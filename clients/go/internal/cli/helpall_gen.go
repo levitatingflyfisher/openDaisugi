@@ -7,27 +7,33 @@ const helpAll = "" +
 	"Start here:\n" +
 	"  dashboard             The live 'factory floor': the module map with real...\n" +
 	"  help                  Show the short start-here text, or every command with --all.\n" +
-	"  start                 Get a gated session over this directory and watch it.\n" +
+	"  start                 Get a checked session over this directory and watch it.\n" +
 	"  status                Show day-one readiness: are token savings live and are...\n" +
 	"\n" +
 	"Run:\n" +
 	"  orchestrate           Run PROMPT end to end: decompose → size → supervised...\n" +
 	"\n" +
-	"Gate:\n" +
-	"  gate                  Call-time tool gate (ADR-0007) — verify each live tool...\n" +
-	"    gate arm              Remove the disarm marker; the gate resumes...\n" +
-	"    gate audit            Run the deterministic adversarial corpus and...\n" +
-	"    gate check            Read one hook payload from stdin and emit the...\n" +
-	"    gate disarm           Kill switch: the gate allows everything until...\n" +
-	"    gate init             Generate and register a reviewable starter...\n" +
-	"    gate proposals        List recorded envelope-edit proposals...\n" +
-	"    gate register         Register the envelope the gate checks this...\n" +
-	"    gate replay           Replay a captured session through the gate...\n" +
-	"    gate report           Summarize the audit log: what an enforcing gate...\n" +
-	"    gate serve            Run the resident gate in the foreground (Ctrl-C...\n" +
-	"    gate settings         Print the Claude Code hooks-settings JSON that...\n" +
-	"    gate status           Show armed/disarmed state, the verdict mode, and...\n" +
+	"Warden:\n" +
 	"  install               Wire openDaisugi into every detected agent harness.\n" +
+	"  recipe                Recipes: named setups that run through install.\n" +
+	"    recipe apply            Show what a recipe would write; with --yes, write...\n" +
+	"    recipe list             List the recipes.\n" +
+	"    recipe revert           Undo a recipe from its receipt.\n" +
+	"    recipe show             Show a recipe: its slots, params and steps.\n" +
+	"  warden                The warden watches each tool call and records it.\n" +
+	"    warden arm              Remove the disarm marker; the warden resumes...\n" +
+	"    warden audit            Run the deterministic adversarial corpus and...\n" +
+	"    warden check            Read one hook payload from stdin and emit the...\n" +
+	"    warden disarm           Kill switch: the warden allows everything until...\n" +
+	"    warden init             Generate and register a reviewable starter...\n" +
+	"    warden proposals        List recorded envelope-edit proposals...\n" +
+	"    warden register         Register the envelope the warden checks this...\n" +
+	"    warden replay           Replay a captured session through the warden...\n" +
+	"    warden report           Summarize the audit log: what an enforcing warden...\n" +
+	"    warden schemas          The MCP tool schemas on file, which `warden...\n" +
+	"    warden serve            Run the resident warden in the foreground (Ctrl-C...\n" +
+	"    warden settings         Print the Claude Code hooks-settings JSON that...\n" +
+	"    warden status           Show armed/disarmed state, the verdict mode, and...\n" +
 	"\n" +
 	"Garden:\n" +
 	"  journal               Inspect and replay journal traces.\n" +
@@ -41,6 +47,19 @@ const helpAll = "" +
 	"    models pin              Resolve a repo to a file pinned to its commit;...\n" +
 	"    models search           Search the Hugging Face API for models, filtered...\n" +
 	"    models use              Record the model the garden uses.\n" +
+	"  pando                 Pando R2, the conversation memory: log, summary tree and...\n" +
+	"    pando append           Add a message.\n" +
+	"    pando date             Print when message ID was logged, in UTC.\n" +
+	"    pando import           Bring old chats in.\n" +
+	"    pando log              Print the messages, one per line.\n" +
+	"    pando migrate          Move the old coppice log into pando/work.\n" +
+	"    pando recall           Find where a word was said: QUERY [-k N].\n" +
+	"    pando serve            Run a read-only MCP server named pando on stdin...\n" +
+	"    pando status           Show a store: messages and where it is.\n" +
+	"    pando stores           List the stores.\n" +
+	"    pando tend             Build summary nodes.\n" +
+	"    pando view             Print the view: the summary lines a turn would see.\n" +
+	"    pando zoom             Open a node: ID N.\n" +
 	"  pathways              Manage compiled pathways.\n" +
 	"    pathways delete           Delete a compiled pathway.\n" +
 	"    pathways export           Export a compiled pathway for sharing or inspection.\n" +
@@ -77,17 +96,16 @@ const helpAll = "" +
 	"    coppice spawn            Start a command in a new pane and print its id.\n" +
 	"    coppice task             Tasks above panes: a name, a worktree, a parent,...\n" +
 	"    coppice wait             Block until the pane reaches a state.\n" +
-	"  distill-repeats      (hidden)  Rank repeated gateway asks into a reuse worklist — the...\n" +
+	"  distill-repeats      (hidden)  Rank repeated router asks into a reuse worklist — the...\n" +
 	"  gardener             (hidden)  Lifecycle management for compiled pathways (prune, merge,...\n" +
 	"    gardener merge            Collapse near-duplicate pathways.\n" +
 	"    gardener prune            Evict stale / failure-dominated pathways.\n" +
 	"    gardener run              Run the full gardener pipeline (prune + merge).\n" +
 	"    gardener status           Report current store size, pathway activation...\n" +
 	"    gardener watch            Cron-friendly one-shot gardener.\n" +
-	"  gateway              (hidden)  Run the token-saving gateway: a local proxy any harness...\n" +
-	"  gateway-report       (hidden)  Calibrate the gateway on a real recorded day: realized...\n" +
+	"  gate                 (hidden)  Refused: this verb is now warden.\n" +
 	"  generate-envelope    (hidden)  Generate a safety envelope for TASK via an LLM.\n" +
-	"  graft                (hidden)  Install, show and remove the gate's graft rule for large...\n" +
+	"  graft                (hidden)  Install, show and remove the warden's graft rule for...\n" +
 	"    graft install          Write the large-read graft rule into...\n" +
 	"    graft remove           Remove a graft rule file.\n" +
 	"    graft status           Show the graft rule files, the one in force, and...\n" +
@@ -115,8 +133,12 @@ const helpAll = "" +
 	"  rank                 (hidden)  Rank N attempts at one task, record the choice, and...\n" +
 	"    rank choose           Rank the attempts, take the leader, and open a...\n" +
 	"    rank fit              Rank the attempts: eliminate, then quality, then...\n" +
+	"    rank judge            Ask a judge model to compare the next pair, in...\n" +
+	"    rank judges           Show how far each judge agrees with the owner,...\n" +
+	"    rank pivot            Show what switching a card to another attempt...\n" +
 	"    rank queue            List the open cards: what was chosen, why, and...\n" +
 	"    rank record           Record the owner's answer on a card.\n" +
+	"    rank show             Show a ranking as the journal holds it: votes,...\n" +
 	"  registry             (hidden)  Git-backed shared pathway registry (v0.25+).\n" +
 	"    registry init             Clone a registry repo to a local directory.\n" +
 	"    registry publish          Sign + commit + push a local pathway as a bundle...\n" +
@@ -128,10 +150,6 @@ const helpAll = "" +
 	"    release sign             Build a SHA-256 manifest over ARTIFACTS and sign it.\n" +
 	"    release verify           Verify a release: trusted signature AND intact...\n" +
 	"  route                (hidden)  Recommend the cheapest viable model/tier for a task.\n" +
-	"  router               (hidden)  The gateway's model chooser: NVIDIA NeMo Switchyard as a...\n" +
-	"    router label            Record whether a session's task succeeded: the...\n" +
-	"    router status           Show the router choice, the Switchyard binary,...\n" +
-	"    router stop             Stop every switchyard-server that a gateway...\n" +
 	"  run                  (hidden)  Execute PLAN against ENVELOPE under runtime supervision.\n" +
 	"  setup                (hidden)  Moved: `daisugi setup` is now `daisugi tiers setup` (same...\n" +
 	"  tend                 (hidden)  Run the distiller.\n" +
@@ -139,9 +157,11 @@ const helpAll = "" +
 	"    tiers setup            Detect hardware, recommend a local model, and...\n" +
 	"    tiers stats            Show per-tier call counts, estimated tokens, and...\n" +
 	"  tree                 (hidden)  The delegation tree: prove each edge, keep the budgets,...\n" +
+	"    tree adopt            Apply a branch's edits to your working tree.\n" +
 	"    tree answer           Answer an ask: allow starts the child as...\n" +
 	"    tree check            Prove that the child's envelope fits inside the...\n" +
 	"    tree end              Record that a node ended; its parent gets the...\n" +
+	"    tree prune-branches   Remove the worktrees of branches whose card is...\n" +
 	"    tree root             Make a root of the tree: the operator's envelope...\n" +
 	"    tree run              Start a child of the tree on sprig, wait for it,...\n" +
 	"    tree spawn            Prove the edge, reserve the child's budget and...\n" +
@@ -155,5 +175,13 @@ const helpAll = "" +
 	"    voice serve            Run the voice bridge.\n" +
 	"    voice status           Show the voice engine, its model, and whether the...\n" +
 	"  weave                (hidden)  Run the plan tree in PLAN against ENVELOPE, with typed...\n" +
+	"\n" +
+	"Router:\n" +
+	"  router                The router: a local proxy in front of your model provider.\n" +
+	"    router label            Record whether a session's task succeeded: the...\n" +
+	"    router report           Calibrate the router on a real recorded day:...\n" +
+	"    router serve            Run the token-saving router: a local proxy any...\n" +
+	"    router status           Show the routing mode, the Switchyard binary,...\n" +
+	"    router stop             Stop every switchyard-server that a router...\n" +
 	"\n" +
 	""

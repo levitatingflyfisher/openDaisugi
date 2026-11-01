@@ -1,6 +1,6 @@
-"""A file protocol between the gate process and a present operator.
+"""A file protocol between the warden process and a present operator.
 
-The gate never waits for a human who is not there: presence is a heartbeat
+The warden never waits for a human who is not there: presence is a heartbeat
 file with a live pid. An ask is a file; an answer is a file; a proposal
 ("remember this") is a file nobody applies automatically. Every path in this
 module fails toward deny: no operator, no answer, malformed answer, a
@@ -18,10 +18,10 @@ unbounded and a stale leftover can't resurface if a ``tool_use_id`` is
 reused. The nonce correlates an answer to one specific ask instance — it is
 not an authentication check; the real trust boundary is filesystem write
 access to this private (0700) directory tree, same as everywhere else in the
-gate's state.
+warden's state.
 
 GR-R-10: the channel is read and written through no link. ``operator.json``,
-``asks/`` and ``answers/`` are opened as the gate opens the rest of its state
+``asks/`` and ``answers/`` are opened as the warden opens the rest of its state
 (``_state_files``): the root and each directory with ``O_NOFOLLOW``, each
 file by its fd with the owner, link-count and mode checks, the mtime from
 the same fd. A file is written under a temp name and renamed inside its
@@ -76,7 +76,7 @@ def _read(
 ) -> tuple[dict[str, Any] | None, float | None, bool]:
     """(body, mtime, refused) for ``<root>/<dirs>/<name>``, read through the
     checked open. Missing is (None, None, False); a refusal is (None, None,
-    True) and leaves the gate's note."""
+    True) and leaves the warden's note."""
     fd, refusal = probe_state_file(root, dirs, name)
     if fd is None:
         return None, None, refusal is not None
@@ -90,9 +90,9 @@ def _write(root: Path, dirs: tuple[str, ...], name: str, body: dict[str, Any]) -
 
 
 def channel_ok(root: Path) -> bool:
-    """False when ``asks/`` or ``answers/`` exists and the gate refuses it
+    """False when ``asks/`` or ``answers/`` exists and the warden refuses it
     (a link, another user's, writable by others). Missing is fine: the
-    first ask makes them. The refusal leaves the gate's note."""
+    first ask makes them. The refusal leaves the warden's note."""
     for sub in (ASKS, ANSWERS):
         fds, why = probe_state_dirs(root, (sub,))
         for f in fds or []:
@@ -142,7 +142,7 @@ def _sweep_expired(root: Path, *, now: float) -> None:
     channel's only janitor — nothing else visits this directory on a
     schedule, and either kind of leftover would otherwise sit there
     forever: an ask that timed out without ever being consumed by its own
-    ``wait_answer`` call (e.g. the gate process died mid-wait), or an
+    ``wait_answer`` call (e.g. the warden process died mid-wait), or an
     answer that outlived its ask (``wait_answer`` retired the ask a moment
     before a late ``answer()`` write landed). An orphaned answer is worse
     than inert clutter — unlike an ask it carries no deadline of its own,
@@ -205,7 +205,7 @@ def _entry_exists(dir_fd: int, name: str) -> bool:
 
 def _drop(root: Path, sub: str, name: str) -> None:
     """Remove ``<root>/<sub>/<name>`` through the directory fd. A directory
-    the gate refuses is left alone: nothing is removed through a link."""
+    the warden refuses is left alone: nothing is removed through a link."""
     try:
         unlink_state_file(root, (sub,), name)
     except StateWriteRefused:
@@ -463,7 +463,7 @@ def propose(
     body: dict[str, Any],
     clock: Callable[[], float] = time.time,
 ) -> Path:
-    """Record a proposed envelope edit. Nothing applies it; `daisugi gate proposals` lists them."""
+    """Record a proposed envelope edit. Nothing applies it; `daisugi warden proposals` lists them."""
     from opendaisugi.session_tree import new_id
 
     pid = new_id()

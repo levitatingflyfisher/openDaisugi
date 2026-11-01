@@ -236,7 +236,7 @@ func TestAViewPageCannotReachTheAPIOrTheSocket(t *testing.T) {
 // earns no strike, and the floor page on the same address keeps working.
 func TestAMissingTokenEarnsNoStrike(t *testing.T) {
 	_, d := newFakeServer(t, echoOK)
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 	for i := 0; i < BanFailures+2; i++ {
 		for _, p := range []string{"/api/panes", "/api/tasks", "/ws"} {
 			if st := getStatus(t, ts.URL+p, ""); st != http.StatusUnauthorized {

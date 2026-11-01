@@ -218,9 +218,10 @@ exit {int(tool.get("exit", 0))}
             _script(
                 bin_dir / name,
                 f"""LOG={log}
-prev=""; f=""
-{{ echo "--call"; for a in "$@"; do printf '%s\\n' "$a"; [ "$prev" = "-f" ] && f="$a"; prev="$a"; done; }} >> "$LOG/engine.log"
+prev=""; f=""; txt=0; files=""
+{{ echo "--call"; for a in "$@"; do printf '%s\\n' "$a"; [ "$prev" = "-f" ] && {{ f="$a"; files="$files $a"; }}; [ "$a" = "-otxt" ] && txt=1; prev="$a"; done; }} >> "$LOG/engine.log"
 if [ -n "$f" ] && [ -f "$f" ]; then /usr/bin/sha256sum "$f" | /usr/bin/cut -d' ' -f1 >> "$LOG/engine.sha"; else echo none >> "$LOG/engine.sha"; fi
+if [ $txt = 1 ]; then for g in $files; do /bin/cat "$LOG/engine.out" > "$g.txt"; done; fi
 /bin/cat "$LOG/engine.out"
 /bin/cat "$LOG/engine.err" >&2
 exit {int(tool.get("exit", 0))}
@@ -278,6 +279,8 @@ def fresh_world(work: Path, spec: dict[str, Any]) -> None:
 def norm_text(text: str, work: Path) -> str:
     text = text.replace(str(work / "home"), "{HOME}")
     text = text.replace(str(work), "{W}")
+    # A long clip's windows sit in a directory of their own: w0001.wav, w0002.wav.
+    text = re.sub(r"daisugi-voice-[^/\s\"']*/(w\d+\.wav)", r"daisugi-voice-{R}/\1", text)
     text = re.sub(r"daisugi-voice-[^/\s\"']*\.wav", "daisugi-voice-{R}.wav", text)
     return text
 
@@ -932,7 +935,7 @@ def moonshine_cases() -> list[dict[str, Any]]:
     for hw, tools in [
         ("16,8,0", {}),
         ("16,8,0", {"parakeet-cli": {}}),
-        ("15.6,4,5.9", moon),
+        ("12.5,6,5.9", moon),
         ("3.8,2,0", moon),
         ("1,1,0", moon),
         (",4,0", moon),
@@ -1166,10 +1169,10 @@ def choose_cases() -> list[dict[str, Any]]:
     cases = []
     every = ["faster-whisper", "moonshine", "parakeet"]
     for ram, cpus, vram, installed, fw in [
-        (15.6, 4, 0.0, every, True),
-        (15.6, 4, 0.0, ["moonshine", "parakeet"], False),
-        (15.6, 4, 0.0, ["moonshine"], False),
-        (15.6, 4, 0.0, [], False),
+        (12.5, 6, 0.0, every, True),
+        (12.5, 6, 0.0, ["moonshine", "parakeet"], False),
+        (12.5, 6, 0.0, ["moonshine"], False),
+        (12.5, 6, 0.0, [], False),
         (8.0, 4, 0.0, ["parakeet"], False),
         (7.9, 16, 0.0, every, True),
         (64.0, 2, 24.0, every, False),
@@ -1199,7 +1202,7 @@ def choose_cases() -> list[dict[str, Any]]:
         ("x86_64", True, ["moonshine"], False),
         ("riscv64", False, ["moonshine", "parakeet"], False),
     ]:
-        q = {"op": "choose_engine", "ram_gb": 15.6, "cpus": 4, "vram_gb": 0.0}
+        q = {"op": "choose_engine", "ram_gb": 12.5, "cpus": 6, "vram_gb": 0.0}
         q.update({"installed": installed, "faster_whisper": fw})
         q.update({"arch": arch, "q4k_on_disk": on_disk})
         cases.append(
@@ -1601,13 +1604,13 @@ def cleanup_cases() -> list[dict[str, Any]]:
         ("unicode", on, "caf\u00e9 \u4e2d\u6587 please", {"text": "Caf\u00e9."}, {}),
         ("long text", on, "word " * 400, {"text": "Words."}, {}),
         ("blank transcript", on, "   ", {"text": "x"}, {}),
-        ("journal unwritable", on, "hello", ok, {"data/gateway": {"text": "a file"}}),
+        ("journal unwritable", on, "hello", ok, {"data/router": {"text": "a file"}}),
         (
             "journal appends",
             on,
             "hello again",
             ok,
-            {"data/gateway/turns.jsonl": {"text": '{"old": 1}\n'}},
+            {"data/router/turns.jsonl": {"text": '{"old": 1}\n'}},
         ),
         (
             "model with slash",
@@ -1721,6 +1724,18 @@ def ptt_cases() -> list[dict[str, Any]]:
                 "keys": "    ",
                 "streams": [[[c1, False]], [[c2, False]]],
                 "transcribe": [{"error": "Could not reach the voice server."}, hello],
+                "deliver": [preview],
+            },
+        ),
+        (
+            "transcribe busy then ok",
+            {
+                "keys": "    ",
+                "streams": [[[c1, False]], [[c2, False]]],
+                "transcribe": [
+                    {"error": "The voice server is still turning an earlier clip.", "busy": True},
+                    hello,
+                ],
                 "deliver": [preview],
             },
         ),
@@ -2471,7 +2486,7 @@ def run_server(case: dict[str, Any], cmd: list[str], work: Path) -> dict[str, An
         res["upstream"] = json.loads(
             json.dumps(norm(upstream.seen, work)).replace(str(upstream.port), "{UP}")
         )
-    journal = data / "gateway" / "turns.jsonl"
+    journal = data / "router" / "turns.jsonl"
     if journal.exists():
         recs = []
         for ln in journal.read_text("utf-8").splitlines():
@@ -2642,7 +2657,7 @@ def server_cases() -> list[dict[str, Any]]:
             [
                 {**tr, "headers": [["Content-Type", "audio/wav"], ["Content-Length", "abc"]]},
                 {**tr, "headers": [["Content-Type", "audio/wav"], ["Content-Length", "-1"]]},
-                {**tr, "headers": [["Content-Type", "audio/wav"], ["Content-Length", "30000001"]]},
+                {**tr, "headers": [["Content-Type", "audio/wav"], ["Content-Length", "64000001"]]},
                 {**tr, "headers": [["Content-Type", "audio/wav"], ["Content-Length", "1_0"]]},
                 {
                     **tr,
@@ -2655,8 +2670,11 @@ def server_cases() -> list[dict[str, Any]]:
         server(
             "transcribe too long",
             [
+                {**tr, "wav": [16000, 16000 * 1201, 1]},
+                {**tr, "wav": [16000, 16000 * 1200 + 8000, 1]},
+                {**tr, "wav": [16000, 16000 * 1200, 1]},
                 {**tr, "wav": [16000, 16000 * 61, 1]},
-                {**tr, "wav": [16000, 16000 * 60, 1]},
+                {**tr, "wav": [16000, 16000 * 30, 1]},
             ],
         ),
         server(

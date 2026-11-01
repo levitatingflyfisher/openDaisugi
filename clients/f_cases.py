@@ -36,10 +36,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import garden_cases  # noqa: E402
 import k3_cases  # noqa: E402, F401 - sibling module, run as a script (it patches garden_cases)
 from garden_cases import body_id, record_replies, run_case, write_jsonl  # noqa: E402
 from k3_cases import cmd_for  # noqa: E402
 from pathway_cases import REPO  # noqa: E402
+
+# The f cases write timestamps "about now" (to-trace, ingest). Up to 90 s after
+# the case starts reads as +0, so a loaded box cannot move a minute bucket.
+garden_cases.NOW_SNAP_S = 90.0
 
 FIXTURE_DIR = REPO / "clients" / "fixtures" / "f"
 SCRATCH = Path(
@@ -920,10 +925,323 @@ def build_codex_cases() -> list[dict[str, Any]]:
     return C
 
 
+# -- pi sessions and OpenCode storage trees ------------------------------------
+
+
+def pline(**kw: Any) -> str:
+    return json.dumps(kw, ensure_ascii=False)
+
+
+PI_HEAD = pline(type="session", version=3, id="sess", timestamp="t", cwd="/w")
+
+
+def pi_user(i: str, text: Any, parent: Any = None) -> str:
+    return pline(
+        type="message",
+        id=i,
+        parentId=parent,
+        timestamp="t",
+        message={"role": "user", "content": [{"type": "text", "text": text}], "timestamp": 1},
+    )
+
+
+def pi_asst(i: str, parent: str, *blocks: Any) -> str:
+    return pline(
+        type="message",
+        id=i,
+        parentId=parent,
+        timestamp="t",
+        message={"role": "assistant", "content": list(blocks), "timestamp": 1},
+    )
+
+
+def pi_call(name: Any, args: Any) -> dict[str, Any]:
+    return {"type": "toolCall", "id": "c", "name": name, "arguments": args}
+
+
+def build_pi_cases() -> list[dict[str, Any]]:
+    C: list[dict[str, Any]] = []
+    add = C.append
+
+    def pp(name: str, text: str | None, *flags: str, **kw: Any) -> dict[str, Any]:
+        return parse(name, text, *flags, fmt="pi", **kw)
+
+    add(
+        pp(
+            "pi one episode",
+            lines(
+                PI_HEAD,
+                pi_user("u1", "fix the build"),
+                pi_asst(
+                    "a1",
+                    "u1",
+                    {"type": "thinking", "thinking": "hm"},
+                    {"type": "text", "text": "running"},
+                    pi_call("bash", {"command": "make"}),
+                    pi_call("read", {"path": "/w/a.py"}),
+                    pi_call("write", {"path": "/w/b.py", "content": "x"}),
+                    pi_call("edit", {"path": "/w/b.py"}),
+                ),
+                pline(
+                    type="message",
+                    id="r1",
+                    parentId="a1",
+                    timestamp="t",
+                    message={
+                        "role": "toolResult",
+                        "toolCallId": "c",
+                        "toolName": "bash",
+                        "content": [],
+                    },
+                ),
+                pline(type="usage", id="x", parentId="a1", timestamp="t", input=1),
+                pline(type="model_change", id="m", parentId="a1", timestamp="t"),
+            ),
+            *M1,
+        )
+    )
+    add(
+        pp(
+            "pi tool names",
+            lines(
+                PI_HEAD,
+                pi_user("u1", "map the names"),
+                pi_asst(
+                    "a1",
+                    "u1",
+                    pi_call("grep", {"pattern": "x", "path": "/w"}),
+                    pi_call("find", {"pattern": "*.py", "path": "/w"}),
+                    pi_call("ls", {"path": "/w"}),
+                    pi_call("powershell", {"command": "dir"}),
+                    pi_call("deploy", {"target": "prod"}),
+                    pi_call("odd", "not a dict"),
+                    pi_call(7, {}),
+                ),
+            ),
+            *M1,
+        )
+    )
+    add(
+        pp(
+            "pi bad lines",
+            lines(
+                "{nope",
+                "[1, 2]",
+                "null",
+                PI_HEAD,
+                pi_user("u1", "after bad lines"),
+                pi_asst("a1", "u1", pi_call("bash", {"command": "ls"})),
+                pline(type="message", id="z", message="not a dict"),
+                pline(type="message", id="y", message={"role": "system", "content": "x"}),
+            ),
+            *M1,
+        )
+    )
+    add(
+        pp(
+            "pi two episodes",
+            lines(
+                PI_HEAD,
+                pi_user("u1", "first"),
+                pi_asst("a1", "u1", pi_call("bash", {"command": "ls"})),
+                pi_user("u2", "second", "a1"),
+                pi_asst("a2", "u2", pi_call("read", {"path": "/w/a"})),
+            ),
+            *M1,
+        )
+    )
+    add(pp("pi empty file", ""))
+    add(
+        pp(
+            "pi no header",
+            lines(pi_user("u1", "t"), pi_asst("a1", "u1", pi_call("bash", {"command": "x"}))),
+            *M1,
+        )
+    )
+    add(pp("pi not utf8", None, *M1, hex_=(PI_HEAD + "\n").encode().hex() + "ff0a"))
+    add(
+        {
+            "kind": "cli",
+            "name": "pi single call",
+            "argv": [
+                "journal",
+                "parse",
+                "t.jsonl",
+                "-o",
+                "eps.json",
+                "--json",
+                "--format",
+                "pi",
+                *M1,
+            ],
+            "before": {
+                **LEX,
+                "t.jsonl": {
+                    "text": lines(
+                        PI_HEAD,
+                        pi_user("u1", "run the tests"),
+                        pi_asst("a1", "u1", pi_call("bash", {"command": "pytest -q"})),
+                    )
+                },
+            },
+            "env": CC,
+        }
+    )
+    return C
+
+
+def oc_tree(
+    messages: dict[str, dict[str, Any]],
+    parts: dict[str, dict[str, dict[str, Any]]],
+    session: str = "ses_1",
+) -> dict[str, Any]:
+    t: dict[str, Any] = {
+        f"storage/session/p/{session}.json": {"text": json.dumps({"id": session})},
+    }
+    for mid, msg in messages.items():
+        t[f"storage/message/{session}/{mid}.json"] = {
+            "text": msg
+            if isinstance(msg, str)
+            else json.dumps({"id": mid, "sessionID": session, **msg})
+        }
+    for mid, plist in parts.items():
+        for pid, part in plist.items():
+            t[f"storage/part/{mid}/{pid}.json"] = {
+                "text": part
+                if isinstance(part, str)
+                else json.dumps({"id": pid, "messageID": mid, **part})
+            }
+    return t
+
+
+def oc_tool(name: Any, status: Any = "completed", **inp: Any) -> dict[str, Any]:
+    return {"type": "tool", "callID": "c", "tool": name, "state": {"status": status, "input": inp}}
+
+
+def build_opencode_cases() -> list[dict[str, Any]]:
+    C: list[dict[str, Any]] = []
+    add = C.append
+
+    def oc(name: str, tree: dict[str, Any], *flags: str, session: str = "ses_1") -> dict[str, Any]:
+        return {
+            "kind": "cli",
+            "name": name,
+            "argv": [
+                "journal",
+                "parse",
+                f"storage/session/p/{session}.json",
+                "-o",
+                "eps.json",
+                "--json",
+                "--format",
+                "opencode",
+                *flags,
+            ],
+            "before": {**LEX, **tree},
+            "env": CC,
+        }
+
+    add(
+        oc(
+            "opencode one episode",
+            oc_tree(
+                {
+                    "msg_2": {"role": "assistant", "time": {"created": 2}},
+                    "msg_1": {"role": "user", "time": {"created": 1}},
+                },
+                {
+                    "msg_1": {"prt_1": {"type": "text", "text": "fix the build"}},
+                    "msg_2": {
+                        "prt_1": oc_tool("bash", command="make"),
+                        "prt_2": oc_tool("read", filePath="/w/a.py"),
+                        "prt_3": oc_tool("write", filePath="/w/b.py", content="x"),
+                        "prt_4": oc_tool("webfetch", url="https://example.com/a"),
+                        "prt_5": oc_tool("glob", pattern="*.py"),
+                    },
+                },
+            ),
+            *M1,
+        )
+    )
+    add(
+        oc(
+            "opencode error part dropped",
+            oc_tree(
+                {
+                    "m1": {"role": "user", "time": {"created": 1}},
+                    "m2": {"role": "assistant", "time": {"created": 2}},
+                },
+                {
+                    "m1": {"p": {"type": "text", "text": "t"}},
+                    "m2": {
+                        "p1": oc_tool("bash", "error", command="boom"),
+                        "p2": oc_tool("bash", "pending", command="later"),
+                        "p3": oc_tool("bash", "running", command="now"),
+                        "p4": oc_tool("bash", None, command="no status"),
+                        "p5": oc_tool(5, command="bad name"),
+                        "p6": {"type": "tool", "tool": "bash", "state": "not a dict"},
+                        "p7": "{nope",
+                        "p8": oc_tool("deploy", target="x"),
+                    },
+                },
+            ),
+            *M1,
+        )
+    )
+    add(
+        oc(
+            "opencode order and ties",
+            oc_tree(
+                {
+                    "b": {"role": "assistant", "time": {"created": 5}},
+                    "a": {"role": "user", "time": {"created": 5}},
+                    "c": {"role": "user", "time": {"created": 9.5}},
+                    "d": {"role": "assistant"},
+                    "e": {"role": "assistant", "time": {"created": 10}},
+                    "bad": "{nope",
+                },
+                {
+                    "a": {"p": {"type": "text", "text": "first"}},
+                    "b": {"p": oc_tool("bash", command="one")},
+                    "c": {
+                        "p": {"type": "text", "text": "second"},
+                        "q": {"type": "text", "text": "line"},
+                    },
+                    "d": {"p": oc_tool("bash", command="zero")},
+                    "e": {"p": oc_tool("read", filePath="/w/e")},
+                },
+            ),
+            *M1,
+        )
+    )
+    add(
+        oc(
+            "opencode id with dotdot",
+            {
+                **oc_tree(
+                    {"msg_1": {"id": "../../outside/leak", "role": "user", "time": {"created": 1}}},
+                    {"msg_1": {"p": {"type": "text", "text": "kept"}}},
+                ),
+                "outside/leak/p.json": {"text": json.dumps({"type": "text", "text": "LEAKED"})},
+            },
+            *M1,
+        )
+    )
+    add(oc("opencode missing session", {"storage/session/p/ses_1.json": {"text": "{}"}}, *M1))
+    add(
+        oc(
+            "opencode empty message dir",
+            {**oc_tree({}, {}), "storage/message/ses_1/x.txt": {"text": ""}},
+            *M1,
+        )
+    )
+    return C
+
+
 def build_format_cases() -> list[dict[str, Any]]:
     C: list[dict[str, Any]] = []
     t = lines(user("t"), asst(tu("Bash", command="x")))
-    for fmt in ("pi", "opencode", "hermes", "openclaw", "Claude-Code", ""):
+    for fmt in ("hermes", "openclaw", "Claude-Code", ""):
         C.append(parse(f"format {fmt or 'empty'}", t, fmt=fmt or " "))
     return C
 
@@ -1282,6 +1600,14 @@ def build_ingest_cases() -> list[dict[str, Any]]:
         ),
     )
     C.append(ing("ingest mixed", mixed))
+    pi_eps = episodes(
+        (
+            "run the tests",
+            [st(0, "shell", command="pytest -q"), st(1, "file_read", path="/w/a.py")],
+        ),
+        ("deploy", [st(2, "mcp", server="pi", tool="deploy", arguments={"target": "prod"})]),
+    ).replace('"source": "claude-code"', '"source": "pi"')
+    C.append(ing("ingest pi episodes", pi_eps))
     C.append(ing("ingest mixed json", mixed, "--json"))
     C.append(ing("ingest mixed dry run", mixed, "--dry-run"))
     C.append(ing("ingest mixed decomposition", mixed, "--allow-shell-decomposition"))
@@ -1308,6 +1634,10 @@ def cap(*records: dict[str, Any], at: float = 1_700_000_000.0) -> dict[str, Any]
 
 def caps(**sessions: Any) -> dict[str, Any]:
     return {f".opendaisugi/captures/{sid}.jsonl": v for sid, v in sessions.items()}
+
+
+def caps_in(where: str, **sessions: Any) -> dict[str, Any]:
+    return {f"{where}/captures/{sid}.jsonl": v for sid, v in sessions.items()}
 
 
 MAKE = {"step_type": "shell", "command": "make test"}
@@ -1627,12 +1957,12 @@ def build_to_trace_cases() -> list[dict[str, Any]]:
             "{HOME}/caps",
         )
     )
-    C.append(tt("to-trace data dir", caps(s=cap(MAKE)), "s", "--data-dir", "{HOME}/dd"))
+    C.append(tt("to-trace data dir", caps_in("dd", s=cap(MAKE)), "s", "--data-dir", "{HOME}/dd"))
     C.append(
         tt(
             "to-trace data dir config",
             {
-                **caps(s=cap(compound)),
+                **caps_in("dd", s=cap(compound)),
                 "dd/config.yaml": {"text": "shell_allow_decomposition: true\n"},
             },
             "s",
@@ -1687,6 +2017,8 @@ def all_cases() -> list[dict[str, Any]]:
     cases = (
         build_claude_cases()
         + build_codex_cases()
+        + build_pi_cases()
+        + build_opencode_cases()
         + build_format_cases()
         + build_split_cases()
         + build_onboard_cases()

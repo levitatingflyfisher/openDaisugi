@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 
-from opendaisugi.gate import GateDecision, evaluate_call, gate_and_contract, register_envelope
 from opendaisugi.hook import _classify_tool, _payload_to_record
 from opendaisugi.models import Envelope, Permission
+from opendaisugi.warden import WardenDecision, evaluate_call, register_envelope, warden_and_contract
 
 
 def _envelope(**perm_kwargs) -> Envelope:
@@ -12,8 +12,8 @@ def _envelope(**perm_kwargs) -> Envelope:
     return Envelope(generated_by="test", task="pi format test", permissions=Permission(**perms))
 
 
-def _gate_root(tmp_path, envelope=None):
-    root = tmp_path / "gate"
+def _warden_root(tmp_path, envelope=None):
+    root = tmp_path / "warden"
     register_envelope(envelope or _envelope(), root=root)
     return root
 
@@ -77,7 +77,7 @@ def test_same_unknown_tool_under_claude_fmt_is_still_dropped():
 def test_unknown_pi_tool_is_denied_when_not_in_mcp_allowlist():
     payload = {"tool_name": "grep_files", "tool_input": {"pattern": "TODO"}}
     d = evaluate_call(payload, _envelope(), mode="enforce", fmt="pi")
-    assert isinstance(d, GateDecision)
+    assert isinstance(d, WardenDecision)
     assert d.allow is False
     assert "pi/grep_files" in d.reason or "mcp_allowlist" in d.reason
 
@@ -109,8 +109,8 @@ def test_stdout_block_formats_are_exactly_hermes_and_openclaw():
 
 
 def test_pi_format_denies_via_exit_code_not_json_stdout(tmp_path):
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("bash", {"command": "rm -rf /"}), root=root, fmt="pi", mode="enforce"
     )
     assert out.exit_code == 2
@@ -119,8 +119,8 @@ def test_pi_format_denies_via_exit_code_not_json_stdout(tmp_path):
 
 
 def test_pi_format_audit_mode_never_denies_the_host(tmp_path):
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("bash", {"command": "rm -rf /"}), root=root, fmt="pi", mode="audit"
     )
     assert out.exit_code == 0
@@ -128,13 +128,13 @@ def test_pi_format_audit_mode_never_denies_the_host(tmp_path):
 
 
 def test_pi_format_allows_via_exit_code_zero(tmp_path):
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("read", {"path": "/allowed/x"}), root=root, fmt="pi", mode="enforce"
     )
     assert out.exit_code == 0
     assert out.stderr == ""
-    # stdout is stdout_for_format's default body. askGate reads only
+    # stdout is stdout_for_format's default body. askWarden reads only
     # exit_code and never parses stdout.
 
 
@@ -142,8 +142,8 @@ def test_hermes_format_is_unaffected_by_the_pi_fix(tmp_path):
     """Regression guard: hermes keeps its JSON-carries-the-verdict contract
     (exit_code 0 always). The fix must not widen EXIT_CODE_FORMATS beyond
     claude, pi and opencode."""
-    root = _gate_root(tmp_path, _envelope(shell=False))
-    out = gate_and_contract(
+    root = _warden_root(tmp_path, _envelope(shell=False))
+    out = warden_and_contract(
         _payload("Bash", {"command": "rm -rf /"}), root=root, fmt="hermes", mode="enforce"
     )
     assert out.exit_code == 0
@@ -152,7 +152,7 @@ def test_hermes_format_is_unaffected_by_the_pi_fix(tmp_path):
 
 
 def test_pi_harness_label_is_intentional_in_the_session_tree():
-    from opendaisugi.gate import _HARNESS_BY_FMT
+    from opendaisugi.warden import _HARNESS_BY_FMT
 
     assert _HARNESS_BY_FMT["pi"] == "pi"
 
@@ -160,8 +160,8 @@ def test_pi_harness_label_is_intentional_in_the_session_tree():
 def test_unknown_format_denies_instead_of_falling_through_to_continue_true(tmp_path):
     """--format has no argparse choices=, so a typo, or codex's still
     unwired gap, must not read as an allow."""
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("read", {"path": "/allowed/x"}), root=root, fmt="codex", mode="enforce"
     )
     assert out.exit_code == 2
@@ -169,17 +169,17 @@ def test_unknown_format_denies_instead_of_falling_through_to_continue_true(tmp_p
 
 
 def test_unknown_format_denies_even_when_the_underlying_decision_would_allow(tmp_path):
-    root = _gate_root(tmp_path)
+    root = _warden_root(tmp_path)
     # A call the envelope admits. The format guard must still deny: a name
     # outside both known sets has no safe body to return either way.
-    out = gate_and_contract(
+    out = warden_and_contract(
         _payload("Read", {"file_path": "/allowed/x"}), root=root, fmt="banana", mode="enforce"
     )
     assert out.exit_code == 2
 
 
 def test_escape_outcome_audit_body_follows_the_format():
-    from opendaisugi.gate import _escape_outcome, _fmt_from_argv
+    from opendaisugi.warden import _escape_outcome, _fmt_from_argv
 
     assert _fmt_from_argv(["--format", "hermes", "--root", "/x"]) == "hermes"
     assert _fmt_from_argv(["--format=openclaw"]) == "openclaw"
@@ -201,7 +201,7 @@ def test_escape_outcome_enforce_denies_via_stdout_for_a_stdout_block_format():
     even for hermes/openclaw. Those hosts never read the exit code, so an
     empty body reads as allow, and a crash that should have blocked the
     call let it through instead."""
-    from opendaisugi.gate import _escape_outcome
+    from opendaisugi.warden import _escape_outcome
 
     for fmt in ("hermes", "openclaw"):
         out = _escape_outcome("enforce", RuntimeError("boom"), fmt=fmt)
@@ -219,7 +219,7 @@ def test_run_argv_denies_a_bad_flag_via_stdout_for_hermes():
     (--no-such-flag): argparse itself refuses this before --format is ever
     bound to args.fmt, so this exercises _fmt_from_argv's raw-scan fallback
     too, not just a post-parse escape."""
-    from opendaisugi.gate import run_argv
+    from opendaisugi.warden import run_argv
 
     out = run_argv(["--mode", "enforce", "--format", "hermes", "--no-such-flag"], b"{}")
     assert out.exit_code == 0
@@ -227,23 +227,23 @@ def test_run_argv_denies_a_bad_flag_via_stdout_for_hermes():
     assert body.get("decision") == "block" or body.get("action") == "block"
     # argparse writes its own usage/error text straight to the real stderr
     # fd during parse_args, before this function's try even starts, so
-    # GateOutcome.stderr here is legitimately empty; the real subprocess's
+    # WardenOutcome.stderr here is legitimately empty; the real subprocess's
     # stderr (checked byte-for-byte against the Go port separately) is not.
     assert out.stderr == ""
 
 
 def test_run_argv_crash_after_a_good_parse_uses_args_fmt_not_the_raw_scan(monkeypatch):
-    """A failure AFTER parse_args succeeds (inside gate_and_contract) must
+    """A failure AFTER parse_args succeeds (inside warden_and_contract) must
     deny in the format argparse actually resolved (args.fmt), not a fresh
     guess from the raw argv. This covers an abbreviated or repeated
     --format the raw scan would not read the same way argparse does."""
-    import opendaisugi.gate as gate_mod
+    import opendaisugi.warden as warden_mod
 
     def _boom(*a, **kw):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(gate_mod, "gate_and_contract", _boom)
-    out = gate_mod.run_argv(["--mode", "enforce", "--format", "openclaw"], b"{}")
+    monkeypatch.setattr(warden_mod, "warden_and_contract", _boom)
+    out = warden_mod.run_argv(["--mode", "enforce", "--format", "openclaw"], b"{}")
     assert out.exit_code == 0
     body = json.loads(out.stdout)
     assert body.get("block") is True or body.get("decision") == "block"
@@ -257,8 +257,8 @@ def test_pi_powershell_classifies_as_shell():
 
 
 def test_pi_powershell_command_reaches_the_shell_predicate(tmp_path):
-    root = _gate_root(tmp_path, _envelope(shell=False))
-    out = gate_and_contract(
+    root = _warden_root(tmp_path, _envelope(shell=False))
+    out = warden_and_contract(
         _payload("powershell", {"command": "Remove-Item -Recurse C:\\"}),
         root=root,
         fmt="pi",
@@ -294,3 +294,52 @@ def test_pi_tool_map_covers_every_pinned_builtin():
         assert _classify_tool(name, fmt="pi") is not None
     assert set(_PI_TOOL_TYPE_MAP) <= _PI_BUILTIN_TOOLS
     assert {"bash", "powershell"} <= {k for k, v in _PI_TOOL_TYPE_MAP.items() if v == "shell"}
+
+
+# --- the capture record is classified under the host's own format --------------------------
+
+
+def test_record_call_under_pi_format_keeps_lowercase_bash(tmp_path):
+    from opendaisugi.hook import record_call
+
+    out = record_call(
+        {"tool_name": "bash", "tool_input": {"command": "ls"}, "session_id": "s1"},
+        root=tmp_path / "captures",
+        fmt="pi",
+    )
+    assert out == tmp_path / "captures" / "s1.jsonl"
+    rec = json.loads(out.read_text().splitlines()[0])
+    assert rec["step_type"] == "shell" and rec["command"] == "ls"
+
+
+def test_record_call_default_format_is_still_claude(tmp_path):
+    from opendaisugi.hook import record_call
+
+    assert (
+        record_call({"tool_name": "bash", "tool_input": {"command": "ls"}}, root=tmp_path) is None
+    )
+
+
+def test_resident_mirror_records_a_pi_call(tmp_path):
+    root = _warden_root(tmp_path, _envelope(shell_allowlist=["ls"]))
+    caps = tmp_path / "caps"
+    out = warden_and_contract(
+        _payload("bash", {"command": "ls"}), root=root, fmt="pi", captures_root=caps
+    )
+    assert out.exit_code == 0
+    rec = json.loads((caps / "s1.jsonl").read_text().splitlines()[0])
+    assert rec["tool_name"] == "bash" and rec["step_type"] == "shell"
+
+
+def test_resident_mirror_never_records_a_denied_pi_call(tmp_path):
+    root = _warden_root(tmp_path, _envelope())
+    caps = tmp_path / "caps"
+    out = warden_and_contract(
+        _payload("bash", {"command": "rm -rf /"}),
+        root=root,
+        fmt="pi",
+        mode="enforce",
+        captures_root=caps,
+    )
+    assert out.exit_code == 2
+    assert not caps.exists()

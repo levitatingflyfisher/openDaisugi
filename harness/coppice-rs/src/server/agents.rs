@@ -1,6 +1,6 @@
 //! pane.report_state and the agent verbs. apply_state is the one entry
 //! point every state goes through: the process tick, a process exit, and a
-//! gate hook's report.
+//! warden hook's report.
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -44,8 +44,8 @@ pub fn register(s: &Arc<Server>) {
         Arc::new(|s, c, r| s.handle_set_model(c, r)),
     );
     let _ = s.handle(
-        "agent.set_router",
-        Arc::new(|s, c, r| s.handle_set_router(c, r)),
+        "agent.set_route",
+        Arc::new(|s, c, r| s.handle_set_route(c, r)),
     );
     let _ = s.handle("agent.move", Arc::new(|s, c, r| s.handle_move(c, r)));
 }
@@ -85,7 +85,7 @@ fn or_unknown(s: &str) -> &str {
 }
 
 /// The state event on the wire. held is set only by the server, when a
-/// foreman hears the ask first.
+/// steward hears the ask first.
 pub fn state_event(ev: &Event, held: Option<&Value>) -> Value {
     let mut p: Vec<(&str, Value)> = vec![("event", json!("state"))];
     p.extend(ev.fields());
@@ -136,7 +136,7 @@ impl Server {
             self.note_ask(pane, ev.ask.as_ref());
         }
         let prev = self.states.current(pane);
-        // The gate-idle stamp follows the merge under one lock (CP-R-57), so
+        // The warden-idle stamp follows the merge under one lock (CP-R-57), so
         // two racing hook reports cannot leave a stamp over a working pane.
         let lp = self.live(pane);
         let _stamp = lp
@@ -161,7 +161,7 @@ impl Server {
             self.broadcast("state", pane, &state_event(&merged, held));
         }
         if !esc.note.is_empty() {
-            self.note_to(&esc.note, pane, &esc.foreman);
+            self.note_to(&esc.note, pane, &esc.steward);
         }
         for (p, a) in &esc.release {
             self.surface(p, a);
@@ -175,14 +175,14 @@ impl Server {
         merged
     }
 
-    /// Keeps the gate-idle stamp in step with the merge (CP-R-57). The hooks
-    /// speak as gate (PreToolUse) and as headless (Stop and Notification,
+    /// Keeps the warden-idle stamp in step with the merge (CP-R-57). The hooks
+    /// speak as warden (PreToolUse) and as headless (Stop and Notification,
     /// whose hook reports source "headless"); process and manifest facts
     /// never touch it. Only an event the merge took counts. Call it under
     /// the pane's stamp_mu.
     fn restamp(&self, lp: &super::panes::LivePane, inc: &Event, merged: &Event) {
         use std::sync::atomic::Ordering::SeqCst;
-        if inc.source != state::SRC_GATE && inc.source != state::SRC_HEADLESS {
+        if inc.source != state::SRC_WARDEN && inc.source != state::SRC_HEADLESS {
             return;
         }
         if merged.source != inc.source || merged.state != inc.state || merged.ts != inc.ts {
@@ -190,9 +190,9 @@ impl Server {
         }
         if inc.state == state::STATE_IDLE {
             let ns = (self.clock_seconds() * 1e9) as i64;
-            let _ = lp.gate_idle_since.compare_exchange(0, ns, SeqCst, SeqCst);
+            let _ = lp.warden_idle_since.compare_exchange(0, ns, SeqCst, SeqCst);
         } else {
-            lp.gate_idle_since.store(0, SeqCst);
+            lp.warden_idle_since.store(0, SeqCst);
         }
     }
 
@@ -344,14 +344,14 @@ impl Server {
         ev.who = None;
         let mut downgraded = false;
         if ev.source == state::SRC_OPERATOR && !c.operator(&id) {
-            ev.source = state::SRC_GATE.into();
+            ev.source = state::SRC_WARDEN.into();
             downgraded = true;
             if let Err(e) = ev.validate() {
                 return proto::err_resp(
                     &r.id,
                     proto::ERR_BAD_REQUEST,
                     &format!(
-                        "a gate blocked report needs an ask: {e}. Attach to this pane to report as operator instead."
+                        "a warden blocked report needs an ask: {e}. Attach to this pane to report as operator instead."
                     ),
                 );
             }
@@ -383,7 +383,7 @@ impl Server {
         if downgraded {
             res.push((
                 "note",
-                json!("source became gate. Attach to this pane to speak as the operator."),
+                json!("source became warden. Attach to this pane to speak as the operator."),
             ));
         }
         if let Some(refusal) = refusal {
@@ -408,6 +408,8 @@ impl Server {
         {
             return;
         }
+        // A resumed or forked long-running agent: its new session is its branch's.
+        self.route_pane_session(&rec, sid);
         let _ = self.update_pane(id, |p| {
             if p.kind == layout::KIND_PTY && !p.closed {
                 p.harness_session_id = sid.into();
@@ -552,7 +554,7 @@ impl Server {
             if let Err(e) = a.prompt_from(&text, !c.role().no_allow) {
                 return proto::err_resp(&r.id, proto::ERR_ADAPTER, &e);
             }
-        } else if self.gated(&id) {
+        } else if self.checked(&id) {
             // A sender that still waits when a drop comes hears of it as
             // its error.
             let from = if c.role().pane {

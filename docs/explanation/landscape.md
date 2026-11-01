@@ -8,7 +8,7 @@ How to read this page. It came from web research, and most rows rest on search s
 third-party posts, not on a full read of the source. "Unverified" marks a gap. Treat a row as a
 pointer to follow, not as a fact to quote. Prices, licences and acquisition notes change.
 
-## Safety: permissions and gates
+## Safety: permissions and checks
 
 ### Harness permission systems
 
@@ -21,14 +21,14 @@ pointer to follow, not as a fact to quote. Prices, licences and acquisition note
 | OpenCode | `permission` config: allow, ask, deny per tool, glob patterns, last match wins. Third-party guide says it is a policy profile, not a sandbox. | Pattern rules, no semantics of arguments, no proof. | https://opencode.ai/en/docs/permissions |
 | Cursor | Terminal sandbox on by default plus allowlist and run modes (Auto-review, Allowlist, Run Everything). Forum reports say allowlist and sandbox interact oddly. | Product setting plus OS sandbox. User can add a command to the allowlist to run it unrestricted. | https://cursor.com/docs/agent/security/run-modes |
 
-### Policy engines and gateways
+### Policy engines and routers
 
 | Name | What it does | How it differs from a Z3-proved envelope | URL |
 |---|---|---|---|
-| Amazon Bedrock AgentCore Policy | Cedar policies checked at the AgentCore Gateway on every tool call. Log-only or enforce mode. Policies can be written in natural language and converted to Cedar. Preview announced Dec 2025; GA status not confirmed. | Closest relative. Cedar rules are written ahead of time per deployment, enforced at a gateway. Cedar is decidable and has SMT analysis of the policies themselves. Our envelope is generated per task and each call is proved against it locally. | https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-bedrock-agentcore-policy-evaluations-preview ; https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.md |
+| Amazon Bedrock AgentCore Policy | Cedar policies checked at the AgentCore Router on every tool call. Log-only or enforce mode. Policies can be written in natural language and converted to Cedar. Preview announced Dec 2025; GA status not confirmed. | Closest relative. Cedar rules are written ahead of time per deployment, enforced at a router. Cedar is decidable and has SMT analysis of the policies themselves. Our envelope is generated per task and each call is proved against it locally. | https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-bedrock-agentcore-policy-evaluations-preview ; https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.md |
 | Cedar analysis (AWS) | Open-source SMT-based analysis of Cedar policies, with Lean models and proofs of the analysis (SymCert, FMCAD 2026). | Proves things about policies, not about a live agent action versus an LLM-written envelope. Shows SMT for authorization is mainstream at AWS. | https://aws.amazon.com/blogs/opensource/introducing-cedar-analysis-open-source-tools-for-verifying-authorization-policies/ ; https://www.amazon.science/publications/symcert-verifying-smt-based-policy-analyses |
 | OPA / Rego | General policy engine. Agent use is by third parties (Strata MCP provider, community mcp-opa-authz). I found no official OPA feature for MCP tool calls. | Hand-written Rego, evaluated not proved. | https://docs.strata.io/docs/opa-authorization ; https://openpolicyagent.org/ecosystem/entry/opa-mcp (authoring helper only) |
-| Docker MCP Gateway | Open-source gateway for MCP servers. Flags for interceptors, secret blocking, call logging, signature verification, container limits. | Isolation and filtering of MCP servers. No argument-level proof. | https://www.docker.com/blog/docker-mcp-gateway-secure-infrastructure-for-agentic-ai/ ; https://docs.docker.com/reference/cli/docker/mcp/gateway/run.md |
+| Docker MCP Router | Open-source router for MCP servers. Flags for interceptors, secret blocking, call logging, signature verification, container limits. | Isolation and filtering of MCP servers. No argument-level proof. | https://www.docker.com/blog/docker-mcp-router-secure-infrastructure-for-agentic-ai/ ; https://docs.docker.com/reference/cli/docker/mcp/router/run.md |
 
 ### Guardrail and agent-security companies
 
@@ -36,7 +36,7 @@ pointer to follow, not as a fact to quote. Prices, licences and acquisition note
 |---|---|---|---|
 | Invariant Labs | ETH Zurich spin-off, agent security tooling. Acquired by Snyk, announced 24 Jun 2025, price undisclosed. | Rule/trace analysis of agent behavior. Not a solver proof against a generated envelope. | https://tech.eu/2025/06/24/snyk-acquires-ai-security-pioneer-invariant-labs-for-a-new-era-in-ai-safeguards/ |
 | Lakera | Lakera Guard (runtime) and Red (pre-deploy). Check Point announced 16 Sep 2025, closed 22 Oct 2025, price undisclosed. | ML detection of injection and leaks. Probabilistic. | https://cyberscoop.com/check-point-lakera-acquistion-ai-security/ ; https://cxotoday.com/press-release/check-point-software-technologies-completes-acquisition-of-lakera-to-secure-the-worlds-ai-transformation/ |
-| Prompt Security | Employee AI-use control, injection and leak blocking, MCP gateway. SentinelOne agreed to acquire it Aug 2025; price reported about $250M by press, not confirmed. | Detection and policy at the edge. Probabilistic. | https://www.darkreading.com/endpoint-security/sentinelone-acquires-ai-startup-prompt-security |
+| Prompt Security | Employee AI-use control, injection and leak blocking, MCP router. SentinelOne agreed to acquire it Aug 2025; price reported about $250M by press, not confirmed. | Detection and policy at the edge. Probabilistic. | https://www.darkreading.com/endpoint-security/sentinelone-acquires-ai-startup-prompt-security |
 | Protect AI | AI/model security. Palo Alto Networks acquisition (announced Apr 2025) seen only in a directory entry (unverified). | Model supply chain focus. | no primary source found |
 | Zenity | Agent security platform. $38M Series B, 29 Oct 2024, over $55M total. | Observe and enforce on agent behavior. No formal proof. | https://zenity.io/company-overview/newsroom/company-news/zenity-raises-38m-series-b-funding-round-to-secure-agentic-ai |
 | Noma Security | AI agent security: discovery, posture, attack simulation, defense. $100M Series B mid-2025, $132M total (Calcalist). Valuation rumor $400M unconfirmed. | Posture and runtime defense. No proof. | https://en.globes.co.il/en/article-1001517758 |
@@ -48,16 +48,20 @@ pointer to follow, not as a fact to quote. Prices, licences and acquisition note
 | Name | What it does | How it differs from a Z3-proved envelope | URL |
 |---|---|---|---|
 | AWS Bedrock Automated Reasoning checks | Part of Bedrock Guardrails. Checks a model answer against a formal policy built from a document. AWS-linked sources claim up to 99% accuracy only for unambiguous translations. | Checks text claims for logical consistency with a policy. Not tool calls. Also depends on NL-to-logic translation. | https://aws.amazon.com/blogs/machine-learning/automated-reasoning-policy-refinement-in-amazon-bedrock |
-| Imandra CodeLogician | LLM agents turn source code into formal models (IML); ImandraX reasons about them. | Verifies software logic before shipping. Not a runtime gate on agent actions. | https://arxiv.org/abs/2601.11840 |
-| Atlas Computing / ARIA Safeguarded AI | Nonprofit and UK programme (GBP 59M) for specs checked by non-learned tools, with evidence that a solution meets the spec. Atlas 2024 status only; no newer data found. | Same philosophy (spec plus non-learned checker). Targets high-stakes domains, mostly research, no shipping agent gate found. | https://www.aria.org.uk/media/s1sght12/programmethesis-safeguarded-ai-accessible.pdf ; https://www.greaterwrong.com/posts/dKD47KMqvYAB7Zkmv/announcing-atlas-computing |
+| Imandra CodeLogician | LLM agents turn source code into formal models (IML); ImandraX reasons about them. | Verifies software logic before shipping. Not a runtime check on agent actions. | https://arxiv.org/abs/2601.11840 |
+| Atlas Computing / ARIA Safeguarded AI | Nonprofit and UK programme (GBP 59M) for specs checked by non-learned tools, with evidence that a solution meets the spec. Atlas 2024 status only; no newer data found. | Same philosophy (spec plus non-learned checker). Targets high-stakes domains, mostly research, no shipping agent check found. | https://www.aria.org.uk/media/s1sght12/programmethesis-safeguarded-ai-accessible.pdf ; https://www.greaterwrong.com/posts/dKD47KMqvYAB7Zkmv/announcing-atlas-computing |
 | Galois | Consultancy. AI plus formal methods (AI-driven verification, memory-safe parser generation). I found no Galois work on agent-action proofs. | Verifies code, not live actions. | https://www.galois.com/ai-fm |
 | Heriot-Watt "certificates of validity" paper | Proposes proof-carrying style: consumer fixes a policy, agent supplies action plus certificate, verifier checks. | Same shape as ours; paper-stage. Here the agent supplies the proof; ours checks against an LLM-written envelope. | https://arxiv.org/pdf/2606.23768 |
 | Harmonic (Aristotle) | Math model whose output is checked in Lean 4. $120M Series C at $1.45B post-money (Jan 2026). | Proves math, not agent actions. Shows Lean checking is a funded trend. | https://harmonic.fun/news/series-c/ |
 | Axiom Math (AxiomProver) | Writes Lean proofs; claims 12/12 on Putnam 2025. $200M raise, about $1.6B valuation per secondary reports. | Same: math proving. | https://www.tamradar.com/funding-rounds/axiom-series-a-200m |
 | Bend / HVM2 (Higher Order Company, Victor Taelin) | A high-level parallel functional language on the HVM2 interaction-combinator runtime. It runs on GPUs with no thread code. | Is: a language and runtime for parallel speed. Is not: a verifier, a safety layer or a proof tool. A "Bend 2 with dependent types" claim came from one aggregator and is unconfirmed. | https://github.com/HigherOrderCo/Bend |
 
+Four more sources (fast weight programmers, weight-space programming, Djinnlang and
+Augustsson's Djinn, and the Prevent, Contain, Prove report) are in
+[weights, types and containment](../research/2026-11-03-weights-types-and-containment.md),
+checked 2026-11-03.
 
-### Where our gate differs (a judgment from this search, not a proof)
+### Where our warden differs (a judgment from this search, not a proof)
 
 1. An LLM writes the envelope for each task. A solver checks it. Others use rules a human writes
    once (Cedar, OPA, Gemini TOML) or ML scoring (Lakera, Meta).
@@ -65,7 +69,7 @@ pointer to follow, not as a fact to quote. Prices, licences and acquisition note
    that does this. Bedrock Automated Reasoning proves claims in text, not tool calls.
 3. Fail closed is the default. The Claude Code sandbox fails open unless configured, and
    Codex hooks fail open.
-4. It runs local and works with any harness. AgentCore Policy needs the AWS gateway.
+4. It runs local and works with any harness. AgentCore Policy needs the AWS router.
 5. Caveat: AgentCore Policy with Cedar is the nearest relative. Its natural-language-to-Cedar
    step is close to "an LLM writes the policy". The gap is per-task generation and the local
    proof. A search can miss private or new work.
@@ -98,10 +102,10 @@ Shape: tree / flat / graph. Isolation as reported by the source.
 
 Note: worktrees isolate files only. Ports, databases, browser profiles stay shared (https://developertoolkit.ai/en/ecosystem/agent-tools/parallel-agents/).
 
-Compared with a delegation tree (long-lived foreman chat spawns gated workers):
-- Most tools are flat (many panes, a human at the top). Few have a persistent foreman chat.
-- Codex caps depth at 1. Claude subagents are one level. A real tree with gates per spawn is rare.
-- Gas Town is closest in spirit (persistent roles) but I did not confirm any per-spawn gate.
+Compared with a delegation tree (long-lived steward chat spawns checked workers):
+- Most tools are flat (many panes, a human at the top). Few have a persistent steward chat.
+- Codex caps depth at 1. Claude subagents are one level. A real tree with checks per spawn is rare.
+- Gas Town is closest in spirit (persistent roles) but I did not confirm any per-spawn check.
 - No source here mentions a fail-closed check on each spawn. That looks like open ground.
 
 ### Views on top of agent systems
@@ -112,7 +116,7 @@ Compared with a delegation tree (long-lived foreman chat spawns gated workers):
 | AgentCraft | Fabric mod: a walkable Minecraft studio for a team of coding agents. A lead (Opus) plans and reviews, up to three workers code, each task in its own git worktree, diffs reviewed in game, nothing pushed. Claude Agent SDK or Codex per agent. Its own scripts make every skin and texture. MIT. | https://github.com/blendi-remade/agentcraft |
 | ClaudeCraft MCP | Lets Claude control a Minecraft world over MCP. Not a session view. | https://www.modpackindex.com/mod/212233/claudecraft-mcp |
 | Villager mods (Smart Villagers AI, Speaking Villagers, VillagerGPT) | Chatty AI villagers, player starts the talk. | https://www.curseforge.com/minecraft/mc-mods/smart-villagers-ai |
-| Human-AI Minecraft house study | Agent barred from placing blocks, so it must ask the human. Gate by design. | https://arxiv.org/pdf/2503.19607 (title uncertain, snippet) |
+| Human-AI Minecraft house study | Agent barred from placing blocks, so it must ask the human. A check by design. | https://arxiv.org/pdf/2503.19607 (title uncertain, snippet) |
 | Voyager | GPT-4 Minecraft agent: auto curriculum, skill library of code, iterative prompting. | https://voyager.minedojo.org/ ; https://arxiv.org/html/2305.16291v2 |
 | Mindcraft | LLMs control Mineflayer bots from profile JSON. Code execution off by default. Tasks module for benchmarks. | https://github.com/mindcraft-bots/mindcraft (snippet) |
 | Project Sid | Many agents in Minecraft build a society. | https://www.tomsguide.com/ai/a-company-gave-1000-ai-agents-access-to-minecraft-and-they-built-a-society |
@@ -129,7 +133,7 @@ Compared with a delegation tree (long-lived foreman chat spawns gated workers):
 Not found: an RTS or Factorio-style agent dashboard; the "villagers who come to you" tweet. Happy (phone client) was not covered.
 
 
-Our delegation tree: a long-lived foreman chat spawns gated workers. Most tools above are flat,
+Our delegation tree: a long-lived steward chat spawns checked workers. Most tools above are flat,
 with a human at the top. Codex caps depth at 1. Claude subagents are one level. Gas Town is
 closest in spirit. We found no source that checks each spawn and fails closed.
 
@@ -193,7 +197,7 @@ UniiChat appeared in our notes but we found no page for it. It may be a spelling
 - From Codex and Claude Code: worktrees isolate files. Ports, databases and browser profiles
   need their own isolation, and we say so.
 - From Victor Taelin's OptMem and OptChat: the verbatim log plus a binary summary tree you can
-  zoom into. The foreman's memory follows it.
+  zoom into. Pando R2, the steward's log, follows it.
 - From Voyager and do-nothing scripting: repeated work becomes plain code, which removes the
   model call.
 - From Cedar and AgentCore Policy: SMT-backed authorization is mainstream.

@@ -21,6 +21,7 @@ pub enum Expr {
     LengthRange { path: String, min: i64, max: Option<i64> },
     Exists { path: String },
     IsEmpty { path: String },
+    PathIn { path: String, scope: String },
     And { children: Vec<Expr> },
     Or { children: Vec<Expr> },
     Not { child: Box<Expr> },
@@ -86,6 +87,13 @@ pub fn parse_expression(v: &Value) -> Result<Expr, String> {
         }
         "exists" => Expr::Exists { path: s(v, "path")? },
         "is_empty" => Expr::IsEmpty { path: s(v, "path")? },
+        "path_in" => {
+            let scope = s(v, "scope")?;
+            if scope != "file_read" && scope != "file_write" {
+                return Err(format!("path_in scope {scope:?} is not file_read or file_write"));
+            }
+            Expr::PathIn { path: s(v, "path")?, scope }
+        }
         "and" => Expr::And {
             children: v
                 .get("children")
@@ -263,6 +271,13 @@ impl<'a> At<'a> {
         }
     }
 
+    /// `predicate_z3._kind_eq`: a bool is never equal to a number.
+    fn kind_eq(&self, b: &Value) -> bool {
+        let is_bool = self.json().is_some_and(|v| v.is_boolean());
+        is_bool == b.is_boolean() && self.eq(b)
+    }
+
+    #[allow(dead_code)]
     fn is_in(&self, values: &[Value]) -> bool {
         values.iter().any(|v| self.eq(v))
     }
@@ -329,6 +344,112 @@ fn compile_regex(pattern: &str) -> Result<regex::Regex, String> {
     regex::Regex::new(&crate::dialect::py_pattern(pattern)).map_err(|e| format!("bad regex {pattern:?}: {e}"))
 }
 
+/// A regex test. Inside an argument rule (a path context is set) it runs on
+/// RE2 and must match the whole string (`rulere`); a pattern RE2 cannot compile
+/// is a deny reason, as in the oracle. Elsewhere it searches.
+fn regex_hit(pattern: &str, s: &str) -> Result<bool, String> {
+    if PATH_CTX.with(|c| c.borrow().is_some()) {
+        crate::rulere::full_match(pattern, s)
+            .map_err(|_| format!("{RULE_REFUSED}argument rule refused: {}", crate::rulere::invalid_reason(pattern)))
+    } else {
+        Ok(compile_regex(pattern)?.is_match(s))
+    }
+}
+
+/// The start of an `Err` text that is a deny reason as it stands
+/// (`predicate_z3.RuleRefused`).
+pub const RULE_REFUSED: &str = "RuleRefused:";
+
+/// The 4096-character cap on a string an argument rule's regex reads, then the
+/// pattern and text checks (a path context is set only inside an argument
+/// rule).
+fn rule_string_cap(s: &str, path: &str, regex: &str) -> Result<(), String> {
+    if PATH_CTX.with(|c| c.borrow().is_none()) {
+        return Ok(());
+    }
+    if s.chars().count() > crate::rxrisk::MAX_RULE_STRING_CHARS {
+        return Err(format!(
+            "{RULE_REFUSED}argument rule refused: argument '{path}' is longer than {} characters",
+            crate::rxrisk::MAX_RULE_STRING_CHARS
+        ));
+    }
+    // Then the pattern and the text (`predicate_z3._regex_hit`).
+    if let Some(msg) = crate::rulere::text_refusal(regex, s, path) {
+        return Err(format!("{RULE_REFUSED}{msg}"));
+    }
+    Ok(())
+}
+
+/// What a `path_in` reads while an `mcp_rules` entry runs: the envelope's
+/// globs and the call's cwd. Unset, `path_in` is false.
+pub struct PathCtx {
+    pub file_read: Vec<String>,
+    pub file_write: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+thread_local! {
+    static PATH_CTX: std::cell::RefCell<Option<PathCtx>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with `ctx` as the `path_in` context.
+pub fn with_path_ctx<T>(ctx: PathCtx, f: impl FnOnce() -> T) -> T {
+    let prev = PATH_CTX.with(|c| c.borrow_mut().replace(ctx));
+    let out = f();
+    PATH_CTX.with(|c| *c.borrow_mut() = prev);
+    out
+}
+
+/// `predicate_z3._eval_path_in`.
+/// `json.dumps(s)` with its default ensure_ascii: every non-ASCII character
+/// as `\uXXXX` (UTF-16 units).
+fn ascii_json(s: &str) -> String {
+    let mut out = String::new();
+    for c in serde_json::to_string(s).unwrap_or_default().chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for u in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{u:04x}"));
+            }
+        }
+    }
+    out
+}
+
+fn eval_path_in(path: &str, which: &str, scope: &Py) -> Result<bool, String> {
+    PATH_CTX.with(|c| {
+        let c = c.borrow();
+        let Some(ctx) = c.as_ref() else { return Ok(false) };
+        let Some(val) = resolve_path(scope, path).as_ref().and_then(At::json) else { return Ok(false) };
+        let items: Vec<&Value> = match val {
+            Value::Array(l) => l.iter().collect(),
+            other => vec![other],
+        };
+        if items.is_empty() {
+            return Ok(false);
+        }
+        let globs = if which == "file_write" { &ctx.file_write } else { &ctx.file_read };
+        for item in items {
+            let Value::String(s) = item else { return Ok(false) };
+            if !s.starts_with('/') {
+                // Refused, not false: under a "not" a false would admit it.
+                return Err(format!(
+                    "{RULE_REFUSED}{}: argument '{path}' is {}, which is not an absolute path; give the tool an absolute path",
+                    crate::mcp_rules::PATH_IN_ABSOLUTE,
+                    ascii_json(s)
+                ));
+            }
+            match crate::mcp_rules::place_arg_path(s, ctx.cwd.as_deref()) {
+                Some(placed) if crate::glob_engine::path_matches_any(&placed, globs) => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    })
+}
+
 /// `_eval_scalar` — evaluate a per-step scalar predicate against one scope
 /// (a JSON object: a step dict, an output dict, or the `{"steps": [...]}`
 /// synthetic wrapper).
@@ -354,26 +475,31 @@ pub fn eval_scalar(expr: &Expr, scope: &Py) -> Result<bool, String> {
             }
             Ok(true)
         }
-        Expr::Equals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| v.eq(value))),
-        Expr::NotEquals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| !v.eq(value))),
-        Expr::InSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| v.is_in(values))),
-        Expr::NotInSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| !v.is_in(values))),
+        Expr::Equals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| v.kind_eq(value))),
+        Expr::NotEquals { path, value } => Ok(resolve_path(scope, path).is_some_and(|v| !v.kind_eq(value))),
+        Expr::InSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| values.iter().any(|x| v.kind_eq(x)))),
+        Expr::NotInSet { path, values } => Ok(resolve_path(scope, path).is_some_and(|v| !values.iter().any(|x| v.kind_eq(x)))),
+        Expr::PathIn { path, scope: which } => eval_path_in(path, which, scope),
         Expr::Matches { path, regex } => {
-            let re = compile_regex(regex)?;
             Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
-                Some(Value::String(s)) => re.is_match(s),
+                Some(Value::String(s)) => {
+                    rule_string_cap(s, path, regex)?;
+                    regex_hit(regex, s)?
+                }
                 _ => false,
             })
         }
         Expr::NotMatches { path, regex } => {
-            let re = compile_regex(regex)?;
             Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
-                Some(Value::String(s)) => !re.is_match(s),
+                Some(Value::String(s)) => {
+                    rule_string_cap(s, path, regex)?;
+                    !regex_hit(regex, s)?
+                }
                 _ => true,
             })
         }
         Expr::NumericRange { path, min, max } => Ok(match resolve_path(scope, path).as_ref().and_then(At::json) {
-            Some(v) if is_numericish(v) => {
+            Some(v) if is_numericish(v) && !v.is_boolean() => {
                 let n = numeric_of(v);
                 *min <= n && n <= *max
             }

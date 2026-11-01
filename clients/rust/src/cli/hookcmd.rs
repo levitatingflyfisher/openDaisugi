@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 
 use super::gardencmd::{now_seconds, read_stamp};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::pyjson::float_repr;
+use crate::warden::pyjson::float_repr;
 
 const EVENTS: &[&str] = &[
     "pre_tool_use",
@@ -24,11 +24,14 @@ const EVENTS: &[&str] = &[
 /// <dir>` in a session of its own, its streams on /dev/null, never waited
 /// on.
 fn spawn_auto_tend(env: &HashMap<String, String>, data_dir: &str) {
-    let Some(bin) = super::install::look_path(env, "daisugi") else {
+    // The path this binary ran from, as install writes it into a hook: the
+    // agent's PATH often lacks the directory `daisugi` is in.
+    let arg0 = std::env::args().next().unwrap_or_default();
+    let Ok(bin) = super::install::self_path(&arg0, env.get("PATH").map(String::as_str).unwrap_or("")) else {
         return;
     };
     let mut cmd = Command::new(bin);
-    cmd.args(["hook", "auto-tend", "--data-dir", data_dir])
+    cmd.args(auto_tend_args(data_dir))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -41,6 +44,27 @@ fn spawn_auto_tend(env: &HashMap<String, String>, data_dir: &str) {
     }
     if let Ok(child) = cmd.spawn() {
         drop(child);
+    }
+}
+
+/// The words after the program.
+fn auto_tend_args(data_dir: &str) -> [&str; 4] {
+    ["hook", "auto-tend", "--data-dir", data_dir]
+}
+
+#[cfg(test)]
+mod autotend_tests {
+    use super::auto_tend_args;
+
+    #[test]
+    fn auto_tend_starts_with_hook_auto_tend_and_the_data_dir() {
+        assert_eq!(auto_tend_args("/d"), ["hook", "auto-tend", "--data-dir", "/d"]);
+    }
+
+    #[test]
+    fn the_program_is_the_path_the_binary_ran_from_not_a_bare_name() {
+        let p = super::super::install::self_path("/opt/x/daisugi", "").unwrap();
+        assert_eq!(p, "/opt/x/daisugi");
     }
 }
 
@@ -69,7 +93,7 @@ impl Env {
         }
         let root = p.str(
             "--captures-root",
-            &super::gateroot::join(&self.data_home(), "captures"),
+            &super::wardenroot::join(&self.data_home(), "captures"),
         );
         let fmt = p.str("--format", "claude");
         let event = p.str("--event", "pre_tool_use");
@@ -83,10 +107,10 @@ impl Env {
         if std::io::stdin().lock().read_to_end(&mut raw).is_err() {
             raw.clear();
         }
-        let contract = crate::gate::hookrecord::hook_record(&raw, &root, &fmt, &event, &self.env);
+        let contract = crate::warden::hookrecord::hook_record(&raw, &root, &fmt, &event, &self.env);
         self.out(&format!("{contract}\n"));
         if event == "pre_tool_use" {
-            let data_dir = crate::gate::paths::path_parent(&crate::gate::paths::path_str(&root));
+            let data_dir = crate::warden::paths::path_parent(&crate::warden::paths::path_str(&root));
             let env = self.env.clone();
             let _ = std::panic::catch_unwind(|| {
                 maybe_trigger_tend(&env, &data_dir, now_seconds(), spawn_auto_tend)
@@ -94,6 +118,11 @@ impl Env {
         }
         Ok(())
     }
+}
+
+/// The resident warden's capture mirror starts the same background tend.
+pub(crate) fn trigger_after_mirror(env: &HashMap<String, String>, data_dir: &str) {
+    maybe_trigger_tend(env, data_dir, now_seconds(), spawn_auto_tend);
 }
 
 /// `hook.maybe_trigger_background_tend`: at most once per 1800 s, and only

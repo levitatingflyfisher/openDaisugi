@@ -7,14 +7,14 @@ import (
 )
 
 const blockedLine = `{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"w1:p1",` +
-	`"state":"blocked","source":"gate","ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":9%s}}`
+	`"state":"blocked","source":"warden","ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":9%s}}`
 
 func withTier(tier string) []byte {
 	return []byte(strings.Replace(blockedLine, "9%s", "9"+tier, 1))
 }
 
 func TestValidateSetsAnAskWithNoTierToPermanent(t *testing.T) {
-	ev := PaneStateEvent{V: 1, State: StateBlocked, Source: SrcGate,
+	ev := PaneStateEvent{V: 1, State: StateBlocked, Source: SrcWarden,
 		Ask: &Ask{ID: "t1", Tool: "Bash", Summary: "ls", Deadline: 9}}
 	if err := ev.Validate(); err != nil {
 		t.Fatal(err)

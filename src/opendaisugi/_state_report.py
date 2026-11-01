@@ -2,7 +2,7 @@
 that cannot import opendaisugi.floor) validation.
 
 Stdlib only. No import from opendaisugi.floor, opendaisugi.voice, or
-opendaisugi.coppice — layer purity (spec-01, master spec §4). gate.py and
+opendaisugi.coppice — layer purity (spec-01, master spec §4). warden.py and
 hook.py build and deliver PaneStateEvents through this module without ever
 reaching into the package that actually OWNS the PaneStateEvent contract
 (opendaisugi.floor.events) — that package re-exports report_state from here
@@ -43,12 +43,12 @@ from typing import Any
 from opendaisugi.datahome import data_home
 
 STATES = ("idle", "working", "blocked", "done", "unknown")
-SOURCES = ("operator", "gate", "headless", "process", "manifest")
+SOURCES = ("operator", "warden", "headless", "process", "manifest")
 
 HERDR_PANE_ENV_CANDIDATES: tuple[str, ...] = ("HERDR_PANE_ID", "HERDR_PANE")
 
 _DETAIL_MAX = 200
-_DEFAULT_ROOT = data_home() / "gate"  # mirrors opendaisugi.gate.DEFAULT_GATE_ROOT
+_DEFAULT_ROOT = data_home() / "warden"  # mirrors opendaisugi.warden.DEFAULT_WARDEN_ROOT
 _HERDR_STATE_MAP = {"working": "working", "blocked": "blocked", "idle": "idle", "done": "idle"}
 
 # coppice's own pane id shape (harness/coppice/internal/layout/layout.go: a
@@ -91,7 +91,7 @@ def _coppice_sock_trustworthy(sock_path: object) -> bool:
     absolute path to a real unix socket this same uid owns.
 
     A relative path resolves differently depending on cwd, which this
-    process (the resident gate) does not share with the caller; a socket
+    process (the resident warden) does not share with the caller; a socket
     owned by another uid could be a different user's coppice server, or a
     rogue listener planted to collect what a caller reports. ``os.lstat``,
     never ``os.stat``: a symlink to a socket this process does not control
@@ -115,7 +115,7 @@ def build_event(
     session_id: str,
     harness: str,
     state: str,
-    source: str = "gate",
+    source: str = "warden",
     harness_session_id: str | None = None,
     pane: str | None = None,
     ask: dict[str, Any] | None = None,
@@ -128,13 +128,13 @@ def build_event(
 ) -> str:
     """Serialize one PaneStateEvent-shaped JSON line (master spec §3.1).
 
-    ``transcript_path``, ``verdict`` and ``mode`` are the gate report
+    ``transcript_path``, ``verdict`` and ``mode`` are the warden report
     fields coppice reads beside the event: the harness's own transcript
     file, the last verdict as ``{decision, tool, clause}``, and
     ``enforcing`` or ``watching``. Each is added only when given. A reader
     that does not know them ignores them.
 
-    Trusted-caller helper: gate.py and hook.py are the only callers, and
+    Trusted-caller helper: warden.py and hook.py are the only callers, and
     both pass known-good literals for state/source, so this never validates
     them — that is opendaisugi.floor.events.PaneStateEvent's job for
     untrusted input. ``detail`` IS clamped here: an operator-authored
@@ -246,7 +246,7 @@ def _report_as_pane_via_coppice(
     away, never give them"): a caller whose real pid the kernel finds
     inside pane A's process tree gets placed as A regardless of what
     ``pane`` here claims, and the mismatch is then this function's own
-    job to catch, since a resident gate's own socket connection to
+    job to catch, since a resident warden's own socket connection to
     coppice carries none of the caller's pane facts on its own. Without
     ``peer_pids``, or when the named pid cannot be placed at all, coppice
     has no evidence against the claim and the hello wins as claimed
@@ -362,7 +362,7 @@ def _send_herdr_report(
                     pass
             proc.kill()
             # A short, bounded reap (whole-branch review, minor 3): this
-            # module also runs inside the long-lived resident gate, not
+            # module also runs inside the long-lived resident warden, not
             # just the ~200ms hot path, so a 1 s wait() here could add a
             # full second past the caller's budget on every wedged
             # herdr. kill()'s SIGKILL reaps almost instantly in the
@@ -395,8 +395,8 @@ def report_state(
 
     ``sock``/``pane``/``herdr_pane`` are a CALLER's own pane identity,
     carried explicitly on the request that reached this call. A resident
-    gate server forwards them from the wire request that named them; a
-    direct in-process caller (hook.py, ``daisugi hook report``, gate.py's
+    warden server forwards them from the wire request that named them; a
+    direct in-process caller (hook.py, ``daisugi hook report``, warden.py's
     non-resident path) leaves all three ``None``. Passing any one of them
     switches this call into explicit mode: ``env`` is not read for identity
     at all, so an incomplete pair (only ``sock`` or only ``pane``, and no
@@ -411,13 +411,13 @@ def report_state(
     identity further than it can verify on disk.
 
     ``peer_pid`` is the OS pid of the actual process that connected to the
-    resident gate's own socket (gate_server.py reads it with
+    resident warden's own socket (warden_server.py reads it with
     ``SO_PEERCRED`` on that connection), never a value the caller's own
     request body could set. It rides on the hello as ``peer_pids: [pid]``.
     Without it, this claimed ``pane`` alone would be nothing more than an
     unverified string the wire request happened to carry: pane A's own
     caller could put pane B's id in ``coppice_pane`` and, since the
-    resident gate's own connection to coppice sits outside every pane's
+    resident warden's own connection to coppice sits outside every pane's
     process tree, coppice's kernel-pid placement of THAT connection has
     nothing of A's or B's to check the claim against, so a bare
     ``hello role pane pane=B`` would simply be believed. ``peer_pids``
@@ -454,9 +454,9 @@ def report_state(
     this connect, so the post-connect check closes a window the
     pre-connect one cannot see.
 
-    Known residual: if the resident gate's own process is itself started
+    Known residual: if the resident warden's own process is itself started
     from a shell inside a coppice-managed pane's process tree, coppice
-    places the resident gate's OWN connection as THAT pane before
+    places the resident warden's OWN connection as THAT pane before
     ``peer_pids`` is even considered, and every hello this function then
     sends for some OTHER caller pane is refused, not honored. PROTOCOL.md's
     Roles section refuses ``pane.report_state`` "about any pane but its
@@ -478,12 +478,12 @@ def report_state(
     deadline is taken up front and the remaining time is re-applied before
     each connect/sendall/recv (and to the Herdr subprocess wait, and to
     each leg of the explicit path's hello-then-report pair), so a wedged
-    peer costs at most ~budget_s on the gate's blocking hot path, never 2x
+    peer costs at most ~budget_s on the warden's blocking hot path, never 2x
     or 3x that. The Herdr path uses Popen + wait(timeout=) + kill() with
     stdout/stderr sent to DEVNULL rather than subprocess.run(timeout=):
     run()'s timeout path kills the child but then calls communicate() again,
     which blocks until every inherited pipe closes — a herdr that forks a
-    daemon could hold the gate open past the budget regardless of the
+    daemon could hold the warden open past the budget regardless of the
     timeout value. Popen + an explicit kill()/wait() has no such pipe to
     wait on.
     """
@@ -581,7 +581,7 @@ def report_child(
 def _validate_hook_report_row(row: dict[str, Any]) -> None:
     """A narrow, independent re-implementation of the master spec §3.1
     rules, used ONLY by `hook_report_argv` below — the one path
-    (`daisugi hook report`, reachable through gate.sock) that a layer
+    (`daisugi hook report`, reachable through warden.sock) that a layer
     module must serve without importing opendaisugi.floor.events, which
     owns the real contract. Deliberately duplicated, not imported.
     tests/floor/test_events.py::test_layer_validator_and_dataclass_agree
@@ -593,7 +593,7 @@ def _validate_hook_report_row(row: dict[str, Any]) -> None:
     as it already did in opendaisugi.floor.events.PaneStateEvent.from_json
     — an uncaught TypeError from this function would escape
     hook_report_argv's `except ValueError` and crash the caller instead of
-    returning exit code 1 (fix round 1, Finding 2). A `gate` `blocked`
+    returning exit code 1 (fix round 1, Finding 2). A `warden` `blocked`
     event with no ask is also rejected: without an ask's deadline, nothing
     can ever release that hold (fix round 1, Finding 3).
     """
@@ -653,8 +653,8 @@ def _validate_hook_report_row(row: dict[str, Any]) -> None:
         tier = ask.get("tier")
         if tier is not None and not isinstance(tier, str):
             raise ValueError("ask tier must be a string")
-    if row["state"] == "blocked" and row["source"] == "gate" and ask is None:
-        raise ValueError("a gate blocked event needs an ask")
+    if row["state"] == "blocked" and row["source"] == "warden" and ask is None:
+        raise ValueError("a warden blocked event needs an ask")
     v = row.get("v", 1)
     if isinstance(v, bool) or not isinstance(v, int):
         raise ValueError(f"invalid schema version {v!r}")
@@ -690,23 +690,23 @@ def hook_report_argv(
     resident: bool = False,
 ) -> HookReportOutcome:
     """`daisugi hook report [--pane P] [--root R]` — validate, downgrade a
-    claimed gate/operator source to headless, append to the session tree,
+    claimed warden/operator source to headless, append to the session tree,
     and deliver.
 
     Exit 0 once stdin parses to a JSON object AND passes validation; exit 1
     (message on stderr) for anything malformed. Never raises out to the
-    caller — this runs on a socket handler's path (gate_server.py) too.
+    caller — this runs on a socket handler's path (warden_server.py) too.
 
     ``coppice_sock``/``coppice_pane``/``herdr_pane`` are the caller's own
-    pane identity, forwarded explicitly by gate_server.py's gate.sock
+    pane identity, forwarded explicitly by warden_server.py's warden.sock
     dispatch from that one request's fields. Never read from this process's
-    own environment, which belongs to the resident gate, not the caller.
+    own environment, which belongs to the resident warden, not the caller.
     The direct CLI entry (`daisugi hook report`, cli.py) leaves all
     three unset, so it keeps reading the environment it actually shares
     with its caller (see report_state).
 
-    ``peer_pid`` is the caller's real OS pid, read off the gate.sock
-    connection itself with SO_PEERCRED by gate_server.py, never taken from
+    ``peer_pid`` is the caller's real OS pid, read off the warden.sock
+    connection itself with SO_PEERCRED by warden_server.py, never taken from
     anything the request body claims. Passed straight through to
     report_state, where it authenticates ``coppice_pane`` against coppice's
     own kernel-pid placement rather than trusting the claim as-is.
@@ -730,12 +730,12 @@ def hook_report_argv(
     if not isinstance(row, dict):
         return HookReportOutcome("", "daisugi hook report: event must be a JSON object", 1)
     if resident and "session_id" in row:
-        # The resident gate builds a path from it (FN-R-21).
+        # The resident warden builds a path from it (FN-R-21).
         from opendaisugi.fence_runs import SESSION_REFUSAL, session_ok
 
         if not session_ok(row["session_id"]):
             return HookReportOutcome("", f"daisugi hook report: {SESSION_REFUSAL}", 1)
-    if row.get("source") in ("gate", "operator"):
+    if row.get("source") in ("warden", "operator"):
         row["source"] = "headless"
     if args.pane is not None:
         row["pane"] = args.pane

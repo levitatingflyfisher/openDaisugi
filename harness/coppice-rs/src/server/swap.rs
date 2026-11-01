@@ -1,6 +1,6 @@
-//! The model and router swaps of the stack bar (F12a), the Rust twin of
+//! The model and route swaps of the stack bar (F12a), the Rust twin of
 //! swap.go. A model swap on claude lands at the next idle prompt, on
-//! headless sprig with the next turn; a router swap restarts the agent and
+//! headless sprig with the next turn; a route swap restarts the agent and
 //! resumes its conversation with a new base URL in its env, since a running
 //! process cannot change its own env.
 
@@ -20,20 +20,20 @@ use crate::sys;
 /// for a model on a prompt.
 pub const MODEL_REFUSAL: &str = "only the operator sets an agent's model.";
 
-/// The same for agent.set_router and for a router on a resume.
-pub const ROUTER_REFUSAL: &str = "only the operator sets an agent's router.";
+/// The same for agent.set_route and for a route on a resume.
+pub const ROUTE_REFUSAL: &str = "only the operator sets an agent's route.";
 
 /// What a model name that is not plain gets. The name is typed into
 /// claude's input box, so it carries no space and no control character.
 pub const MODEL_WORDS_REFUSAL: &str =
     "model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters.";
 
-/// What a router word other than direct or gateway gets. Switchyard is a
-/// mode of the gateway itself, so a pane picks the gateway and the
-/// gateway's own setting names what routes behind it.
-pub const ROUTER_WORDS_REFUSAL: &str = "router must be direct or gateway.";
+/// What a route word other than direct or router gets. Switchyard is a
+/// mode of the router itself, so a pane picks the router and the
+/// router's own setting names what routes behind it.
+pub const ROUTE_WORDS_REFUSAL: &str = "route must be direct or router.";
 
-/// The longest a router swap waits for the old process to go.
+/// The longest a route swap waits for the old process to go.
 const STOP_WAIT: Duration = Duration::from_secs(10);
 
 /// `[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,63}`
@@ -46,8 +46,8 @@ pub fn valid_model_name(s: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || b"._:/[]-".contains(c))
 }
 
-pub fn valid_router_word(w: &str) -> bool {
-    w == "direct" || w == "gateway"
+pub fn valid_route_word(w: &str) -> bool {
+    w == "direct" || w == "router"
 }
 
 /// The words for a swap the pane's harness has no way to do.
@@ -64,9 +64,9 @@ pub fn harness_word(h: &str) -> String {
     }
 }
 
-/// For each harness a router swap is built for: the env key that holds its
+/// For each harness a route swap is built for: the env key that holds its
 /// base URL and the vendor address it takes for direct.
-fn router_key(harness: &str) -> Option<(&'static str, &'static str)> {
+fn route_key(harness: &str) -> Option<(&'static str, &'static str)> {
     match harness {
         "claude" => Some(("ANTHROPIC_BASE_URL", "https://api.anthropic.com")),
         _ => None,
@@ -74,32 +74,32 @@ fn router_key(harness: &str) -> Option<(&'static str, &'static str)> {
 }
 
 impl Server {
-    /// The env entry a router swap sets for a harness. Direct is the
+    /// The env entry a route swap sets for a harness. Direct is the
     /// vendor's own address, never a missing key: a pane's process also
     /// inherits the server's env, so a missing key could still route
-    /// through the gateway.
-    pub(super) fn router_env(
+    /// through the router.
+    pub(super) fn route_env(
         &self,
         harness: &str,
-        router: &str,
+        route: &str,
     ) -> Result<(String, String), String> {
-        let Some((key, vendor)) = router_key(harness) else {
+        let Some((key, vendor)) = route_key(harness) else {
             return Err(format!(
-                "Swapping the router is not built for {} yet.",
+                "Swapping the route is not built for {} yet.",
                 harness_word(harness)
             ));
         };
-        if router == "direct" {
+        if route == "direct" {
             return Ok((key.into(), vendor.into()));
         }
-        let (gateway, _) = self.gateway_facts();
-        if gateway.is_empty() {
+        let (router, _) = self.router_facts();
+        if router.is_empty() {
             return Err(
-                "no gateway is set. Add gateway = \"http://127.0.0.1:8787\" to coppice.toml."
+                "no router is set. Add router = \"http://127.0.0.1:8787\" to coppice.toml."
                     .into(),
             );
         }
-        Ok((key.into(), gateway))
+        Ok((key.into(), router))
     }
 
     /// True when pane.resume would resume rec's conversation rather than
@@ -192,19 +192,19 @@ impl Server {
         )
     }
 
-    /// agent.set_router {pane, router}: stops the agent, keeps its record
+    /// agent.set_route {pane, route}: stops the agent, keeps its record
     /// as ended, and resumes the conversation in a new pane whose env names
     /// the new base URL. It refuses an agent that has no conversation to
     /// resume, because a restart would lose it. The agent comes back with a
     /// new pane id and enforcing: a watching marker goes with the old pane.
-    pub(super) fn handle_set_router(self: &Arc<Server>, c: &Arc<Client>, r: &Request) -> Response {
+    pub(super) fn handle_set_route(self: &Arc<Server>, c: &Arc<Client>, r: &Request) -> Response {
         let id = r.s("pane");
         if c.view_only_on(&id) {
             return role::refuse_view_only(r, &id);
         }
-        let router = r.s("router");
-        if !valid_router_word(&router) {
-            return proto::err_resp(&r.id, proto::ERR_BAD_REQUEST, ROUTER_WORDS_REFUSAL);
+        let route = r.s("route");
+        if !valid_route_word(&route) {
+            return proto::err_resp(&r.id, proto::ERR_BAD_REQUEST, ROUTE_WORDS_REFUSAL);
         }
         if self.is_closed() {
             return proto::err_resp(
@@ -228,27 +228,27 @@ impl Server {
                 &format!("{label} has ended."),
             );
         }
-        if router_key(&rec.harness).is_none() {
+        if route_key(&rec.harness).is_none() {
             return proto::err_resp(
                 &r.id,
                 proto::ERR_BAD_REQUEST,
-                &swap_refusal("router", &label, &harness_word(&rec.harness)),
+                &swap_refusal("route", &label, &harness_word(&rec.harness)),
             );
         }
-        if let Err(e) = self.router_env(&rec.harness, &router) {
+        if let Err(e) = self.route_env(&rec.harness, &route) {
             return proto::err_resp(&r.id, proto::ERR_BAD_REQUEST, &e);
         }
         // The agent would come back with a base URL that fails every call,
-        // so a gateway that does not answer is refused before anything
-        // stops. A gateway off this computer is not dialed, so it is not
+        // so a router that does not answer is refused before anything
+        // stops. A router off this computer is not dialed, so it is not
         // judged here.
-        if router == "gateway" {
-            let (gateway, _) = self.gateway_facts();
-            if self.gateway_answers(&gateway) == Some(false) {
+        if route == "router" {
+            let (router, _) = self.router_facts();
+            if self.router_answers(&router) == Some(false) {
                 return proto::err_resp(
                     &r.id,
                     proto::ERR_BAD_REQUEST,
-                    &format!("the gateway at {gateway} does not answer. Start it, then swap."),
+                    &format!("the router at {router} does not answer. Start it, then swap."),
                 );
             }
         }
@@ -266,16 +266,16 @@ impl Server {
                 &format!("pane {id} is already resuming."),
             );
         }
-        let resp = self.swap_router_claimed(r, &id, &label, &router);
+        let resp = self.swap_route_claimed(r, &id, &label, &route);
         self.release_resume(&id);
         resp
     }
-    fn swap_router_claimed(
+    fn swap_route_claimed(
         self: &Arc<Server>,
         r: &Request,
         id: &str,
         label: &str,
-        router: &str,
+        route: &str,
     ) -> Response {
         let Some(lp) = self.live(id) else {
             return proto::err_resp(
@@ -300,21 +300,21 @@ impl Server {
         // Keep the record, as a process that ends on its own does, so the
         // resume reads it.
         let _ = self.close_pane(id, None);
-        let first = self.resume_claimed(r, id, None, None, router, false);
+        let first = self.resume_claimed(r, id, None, None, route, false);
         if first.ok {
             return first;
         }
         // The old process is gone, so the swap must not leave the agent
         // dead without a word: try one plain resume with the old env.
         let back = self.resume_claimed(r, id, None, None, "", false);
-        router_swap_failed(&r.id, label, id, &first, &back)
+        route_swap_failed(&r.id, label, id, &first, &back)
     }
 }
 
-/// The reply for a router swap whose new start failed. `back` is the plain
+/// The reply for a route swap whose new start failed. `back` is the plain
 /// resume that followed: when it worked the agent runs again on its old
-/// router, and when it failed too the agent is in the ended list.
-fn router_swap_failed(
+/// route, and when it failed too the agent is in the ended list.
+fn route_swap_failed(
     req_id: &str,
     label: &str,
     id: &str,
@@ -338,7 +338,7 @@ fn router_swap_failed(
             req_id,
             proto::ERR_SPAWN_FAILED,
             &format!(
-                "The router of {label} did not change: {why} The agent runs again on its old router, as pane {new_id}."
+                "The route of {label} did not change: {why} The agent runs again on its old route, as pane {new_id}."
             ),
         );
     }
@@ -346,7 +346,7 @@ fn router_swap_failed(
         req_id,
         proto::ERR_SPAWN_FAILED,
         &format!(
-            "{label} was stopped and its router did not change. It is in the ended list. To start it again, run: coppice pane resume {id}."
+            "{label} was stopped and its route did not change. It is in the ended list. To start it again, run: coppice pane resume {id}."
         ),
     )
 }
@@ -375,7 +375,7 @@ fn stamp_len(path: &str) -> usize {
 
 /// Puts the pane prefix /pane/<floor>/<pane> at the start of a base URL's
 /// path, ahead of any path it has (a /v1), and takes off a stamp it already
-/// carries. The gateway strips the prefix and stamps its turn record with
+/// carries. The router strips the prefix and stamps its turn record with
 /// the pane and the floor, so the floor can say which pane a saving
 /// belongs to. A URL it cannot read comes back as it was.
 pub fn stamp_url(raw: &str, floor: &str, id: &str) -> String {
@@ -399,7 +399,7 @@ pub fn stamp_url(raw: &str, floor: &str, id: &str) -> String {
 
 impl Server {
     /// The env a pane's process starts with: the record's own, with each
-    /// base URL that the record's own env sets to the gateway carrying the
+    /// base URL that the record's own env sets to the router carrying the
     /// pane prefix. A base URL the process only inherits from the server is
     /// left alone, and the record keeps the plain URL, so a resume or a
     /// restart stamps the new pane id.
@@ -411,15 +411,15 @@ impl Server {
         if out.is_empty() {
             return out;
         }
-        let (gateway, _) = self.gateway_facts();
-        if gateway.is_empty() {
+        let (router, _) = self.router_facts();
+        if router.is_empty() {
             return out;
         }
         for k in ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"] {
             let v = rec.env.get(k).map(|v| v.trim()).unwrap_or("");
             if v.is_empty()
-                || !super::facts::same_endpoint(v, &gateway)
-                || !self.gateway_stamps(&gateway)
+                || !super::facts::same_endpoint(v, &router)
+                || !self.router_stamps(&router)
             {
                 continue;
             }
@@ -431,40 +431,40 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
-    use super::{router_swap_failed, stamp_url, valid_model_name, valid_router_word};
+    use super::{route_swap_failed, stamp_url, valid_model_name, valid_route_word};
     use crate::proto;
     use serde_json::json;
 
     #[test]
-    fn a_failed_router_swap_says_the_router_did_not_change() {
+    fn a_failed_route_swap_says_the_route_did_not_change() {
         let first = proto::err_resp(
             "1",
             proto::ERR_SPAWN_FAILED,
-            "the new router would not start",
+            "the new route would not start",
         );
         // The retry on the old env worked: an error that names the cause.
         let back = proto::ok_resp("1", json!({"pane": "w1:p3"}));
-        let r = router_swap_failed("1", "auth", "w1:p1", &first, &back);
+        let r = route_swap_failed("1", "auth", "w1:p1", &first, &back);
         let (code, msg) = r.error.clone().unwrap();
         assert!(!r.ok && code == proto::ERR_SPAWN_FAILED);
         assert_eq!(
             msg,
-            "The router of auth did not change: the new router would not start. \
-             The agent runs again on its old router, as pane w1:p3."
+            "The route of auth did not change: the new route would not start. \
+             The agent runs again on its old route, as pane w1:p3."
         );
         // The retry failed too: the agent is in the ended list.
         let back = proto::err_resp("1", proto::ERR_SPAWN_FAILED, "no start");
-        let r = router_swap_failed("1", "auth", "w1:p1", &first, &back);
+        let r = route_swap_failed("1", "auth", "w1:p1", &first, &back);
         assert_eq!(
             r.error.unwrap().1,
-            "auth was stopped and its router did not change. It is in the ended list. \
+            "auth was stopped and its route did not change. It is in the ended list. \
              To start it again, run: coppice pane resume w1:p1."
         );
     }
 
     /// A loopback server that answers every request with `reply` and counts
     /// the asks. It answers its base URL.
-    fn caps_gateway(
+    fn caps_router(
         reply: &'static str,
     ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
         use std::io::{Read, Write};
@@ -496,24 +496,24 @@ mod tests {
             data_dir: dir.clone(),
             start_dir: dir,
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         })
     }
 
     #[test]
-    fn a_pane_is_stamped_only_when_the_gateway_says_it_takes_the_prefix() {
+    fn a_pane_is_stamped_only_when_the_router_says_it_takes_the_prefix() {
         const YES: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{\"pane_prefix\": true}";
         const CHUNKED: &str = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n15\r\n{\"pane_prefix\": true}\r\n0\r\n\r\n";
         let s = test_server("yes");
         for reply in [YES, CHUNKED] {
-            let (gw, asks) = caps_gateway(reply);
+            let (gw, asks) = caps_router(reply);
             // A yes is asked once per address, however many panes start.
-            assert!(s.gateway_stamps(&gw) && s.gateway_stamps(&gw) && s.gateway_stamps(&gw));
+            assert!(s.router_stamps(&gw) && s.router_stamps(&gw) && s.router_stamps(&gw));
             assert_eq!(asks.load(std::sync::atomic::Ordering::SeqCst), 1);
         }
         for (name, reply) in [
             (
-                "old gateway",
+                "old router",
                 "HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\n{}",
             ),
             (
@@ -531,15 +531,15 @@ mod tests {
             ),
             ("no HTTP", "garbage"),
         ] {
-            let (gw, asks) = caps_gateway(reply);
-            assert!(!s.gateway_stamps(&gw), "{name}");
+            let (gw, asks) = caps_router(reply);
+            assert!(!s.router_stamps(&gw), "{name}");
             // The no is kept for a while, so the next start does not ask.
-            assert!(!s.gateway_stamps(&gw), "{name}");
+            assert!(!s.router_stamps(&gw), "{name}");
             assert_eq!(asks.load(std::sync::atomic::Ordering::SeqCst), 1, "{name}");
         }
-        // A gateway that does not answer, and one that is not loopback.
-        assert!(!s.gateway_stamps("http://127.0.0.1:1"));
-        assert!(!s.gateway_stamps("http://192.0.2.1:8787"));
+        // A router that does not answer, and one that is not loopback.
+        assert!(!s.router_stamps("http://127.0.0.1:1"));
+        assert!(!s.router_stamps("http://192.0.2.1:8787"));
     }
 
     #[test]
@@ -564,12 +564,12 @@ mod tests {
     }
 
     #[test]
-    fn router_words_are_direct_and_gateway() {
-        assert!(valid_router_word("direct") && valid_router_word("gateway"));
+    fn route_words_are_direct_and_router() {
+        assert!(valid_route_word("direct") && valid_route_word("router"));
         assert!(
-            !valid_router_word("switchyard")
-                && !valid_router_word("")
-                && !valid_router_word("Direct")
+            !valid_route_word("switchyard")
+                && !valid_route_word("")
+                && !valid_route_word("Direct")
         );
     }
 

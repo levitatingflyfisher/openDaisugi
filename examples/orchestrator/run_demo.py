@@ -61,7 +61,7 @@ async def main() -> None:
     result = await orch.orchestrate(
         "print two greetings and combine them",
         envelope=envelope,
-        budget_tokens=20_000,  # gates routing DURING the run
+        budget_tokens=20_000,  # checks routing DURING the run
         decompose_client=_FakeClient(decomposed),
         synth_client=_FakeClient(type("A", (), {"answer": "hello world"})()),
     )

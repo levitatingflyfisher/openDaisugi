@@ -304,9 +304,9 @@ func (s *Server) handlePaneResume(c *Client, r *proto.Request) proto.Response {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
 			"pane.resume takes positive cols and rows, or neither.")
 	}
-	router, _ := r.Str("router")
-	if router != "" && !validRouterWord(router) {
-		return proto.ErrResp(r.ID, proto.ErrBadRequest, RouterWordsRefusal)
+	route, _ := r.Str("route")
+	if route != "" && !validRouteWord(route) {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest, RouteWordsRefusal)
 	}
 	if !s.claimResume(id) {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
@@ -314,18 +314,18 @@ func (s *Server) handlePaneResume(c *Client, r *proto.Request) proto.Response {
 	}
 	defer s.releaseResume(id)
 	return s.resumeEnded(r.ID, resumeArgs{
-		id: id, cols: cols, rows: rows, hasCols: hasCols, hasRows: hasRows, router: router,
+		id: id, cols: cols, rows: rows, hasCols: hasCols, hasRows: hasRows, route: route,
 		fenced: s.callerFenced(roleOrOperator(c)),
 	})
 }
 
-// resumeArgs is what resumeEnded takes. router is "" for the record's own
-// env, or direct or gateway for a base URL set on the new pane (F12a).
+// resumeArgs is what resumeEnded takes. route is "" for the record's own
+// env, or direct or router for a base URL set on the new pane (F12a).
 type resumeArgs struct {
 	id               string
 	cols, rows       int
 	hasCols, hasRows bool
-	router           string
+	route            string
 	// fenced is true when the caller may be a fenced process: the resumed
 	// pane is fenced whatever its record said (FN-R-15).
 	fenced bool
@@ -372,22 +372,22 @@ func (s *Server) resumeEnded(reqID string, a resumeArgs) proto.Response {
 	if !hasRows {
 		rows = rec.Rows
 	}
-	// A record labelled foreman is the floor's foreman again only when it
-	// is the one the server tracks. Any other keeps no foreman label, so
-	// two panes never read as the foreman. talkMu is held from here to
-	// the end, so a talk cannot start a foreman in between.
+	// A record labelled steward is the floor's steward again only when it
+	// is the one the server tracks. Any other keeps no steward label, so
+	// two panes never read as the steward. talkMu is held from here to
+	// the end, so a talk cannot start a steward in between.
 	label := cleanLabel(rec.Label)
-	talkHeld := isForemanLabel(label) || s.isTrackedForeman(id)
+	talkHeld := isStewardLabel(label) || s.isTrackedSteward(id)
 	if talkHeld {
 		s.talkMu.Lock()
 		defer s.talkMu.Unlock()
-		if s.trackedForeman() != id && isForemanLabel(label) {
-			label = DefaultForemanLabel + "-old"
+		if s.trackedSteward() != id && isStewardLabel(label) {
+			label = DefaultStewardLabel + "-old"
 		}
 	}
 	env := maps.Clone(rec.Env)
-	if a.router != "" {
-		key, val, err := s.routerEnv(rec.Harness, a.router)
+	if a.route != "" {
+		key, val, err := s.routeEnv(rec.Harness, a.route)
 		if err != nil {
 			return proto.ErrResp(r.ID, proto.ErrBadRequest, err.Error())
 		}
@@ -401,6 +401,7 @@ func (s *Server) resumeEnded(reqID string, a resumeArgs) proto.Response {
 		Harness: rec.Harness, Cols: cols, Rows: rows, TaskID: rec.TaskID,
 		HarnessSessionID: sessionID, ForkPending: forkPending, ParentPane: parentPane,
 		ExtraArgs: rec.ExtraArgs, Model: rec.Model, Fence: fenceOr(rec.Fence, a.fenced),
+		StartedAt: s.clock().Unix(), MadeBy: rec.MadeBy,
 	})
 	if err != nil {
 		code := proto.ErrNoSuchTab
@@ -434,13 +435,13 @@ func (s *Server) resumeEnded(reqID string, a resumeArgs) proto.Response {
 	}
 	s.dropRecord(id)
 	if talkHeld {
-		s.followForemanLocked(id, newRec.ID, resumed)
+		s.followStewardLocked(id, newRec.ID, resumed)
 	}
 	out := map[string]any{
 		"pane": newRec.ID, "workspace": newRec.Workspace, "tab": newRec.Tab, "resumed": resumed,
 	}
-	if a.router != "" {
-		out["router"] = a.router
+	if a.route != "" {
+		out["route"] = a.route
 	}
 	return proto.OKResp(r.ID, out)
 }

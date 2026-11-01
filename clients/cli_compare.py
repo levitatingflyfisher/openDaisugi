@@ -8,7 +8,7 @@ Cases come from clients/fixtures/cli/cases.jsonl (clients/cli_cases.py
 writes them from the Python CLI). Each case runs in a fresh scratch HOME;
 the binary's exit code, stdout, stderr and the tree it leaves are
 normalized the way the oracle's were and compared structurally: file set,
-modes, JSON files parsed, gate hook commands compared on their flags.
+modes, JSON files parsed, warden hook commands compared on their flags.
 
 Each case lands in one class:
 
@@ -18,7 +18,7 @@ Each case lands in one class:
 - not-ported: a case marked go_refuses, where the binary printed its one
   line and exited 2 without changing anything, as it must.
 - disagree: anything else. A disagreement where the binary's tree or
-  status reports a stronger gate than Python's is flagged fail-open.
+  status reports a stronger warden than Python's is flagged fail-open.
 
 Output compared: stdout exactly, except --version, whose number comes
 from the binary's build (only one version line is asked for). In an
@@ -29,7 +29,7 @@ binary's own note that it wrote through a symlink is dropped.
 
 With --oracle the Python CLI is also run live, so a stale fixture shows
 up. Every install case the binary wrote is also checked for interop:
-Python's `gate status --json` on the binary's tree must equal the
+Python's `warden status --json` on the binary's tree must equal the
 binary's own.
 """
 
@@ -122,7 +122,7 @@ def without_notes(lines: list[str]) -> list[str]:
 
 def warnings_as_go(lines: list[str]) -> list[str]:
     return [
-        ("warning: " + ln.split(": ", 1)[1]) if ln.startswith("UserWarning: ") else ln
+        ("warning: " + ln.split(": ", 1)[1]) if re.match(r"^\w*Warning: ", ln) else ln
         for ln in lines
     ]
 
@@ -222,7 +222,7 @@ def compare(
 
 
 def fail_open(case: dict[str, Any], expect: dict[str, Any], got: dict[str, Any]) -> bool:
-    """The binary reported or wrote a stronger gate than Python did."""
+    """The binary reported or wrote a stronger warden than Python did."""
     text = json.dumps(got["tree"]) + json.dumps(got["stdout"])
     want = json.dumps(expect["tree"]) + json.dumps(expect["stdout"])
     return ("enforce" in text and "enforce" not in want) or (
@@ -231,7 +231,7 @@ def fail_open(case: dict[str, Any], expect: dict[str, Any], got: dict[str, Any])
 
 
 def interop(case: dict[str, Any], binary: str, work: Path) -> list[str]:
-    """Python's gate status on the tree the binary left must equal the
+    """Python's warden status on the tree the binary left must equal the
     binary's own status there."""
     import os
     import subprocess
@@ -249,7 +249,7 @@ def interop(case: dict[str, Any], binary: str, work: Path) -> list[str]:
     }
     cwd = home
     py = subprocess.run(
-        [sys.executable, "-m", "opendaisugi.cli", "gate", "status", "--json"],
+        [sys.executable, "-m", "opendaisugi.cli", "warden", "status", "--json"],
         env=env,
         cwd=cwd,
         capture_output=True,
@@ -258,7 +258,7 @@ def interop(case: dict[str, Any], binary: str, work: Path) -> list[str]:
         check=False,
     )
     go = subprocess.run(
-        [binary, "gate", "status", "--json"],
+        [binary, "warden", "status", "--json"],
         env=env,
         cwd=cwd,
         capture_output=True,
@@ -295,7 +295,7 @@ def carries_view(binary: str) -> bool:
 
 
 def start_wrapper(binary: str) -> str:
-    """The binary behind a wrapper that stands in for its spawned `gate
+    """The binary behind a wrapper that stands in for its spawned `warden
     serve` the way the oracle's fake spawn does: it logs the argv and makes
     the socket file. It takes any extra flags (`start` adds --captures-root,
     as the oracle's does) and logs them all. Everything else runs the binary, with the wrapper's
@@ -305,10 +305,10 @@ def start_wrapper(binary: str) -> str:
     w = d / "daisugi"
     w.write_text(
         "#!/bin/bash\n"
-        'if [ "$1" = gate ] && [ "$2" = serve ] && [ "$3" = --root ] && [ $# -ge 4 ]; then\n'
+        'if [ "$1" = warden ] && [ "$2" = serve ] && [ "$3" = --root ] && [ $# -ge 4 ]; then\n'
         '  items=""; for a in "$@"; do items="$items, \\"$a\\""; done\n'
         '  printf \'["{DAISUGI}"%s]\\n\' "$items" >> "$FAKE_SPAWN_LOG"\n'
-        '  : > "$4/gate.sock"\n'
+        '  : > "$4/warden.sock"\n'
         "  exit 0\n"
         "fi\n"
         f'exec -a "$0" {shlex.quote(binary)} "$@"\n',

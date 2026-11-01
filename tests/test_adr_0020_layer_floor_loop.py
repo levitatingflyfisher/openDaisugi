@@ -11,7 +11,7 @@ from pathlib import Path
 ADR_PATH = Path("docs/adr/0020-layer-floor-loop.md")
 
 REQUIRED_DECISION_TEXT = (
-    "openDaisugi is three parts. The **layer** (gate, verifier, journal, garden) is a "
+    "openDaisugi is three parts. The **layer** (gate, verifier, journal, garden) is a "  # names-ok: a verbatim quote of the dated ADR
     "library that imports nothing above it and runs alone in any harness. The **floor** "
     "(coppice) supervises panes and sources every state it shows. The **loop** is "
     "whatever harness runs in a pane; sprig is ours, the rest are rented. The invariant "

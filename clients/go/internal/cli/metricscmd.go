@@ -60,26 +60,26 @@ func renderPrometheus(raw rawMetrics) (string, error) {
 		lines = promMetric(lines, "daisugi_pathway_reuse_hits_total", "counter", "Lifetime pathway reuse hits.",
 			one(raw.pathwayHits.String()))
 	}
-	if g := raw.gateway; g != nil {
-		lines = promMetric(lines, "daisugi_gateway_turns_total", "counter", "Gateway turns routed.", one(strconv.Itoa(g.Turns)))
-		lines = promMetric(lines, "daisugi_gateway_downgraded_turns_total", "counter",
-			"Gateway turns routed to a cheaper model than requested.", one(strconv.Itoa(g.Downgraded)))
-		lines = promMetric(lines, "daisugi_gateway_frontier_tokens_saved_total", "counter",
+	if g := raw.router; g != nil {
+		lines = promMetric(lines, "daisugi_router_turns_total", "counter", "Router turns routed.", one(strconv.Itoa(g.Turns)))
+		lines = promMetric(lines, "daisugi_router_downgraded_turns_total", "counter",
+			"Router turns routed to a cheaper model than requested.", one(strconv.Itoa(g.Downgraded)))
+		lines = promMetric(lines, "daisugi_router_frontier_tokens_saved_total", "counter",
 			"Tokens kept off the frontier model by routing.", one(new(big.Int).Set(g.FrontierSaved).String()))
-		lines = promMetric(lines, "daisugi_gateway_dollars_saved", "gauge",
+		lines = promMetric(lines, "daisugi_router_dollars_saved", "gauge",
 			"Estimated dollars saved by routing (best-effort).", one(pyReprFloat(g.DollarsSaved)))
-		lines = promMetric(lines, "daisugi_gateway_blended_multiplier", "gauge",
+		lines = promMetric(lines, "daisugi_router_blended_multiplier", "gauge",
 			"Blended cost multiplier versus all-frontier routing.", one(pyReprFloat(g.Blended)))
-		lines = promMetric(lines, "daisugi_gateway_cache_hit_rate", "gauge",
+		lines = promMetric(lines, "daisugi_router_cache_hit_rate", "gauge",
 			"Share of input tokens served from cache (0..1).", one(pyReprFloat(g.CacheHitRate)))
 	}
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-// prometheusText reads the stores and renders them. A gateway record of
+// prometheusText reads the stores and renders them. A router record of
 // other types is refused (GW-8) before any store is opened.
 func (e *Env) prometheusText(cmd, dataDir string) (string, error) {
-	recs, err := e.gatewayRecords(cmd, dataDir)
+	recs, err := e.routerRecords(cmd, dataDir)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +123,7 @@ func (e *Env) metricsHandler(dataDir string) http.Handler {
 			w.WriteHeader(404)
 			return
 		}
-		recs, err := loadGatewayRecords(dataDir)
+		recs, err := loadRouterRecords(dataDir)
 		if err != nil {
 			// A record this binary does not read the oracle's way: no
 			// numbers rather than other numbers (K4-6).

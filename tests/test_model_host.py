@@ -20,6 +20,7 @@ from opendaisugi.model_host import (
     CONTEXT_FLOOR,
     HostInfo,
     describe_host,
+    endpoint_kind,
     harness_env,
     probe,
     record,
@@ -360,7 +361,7 @@ def test_describe_host_lines_reflect_the_recorded_config(tmp_path):
     assert "warning:" in joined
     assert "ANTHROPIC_BASE_URL=http://box:11434" in joined
     assert "ANTHROPIC_AUTH_TOKEN=ollama" in joined
-    assert "daisugi gateway --upstream http://box:11434" in joined
+    assert "daisugi router serve --upstream http://box:11434" in joined
 
 
 def test_describe_host_warning_is_fresh_after_a_context_override(tmp_path):
@@ -380,8 +381,57 @@ def test_describe_host_warning_is_fresh_after_a_context_override(tmp_path):
     assert "warning:" not in joined
 
 
-def test_describe_host_teaches_the_gateway_route_for_openai_only_hosts(tmp_path):
+def test_describe_host_teaches_the_router_route_for_openai_only_hosts(tmp_path):
     info = HostInfo("http://box:8080", "openai", ["m"], "m", 65536, 3.0, [])
     cfg = record(info, config_path=tmp_path / "config.yaml")
     joined = "\n".join(describe_host(info, cfg))
     assert "OpenAI wire only" in joined
+
+
+def test_endpoint_kind_ollama_from_api_tags():
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "gemma4:latest"}]})
+        return httpx.Response(404)
+
+    cl = httpx.Client(transport=httpx.MockTransport(handler))
+    assert endpoint_kind("http://box:11434/v1", client=cl) == "ollama"
+    assert seen == ["http://box:11434/api/tags"]
+
+
+@pytest.mark.parametrize("endpoint", ["http://box:8080", "http://box:8080/", "http://box:8080/v1/"])
+def test_endpoint_kind_cuts_the_root_like_endpoint_context(endpoint):
+    seen = []
+
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(404)
+
+    cl = httpx.Client(transport=httpx.MockTransport(handler))
+    assert endpoint_kind(endpoint, client=cl) == "openai"
+    assert seen == ["http://box:8080/api/tags"]
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        httpx.Response(200, text="nope"),
+        httpx.Response(200, json={"data": []}),
+        httpx.Response(200, json={"models": "x"}),
+        httpx.Response(500, text="{}"),
+    ],
+)
+def test_endpoint_kind_anything_else_is_openai(resp):
+    cl = httpx.Client(transport=httpx.MockTransport(lambda req: resp))
+    assert endpoint_kind("http://box:8080/v1", client=cl) == "openai"
+
+
+def test_endpoint_kind_unreachable_is_openai():
+    def handler(req):
+        raise httpx.ConnectError("refused")
+
+    cl = httpx.Client(transport=httpx.MockTransport(handler))
+    assert endpoint_kind("http://box:1/v1", client=cl) == "openai"

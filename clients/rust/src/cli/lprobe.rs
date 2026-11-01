@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::batch;
 use crate::bundle;
 use crate::deeds;
-use crate::gate::pyjson::{dumps, loads, Object, Value};
+use crate::warden::pyjson::{dumps, loads, Object, Value};
 use crate::lerr::{LErr, PyError, LR};
 use crate::pathways::pathway::json_mode;
 use crate::pathways::pmodel::{validate_model, Id, Mode};
@@ -267,7 +267,7 @@ impl Probe {
             }
             "strata" => probe_strata(q),
             "batch" => self.probe_batch(q),
-            _ => Err(PyError::new("KeyError", crate::gate::py::text::repr(op)).into()),
+            _ => Err(PyError::new("KeyError", crate::warden::py::text::repr(op)).into()),
         }
     }
 

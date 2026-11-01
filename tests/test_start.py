@@ -1,8 +1,8 @@
 """`daisugi start`: five reported steps, idempotent, nothing hidden, nothing spent.
 
-B-1: the gate hook is scoped to `cwd`, never `~/.claude/settings.json` — a
+B-1: the warden hook is scoped to `cwd`, never `~/.claude/settings.json` — a
 machine-global hook whose only envelope belonged to one project would deny
-every other project's sessions. B-4: the gate-server step only says "done"
+every other project's sessions. B-4: the warden-server step only says "done"
 once `<root>/<SOCK_NAME>` actually appears.
 """
 
@@ -12,8 +12,8 @@ import json
 import socket
 from pathlib import Path
 
-from opendaisugi.gate_server import SOCK_NAME
 from opendaisugi.start import StartOptions, plan_start, run_start
+from opendaisugi.warden_server import SOCK_NAME
 
 
 def _opts(tmp_path: Path, **kw) -> StartOptions:
@@ -39,11 +39,11 @@ def _touch_sock(root: Path):
 
 def test_plan_on_a_fresh_project_would_do_everything(tmp_path):
     steps = {s.key: s for s in plan_start(_opts(tmp_path))}
-    assert set(steps) == {"harness", "hook", "envelope", "gate-server", "view"}
+    assert set(steps) == {"harness", "hook", "envelope", "warden-server", "view"}
     assert steps["harness"].state == "done" and "claude" in steps["harness"].text
     assert steps["hook"].state == "would" and "audit" in steps["hook"].text
     assert steps["envelope"].state == "would"
-    assert steps["gate-server"].state == "would"
+    assert steps["warden-server"].state == "would"
     assert steps["view"].state == "would"
 
 
@@ -51,25 +51,25 @@ def test_plan_never_writes_anything(tmp_path):
     opts = _opts(tmp_path)
     plan_start(opts)
     assert not (opts.cwd / ".claude" / "settings.json").exists()
-    assert not (opts.data_dir / "gate").exists()
+    assert not (opts.data_dir / "warden").exists()
 
 
 def test_run_installs_hook_scoped_to_cwd_not_home(tmp_path):
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
     steps = {s.key: s for s in run_start(opts)}
 
     settings_path = opts.cwd / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text())
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert "opendaisugi.gate_client" in cmd
+    assert "opendaisugi.warden_client" in cmd
     assert "--mode audit" in cmd
     assert f"--root {root}" in cmd
     assert steps["hook"].state == "done"
     assert str(opts.cwd) in steps["hook"].text
     # A project-settings hook needs Claude Code's folder-trust before it fires;
     # "done" here only means the file was written, not that the hook is live.
-    assert "daisugi gate report" in steps["hook"].text
+    assert "daisugi warden report" in steps["hook"].text
     assert "trust" in steps["hook"].text.lower()
 
     # B-1: nothing was ever written under a home directory — this is the whole point.
@@ -78,7 +78,7 @@ def test_run_installs_hook_scoped_to_cwd_not_home(tmp_path):
 
 
 def test_run_registers_a_cwd_keyed_envelope_not_default(tmp_path):
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
     steps = {s.key: s for s in run_start(opts)}
 
@@ -94,11 +94,11 @@ def test_run_registers_a_cwd_keyed_envelope_not_default(tmp_path):
     assert envelopes[0].stem in cmd
 
 
-def test_start_gives_the_resident_gate_the_captures_root_the_fence_gives(tmp_path):
+def test_start_gives_the_resident_warden_the_captures_root_the_fence_gives(tmp_path):
     """The first server wins, so `daisugi start` fixes the same server-chosen
-    captures root as `daisugi fence` (<gate root>/captures), and a fenced run
+    captures root as `daisugi fence` (<warden root>/captures), and a fenced run
     that finds this server has its captures land."""
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     spawned = []
 
     def spawn(argv):
@@ -112,8 +112,8 @@ def test_start_gives_the_resident_gate_the_captures_root_the_fence_gives(tmp_pat
     assert argv[argv.index("--root") + 1] == str(root)
 
 
-def test_run_starts_the_gate_server_and_reports_done_once_the_socket_appears(tmp_path):
-    root = tmp_path / "data" / "gate"
+def test_run_starts_the_warden_server_and_reports_done_once_the_socket_appears(tmp_path):
+    root = tmp_path / "data" / "warden"
     spawned = []
 
     def spawn(argv):
@@ -122,21 +122,21 @@ def test_run_starts_the_gate_server_and_reports_done_once_the_socket_appears(tmp
 
     opts = _opts(tmp_path, spawn=spawn)
     steps = {s.key: s for s in run_start(opts)}
-    assert steps["gate-server"].state == "done" and spawned and "serve" in " ".join(spawned[0])
+    assert steps["warden-server"].state == "done" and spawned and "serve" in " ".join(spawned[0])
     assert (root / SOCK_NAME).exists()
     assert steps["view"].state == "would"
 
 
-def test_gate_server_step_fails_when_the_socket_never_appears(tmp_path):
+def test_warden_server_step_fails_when_the_socket_never_appears(tmp_path):
     """B-4: a spawn that dies (or never binds) must not be reported "done"."""
     opts = _opts(tmp_path, spawn=lambda argv: None)  # never touches the socket
     steps = {s.key: s for s in run_start(opts)}
-    assert steps["gate-server"].state == "failed"
-    assert "gate serve" in steps["gate-server"].text
+    assert steps["warden-server"].state == "failed"
+    assert "warden serve" in steps["warden-server"].text
 
 
 def _listen(path: Path) -> socket.socket:
-    """A socket that answers, as a running gate's does."""
+    """A socket that answers, as a running warden's does."""
     path.parent.mkdir(parents=True, exist_ok=True)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.bind(str(path))
@@ -145,7 +145,7 @@ def _listen(path: Path) -> socket.socket:
 
 
 def test_second_run_skips_what_exists(tmp_path):
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
     run_start(opts)
     (root / SOCK_NAME).unlink()
@@ -157,37 +157,60 @@ def test_second_run_skips_what_exists(tmp_path):
     assert steps["hook"].state == "skipped" and "already installed" in steps["hook"].text
     assert steps["envelope"].state == "skipped"
     assert (
-        steps["gate-server"].state == "skipped" and "already running" in steps["gate-server"].text
+        steps["warden-server"].state == "skipped"
+        and "already running" in steps["warden-server"].text
     )
 
 
 def test_no_claude_is_a_failed_step_with_a_fix_and_short_circuits(tmp_path):
     opts = _opts(tmp_path, which=lambda n: None)
     steps = {s.key: s for s in run_start(opts)}
-    assert set(steps) == {"harness", "hook", "envelope", "gate-server", "view"}
+    assert set(steps) == {"harness", "hook", "envelope", "warden-server", "view"}
     assert steps["harness"].state == "failed"
     assert "PATH" in steps["harness"].text and "install" in steps["harness"].text.lower()
     assert steps["hook"].state == "skipped"
     assert steps["envelope"].state == "skipped"
-    assert steps["gate-server"].state == "skipped"
+    assert steps["warden-server"].state == "skipped"
     # short-circuited: nothing was written anywhere.
     assert not (opts.cwd / ".claude" / "settings.json").exists()
-    assert not (opts.data_dir / "gate").exists()
+    assert not (opts.data_dir / "warden").exists()
 
 
-def test_second_run_asking_for_a_different_mode_says_how_to_switch(tmp_path):
-    root = tmp_path / "data" / "gate"
+def _warden_command(opts: StartOptions) -> str:
+    settings = json.loads((opts.cwd / ".claude" / "settings.json").read_text())
+    return settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+
+def test_start_enforce_over_an_audit_hook_steps_it_up_and_says_so(tmp_path):
+    root = tmp_path / "data" / "warden"
     opts = _opts(tmp_path, spawn=_touch_sock(root))
     run_start(opts)  # audit, the default
+    assert "--mode audit" in _warden_command(opts)
     enforce_opts = _opts(tmp_path, spawn=_touch_sock(root), enforce=True)
+    settings_path = enforce_opts.cwd / ".claude" / "settings.json"
+    planned = {s.key: s for s in plan_start(enforce_opts)}
+    assert planned["hook"].state == "would"
+    assert "--mode audit" in _warden_command(opts)  # a dry run writes nothing
     steps = {s.key: s for s in run_start(enforce_opts)}
+    assert steps["hook"].state == "done"
+    assert steps["hook"].text == (
+        f"Warden: the Claude Code hook in {settings_path} now runs in enforce mode (it was audit)."
+    )
+    command = _warden_command(opts)
+    assert "--mode enforce" in command and command.endswith("|| exit 2")
+
+
+def test_start_never_lowers_an_enforce_hook(tmp_path):
+    root = tmp_path / "data" / "warden"
+    run_start(_opts(tmp_path, spawn=_touch_sock(root), enforce=True))
+    opts = _opts(tmp_path, spawn=_touch_sock(root))
+    steps = {s.key: s for s in run_start(opts)}
     assert steps["hook"].state == "skipped"
-    assert "audit" in steps["hook"].text and "enforce" in steps["hook"].text
-    assert "remove the gate hook line" in steps["hook"].text
+    assert "--mode enforce" in _warden_command(opts)
 
 
 def test_enforce_flag_installs_enforce(tmp_path):
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     opts = _opts(tmp_path, spawn=_touch_sock(root), enforce=True)
     run_start(opts)
     settings = json.loads((opts.cwd / ".claude" / "settings.json").read_text())
@@ -195,7 +218,7 @@ def test_enforce_flag_installs_enforce(tmp_path):
 
 
 def test_hook_step_names_a_coexisting_machine_global_hook(tmp_path):
-    """`daisugi install --gate` writes a hook to ~/.claude/settings.json with no
+    """`daisugi install` writes a hook to ~/.claude/settings.json with no
     --session, resolving to the shared `default` envelope. `start`'s hook is a
     different file, so it can't see or change that one — but it must not stay
     silent about it: silence here is the same honesty gap B-1 named, from the
@@ -212,7 +235,7 @@ def test_hook_step_names_a_coexisting_machine_global_hook(tmp_path):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "python -m opendaisugi.gate_client --mode enforce --root x",
+                                    "command": "python -m opendaisugi.warden_client --mode enforce --root x",
                                 }
                             ],
                         }
@@ -247,10 +270,10 @@ def test_session_key_is_stable_and_filename_safe(tmp_path):
     assert all(c.isalnum() or c in "._-" for c in key)
 
 
-def test_a_stale_socket_is_removed_and_a_gate_started(tmp_path):
+def test_a_stale_socket_is_removed_and_a_warden_started(tmp_path):
     """G2-9: a socket file nobody answers (a Ctrl-C'd or killed server) is
-    not a running gate."""
-    root = tmp_path / "data" / "gate"
+    not a running warden."""
+    root = tmp_path / "data" / "warden"
     root.mkdir(parents=True)
     dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     dead.bind(str(root / SOCK_NAME))
@@ -265,11 +288,11 @@ def test_a_stale_socket_is_removed_and_a_gate_started(tmp_path):
 
     steps = {s.key: s for s in run_start(_opts(tmp_path, spawn=spawn))}
     assert spawned
-    assert steps["gate-server"].state == "done"
+    assert steps["warden-server"].state == "done"
 
 
-def test_a_stale_regular_file_is_removed_and_a_gate_started(tmp_path):
-    root = tmp_path / "data" / "gate"
+def test_a_stale_regular_file_is_removed_and_a_warden_started(tmp_path):
+    root = tmp_path / "data" / "warden"
     root.mkdir(parents=True)
     (root / SOCK_NAME).write_text("")
     spawned = []
@@ -279,11 +302,11 @@ def test_a_stale_regular_file_is_removed_and_a_gate_started(tmp_path):
         _touch_sock(root)(argv)
 
     steps = {s.key: s for s in run_start(_opts(tmp_path, spawn=spawn))}
-    assert spawned and steps["gate-server"].state == "done"
+    assert spawned and steps["warden-server"].state == "done"
 
 
-def test_a_live_gate_is_left_alone(tmp_path):
-    root = tmp_path / "data" / "gate"
+def test_a_live_warden_is_left_alone(tmp_path):
+    root = tmp_path / "data" / "warden"
     live = _listen(root / SOCK_NAME)
     spawned = []
     try:
@@ -291,14 +314,14 @@ def test_a_live_gate_is_left_alone(tmp_path):
     finally:
         live.close()
     assert not spawned
-    assert steps["gate-server"].state == "skipped"
-    assert "already running" in steps["gate-server"].text
+    assert steps["warden-server"].state == "skipped"
+    assert "already running" in steps["warden-server"].text
 
 
 def test_a_dry_run_leaves_a_stale_socket_in_place(tmp_path):
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     root.mkdir(parents=True)
     (root / SOCK_NAME).write_text("")
     steps = {s.key: s for s in plan_start(_opts(tmp_path))}
-    assert steps["gate-server"].state == "would"
+    assert steps["warden-server"].state == "would"
     assert (root / SOCK_NAME).exists()

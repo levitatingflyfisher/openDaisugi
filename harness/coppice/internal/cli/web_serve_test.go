@@ -188,8 +188,8 @@ func TestForgetKeepsEverySettingExceptEnabled(t *testing.T) {
 	if !strings.Contains(string(body), "ntfy.box.local") {
 		t.Fatalf("--forget threw away the ntfy URL:\n%s", body)
 	}
-	if !strings.Contains(string(body), web.GateRoot(dataDir)) {
-		t.Fatalf("--forget threw away the gate root:\n%s", body)
+	if !strings.Contains(string(body), web.WardenRoot(dataDir)) {
+		t.Fatalf("--forget threw away the warden root:\n%s", body)
 	}
 	if !strings.Contains(string(body), `"enabled": false`) {
 		t.Fatalf("--forget did not turn autostart off:\n%s", body)
@@ -198,17 +198,17 @@ func TestForgetKeepsEverySettingExceptEnabled(t *testing.T) {
 
 // --tls off with a loopback listen resolves cleanly with no CA needed, so
 // this uses the stub rather than reaching a real Serve.
-func TestGateRootIsConfigurableAndSaved(t *testing.T) {
+func TestWardenRootIsConfigurableAndSaved(t *testing.T) {
 	dataDir := t.TempDir()
-	root := filepath.Join(dataDir, "elsewhere", "gate")
+	root := filepath.Join(dataDir, "elsewhere", "warden")
 	runWithStubServe(t, dataDir, noopServe, "web", "serve", "--tls", "off", "--listen", "127.0.0.1:0",
-		"--persist", "--gate-root", root)
+		"--persist", "--warden-root", root)
 	body, err := os.ReadFile(web.ConfigPath(dataDir))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(body), "elsewhere") {
-		t.Fatalf("--gate-root was not saved:\n%s", body)
+		t.Fatalf("--warden-root was not saved:\n%s", body)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestWebServeGivesThePageTheEnabledViews(t *testing.T) {
 	for _, v := range got.Views {
 		ids[v.ID] = true
 	}
-	for _, id := range []string{"tree", "minimap", "kanban", "colony", "shift-log", "herdr-grid", "inbox"} {
+	for _, id := range []string{"tree", "cards", "minimap", "kanban", "colony", "shift-log", "herdr-grid", "inbox"} {
 		if !ids[id] {
 			t.Errorf("web serve did not give the page the %s view; got %v", id, got.Views)
 		}

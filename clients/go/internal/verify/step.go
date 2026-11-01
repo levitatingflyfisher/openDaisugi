@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// VerifyStep ports verify.verify_step, the supervisor's per-step gate on a
+// VerifyStep ports verify.verify_step, the supervisor's per-step warden on a
 // singleton plan: delegation safety, permissions, skill delegations, the
 // robotics checks and the (trivial) DAG, each short-circuiting. The
 // envelope's own Z3 checks and the plan-level predicates are the whole-plan

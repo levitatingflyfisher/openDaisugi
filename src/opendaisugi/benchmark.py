@@ -74,7 +74,7 @@ def _t95(df: int) -> float:
 @dataclass
 class RunMetric:
     """One run's measurement. ``denials`` / ``violations`` are the count of
-    actions the gate/verifier refused during the run — the safety signal."""
+    actions the warden/verifier refused during the run — the safety signal."""
 
     tokens: int
     latency_ms: float

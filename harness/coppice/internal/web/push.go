@@ -23,17 +23,17 @@ import (
 const PushDebounce = 5 * time.Second
 
 // Ask mirrors the ask block of a pane state event. Tier is undoable or
-// permanent; anything else reads as permanent. Gate, when present, is the
-// gate's own verdict and the rule that decided it.
+// permanent; anything else reads as permanent. Warden, when present, is the
+// warden's own verdict and the rule that decided it.
 type Ask struct {
-	ID       string   `json:"id"`
-	Tool     string   `json:"tool"`
-	Summary  string   `json:"summary"`
-	Deadline float64  `json:"deadline"`
-	Tier     string   `json:"tier"`
-	Gate     *AskGate `json:"gate,omitempty"`
+	ID       string     `json:"id"`
+	Tool     string     `json:"tool"`
+	Summary  string     `json:"summary"`
+	Deadline float64    `json:"deadline"`
+	Tier     string     `json:"tier"`
+	Warden   *AskWarden `json:"warden,omitempty"`
 	// Holder is "harness" when a headless harness holds the ask itself.
-	// The gate cannot answer it, so no card offers an answer to it.
+	// The warden cannot answer it, so no card offers an answer to it.
 	Holder string `json:"holder,omitempty"`
 }
 
@@ -41,21 +41,21 @@ type Ask struct {
 func (a *Ask) Held() bool { return a != nil && a.Holder == "harness" }
 
 // AtTheFloor is what the answer route says about an ask a harness holds:
-// the gate has no file for it, so the floor answers it. The page's Deny
+// the warden has no file for it, so the floor answers it. The page's Deny
 // and Allow for such an ask go to coppice-server, not to this route.
 func AtTheFloor(pane string) string {
 	return fmt.Sprintf("The harness holds this ask itself. Open %s on the floor and answer it there.", pane)
 }
 
 // Words a push for a blocked pane with no ask says, by what found the
-// block. They match the floor's own. Only the gate's block blames the gate.
+// block. They match the floor's own. Only the warden's block blames the warden.
 const (
-	BlockedByGate      = "Blocked. The gate gave no detail."
+	BlockedByWarden    = "Blocked. The warden gave no detail."
 	BlockedOwnQuestion = "Waiting on the agent's own question. Open it to answer."
 )
 
-// AskGate is the gate's verdict on an ask and the rule that decided it.
-type AskGate struct {
+// AskWarden is the warden's verdict on an ask and the rule that decided it.
+type AskWarden struct {
 	Verdict string `json:"verdict"`
 	Rule    *int   `json:"rule"`
 }
@@ -77,11 +77,11 @@ type StateEvent struct {
 	Detail  string  `json:"detail"`
 	TS      float64 `json:"ts"`
 	Ask     *Ask    `json:"ask"`
-	// Held is set while a foreman hears the ask first.
+	// Held is set while a steward hears the ask first.
 	Held *Held `json:"held,omitempty"`
 }
 
-// Held names the foreman that hears an ask first, and its task.
+// Held names the steward that hears an ask first, and its task.
 type Held struct {
 	By   string `json:"by"`
 	Task string `json:"task"`
@@ -146,7 +146,7 @@ func NewPublisher(cfg PushConfig, hc *http.Client, now func() time.Time, log *sl
 // asciiHeader makes a string safe for ntfy: printable ASCII only, one line,
 // bounded. ntfy reads Title as an HTTP header, where a newline would split
 // the request, and shows the body as text. Both are scrubbed so what the
-// phone shows is what the gate said.
+// phone shows is what the warden said.
 func asciiHeader(s string, max int) string {
 	var b strings.Builder
 	lastSpace := false
@@ -179,7 +179,7 @@ func asciiHeader(s string, max int) string {
 
 // OnState records one merged state and publishes when a pane has just become
 // blocked. Everything else is quiet on purpose: the interesting moment is
-// the edge, not the level. A blocked event that a foreman holds counts as
+// the edge, not the level. A blocked event that a steward holds counts as
 // not blocked, so the edge comes when the hold ends.
 func (p *Publisher) OnState(ev StateEvent, label string) {
 	p.onState(context.Background(), ev, label)
@@ -220,13 +220,13 @@ func (p *Publisher) onState(ctx context.Context, ev StateEvent, label string) {
 	case ev.Ask.Held():
 		body = "Wants " + ev.Ask.Summary + ". Open the floor to answer it."
 	case ev.Ask != nil && ev.Ask.Summary != "":
-		body = "Wants " + ev.Ask.Summary + ". " + gateSays(ev.Ask.Gate)
+		body = "Wants " + ev.Ask.Summary + ". " + wardenSays(ev.Ask.Warden)
 	case ev.Detail != "" && ev.Source != "manifest":
 		// A manifest's detail is the name of the screen rule that matched,
 		// which tells the owner nothing.
 		body = ev.Detail
-	case ev.Source == "gate":
-		body = BlockedByGate
+	case ev.Source == "warden":
+		body = BlockedByWarden
 	}
 	click := clickURL(p.cfg.ClickBase, ev)
 	actions := p.actions(ev, click, tok)
@@ -258,16 +258,16 @@ func clickURL(base string, ev StateEvent) string {
 	return click
 }
 
-// gateSays is the sentence about the gate's verdict. The rule shows when
-// the gate names one.
-func gateSays(g *AskGate) string {
+// wardenSays is the sentence about the warden's verdict. The rule shows when
+// the warden names one.
+func wardenSays(g *AskWarden) string {
 	if g != nil && g.Verdict == "allow" {
-		return "Gate says yes."
+		return "Warden says yes."
 	}
 	if g != nil && g.Rule != nil {
-		return fmt.Sprintf("Gate says no, rule %d.", *g.Rule)
+		return fmt.Sprintf("Warden says no, rule %d.", *g.Rule)
 	}
-	return "Gate says no."
+	return "Warden says no."
 }
 
 // actions is the card's buttons in ntfy's Actions header form: Deny, then
@@ -278,7 +278,7 @@ func gateSays(g *AskGate) string {
 // own token answers. With no external URL, or an ask id that cannot ride in the
 // header, the card has no buttons.
 func (p *Publisher) actions(ev StateEvent, click, tok string) string {
-	// The gate cannot answer an ask a harness holds, so its card only
+	// The warden cannot answer an ask a harness holds, so its card only
 	// looks.
 	if ev.Ask.Held() {
 		if click == "" {

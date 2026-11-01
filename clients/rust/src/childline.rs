@@ -5,8 +5,8 @@
 //! client does not use the voice module. The one definition is
 //! src/opendaisugi/childline.py.
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
 
 /// One request: the body's length, big-endian, then the body.
 pub fn frame(body: &[u8]) -> Vec<u8> {

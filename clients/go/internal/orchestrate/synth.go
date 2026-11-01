@@ -4,16 +4,16 @@ import (
 	"sort"
 	"strings"
 
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/router"
 	"daisugi-verify/internal/supervise"
 )
 
 // DefaultSynthModel is synthesizer._DEFAULT_MODEL.
-const DefaultSynthModel = gateway.DefaultCheapModel
+const DefaultSynthModel = router.DefaultCheapModel
 
 // synthSystem is synthesizer.SYNTHESIZER_SYSTEM_PROMPT.
 const synthSystem = `You are a synthesizer. You are given the user's original request and the outputs

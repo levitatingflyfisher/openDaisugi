@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"daisugi-verify/internal/pandoskip"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,7 +17,6 @@ import (
 
 	"daisugi-verify/internal/capture"
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
@@ -26,6 +26,7 @@ import (
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/transcript"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // clickFile is click.Path(exists=True, dir_okay=False, readable=True) on
@@ -55,25 +56,25 @@ func (e *Env) note(format string, a ...any) {
 func (e *Env) backend() string { return e.llmClient().Backend() }
 
 // echoResolved is cli._echo_resolved(DEFAULT_DATA_DIR): the backend, the
-// gate's state and the data directory, on stderr.
+// warden's state and the data directory, on stderr.
 func (e *Env) echoResolved() error {
-	gate, err := e.gateState()
+	warden, err := e.wardenState()
 	if err != nil {
 		return err
 	}
-	e.note("backend: %s · gate: %s · data: %s", e.backend(), gate, e.tilde(e.dataHome()))
+	e.note("backend: %s · warden: %s · data: %s", e.backend(), warden, e.tilde(e.dataHome()))
 	return nil
 }
 
-// gateState is the gate part of _echo_resolved, which it works out before
+// wardenState is the warden part of _echo_resolved, which it works out before
 // it resolves the backend.
-func (e *Env) gateState() (string, error) {
+func (e *Env) wardenState() (string, error) {
 	dataDir := e.dataHome()
-	root := gateroot.Join(dataDir, "gate")
-	if gateroot.IsDisarmed(root) {
+	root := wardenroot.Join(dataDir, "warden")
+	if wardenroot.IsDisarmed(root) {
 		return "disarmed", nil
 	}
-	return config.GateMode(gateroot.Join(dataDir, "config.yaml"))
+	return config.WardenMode(wardenroot.Join(dataDir, "config.yaml"))
 }
 
 // checkLLMFlag is cli._check_llm_flag: a value that names no backend is
@@ -97,7 +98,7 @@ func (e *Env) renamedBackend(cmd string) error {
 	if !llm.Renamed(e.backend()) {
 		return nil
 	}
-	if _, err := e.gateState(); err != nil {
+	if _, err := e.wardenState(); err != nil {
 		return e.refuse(cmd, err)
 	}
 	e.errf("%s\n", llm.RenamedText)
@@ -146,7 +147,7 @@ func (e *Env) splitClaude(content string, cwd *string) (any, error) {
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, args...)
 	c.Dir = *cwd
-	c.Env = e.Environ
+	c.Env = pandoskip.Environ(e.Environ)
 	c.Stdin = strings.NewReader(prompt)
 	var out bytes.Buffer
 	c.Stdout = &out
@@ -227,7 +228,7 @@ func (e *Env) journalParse(args []string) error {
 	const cmd = "journal parse"
 	opts := []opt{
 		{names: []string{"-o", "--output"}, value: true, metavar: "PATH", help: "Path to write the episodes YAML/JSON file."},
-		{names: []string{"--format"}, value: true, metavar: "TEXT", help: "Parser format (default: claude-code)."},
+		{names: []string{"--format"}, value: true, metavar: "TEXT", help: "Parser format: claude-code | codex | pi | opencode (default: claude-code)."},
 		{names: []string{"--min-tools"}, value: true, metavar: "INTEGER", help: "Merge episodes below this tool-call threshold."},
 		{names: []string{"--max-tools"}, value: true, metavar: "INTEGER", help: "LLM-split episodes above this tool-call threshold."},
 		{names: []string{"--model"}, value: true, metavar: "TEXT", help: "Model for LLM splitting (rarely needed)."},
@@ -271,21 +272,28 @@ func (e *Env) journalParse(args []string) error {
 		return err
 	}
 	format := p.str("--format", "claude-code")
-	if format != "claude-code" && format != "codex" {
+	if format != "claude-code" && format != "codex" && format != "pi" && format != "opencode" {
 		if err := e.echoResolved(); err != nil {
 			return e.refuse(cmd, err)
 		}
-		e.errf("Unknown parser format: %s. Available: ['claude-code', 'codex']\n", pystr.Repr(format))
+		e.errf("Unknown parser format: %s. Available: ['claude-code', 'codex', 'opencode', 'pi']\n", pystr.Repr(format))
 		return exit(2)
 	}
 	// The transcript is read before the note Python prints first, so a
 	// refusal is the run's one line. An exception the parse raises is
 	// printed after the note, as Python prints it.
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return e.failPy(cmd, err)
+	var eps []*transcript.RawEpisode
+	if format == "opencode" {
+		// An OpenCode session is a tree: the file named is one session's
+		// record, and its messages sit beside it in the storage tree.
+		eps, err = transcript.ReadOpenCode(path)
+	} else {
+		raw, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return e.failPy(cmd, rerr)
+		}
+		eps, err = transcript.Read(raw, format)
 	}
-	eps, err := transcript.Read(raw, format)
 	var pe *transcript.ParseError
 	if err != nil && !errors.As(err, &pe) {
 		return e.refuse(cmd, err)
@@ -337,7 +345,7 @@ func (e *Env) journalParse(args []string) error {
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
-	payload := pyjson.NewObject().Set("source", format).Set("source_file", gateroot.PathStr(path)).
+	payload := pyjson.NewObject().Set("source", format).Set("source_file", wardenroot.PathStr(path)).
 		Set("parsed_at", time.Now().UTC().Format("2006-01-02T15:04:05Z")).Set("episodes", episodes)
 	var text string
 	if p.flag("--json") {
@@ -351,7 +359,7 @@ func (e *Env) journalParse(args []string) error {
 	if err := os.WriteFile(output, []byte(text), 0o666); err != nil {
 		return e.failPy(cmd, err)
 	}
-	e.out("Parsed %d episodes to %s\n", len(eps), gateroot.PathStr(output))
+	e.out("Parsed %d episodes to %s\n", len(eps), wardenroot.PathStr(output))
 	return nil
 }
 
@@ -458,7 +466,7 @@ func (e *Env) journalIngest(args []string) error {
 	dataDir := e.dataDir(p)
 	decompose := p.flag("--allow-shell-decomposition")
 	if !p.flagSet("--allow-shell-decomposition") {
-		cfg, err := config.Load(gateroot.Join(dataDir, "config.yaml"))
+		cfg, err := config.Load(wardenroot.Join(dataDir, "config.yaml"))
 		if err != nil {
 			return e.configLoadErr(cmd, err)
 		}
@@ -470,7 +478,7 @@ func (e *Env) journalIngest(args []string) error {
 	// Everything is worked out before the first write, so input this
 	// binary cannot journal the way Python does changes nothing. A trace
 	// already ingested is found by its YAML body, as load_trace finds it.
-	traces := &tracejournal.Journal{TracesDir: gateroot.Join(dataDir, "journal/traces")}
+	traces := &tracejournal.Journal{TracesDir: wardenroot.Join(dataDir, "journal/traces")}
 	items := make([]*ingestItem, 0, len(episodes))
 	for _, x := range episodes {
 		ep := x.(*pyjson.Object)
@@ -668,7 +676,7 @@ func (e *Env) ingestReport(items []*ingestItem, path string, dry, asJSON bool) e
 		if dry {
 			verb, note, pass, fail = "Previewed", " (dry run — nothing written)", "would pass", "would fail"
 		}
-		name := gateroot.PathStr(path)
+		name := wardenroot.PathStr(path)
 		if i := strings.LastIndexByte(name, '/'); i >= 0 {
 			name = name[i+1:]
 		}

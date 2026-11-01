@@ -277,7 +277,7 @@ def test_resize_is_a_documented_no_op(tmux_backend, tmp_path):
     assert "tmux owns the layout" in TmuxBackend.resize.__doc__
 
 
-# --- state: skip, no-match, gate precedence -- no live pane needed ----------
+# --- state: skip, no-match, warden precedence -- no live pane needed ----------
 
 
 def test_a_skip_rule_leaves_the_previous_state_in_place(tmp_path):
@@ -329,8 +329,8 @@ def test_a_true_no_match_also_leaves_the_previous_state_in_place(tmp_path):
     assert second is first, "an unmatched screen must not erase the last real state"
 
 
-def test_a_stale_gate_snapshot_does_not_reclaim_a_pane_the_manifest_already_moved_past(tmp_path):
-    """gate_states() may keep handing back the SAME already-resolved event forever;
+def test_a_stale_warden_snapshot_does_not_reclaim_a_pane_the_manifest_already_moved_past(tmp_path):
+    """warden_states() may keep handing back the SAME already-resolved event forever;
     the caller supplying it is not obliged to prune its own snapshot. Re-merging
     that one fact on every poll must not flip a pane back to blocked once the
     manifest has moved it on.
@@ -345,25 +345,25 @@ def test_a_stale_gate_snapshot_does_not_reclaim_a_pane_the_manifest_already_move
         session_id="s",
         harness="sleep",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=time.time() - 200.0,
         pane="%9",
         ask=Ask(id="a1", tool="Bash", summary="run it", deadline=old_deadline),
     )
     backend = TmuxBackend(
-        socket=SOCKET, manifest_dirs=[manifest_dir], gate_states=lambda: {"%9": stale}
+        socket=SOCKET, manifest_dirs=[manifest_dir], warden_states=lambda: {"%9": stale}
     )
     screens = iter(["BUSY", "quiet", "quiet"])
     backend.read = lambda ref, source="visible": next(screens)
     ref = PaneRef(backend="tmux", id="%9")
-    gate = {"%9": stale}
+    warden = {"%9": stale}
 
-    first = backend._state_for(ref, "sleep", "", gate, time.time())
-    assert first.state == "working", "an already-expired gate hold must yield to fresh evidence"
+    first = backend._state_for(ref, "sleep", "", warden, time.time())
+    assert first.state == "working", "an already-expired warden hold must yield to fresh evidence"
 
-    second = backend._state_for(ref, "sleep", "", gate, time.time())
+    second = backend._state_for(ref, "sleep", "", warden, time.time())
     assert second.state == "working", (
-        "re-merging the same stale gate snapshot must not reclaim a pane the manifest left"
+        "re-merging the same stale warden snapshot must not reclaim a pane the manifest left"
     )
 
 
@@ -393,13 +393,13 @@ def test_a_cached_state_for_a_vanished_pane_id_is_evicted_but_a_live_one_is_kept
         pane=ghost,
         detail="rule=busy region=whole_recent",
     )
-    tmux_backend._gate_seen[ghost] = time.time()
+    tmux_backend._warden_seen[ghost] = time.time()
 
     tmux_backend.list()
 
     assert ref.id in tmux_backend._current
     assert ghost not in tmux_backend._current
-    assert ghost not in tmux_backend._gate_seen
+    assert ghost not in tmux_backend._warden_seen
 
 
 def test_the_pane_title_reaches_the_manifest_as_the_osc_title_region(tmux_backend, tmp_path):
@@ -428,8 +428,8 @@ def test_the_pane_title_reaches_the_manifest_as_the_osc_title_region(tmux_backen
     assert info is not None and info.state is not None and info.state.state == "working"
 
 
-def test_a_gate_event_still_outranks_a_matching_manifest_within_the_hold(tmp_path):
-    """master §5.1: a gate fact outranks a screen guess. A live, unexpired gate
+def test_a_warden_event_still_outranks_a_matching_manifest_within_the_hold(tmp_path):
+    """master §5.1: a warden fact outranks a screen guess. A live, unexpired warden
     'blocked' hold must not be shouldered aside by a manifest match the same tick.
     """
     manifest_dir = tmp_path / "manifests"
@@ -441,19 +441,19 @@ def test_a_gate_event_still_outranks_a_matching_manifest_within_the_hold(tmp_pat
         session_id="s",
         harness="sleep",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=time.time(),
         pane="%9",
         ask=Ask(id="a1", tool="Bash", summary="run it", deadline=time.time() + 3600),
     )
     backend = TmuxBackend(
-        socket=SOCKET, manifest_dirs=[manifest_dir], gate_states=lambda: {"%9": ev}
+        socket=SOCKET, manifest_dirs=[manifest_dir], warden_states=lambda: {"%9": ev}
     )
     backend.read = lambda ref, source="visible": "BUSY"
     ref = PaneRef(backend="tmux", id="%9")
 
     result = backend._state_for(ref, "sleep", "", {"%9": ev}, time.time())
-    assert result.state == "blocked" and result.source == "gate"
+    assert result.state == "blocked" and result.source == "warden"
 
 
 # --- subscribe(): a pane already pane_dead before subscribe() ever polls it --

@@ -49,7 +49,7 @@ func (c *Compiled) Evaluate(in Input) Result {
 	best := -1
 	for i, rule := range c.Manifest.Rules {
 		text := Region(in, rule.Region)
-		matched := gateMatches(&c.gates[i], text, strings.ToLower(text))
+		matched := conditionMatches(&c.conditions[i], text, strings.ToLower(text))
 		res.Evaluated = append(res.Evaluated, Evaluated{
 			ID: rule.ID, Priority: rule.Priority, Region: rule.Region,
 			State: rule.EffectiveState(), Matched: matched,
@@ -80,7 +80,7 @@ func (c *Compiled) Evaluate(in Input) Result {
 	return res
 }
 
-func gateMatches(g *compiledGate, text, lower string) bool {
+func conditionMatches(g *compiledCondition, text, lower string) bool {
 	for _, needle := range g.contains {
 		if !strings.Contains(lower, needle) {
 			return false
@@ -107,14 +107,14 @@ func gateMatches(g *compiledGate, text, lower string) bool {
 		}
 	}
 	for i := range g.all {
-		if !gateMatches(&g.all[i], text, lower) {
+		if !conditionMatches(&g.all[i], text, lower) {
 			return false
 		}
 	}
 	if len(g.any) > 0 {
 		hit := false
 		for i := range g.any {
-			if gateMatches(&g.any[i], text, lower) {
+			if conditionMatches(&g.any[i], text, lower) {
 				hit = true
 				break
 			}
@@ -124,7 +124,7 @@ func gateMatches(g *compiledGate, text, lower string) bool {
 		}
 	}
 	for i := range g.not {
-		if gateMatches(&g.not[i], text, lower) {
+		if conditionMatches(&g.not[i], text, lower) {
 			return false
 		}
 	}

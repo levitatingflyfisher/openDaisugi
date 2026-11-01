@@ -3,7 +3,7 @@
 Four steps, each reported as done / skipped / failed / would. Idempotent: run
 it twice and the second run skips what the first did. Never spends tokens.
 
-The gate hook this installs is scoped to ``cwd`` — ``<cwd>/.claude/settings.json``,
+The warden hook this installs is scoped to ``cwd`` — ``<cwd>/.claude/settings.json``,
 never ``~/.claude/settings.json`` — and the envelope it registers is keyed to
 ``cwd`` too (not the shared ``default`` envelope). A machine-global hook whose
 only envelope belonged to one project would deny every other project's
@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,12 +42,12 @@ class StartOptions:
     enforce: bool = False
     ask: bool = False
     no_ui: bool = False
-    # How long to wait for the resident gate's socket to appear before
-    # reporting the gate-server step "failed" instead of "done" (B-4: never
+    # How long to wait for the resident warden's socket to appear before
+    # reporting the warden-server step "failed" instead of "done" (B-4: never
     # claim a daemon is up without seeing its socket).
     server_wait_s: float = 2.0
     # Only used to check for a pre-existing machine-global hook (`daisugi
-    # install --gate` writes here) so the hook step can say so honestly —
+    # install` writes here) so the hook step can say so honestly —
     # start itself never reads or writes under home.
     home: Path = field(default_factory=Path.home)
     # Looked up at call time (not captured at import) so tests can patch shutil.which.
@@ -67,9 +68,9 @@ def _detach(argv: list[str]) -> None:
 def _session_key(cwd: Path) -> str:
     """A filename-safe, human-greppable id for this directory's envelope/hook.
 
-    Sanitized with the same charset ``gate._safe_session_id`` allows, so
+    Sanitized with the same charset ``warden._safe_session_id`` allows, so
     passing it through that sanitizer again downstream (which both
-    ``register_envelope`` and the gate's own session lookup do) is a no-op —
+    ``register_envelope`` and the warden's own session lookup do) is a no-op —
     the file this writes and the file a live session looks up are guaranteed
     to be the same path.
 
@@ -83,7 +84,7 @@ def _session_key(cwd: Path) -> str:
     Claude uuid is preserved on the tree header's ``harnessSessionId`` so the
     TUI's attach resumes the right session (``cockpit.SessionRow.harness_session_id``);
     a follow-on will give ``start`` per-session trees under one project envelope.
-    ``daisugi install --gate`` is unaffected — it passes no ``--session``, so its
+    ``daisugi install`` is unaffected — it passes no ``--session``, so its
     trees are keyed by the real uuid, one per session.
     """
     resolved = Path(cwd).resolve()
@@ -104,14 +105,43 @@ def _view_step(opts: StartOptions) -> StartStep:
     return StartStep("view", "skipped" if opts.no_ui else "would", text)
 
 
+def _step_up_note(opts: StartOptions, settings_path: Path, root: Path, session_key: str, act: bool):
+    """The one-line note when `start --enforce` over an audit hook rewrites it
+    to enforce in place (as `daisugi install --enforce` does), else None. A dry
+    run tries the same on a copy and writes nothing. Never steps down."""
+    import shutil
+    import tempfile
+
+    from opendaisugi import install as _inst
+
+    def attempt(path: Path) -> str | None:
+        _inst._WARDEN_NOTES.clear()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            _inst._patch_claude_warden(
+                path, enforce=True, ask=opts.ask, root=root, session=session_key
+            )
+        notes = [n for n in _inst._WARDEN_NOTES if "now runs in enforce mode" in n]
+        _inst._WARDEN_NOTES.clear()
+        return notes[0] if notes else None
+
+    if act:
+        return attempt(settings_path)
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "settings.json"
+        shutil.copy(settings_path, copy)
+        note = attempt(copy)
+    return note.replace(str(copy), str(settings_path)) if note else None
+
+
 def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
     from opendaisugi.config import installed_hook_mode
-    from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
-    from opendaisugi.gate_server import SOCK_NAME, probe
-    from opendaisugi.install import _patch_claude_gate
+    from opendaisugi.install import _absolute_warden_root, _patch_claude_warden
+    from opendaisugi.warden import _envelopes_dir, register_envelope, starter_envelope
+    from opendaisugi.warden_server import SOCK_NAME, probe
 
     out: list[StartStep] = []
-    root = opts.data_dir / "gate"
+    root = opts.data_dir / "warden"
     mode = "enforce" if opts.enforce else "audit"
     settings_path = opts.cwd / ".claude" / "settings.json"
     session_key = _session_key(opts.cwd)
@@ -136,9 +166,13 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         out.append(
             StartStep("envelope", "skipped", "no harness session to register an envelope for")
         )
-        out.append(StartStep("gate-server", "skipped", "no harness session needs it yet"))
+        out.append(StartStep("warden-server", "skipped", "no harness session needs it yet"))
         out.append(_view_step(opts))
         return out
+
+    # The hook bakes the warden root; a relative one is refused before any
+    # write, in a dry run too (a plan must not promise a hook it cannot write).
+    _absolute_warden_root(root)
 
     global_settings_path = opts.home / ".claude" / "settings.json"
     global_note = ""
@@ -146,15 +180,23 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         global_mode = installed_hook_mode(global_settings_path)
         if global_mode:
             global_note = (
-                f" (note: a machine-global gate hook is ALSO installed at "
-                f"{global_settings_path}, mode: {global_mode} — `daisugi install --gate` "
+                f" (note: a machine-global warden hook is ALSO installed at "
+                f"{global_settings_path}, mode: {global_mode} — `daisugi install` "
                 f"put it there; it fires on every directory's sessions, including this one)"
             )
 
     installed = installed_hook_mode(settings_path)
-    if installed:
+    stepped_note = (
+        _step_up_note(opts, settings_path, root, session_key, act)
+        if installed == "audit" and mode == "enforce"
+        else None
+    )
+    if stepped_note:
+        text = stepped_note if act else f"would change the warden hook: {stepped_note}"
+        out.append(StartStep("hook", "done" if act else "would", f"{text}{global_note}"))
+    elif installed:
         change_hint = (
-            f"; it's already {installed} — to switch to {mode}, remove the gate hook line "
+            f"; it's already {installed} — to switch to {mode}, remove the warden hook line "
             f"from {settings_path} and run `daisugi start` again"
             if installed != mode
             else ""
@@ -163,23 +205,23 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
             StartStep(
                 "hook",
                 "skipped",
-                f"a gate hook is already installed in {settings_path} "
+                f"a warden hook is already installed in {settings_path} "
                 f"(mode: {installed}, this directory only){change_hint}{global_note}",
             )
         )
     elif act:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        _patch_claude_gate(
+        _patch_claude_warden(
             settings_path, enforce=opts.enforce, ask=opts.ask, root=root, session=session_key
         )
         out.append(
             StartStep(
                 "hook",
                 "done",
-                f"installed the gate hook in {mode} mode into {settings_path} "
+                f"installed the warden hook in {mode} mode into {settings_path} "
                 f"(this directory only){global_note} — a project-settings hook needs Claude "
                 f"Code to trust this folder before it fires; confirm it did with "
-                f"`daisugi gate report`",
+                f"`daisugi warden report`",
             )
         )
     else:
@@ -187,7 +229,7 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
             StartStep(
                 "hook",
                 "would",
-                f"install the gate hook in {mode} mode into {settings_path} "
+                f"install the warden hook in {mode} mode into {settings_path} "
                 f"(this directory only){global_note}",
             )
         )
@@ -213,12 +255,12 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         out.append(StartStep("envelope", "would", f"register a starter envelope for {opts.cwd}"))
 
     sock = root / SOCK_NAME
-    # A socket file is not a running gate: a server stopped by SIGKILL (or
+    # A socket file is not a running warden: a server stopped by SIGKILL (or
     # an older one stopped by Ctrl-C) leaves it behind. Only one that
     # answers is.
     state = probe(sock)
     if state == "live":
-        out.append(StartStep("gate-server", "skipped", "the resident gate is already running"))
+        out.append(StartStep("warden-server", "skipped", "the resident warden is already running"))
     elif act:
         if state == "stale":
             try:
@@ -226,13 +268,13 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
             except OSError:
                 pass
         # The first server wins, so start fixes the same captures root the
-        # fence gives its server, <gate root>/captures (FN-R-32, FN-R-35).
+        # fence gives its server, <warden root>/captures (FN-R-32, FN-R-35).
         opts.spawn(
             [
                 sys.executable,
                 "-m",
                 "opendaisugi.cli",
-                "gate",
+                "warden",
                 "serve",
                 "--root",
                 str(root),
@@ -244,20 +286,20 @@ def _steps(opts: StartOptions, *, act: bool) -> list[StartStep]:
         while not sock.exists() and time.monotonic() - t0 < opts.server_wait_s:
             time.sleep(0.05)
         if sock.exists():
-            out.append(StartStep("gate-server", "done", f"started the resident gate on {sock}"))
+            out.append(StartStep("warden-server", "done", f"started the resident warden on {sock}"))
         else:
             out.append(
                 StartStep(
-                    "gate-server",
+                    "warden-server",
                     "failed",
-                    f"started `daisugi gate serve` but {sock} never appeared after "
-                    f"{opts.server_wait_s:.0f}s. Run `daisugi gate serve --root {root}` "
+                    f"started `daisugi warden serve` but {sock} never appeared after "
+                    f"{opts.server_wait_s:.0f}s. Run `daisugi warden serve --root {root}` "
                     f"in a terminal to see why it exited.",
                 )
             )
     else:
         out.append(
-            StartStep("gate-server", "would", "start the resident gate (daisugi gate serve)")
+            StartStep("warden-server", "would", "start the resident warden (daisugi warden serve)")
         )
 
     out.append(_view_step(opts))

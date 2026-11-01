@@ -10,13 +10,18 @@
 use std::collections::BTreeMap;
 
 use crate::cli::yaml::{Kind, Node};
-use crate::gate::pyjson::{canonical_json_ascii, loads_py, Object, Value};
+use crate::warden::pyjson::{canonical_json_ascii, loads_py, Object, Value};
 
 /// The built-in profile's name.
 pub const DEFAULT: &str = "default";
 /// The wires a profile may name.
 pub const WIRES: &[&str] = &["claude-code", "anthropic", "openai"];
-const FIELDS: &[&str] = &["wire", "base_url", "model", "key_env"];
+const FIELDS: &[&str] = &["wire", "base_url", "model", "key_env", "max_tokens", "timeout_s", "thinking"];
+/// `agent_profiles.MAX_TOKENS_LIMIT`.
+pub const MAX_TOKENS_LIMIT: usize = 1_000_000;
+/// `agent_profiles.TIMEOUT_LIMIT`: the most seconds a profile may let one
+/// pando summary call take.
+pub const TIMEOUT_LIMIT: usize = 86_400;
 
 /// The server a wire talks to when the profile names none.
 pub fn default_base(wire: &str) -> &'static str {
@@ -69,6 +74,30 @@ pub struct Profile {
     pub model: Option<String>,
     pub key_env: Option<String>,
     pub key: Option<String>,
+    /// The most tokens one pando summary call may produce; None for the
+    /// summarizer's default. Only pando reads it, and the bundle does not
+    /// carry it.
+    pub max_tokens: Option<usize>,
+    /// The most seconds one pando summary call may take; None for the
+    /// summarizer's default (120). Only pando reads it, and the bundle does
+    /// not carry it.
+    pub timeout_s: Option<usize>,
+    /// off, low, medium or high; None leaves the server's default. Only
+    /// pando reads it, and the bundle does not carry it.
+    pub thinking: Option<String>,
+}
+
+/// The values a profile's `thinking` may take.
+pub const THINKING: &[&str] = &["off", "low", "medium", "high"];
+
+/// A thinking value. YAML 1.1 reads a bare off as false, so false counts as
+/// off.
+fn thinking_of(v: &Node) -> Option<String> {
+    match v.kind {
+        Kind::Bool if !v.b => Some("off".into()),
+        Kind::Str if THINKING.contains(&v.text.as_str()) => Some(v.text.clone()),
+        _ => None,
+    }
 }
 
 /// The built-in profile.
@@ -256,7 +285,31 @@ fn check(name: &str, doc: &Node) -> Option<String> {
             return Some("key_env must be a variable name".into());
         }
     }
+    let max_tokens = doc.map.get("max_tokens").filter(|v| v.kind != Kind::Null);
+    if let Some(v) = max_tokens {
+        if max_tokens_of(v).is_none() {
+            return Some(format!(
+                "max_tokens must be a whole number from 1 to {MAX_TOKENS_LIMIT}"
+            ));
+        }
+    }
+    if let Some(v) = doc.map.get("timeout_s").filter(|v| v.kind != Kind::Null) {
+        if timeout_s_of(v).is_none() {
+            return Some(format!(
+                "timeout_s must be a whole number from 1 to {TIMEOUT_LIMIT}"
+            ));
+        }
+    }
+    let thinking = doc.map.get("thinking").filter(|v| v.kind != Kind::Null);
+    if let Some(v) = thinking {
+        if thinking_of(v).is_none() {
+            return Some("thinking must be off, low, medium or high".into());
+        }
+    }
     if wire == "claude-code" {
+        if thinking.is_some() {
+            return Some("the claude-code wire takes no thinking".into());
+        }
         if doc
             .map
             .get("base_url")
@@ -267,8 +320,34 @@ fn check(name: &str, doc: &Node) -> Option<String> {
         if doc.map.get("key_env").is_some_and(|v| v.kind != Kind::Null) {
             return Some("the claude-code wire takes no key_env".into());
         }
+        if max_tokens.is_some() {
+            return Some("the claude-code wire takes no max_tokens".into());
+        }
     }
     None
+}
+
+/// A timeout_s value: a whole number from 1 to `TIMEOUT_LIMIT`.
+fn timeout_s_of(v: &Node) -> Option<usize> {
+    if v.kind != Kind::Int {
+        return None;
+    }
+    v.text
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=TIMEOUT_LIMIT).contains(n))
+}
+
+/// A max_tokens value: a whole number from 1 to `MAX_TOKENS_LIMIT`. A bool,
+/// a float and text are not one.
+fn max_tokens_of(v: &Node) -> Option<usize> {
+    if v.kind != Kind::Int {
+        return None;
+    }
+    v.text
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=MAX_TOKENS_LIMIT).contains(n))
 }
 
 /// `agent_profiles.resolve`: read the table raw (None for none) and each
@@ -300,6 +379,9 @@ pub fn resolve(raw: Option<&Node>, lookup: &dyn Fn(&str) -> Option<String>) -> P
                 model: get("model"),
                 key_env,
                 key,
+                max_tokens: doc.map.get("max_tokens").and_then(max_tokens_of),
+                timeout_s: doc.map.get("timeout_s").and_then(timeout_s_of),
+                thinking: doc.map.get("thinking").and_then(thinking_of),
             },
         );
     }
@@ -334,6 +416,9 @@ pub fn from_bundle(data: &[u8]) -> Profiles {
                 model: s("model"),
                 key_env: s("key_env"),
                 key: s("key"),
+                max_tokens: None,
+                timeout_s: None,
+                thinking: None,
             },
         );
     }
@@ -388,5 +473,59 @@ mod tests {
         assert!(String::from_utf8(ps.bundle()).unwrap().starts_with(
             r#"{"default":{"base_url":null,"key":null,"key_env":null,"model":null,"wire":"claude-code"},"local":"#
         ));
+    }
+
+    const MAX_TOKENS: &str = "agent_profiles:\n  big: {wire: openai, max_tokens: 4096}\n  none: {wire: anthropic, max_tokens: null}\n  plain: {wire: openai}\n  top: {wire: openai, max_tokens: 1000000}\n  zero: {wire: openai, max_tokens: 0}\n  neg: {wire: openai, max_tokens: -5}\n  text: {wire: openai, max_tokens: '400'}\n  flag: {wire: openai, max_tokens: true}\n  half: {wire: openai, max_tokens: 1.5}\n  huge: {wire: openai, max_tokens: 1000001}\n  cc: {wire: claude-code, max_tokens: 400}\n";
+
+    #[test]
+    fn max_tokens_follows_the_oracle() {
+        let t = crate::cli::yaml::parse(MAX_TOKENS).unwrap().map["agent_profiles"].clone();
+        let ps = resolve(Some(&t), &|_| None);
+        let bad = "max_tokens must be a whole number from 1 to 1000000";
+        for n in ["zero", "neg", "text", "flag", "half", "huge"] {
+            assert_eq!(ps.invalid[n], bad, "{n}");
+        }
+        assert_eq!(ps.invalid["cc"], "the claude-code wire takes no max_tokens");
+        assert_eq!(ps.valid["big"].max_tokens, Some(4096));
+        assert_eq!(ps.valid["top"].max_tokens, Some(1_000_000));
+        assert_eq!(ps.valid["none"].max_tokens, None);
+        assert_eq!(ps.valid["plain"].max_tokens, None);
+        assert!(!String::from_utf8(ps.bundle()).unwrap().contains("max_tokens"));
+    }
+
+    const TIMEOUT: &str = "agent_profiles:\n  slow: {wire: openai, timeout_s: 240}\n  none: {wire: anthropic, timeout_s: null}\n  plain: {wire: openai}\n  top: {wire: openai, timeout_s: 86400}\n  zero: {wire: openai, timeout_s: 0}\n  neg: {wire: openai, timeout_s: -5}\n  text: {wire: openai, timeout_s: '400'}\n  flag: {wire: openai, timeout_s: true}\n  half: {wire: openai, timeout_s: 1.5}\n  huge: {wire: openai, timeout_s: 86401}\n  cc: {wire: claude-code, timeout_s: 300}\n  cczero: {wire: claude-code, timeout_s: 0}\n";
+
+    const THINKING_TABLE: &str = "agent_profiles:\n  a: {wire: openai, thinking: off}\n  b: {wire: anthropic, thinking: high}\n  c: {wire: openai, thinking: null}\n  d: {wire: openai}\n  e: {wire: openai, thinking: none}\n  f: {wire: openai, thinking: true}\n  g: {wire: openai, thinking: 3}\n  h: {wire: openai, thinking: High}\n  cc: {wire: claude-code, thinking: off}\n";
+
+    #[test]
+    fn thinking_follows_the_oracle() {
+        let t = crate::cli::yaml::parse(THINKING_TABLE).unwrap().map["agent_profiles"].clone();
+        let ps = resolve(Some(&t), &|_| None);
+        let bad = "thinking must be off, low, medium or high";
+        for n in ["e", "f", "g", "h"] {
+            assert_eq!(ps.invalid[n], bad, "{n}");
+        }
+        assert_eq!(ps.invalid["cc"], "the claude-code wire takes no thinking");
+        assert_eq!(ps.valid["a"].thinking.as_deref(), Some("off"));
+        assert_eq!(ps.valid["b"].thinking.as_deref(), Some("high"));
+        assert_eq!(ps.valid["c"].thinking, None);
+        assert_eq!(ps.valid["d"].thinking, None);
+        assert!(!String::from_utf8(ps.bundle()).unwrap().contains("thinking"));
+    }
+
+    #[test]
+    fn timeout_s_follows_the_oracle() {
+        let t = crate::cli::yaml::parse(TIMEOUT).unwrap().map["agent_profiles"].clone();
+        let ps = resolve(Some(&t), &|_| None);
+        let bad = "timeout_s must be a whole number from 1 to 86400";
+        for n in ["zero", "neg", "text", "flag", "half", "huge", "cczero"] {
+            assert_eq!(ps.invalid[n], bad, "{n}");
+        }
+        assert_eq!(ps.valid["slow"].timeout_s, Some(240));
+        assert_eq!(ps.valid["top"].timeout_s, Some(86_400));
+        assert_eq!(ps.valid["cc"].timeout_s, Some(300));
+        assert_eq!(ps.valid["none"].timeout_s, None);
+        assert_eq!(ps.valid["plain"].timeout_s, None);
+        assert!(!String::from_utf8(ps.bundle()).unwrap().contains("timeout_s"));
     }
 }

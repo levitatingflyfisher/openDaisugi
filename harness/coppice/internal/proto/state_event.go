@@ -22,7 +22,7 @@ const (
 // state is reserved for a headless pane whose event stream failed to parse.
 const (
 	SrcOperator = "operator"
-	SrcGate     = "gate"
+	SrcWarden   = "warden"
 	SrcHeadless = "headless"
 	SrcProcess  = "process"
 	SrcManifest = "manifest"
@@ -36,9 +36,9 @@ var validStates = map[string]bool{
 }
 
 // sourceRanks encodes the precedence in master spec 3.1:
-// operator > gate > headless > process > manifest.
+// operator > warden > headless > process > manifest.
 var sourceRanks = map[string]int{
-	SrcOperator: 5, SrcGate: 4, SrcHeadless: 3, SrcProcess: 2, SrcManifest: 1,
+	SrcOperator: 5, SrcWarden: 4, SrcHeadless: 3, SrcProcess: 2, SrcManifest: 1,
 }
 
 // SourceRank is 0 for anything not in the enum, so an unknown source can never
@@ -60,7 +60,7 @@ type Ask struct {
 	Deadline float64 `json:"deadline"`
 	Tier     string  `json:"tier"`
 	// Holder is HolderHarness when a headless harness holds the ask itself,
-	// so the gate cannot answer it and only agent.allow and agent.deny
+	// so the warden cannot answer it and only agent.allow and agent.deny
 	// can. Only the server sets it.
 	Holder string `json:"holder,omitempty"`
 }
@@ -112,10 +112,10 @@ func (e PaneStateEvent) Validate() error {
 		return fmt.Errorf("state %q is not one of idle working blocked done unknown", e.State)
 	}
 	if SourceRank(e.Source) == 0 {
-		return fmt.Errorf("source %q is not one of operator gate headless process manifest", e.Source)
+		return fmt.Errorf("source %q is not one of operator warden headless process manifest", e.Source)
 	}
 	// Master spec 3.1, amended 2026-09-09: done may only come from process
-	// or headless. A gate- or operator-sourced done would show a live agent
+	// or headless. A warden- or operator-sourced done would show a live agent
 	// as finished, so every other source is barred, not only manifest.
 	// Matches opendaisugi.floor.events.PaneStateEvent.__post_init__:
 	//   if self.state == "done" and self.source not in ("process", "headless"):
@@ -134,8 +134,8 @@ func (e PaneStateEvent) Validate() error {
 	if e.Ask != nil {
 		e.Ask.Tier = NormalTier(e.Ask.Tier)
 	}
-	if e.Source == SrcGate && e.State == StateBlocked && e.Ask == nil {
-		return fmt.Errorf("a gate blocked event must carry the ask it is holding")
+	if e.Source == SrcWarden && e.State == StateBlocked && e.Ask == nil {
+		return fmt.Errorf("a warden blocked event must carry the ask it is holding")
 	}
 	if e.Who != nil && e.Source != SrcOperator {
 		return fmt.Errorf("who is only valid on an operator event, source is %q", e.Source)

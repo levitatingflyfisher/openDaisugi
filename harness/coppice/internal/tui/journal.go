@@ -10,7 +10,7 @@ import (
 
 // journalTitle heads the journal: what it lists, in the words the web
 // page uses.
-const journalTitle = "Journal · the verdicts the gate and each agent's loop report, newest first. 100 per agent, 500 in all, oldest first"
+const journalTitle = "Journal · the verdicts the warden and each agent's loop report, newest first. 100 per agent, 500 in all, oldest first"
 
 // JournalRow is one verdict from floor.journal.
 type JournalRow struct {
@@ -102,7 +102,7 @@ func journalLines(m *Model, cols, height int) []string {
 	case v.Err != "":
 		lines = append(lines, sgrAmber+textwidth.Pad(textwidth.Truncate("The journal did not load: "+textwidth.Printable(v.Err, 0), cols), cols)+sgrReset)
 	case len(v.Rows) == 0:
-		lines = append(lines, textwidth.Pad("No gate verdicts yet.", cols))
+		lines = append(lines, textwidth.Pad("No warden verdicts yet.", cols))
 	}
 	for i := v.Top; i < len(v.Rows) && len(lines) < height; i++ {
 		r := v.Rows[i]

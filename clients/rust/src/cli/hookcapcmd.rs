@@ -6,16 +6,20 @@
 use super::autotendcmd::convert_capture;
 use super::config;
 use super::gardencmd::now_seconds;
-use super::gatecmds::DECOMPOSE_OPT;
-use super::gateroot::{join, path_str};
+use super::wardencmds::DECOMPOSE_OPT;
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Parsed, Res};
-use crate::capture::{list_sessions, stem, CapErr};
+use crate::capture::{list_sessions_in, stem, CapErr};
 use crate::distill::token_hex;
-use crate::gate::pyjson::{dumps, py_str, Object, Value};
+use crate::warden::pyjson::{dumps, py_str, Object, Value};
 use crate::shell_decompose::ShellParser;
 use crate::tracejournal::{iso_seconds, Journal};
 
-const CAPTURES_ROOT: Opt = Opt::val(&["--captures-root"], "PATH", "");
+pub(super) const CAPTURES_ROOT: Opt = Opt::val(
+    &["--captures-root"],
+    "PATH",
+    "Read this one directory only. Default: <data>/captures, then <data>/warden/captures.",
+);
 
 /// `format(s, "<n")` on a str: padded with spaces to n code points.
 fn ljust(s: &str, n: usize) -> String {
@@ -28,12 +32,13 @@ fn ljust(s: &str, n: usize) -> String {
 }
 
 impl Env {
-    /// The --captures-root value as pathlib prints it.
-    fn captures_root(&self, p: &Parsed) -> String {
+    /// The roots the journal feed reads: the one --captures-root names, or
+    /// the data dir's two (primary first).
+    pub(super) fn capture_roots(&self, p: &Parsed, data_dir: &str) -> Vec<String> {
         if p.has("--captures-root") {
-            return path_str(&p.str("--captures-root", ""));
+            return vec![path_str(&p.str("--captures-root", ""))];
         }
-        join(&self.data_home(), "captures")
+        vec![join(data_dir, "captures"), join(data_dir, "warden/captures")]
     }
 
     /// An exception Python does not catch ends the command: the class
@@ -47,12 +52,17 @@ impl Env {
     /// newest first.
     pub(super) fn hook_list(&mut self, args: &[String]) -> Res {
         const CMD: &str = "hook list";
-        let opts = [CAPTURES_ROOT, Opt::flag(&["--json"], "Machine-readable JSON output.")];
+        let opts = [
+            CAPTURES_ROOT,
+            Opt::val(&["--data-dir"], "PATH", ""),
+            Opt::flag(&["--json"], "Machine-readable JSON output."),
+        ];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
             return self.cmd_help(CMD, "", "List captured sessions with call counts.", &opts);
         }
-        let sessions = match list_sessions(&self.captures_root(&p)) {
+        let roots = self.capture_roots(&p, &self.data_dir_of(&p));
+        let sessions = match list_sessions_in(&roots) {
             Ok(s) => s,
             Err(CapErr::Raised(typ, msg)) => return self.py_raise(CMD, &typ, &msg),
             Err(e) => return Err(self.cap_err(CMD, e)),
@@ -66,7 +76,8 @@ impl Env {
                             .with("session_id", s.id.as_str())
                             .with("calls", Value::Int(s.calls.to_string()))
                             .with("first_at", s.first_at.clone())
-                            .with("last_at", s.last_at.clone()),
+                            .with("last_at", s.last_at.clone())
+                            .with("root", path_str(&s.root)),
                     )
                 })
                 .collect();
@@ -77,12 +88,14 @@ impl Env {
             self.out("(no captured sessions)\n");
             return Ok(());
         }
-        let mut b = format!("{}  {:>6}  last_at\n", ljust("session_id", 40), "calls");
+        let show_root = sessions.iter().map(|s| s.root.as_str()).collect::<std::collections::HashSet<_>>().len() > 1;
+        let mut b = format!("{}  {:>6}  last_at{}\n", ljust("session_id", 40), "calls", if show_root { "  root" } else { "" });
         for s in &sessions {
             let Ok(at) = py_str(&s.last_at) else {
                 return self.refuse(CMD, "a captured_at whose str() this binary does not write");
             };
-            b.push_str(&format!("{}  {:>6}  {at}\n", ljust(&s.id, 40), s.calls));
+            let root = if show_root { format!("  {}", path_str(&s.root)) } else { String::new() };
+            b.push_str(&format!("{}  {:>6}  {at}{root}\n", ljust(&s.id, 40), s.calls));
         }
         self.out(&b);
         Ok(())
@@ -107,13 +120,21 @@ impl Env {
         }
         let id = p.args[0].clone();
         let name = format!("{id}.jsonl");
-        let path =
-            if name.starts_with('/') { path_str(&name) } else { join(&self.captures_root(&p), &path_str(&name)) };
-        if std::fs::metadata(&path).is_err() {
-            self.errf(&format!("error: no capture at {path}\n"));
-            return exit(1);
-        }
         let data_dir = self.data_dir_of(&p);
+        let mut found: Option<String> = None;
+        let mut searched: Vec<String> = vec![];
+        for root in self.capture_roots(&p, &data_dir) {
+            let cand = if name.starts_with('/') { path_str(&name) } else { join(&root, &path_str(&name)) };
+            searched.push(cand.clone());
+            if std::fs::metadata(&cand).is_ok() {
+                found = Some(cand);
+                break;
+            }
+        }
+        let Some(path) = found else {
+            self.errf(&format!("error: no capture at {}\n", searched.join(", ")));
+            return exit(1);
+        };
         let mut decompose = p.flag("--allow-shell-decomposition");
         if !p.flag_set("--allow-shell-decomposition") {
             match config::load(&join(&data_dir, "config.yaml")) {

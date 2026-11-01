@@ -11,9 +11,9 @@ import (
 
 	"daisugi-verify/internal/config"
 	"daisugi-verify/internal/envgen"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var tiersHelp = `Usage: daisugi tiers [OPTIONS] COMMAND [ARGS]...
@@ -212,7 +212,10 @@ func (e *Env) tiersSetup(args []string) error {
 		{names: []string{"--data-dir"}, value: true, metavar: "PATH", help: "Daisugi data directory."},
 		{names: []string{"--endpoint"}, value: true, metavar: "TEXT", help: "OpenAI-compatible local /v1 URL to qualify (e.g. http://localhost:8080/v1)."},
 		{names: []string{"--remote"}, value: true, metavar: "TEXT", help: "host[:port] of a self-hosted model server to probe and record."},
-		{names: []string{"--kind"}, value: true, metavar: "TEXT", help: "auto | ollama | openai | anthropic. The wire --remote speaks."},
+		{names: []string{"--kind"}, value: true, metavar: "TEXT", help: "auto | ollama | openai | anthropic. The wire the host speaks. " +
+			"With --remote, auto probes in order and stops at the first that answers. " +
+			"With --endpoint, auto asks the server once whether it is Ollama; ollama and openai skip the question. " +
+			"An Ollama host gets reasoning_effort none, so a thinking model answers without thinking."},
 		{names: []string{"--context"}, value: true, metavar: "INTEGER", help: "Override the probed context window in tokens."},
 		{names: []string{"--model"}, value: true, metavar: "TEXT", help: "Model name served by --endpoint or --remote."},
 		{names: []string{"--threshold"}, value: true, metavar: "FLOAT", help: "Min valid-envelope pass rate to promote."},
@@ -242,14 +245,14 @@ func (e *Env) tiersSetup(args []string) error {
 			return e.usage(cmd, err)
 		}
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if p.has("--matcher") {
-		return e.setMatcher(cmd, gateroot.Join(dataDir, "config.yaml"), p.str("--matcher", ""))
+		return e.setMatcher(cmd, wardenroot.Join(dataDir, "config.yaml"), p.str("--matcher", ""))
 	}
 	endpoint, remote := p.str("--endpoint", ""), p.str("--remote", "")
 	if endpoint != "" && remote != "" {
 		return e.fail3("--endpoint and --remote are mutually exclusive.",
-			"--endpoint qualifies a local /v1 server against the envelope-generation gate. --remote probes "+
+			"--endpoint qualifies a local /v1 server against the envelope-generation warden. --remote probes "+
 				"and records a model host for your harness to point at.",
 			"run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].", 1)
 	}
@@ -271,6 +274,12 @@ func (e *Env) tiersSetup(args []string) error {
 		e.errf("--model is required with --endpoint (the model name the local server serves).\n")
 		return exit(2)
 	}
+	if endpoint != "" {
+		if k := p.str("--kind", "auto"); k != "auto" && k != "ollama" && k != "openai" {
+			e.errf("--kind %s does not apply to --endpoint: an endpoint speaks the OpenAI wire. Use --kind auto, ollama or openai.\n", pystr.Repr(k))
+			return exit(2)
+		}
+	}
 	h := e.detectHardware()
 	rec := recommend(h)
 	type probeOutcome struct{ task, outcome, reason string }
@@ -283,6 +292,7 @@ func (e *Env) tiersSetup(args []string) error {
 	}
 	var qual *qualification
 	wired := false
+	hostKind := ""
 	if endpoint != "" {
 		c := e.llmClient()
 		// An endpoint is an HTTP server. The claude-code backend ignores it,
@@ -294,8 +304,15 @@ func (e *Env) tiersSetup(args []string) error {
 		}
 		c.Pin("api")
 		base := endpoint
+		hostKind = p.str("--kind", "auto")
+		if hostKind == "auto" {
+			hostKind = e.newHostClient().endpointKind(strings.TrimSuffix(strings.TrimRight(endpoint, "/"), "/v1"))
+		}
 		t := envgen.NewTier1(model, &base, nil, "")
 		t.Timeout = envgen.QualifyTimeout
+		if hostKind == "ollama" {
+			t.ReasoningEffort = envgen.OllamaNoThinkEffort
+		}
 		if err := c.Check(t.Model); err != nil {
 			return e.refuse(cmd, err)
 		}
@@ -307,6 +324,9 @@ func (e *Env) tiersSetup(args []string) error {
 		total := len(probeTasks) * int(n)
 		e.note("qualifying %s at %s: %d probes, up to %d s each", model, endpoint, total,
 			int(envgen.QualifyTimeout.Seconds()))
+		if hostKind == "ollama" {
+			e.note("  host: ollama, thinking off (reasoning_effort none); pass --kind openai to send the request as is")
+		}
 		done := 0
 		for i := int64(0); i < n; i++ {
 			for _, task := range probeTasks {
@@ -337,7 +357,7 @@ func (e *Env) tiersSetup(args []string) error {
 			if err := os.MkdirAll(dataDir, 0o777); err != nil {
 				return e.failPy(cmd, err)
 			}
-			body := pyjson.DumpsIndent(pyjson.NewObject().Set("model", model).Set("base_url", endpoint), 2, true) + "\n"
+			body := pyjson.DumpsIndent(pyjson.NewObject().Set("model", model).Set("base_url", endpoint).Set("host_kind", hostKind), 2, true) + "\n"
 			if err := os.WriteFile(filepath.Join(dataDir, envgen.ConfigFile), []byte(body), 0o666); err != nil {
 				return e.failPy(cmd, err)
 			}
@@ -345,6 +365,10 @@ func (e *Env) tiersSetup(args []string) error {
 		}
 	}
 	budget := h.budget()
+	runtime := "llamafile"
+	if hostKind == "ollama" {
+		runtime = "ollama"
+	}
 	if p.flag("--json") {
 		var ram any
 		if h.ram != nil {
@@ -362,7 +386,7 @@ func (e *Env) tiersSetup(args []string) error {
 			}
 			q = pyjson.NewObject().Set("attempts", qual.attempts).Set("valid", qual.valid).
 				Set("pass_rate", floatAny(qual.rate)).Set("passed", qual.passed).Set("threshold", floatAny(threshold)).
-				Set("wired", wired).Set("outcomes", outs)
+				Set("wired", wired).Set("host_kind", hostKind).Set("outcomes", outs)
 			if qual.context != nil {
 				q.(*pyjson.Object).Set("context_window", int(*qual.context))
 			}
@@ -372,7 +396,7 @@ func (e *Env) tiersSetup(args []string) error {
 				Set("ram_gb", ram).Set("vram_gb", floatAny(h.vram)).Set("gpu_name", h.gpu).
 				Set("unified_memory", false).Set("model_budget_gb", floatAny(budget))).
 			Set("recommendation", pyjson.NewObject().Set("size_class", rec.size).Set("params_b_max", rec.params).
-				Set("quant", "Q4_K_M").Set("runtime", "llamafile").Set("est_download_gb", floatAny(rec.download)).
+				Set("quant", "Q4_K_M").Set("runtime", runtime).Set("est_download_gb", floatAny(rec.download)).
 				Set("candidate_families", fams).Set("provisional", true).Set("rationale", rec.rationale)).
 			Set("qualification", q)
 		e.out("%s\n", pyjson.DumpsIndent(payload, 2, true))
@@ -391,8 +415,8 @@ func (e *Env) tiersSetup(args []string) error {
 	}
 	e.out("%s\n", line)
 	e.out("Model budget: ~%sGB\n\n", pyjson.FloatRepr(budget))
-	e.out("Recommended: a %s-class instruct model at Q4_K_M via llamafile (~%sGB).\n", rec.size,
-		pyjson.FloatRepr(rec.download))
+	e.out("Recommended: a %s-class instruct model at Q4_K_M via %s (~%sGB).\n", rec.size,
+		runtime, pyjson.FloatRepr(rec.download))
 	e.out("  candidate families (your pick, none verified-best): %s\n", strings.Join(rec.families, ", "))
 	e.out("  %s\n\n", rec.rationale)
 	if qual == nil {
@@ -415,6 +439,13 @@ func (e *Env) tiersSetup(args []string) error {
 	if qual.context != nil {
 		e.out("  Context window: %d tokens (what the server serves).\n", *qual.context)
 	}
+	if hostKind != "" {
+		line := "  Host kind: " + hostKind
+		if hostKind == "ollama" {
+			line += " (thinking off: reasoning_effort none)"
+		}
+		e.out("%s\n", line)
+	}
 	if !qual.passed {
 		for _, o := range qual.outcomes {
 			if o.outcome != envgen.OutcomeValid {
@@ -423,12 +454,20 @@ func (e *Env) tiersSetup(args []string) error {
 			}
 		}
 	}
-	errored := 0
+	errored, failed, truncated := 0, 0, 0
 	for _, o := range qual.outcomes {
-		if o.outcome == envgen.OutcomeError {
+		switch o.outcome {
+		case envgen.OutcomeError:
 			errored++
+		case envgen.OutcomeValid:
+			continue
+		}
+		failed++
+		if o.outcome == envgen.OutcomeTruncated {
+			truncated++
 		}
 	}
+	allTruncated := qual.valid < qual.attempts && failed > 0 && truncated == failed
 	switch {
 	case wired:
 		e.out("  → Wired as Tier-1 in %s; `daisugi onboard`/`tend` will now defer to it.\n", dataDir)
@@ -438,6 +477,9 @@ func (e *Env) tiersSetup(args []string) error {
 		e.out("  → ALL attempts errored — this is a wiring problem, not model capacity. " +
 			"Check the server is reachable at --endpoint and serving /v1, and that " +
 			"--model matches the name it serves.\n")
+	case allTruncated:
+		e.out("  → Every failed probe was truncated: the model stops at the token limit before the envelope is complete. " +
+			"Turn thinking off at the server, or raise its output limit, then re-run.\n")
 	default:
 		e.out("  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately.\n")
 	}

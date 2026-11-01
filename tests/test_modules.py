@@ -52,7 +52,7 @@ def test_detect_stages_covers_the_pipeline(tmp_path):
     # The load-bearing stages of the pipeline must all appear.
     for k in (
         "harness",
-        "gate",
+        "warden",
         "verifier",
         "matcher",
         "router",
@@ -208,14 +208,14 @@ def test_an_unbuilt_verifier_client_is_possible_with_its_build_command(tmp_path,
     assert "cargo build" in by_name["rust"].note
 
 
-def test_a_client_that_answered_the_gate_under_this_data_dir_is_active(tmp_path, monkeypatch):
+def test_a_client_that_answered_the_warden_under_this_data_dir_is_active(tmp_path, monkeypatch):
     """The map reads the dispatch record from the data dir it describes, not
     from the operator's home."""
     from opendaisugi.bench import options
     from opendaisugi.verifier_dispatch import _record_dispatch
 
     monkeypatch.setattr(options, "client_is_built", lambda spec: True)
-    _record_dispatch(tmp_path / "gate", "go", True, "")
+    _record_dispatch(tmp_path / "warden", "go", True, "")
     verifier = next(s for s in detect_stages(tmp_path) if s.key == "verifier")
     by_name = {m.name: m for m in verifier.modules}
     assert by_name["go (mvdan)"].state == ACTIVE
@@ -250,14 +250,14 @@ def test_map_marks_live_cfg_planned(tmp_path):
             assert "[live]" in line  # the running code reads it now
         if line.startswith("┌─ verifier"):
             assert "[live]" in line  # dispatched per verify call
-        if line.startswith("┌─ gate"):
+        if line.startswith("┌─ warden"):
             assert "[cfg]" in line  # a real choice, needs reinstall
 
 
 def test_floor_stage_reports_herdr_and_coppice_honestly(tmp_path):
     # home=/which= isolate this from whatever the real developer box has
     # actually installed (whole-branch review, minor 4) — this repo's own
-    # workflow runs `daisugi install --gate --report herdr` for real, so a
+    # workflow runs `daisugi install --report herdr` for real, so a
     # bare detect_stages(tmp_path) would read the box's real
     # ~/.claude/settings.json instead of a clean fixture.
     stages = detect_stages(tmp_path, home=tmp_path / "home", which=lambda _: None)
@@ -539,12 +539,12 @@ def test_backend_stage_marks_the_api_backend_active(tmp_path, value):
     assert by_name["anthropic-api"].state == "active"
 
 
-# --- pi: the gate extension is a real, installable adapter row ---------------
+# --- pi: the warden extension is a real, installable adapter row ---------------
 
 
 def test_pi_harness_row_is_active_when_extension_installed(tmp_path, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    ext = tmp_path / ".pi" / "agent" / "extensions" / "daisugi-gate"
+    ext = tmp_path / ".pi" / "agent" / "extensions" / "daisugi-warden"
     ext.mkdir(parents=True)
     (ext / "index.ts").write_text("// installed")
     stages = detect_stages(tmp_path)
@@ -572,7 +572,7 @@ def test_pi_harness_row_is_possible_when_pi_not_detected(tmp_path, monkeypatch):
 
 def test_pi_rows_honor_the_home_parameter_over_path_home(tmp_path, monkeypatch):
     other = tmp_path / "other"
-    ext = other / ".pi" / "agent" / "extensions" / "daisugi-gate"
+    ext = other / ".pi" / "agent" / "extensions" / "daisugi-warden"
     ext.mkdir(parents=True)
     (ext / "index.ts").write_text("// installed")
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
@@ -581,19 +581,19 @@ def test_pi_rows_honor_the_home_parameter_over_path_home(tmp_path, monkeypatch):
     assert next(m for m in harness_stage.modules if m.name == "pi").state == ACTIVE
 
 
-def test_gate_stage_names_pis_in_process_enforcement_class(tmp_path, monkeypatch):
+def test_warden_stage_names_pis_in_process_enforcement_class(tmp_path, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    ext = tmp_path / ".pi" / "agent" / "extensions" / "daisugi-gate"
+    ext = tmp_path / ".pi" / "agent" / "extensions" / "daisugi-warden"
     ext.mkdir(parents=True)
     (ext / "index.ts").write_text("// installed")
     stages = detect_stages(tmp_path)
-    gate_stage = next(s for s in stages if s.key == "gate")
-    pi_gate = next(m for m in gate_stage.modules if "pi" in m.name)
-    assert pi_gate.state == ACTIVE
-    assert "exit-2" in pi_gate.note or "fail-open" in pi_gate.note
+    warden_stage = next(s for s in stages if s.key == "warden")
+    pi_warden = next(m for m in warden_stage.modules if "pi" in m.name)
+    assert pi_warden.state == ACTIVE
+    assert "exit-2" in pi_warden.note or "fail-open" in pi_warden.note
 
 
-# --- opencode: the gate plugin is an installable adapter row ------------------
+# --- opencode: the warden plugin is an installable adapter row ------------------
 
 
 def _oc_module(stages, stage_key: str, name: str):
@@ -616,15 +616,15 @@ def test_opencode_rows_follow_the_plugin_install_and_name_the_class(tmp_path, mo
     assert harness_row.state == ACTIVE
     assert "deny-only" in harness_row.note
     assert "fail-closed" in harness_row.note
-    gate_row = _oc_module(after, "gate", "opencode tool.execute.before, in-process")
-    assert gate_row.state == ACTIVE
-    assert "deny-only" in gate_row.note and "fail-closed" in gate_row.note
-    assert "ungated if the plugin fails to load" in gate_row.note
-    assert "Every ask is permanent" in gate_row.note
-    assert "apply_patch is checked path by path" in gate_row.note
-    assert "Outside coppice" in gate_row.note
-    assert "OPENCODE_CONFIG_DIR" in gate_row.note
-    assert ".opencode plugin and tool directories" in gate_row.note
+    warden_row = _oc_module(after, "warden", "opencode tool.execute.before, in-process")
+    assert warden_row.state == ACTIVE
+    assert "deny-only" in warden_row.note and "fail-closed" in warden_row.note
+    assert "ungated if the plugin fails to load" in warden_row.note
+    assert "Every ask is permanent" in warden_row.note
+    assert "apply_patch is checked path by path" in warden_row.note
+    assert "Outside coppice" in warden_row.note
+    assert "OPENCODE_CONFIG_DIR" in warden_row.note
+    assert ".opencode plugin and tool directories" in warden_row.note
 
 
 def test_opencode_row_is_available_when_opencode_is_on_path(tmp_path, monkeypatch):

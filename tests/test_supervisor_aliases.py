@@ -36,7 +36,11 @@ async def test_supervisor_forwards_aliases_to_verify(monkeypatch):
     sup = Supervisor(aliases=reg)
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["ls"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
     )
     await sup.run(plan, env)
     assert captured["aliases"] is reg

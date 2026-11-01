@@ -18,12 +18,15 @@ dependencies = [
     # at call time, and the lexical matcher (ADR-0019) needs it too — a zero-extra
     # `pip install opendaisugi` must still be able to distill pathways.
     "numpy>=1.26",
+    # The warden evaluates MCP rule regexes with RE2 (linear time, no
+    # backtracking), the engine Go `regexp` and Rust `regex` also implement.
+    "google-re2>=1.1.20251105,<2",
 ]
 
 [project.optional-dependencies]
 # The model client's HTTP backend (opendaisugi/llm_client.py): the Anthropic
 # Messages API and OpenAI-compatible chat completions (Ollama, llamafile, any
-# local server). The gate, verifier, CLI startup, and every coppice-invoked
+# local server). The warden, verifier, CLI startup, and every coppice-invoked
 # path never import it. Only a model call over HTTP does (envelope
 # generation, orchestrate, tend and distill on the API backend, llm_check,
 # episode splitting, voice cleanup), lazily. Absent, a call raises ImportError
@@ -48,7 +51,7 @@ dev = [
     "opendaisugi[mcp]",
     "opendaisugi[shell]",
     "opendaisugi[sign]",
-    "opendaisugi[gateway]",
+    "opendaisugi[router]",
     "opendaisugi[tui]",
     "opendaisugi[voice]",
     # The two torch-free matchers. tests/test_matcher_backend.py needs their
@@ -105,11 +108,11 @@ mcp = [
     # mcp_server.py uses. Lift the bound when the server moves to 2.x.
     "mcp>=1.27,<2",
 ]
-# v0.44: the token-saving gateway's async transport — an OpenAI/Anthropic-compatible proxy
+# v0.44: the token-saving router's async transport — an OpenAI/Anthropic-compatible proxy
 # any harness points at via base_url. Pure-Python (httpx); the ASGI app runs under any
 # ASGI server (uvicorn, hypercorn). Absent => the routing/meter/journal layer still imports
-# and works; only opendaisugi.gateway_asgi.make_gateway_app needs it.
-gateway = [
+# and works; only opendaisugi.router_asgi.make_router_app needs it.
+router = [
     "httpx>=0.27",
     "uvicorn>=0.30",
 ]
@@ -176,6 +179,7 @@ artifacts = [
     "src/opendaisugi/viz_dag_template.html",
     "src/opendaisugi/tui_web/*.html",
     "src/opendaisugi/model_catalog.json",
+    "src/opendaisugi/recipes/*.json",
     "src/opendaisugi/harness_pi/**/*",
     "src/opendaisugi/harness_opencode/**/*",
 ]

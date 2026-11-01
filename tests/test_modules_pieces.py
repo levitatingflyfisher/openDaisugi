@@ -17,14 +17,14 @@ def test_pieces_say_on_or_off_and_the_command_for_each(tmp_path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     pieces = {p.key: p for p in detect_pieces(tmp_path, home=home, which=lambda _n: None, env={})}
-    assert list(pieces) == ["gate", "gateway", "router", "memory", "floor", "loop"]
-    assert {p.state for p in pieces.values() if p.key != "router"} == {"off"}
-    assert pieces["router"].state == "off"  # no gateway, so no router
-    assert pieces["gate"].turn_on == "daisugi install --gate"
-    assert pieces["router"].turn_on.endswith("--router rules|switchyard|knn|model")
+    assert list(pieces) == ["warden", "router", "routing_mode", "memory", "floor", "loop"]
+    assert {p.state for p in pieces.values() if p.key != "routing_mode"} == {"off"}
+    assert pieces["routing_mode"].state == "off"  # no router, so no routing mode
+    assert pieces["warden"].turn_on == "daisugi install"
+    assert pieces["routing_mode"].turn_on.endswith("--routing-mode rules|switchyard|knn|model")
 
 
-def test_pieces_see_a_gate_hook_and_an_mcp_entry(tmp_path) -> None:
+def test_pieces_see_a_warden_hook_and_an_mcp_entry(tmp_path) -> None:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     (home / ".claude" / "settings.json").write_text(
@@ -33,11 +33,11 @@ def test_pieces_see_a_gate_hook_and_an_mcp_entry(tmp_path) -> None:
         )
     )
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"opendaisugi": {}}}))
-    save_config(Config(matcher_model="lexical", gateway_router="off"), tmp_path / "config.yaml")
+    save_config(Config(matcher_model="lexical", routing_mode="off"), tmp_path / "config.yaml")
     pieces = {p.key: p for p in detect_pieces(tmp_path, home=home, which=lambda _n: "/x", env={})}
-    assert pieces["gate"].state == "on" and "claude-code" in pieces["gate"].detail
+    assert pieces["warden"].state == "on" and "claude-code" in pieces["warden"].detail
     assert pieces["memory"].state == "on"
-    assert pieces["router"].state == "off"
+    assert pieces["routing_mode"].state == "off"
     assert pieces["loop"].state == "on"
 
 
@@ -47,9 +47,9 @@ def test_modules_pieces_is_read_only_and_prints_six_blocks(tmp_path) -> None:
     assert res.output.count("  on:   ") == 6 and res.output.count("  off:  ") == 6
     res = runner.invoke(app, ["modules", "--pieces", "--json", "--data-dir", str(tmp_path)])
     assert [p["key"] for p in json.loads(res.output)] == [
-        "gate",
-        "gateway",
+        "warden",
         "router",
+        "routing_mode",
         "memory",
         "floor",
         "loop",

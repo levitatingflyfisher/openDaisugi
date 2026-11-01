@@ -66,6 +66,10 @@ def _flag(argv, name):
 
 # --- the table -------------------------------------------------------------
 
+MAX_TOKENS_WHY = "max_tokens must be a whole number from 1 to 1000000"
+TIMEOUT_WHY = "timeout_s must be a whole number from 1 to 86400"
+THINKING_WHY = "thinking must be off, low, medium or high"
+
 
 def test_resolve_reads_valid_entries_and_says_why_others_are_not():
     p = agent_profiles.resolve({**TABLE, "default": {"wire": "openai"}, 5: {}}, ENV)
@@ -87,10 +91,81 @@ def test_resolve_reads_valid_entries_and_says_why_others_are_not():
         ({"wire": "openai", "key_env": "1X"}, "key_env must be a variable name"),
         ({"wire": "openai", "url": "x"}, "it has an unknown field url"),
         ("openai", "it is not a mapping"),
+        ({"wire": "openai", "max_tokens": 0}, MAX_TOKENS_WHY),
+        ({"wire": "openai", "max_tokens": -5}, MAX_TOKENS_WHY),
+        ({"wire": "openai", "max_tokens": "400"}, MAX_TOKENS_WHY),
+        ({"wire": "openai", "max_tokens": True}, MAX_TOKENS_WHY),
+        ({"wire": "openai", "max_tokens": 1.5}, MAX_TOKENS_WHY),
+        ({"wire": "openai", "max_tokens": 1_000_001}, MAX_TOKENS_WHY),
+        ({"wire": "claude-code", "max_tokens": 400}, "the claude-code wire takes no max_tokens"),
+        ({"wire": "openai", "timeout_s": 0}, TIMEOUT_WHY),
+        ({"wire": "openai", "timeout_s": -5}, TIMEOUT_WHY),
+        ({"wire": "openai", "timeout_s": "400"}, TIMEOUT_WHY),
+        ({"wire": "openai", "timeout_s": True}, TIMEOUT_WHY),
+        ({"wire": "openai", "timeout_s": 1.5}, TIMEOUT_WHY),
+        ({"wire": "openai", "timeout_s": 86_401}, TIMEOUT_WHY),
+        ({"wire": "claude-code", "timeout_s": 0}, TIMEOUT_WHY),
+        ({"wire": "openai", "thinking": "none"}, THINKING_WHY),
+        ({"wire": "openai", "thinking": True}, THINKING_WHY),
+        ({"wire": "openai", "thinking": 3}, THINKING_WHY),
+        ({"wire": "openai", "thinking": "High"}, THINKING_WHY),
+        ({"wire": "claude-code", "thinking": "off"}, "the claude-code wire takes no thinking"),
     ],
 )
 def test_invalid_entries(doc, why):
     assert agent_profiles.resolve({"p": doc}, {}).invalid == {"p": why}
+
+
+def test_thinking_is_optional_and_kept_out_of_the_bundle():
+    p = agent_profiles.resolve(
+        {
+            "a": {"wire": "openai", "thinking": "off"},
+            "b": {"wire": "anthropic", "thinking": "high"},
+            "c": {"wire": "openai", "thinking": None},
+            "d": {"wire": "openai"},
+        },
+        {},
+    )
+    assert p.invalid == {}
+    assert [p.valid[n].thinking for n in "abcd"] == ["off", "high", None, None]
+    assert b"thinking" not in p.bundle()
+    # YAML 1.1 reads a bare off as false: it means off
+    y = agent_profiles.resolve({"a": {"wire": "openai", "thinking": False}}, {})
+    assert y.invalid == {} and y.valid["a"].thinking == "off"
+    assert agent_profiles.resolve({"a": {"wire": "openai", "thinking": True}}, {}).invalid
+
+
+def test_max_tokens_is_optional_and_kept_out_of_the_bundle():
+    p = agent_profiles.resolve(
+        {
+            "a": {"wire": "openai", "max_tokens": 2048},
+            "b": {"wire": "anthropic", "max_tokens": None},
+            "c": {"wire": "openai"},
+            "top": {"wire": "openai", "max_tokens": 1_000_000},
+        },
+        {},
+    )
+    assert p.invalid == {}
+    assert [p.valid[n].max_tokens for n in ("a", "b", "c", "top")] == [2048, None, None, 1_000_000]
+    # only the pando summarizer reads it: a child agent's bundle does not carry it
+    assert all("max_tokens" not in e for e in json.loads(p.bundle()).values())
+
+
+def test_timeout_s_is_optional_on_every_wire_and_kept_out_of_the_bundle():
+    p = agent_profiles.resolve(
+        {
+            "a": {"wire": "openai", "timeout_s": 240},
+            "b": {"wire": "anthropic", "timeout_s": None},
+            "c": {"wire": "openai"},
+            "top": {"wire": "openai", "timeout_s": 86_400},
+            "cc": {"wire": "claude-code", "timeout_s": 300},
+        },
+        {},
+    )
+    assert p.invalid == {}
+    got = [p.valid[n].timeout_s for n in ("a", "b", "c", "top", "cc")]
+    assert got == [240, None, None, 86_400, 300]
+    assert all("timeout_s" not in e for e in json.loads(p.bundle()).values())
 
 
 def test_lookup_texts_name_no_origin():

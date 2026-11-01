@@ -1,26 +1,26 @@
-"""The gate's rule that no agent edits the floor's own config.
+"""The warden's rule that no agent edits the floor's own config.
 
 coppice.toml names the plugins the coppice server runs, and the plugin
 directories hold their code. A policy the server starts runs outside every
-pane's gate. So a pane that could write there could run any program it
-likes. The gate denies every write it can place under the coppice config
+pane's warden. So a pane that could write there could run any program it
+likes. The warden denies every write it can place under the coppice config
 directory and the coppice data directories, before any envelope check,
-in every mode. No operator ask can turn that deny. A path the gate
+in every mode. No operator ask can turn that deny. A path the warden
 cannot place, such as a glob, a brace, or a variable the line sets, falls
 to its tier, which is permanent.
 
 A shell line or an MCP tool's arguments that name one of those
-directories are denied too. Each word goes through the gate's path
+directories are denied too. Each word goes through the warden's path
 normalizer, with ~, $HOME and the XDG homes expanded and each cd
 followed, so ./, // and ../ spellings are caught. The check cannot tell
-a read from a write there, and it denies both. After a cd the gate
+a read from a write there, and it denies both. After a cd the warden
 cannot follow, a relative word that names a floor directory by its last
 part, such as coppice, is denied too, and any other relative word is left
 to its tier, which is permanent.
 
 A file-read tool call, such as Read or Grep, is not denied by this rule.
 Reading the floor's config is harmless: coppice.toml names harnesses,
-plugins, projects and the gateway, and web.json holds paths and the name
+plugins, projects and the router, and web.json holds paths and the name
 of an environment variable, never a secret. An operator can put any value
 in a [plugin.<id>] table, and such a value is left to the envelope. The
 secrets the coppice data directory holds, and every directory that holds
@@ -30,7 +30,7 @@ A coppice server started with its own --data-dir tells each pane where
 that is through COPPICE_DATA_DIR, and that directory is a floor directory
 too. On a resident call the caller sends the value on its request. The
 variable only adds a directory. The cost is the same as for the default
-one: a word that holds the directory's path, or after a cd the gate cannot
+one: a word that holds the directory's path, or after a cd the warden cannot
 follow a relative word that holds its last part, is denied. So a short or
 common last part, such as data, denies more than the default does.
 
@@ -38,7 +38,7 @@ The same rule, with its own paths and its own refusal, guards OpenCode's
 config. OpenCode loads code at start from its global config directory,
 from each project's .opencode plugin and tool directories and from the
 plugin list in any opencode.json. A pane that could write there could delete its own
-gate, or load code beside it that undoes it. The rule covers the whole
+warden, or load code beside it that undoes it. The rule covers the whole
 OpenCode config directory under the XDG config home and under ~/.config,
 every path with a .opencode component followed by plugin, plugins, tool
 or tools, a .opencode directory itself, and every file named
@@ -49,19 +49,19 @@ free text of an MCP argument are left out, since they are messages for
 people, not paths.
 
 The same rule, with its own paths and its own refusal, guards daisugi's
-own config: the config.yaml beside the gate root in force and the default
+own config: the config.yaml beside the warden root in force and the default
 one (~/.opendaisugi/config.yaml). It holds dialect_enforce, the pin that
 turns the dialect's words from audit to enforce, and the verifier client
-and gate mode the gate reads. A pane that could write it could drop the
+and warden mode the warden reads. A pane that could write it could drop the
 pin. As for the floor, a shell line or an MCP argument that names the file
-is denied, a read included; a Read tool call is not. After a cd the gate
+is denied, a read included; a Read tool call is not. After a cd the warden
 cannot follow, a relative word is denied only when it names the file's
 directory and then config.yaml (.opendaisugi/config.yaml): a bare
 config.yaml is too common a name to deny, so it is left to the envelope. A
 command that removes or moves a directory above the file (rm -r
 ~/.opendaisugi) is not caught here, as for the floor's directories, and
 daisugi's own commands that rewrite config.yaml (tiers setup, install
---router) keep the pin as it is.
+--routing-mode) keep the pin as it is.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ from opendaisugi.datahome import guarded_data_dirs
 from opendaisugi.effects import _next_cwd, _resolve
 
 REFUSAL = "this is the floor's own config. Edit it yourself."
-OPENCODE_PLUGIN_REFUSAL = "this is OpenCode's config or gate plugin. Edit it yourself."
+OPENCODE_PLUGIN_REFUSAL = "this is OpenCode's config or warden plugin. Edit it yourself."
 DAISUGI_CONFIG_REFUSAL = "this is daisugi's own config. Edit it yourself."
 
 
@@ -94,7 +94,7 @@ class Guard:
     roots: Callable[[], list[Path]]
     names: Callable[[str], bool] = _never
     text: Callable[[str], bool] = _never
-    # The relative-word rule after a cd the gate cannot follow: True when
+    # The relative-word rule after a cd the warden cannot follow: True when
     # a word's parts name a guarded path. None: any root's last part.
     part: Callable[[tuple[str, ...]], bool] | None = None
 
@@ -109,7 +109,7 @@ def custom_data_dirs() -> list[Path]:
     pane it starts, over any value the server itself inherited. Only an
     absolute path counts. coppice always sends one, and a relative one
     says nothing about where the data is."""
-    from opendaisugi.gate import _resident
+    from opendaisugi.warden import _resident
 
     out: list[Path] = []
     caller = getattr(_resident, "caller", None) or {}
@@ -122,33 +122,46 @@ def custom_data_dirs() -> list[Path]:
 
 
 def coppice_data_dirs() -> list[Path]:
-    """Every coppice data directory the gate knows: the default one and
+    """Every coppice data directory the warden knows: the default one and
     any the caller's pane names, each as written and as resolved."""
     return _spellings([*[d / "coppice" for d in guarded_data_dirs()], *custom_data_dirs()])
 
 
-def foreman_log_dirs() -> list[Path]:
-    """The foreman's log dirs, beside the coppice data dir under each data
-    home and under each data dir a pane names through COPPICE_DATA_DIR.
-    Each comes as written and as resolved. A pane never works in one, so
-    the floor rule guards them like the data dirs."""
+# The steward's log dir keeps its name on disk until ADR-0023 moves the store
+# into daisugi (one move, not two). The turn dir is new: coppice starts the
+# pane-mode steward in `coppice/steward` under the state home. The old turn
+# dir name stays guarded too, since it may still hold files.
+LOG_DIR_NAME = "foreman"  # names-ok: the on-disk name until ADR-0023
+TURN_DIR_NAMES = ("steward", "foreman")  # names-ok: the old turn dir name may hold files
+# ADR-0023 moved the conversation memory to <data home>/pando: every store
+# and every child store under it. The old log dir stays guarded for an
+# install that has not moved yet, and it still holds the chair's files.
+PANDO_DIR_NAME = "pando"
+
+
+def steward_log_dirs() -> list[Path]:
+    """The steward's log dirs and the Pando dir, beside the coppice data
+    dir under each data home and under each data dir a pane names through
+    COPPICE_DATA_DIR. Each comes as written and as resolved. A pane never
+    works in one, so the floor rule guards them like the data dirs."""
     home = Path.home()
-    out: list[Path] = [d / "foreman" for d in guarded_data_dirs(home=home)]
-    out.extend(d / "foreman" for d in custom_data_dirs())
+    out: list[Path] = []
+    for d in [*guarded_data_dirs(home=home), *custom_data_dirs()]:
+        out.extend((d / LOG_DIR_NAME, d / PANDO_DIR_NAME))
     return _spellings(out)
 
 
-def foreman_dirs() -> list[Path]:
-    """The foreman's private directories: its log dirs and its turn dir
-    under the state home. The pane-mode foreman works from the turn dir, so
+def steward_dirs() -> list[Path]:
+    """The steward's private directories: its log dirs and its turn dir
+    under the state home. The pane-mode steward works from the turn dir, so
     the floor rule does not guard it (it would refuse every call that
-    foreman makes); the pane door and the search rule do keep a file read
+    steward makes); the pane door and the search rule do keep a file read
     out of it."""
     home = Path.home()
-    out: list[Path] = list(foreman_log_dirs())
+    out: list[Path] = list(steward_log_dirs())
     for base in (os.environ.get("XDG_STATE_HOME"), str(home / ".local" / "state")):
         if base:
-            out.append(Path(base) / "coppice" / "foreman")
+            out.extend(Path(base) / "coppice" / name for name in TURN_DIR_NAMES)
     return _spellings(out)
 
 
@@ -167,7 +180,7 @@ def _roots() -> list[Path]:
             out.append(Path(base) / "coppice")
     out.extend([d / "coppice" for d in guarded_data_dirs(home=home)])
     out.extend(custom_data_dirs())
-    out.extend(foreman_log_dirs())
+    out.extend(steward_log_dirs())
     return _spellings(out)
 
 
@@ -237,7 +250,7 @@ def _expand_home(text: str) -> str:
     nothing, as in the shell."""
     home = str(Path.home())
 
-    from opendaisugi.gate import _resident
+    from opendaisugi.warden import _resident
 
     caller = getattr(_resident, "caller", None) or {}
 
@@ -291,7 +304,7 @@ def _in_roots(path: str, guard: Guard = FLOOR) -> bool:
 def path_in_floor(raw: str, cwd: str, guard: Guard = FLOOR) -> bool:
     """True when a file path, as typed and as the OS resolves it from cwd,
     is inside a path the guard covers, the floor by default.
-    Both spellings go through the gate's one path normalizer."""
+    Both spellings go through the warden's one path normalizer."""
     if not raw:
         return False
     word = _expand_home(raw)
@@ -381,8 +394,8 @@ def _names_root_part(word: str, guard: Guard) -> bool:
 def _shell_hit(command: str, cwd: str, guard: Guard = FLOOR) -> tuple[bool, list[str]]:
     """Whether a shell line names a guarded path in any word or redirect,
     from any cwd the line passes through, and the git message values the
-    line holds. The cwd follows each cd the way the gate's effects check
-    follows it. After a cd the gate cannot follow, a relative word that
+    line holds. The cwd follows each cd the way the warden's effects check
+    follows it. After a cd the warden cannot follow, a relative word that
     names a guarded directory by its last part is a hit, and any other
     relative word is left to its tier, which is permanent. A git message
     value is not a path and is not placed."""
@@ -428,7 +441,7 @@ def _shell_hit(command: str, cwd: str, guard: Guard = FLOOR) -> tuple[bool, list
         here = _next_cwd(tokens, here)
         if here not in cwds:
             if len(cwds) >= _MAX_CWDS:
-                # Past this many directories the gate stops following cd,
+                # Past this many directories the warden stops following cd,
                 # as it does for a cd it cannot follow, so the check stays
                 # well inside a hook timeout.
                 here = None
@@ -446,7 +459,7 @@ def _shell_hit(command: str, cwd: str, guard: Guard = FLOOR) -> tuple[bool, list
 
 def text_names_floor(text: str, cwd: str, guard: Guard = FLOOR, free_text: bool = False) -> bool:
     """True when a shell line or a tool argument names a path the guard
-    covers, as typed or after the gate places each of its words, or runs
+    covers, as typed or after the warden places each of its words, or runs
     from inside one. The guard's text rule meets the whole line, less one
     copy of each git message value. free_text marks an MCP argument, which
     is data: its words are still placed, but the guard's text rule skips
@@ -512,12 +525,15 @@ def floor_config_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> 
 
 
 def daisugi_config_roots(root: Path | None) -> list[Path]:
-    """daisugi's config files the gate reads: config.yaml beside the gate
+    """daisugi's config files the warden reads: config.yaml beside the warden
     root in force, and the default one, each as written and as resolved."""
-    from opendaisugi.gate import _gate_root
+    from opendaisugi.warden import _warden_root
 
     return _spellings(
-        [_gate_root(root).parent / "config.yaml", *[d / "config.yaml" for d in guarded_data_dirs()]]
+        [
+            _warden_root(root).parent / "config.yaml",
+            *[d / "config.yaml" for d in guarded_data_dirs()],
+        ]
     )
 
 
@@ -543,6 +559,6 @@ def daisugi_config_hit(
 
 def opencode_plugin_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> bool:
     """True when a tool call writes to, or names, a path OpenCode loads code
-    from, the gate plugin's directory among them. Any error counts as a
+    from, the warden plugin's directory among them. Any error counts as a
     hit."""
     return _hit(payload, record, OPENCODE)

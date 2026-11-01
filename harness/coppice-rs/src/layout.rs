@@ -16,6 +16,9 @@ use crate::gojson;
 /// The layout.json schema version this build reads and writes.
 pub const SCHEMA_VERSION: i64 = 1;
 
+/// The made_by of a pane another pane's connection created.
+pub const MADE_BY_AGENT: &str = "agent";
+
 pub const KIND_PTY: &str = "pty";
 pub const KIND_HEADLESS: &str = "headless";
 
@@ -62,6 +65,8 @@ pub struct Pane {
     pub ended_at: i64,
     pub extra_args: Vec<String>,
     pub parent_pane: String,
+    /// "agent" for a pane another pane's connection created, else empty.
+    pub made_by: String,
     /// The pane's own fence setting: "on", "off" or empty (follow the
     /// config). Never wrapped into argv: the server builds the command at
     /// start.
@@ -74,6 +79,19 @@ pub struct Pane {
     /// resume or a restart of the pane keeps it. Empty means the harness's
     /// own.
     pub model: String,
+    /// The unix second the record was made. Two panes that share one Hermes
+    /// session compare it: the newer pane owns the session. Records from
+    /// before it have none.
+    pub started_at: i64,
+    /// The Hermes session id this pane showed first. It stays: a closed pane
+    /// reads that session and never the newest one.
+    pub hermes_session: String,
+    /// The first prompt a Hermes pane without -c or -r was sent, and the
+    /// moment in unix milliseconds. Hermes writes its session at the first
+    /// prompt, so the session whose first user message is this text, written
+    /// then, is the pane's own.
+    pub hermes_prompt: String,
+    pub hermes_prompt_at: i64,
 }
 
 impl Pane {
@@ -113,6 +131,9 @@ impl Pane {
         if !self.parent_pane.is_empty() {
             p.push(("parent_pane", json!(self.parent_pane)));
         }
+        if !self.made_by.is_empty() {
+            p.push(("made_by", json!(self.made_by)));
+        }
         if !self.fence.is_empty() {
             p.push(("fence", json!(self.fence)));
         }
@@ -127,6 +148,18 @@ impl Pane {
         }
         if !self.model.is_empty() {
             p.push(("model", json!(self.model)));
+        }
+        if self.started_at != 0 {
+            p.push(("started_at", json!(self.started_at)));
+        }
+        if !self.hermes_session.is_empty() {
+            p.push(("hermes_session", json!(self.hermes_session)));
+        }
+        if !self.hermes_prompt.is_empty() {
+            p.push(("hermes_prompt", json!(self.hermes_prompt)));
+        }
+        if self.hermes_prompt_at != 0 {
+            p.push(("hermes_prompt_at", json!(self.hermes_prompt_at)));
         }
         gojson::obj(p)
     }
@@ -145,7 +178,13 @@ pub struct Task {
     pub worktree: String,
     pub parent: String,
     pub model: String,
-    pub foreman: String,
+    pub steward: String,
+    /// The task's own safety envelope, as the JSON text daisugi reads; ""
+    /// for none.
+    pub envelope: String,
+    /// The daisugi tree session the envelope is registered under, once a
+    /// pane has started in the task.
+    pub session: String,
     pub children: Vec<String>,
 }
 
@@ -157,11 +196,19 @@ impl Task {
             ("worktree", &self.worktree),
             ("parent", &self.parent),
             ("model", &self.model),
-            ("foreman", &self.foreman),
+            ("steward", &self.steward),
         ] {
             if !v.is_empty() {
                 p.push((k, json!(v)));
             }
+        }
+        if !self.envelope.is_empty() {
+            if let Ok(v) = serde_json::from_str::<Value>(&self.envelope) {
+                p.push(("envelope", v));
+            }
+        }
+        if !self.session.is_empty() {
+            p.push(("session", json!(self.session)));
         }
         p.push(("children", json!(self.children)));
         gojson::obj(p)
@@ -387,11 +434,16 @@ impl Pane {
             ended_at: f.i("ended_at")?,
             extra_args: f.list("extra_args")?.unwrap_or_default(),
             parent_pane: f.s("parent_pane")?,
+            made_by: f.s("made_by")?,
             fence: f.s("fence")?,
             workspace_changed: f.list("workspace_changed")?.unwrap_or_default(),
             fork_pending: f.b("fork_pending")?,
             task_id: f.s("task_id")?,
             model: f.s("model")?,
+            started_at: f.i("started_at")?,
+            hermes_session: f.s("hermes_session")?,
+            hermes_prompt: f.s("hermes_prompt")?,
+            hermes_prompt_at: f.i("hermes_prompt_at")?,
         })
     }
 }
@@ -406,7 +458,12 @@ impl Task {
             worktree: f.s("worktree")?,
             parent: f.s("parent")?,
             model: f.s("model")?,
-            foreman: f.s("foreman")?,
+            steward: f.s("steward")?,
+            envelope: match v.get("envelope") {
+                Some(e) if !e.is_null() => e.to_string(),
+                _ => String::new(),
+            },
+            session: f.s("session")?,
             children: f.list("children")?.unwrap_or_default(),
         })
     }
@@ -807,22 +864,33 @@ impl Tree {
         }
     }
 
-    pub fn set_foreman(&self, id: &str, pane: &str) -> Result<(), LayoutError> {
+    pub fn set_steward(&self, id: &str, pane: &str) -> Result<(), LayoutError> {
         let mut s = self.w();
         let tk = s
             .tasks
             .get_mut(id)
             .ok_or_else(|| LayoutError::NoTask(id.into()))?;
-        tk.foreman = pane.into();
+        tk.steward = pane.into();
         Ok(())
     }
 
-    /// Clears the foreman on every task that names pane.
-    pub fn drop_foreman(&self, pane: &str) {
+    /// Records the daisugi session a task's envelope is registered under.
+    pub fn set_task_session(&self, id: &str, session: &str) -> Result<(), LayoutError> {
+        let mut s = self.w();
+        let tk = s
+            .tasks
+            .get_mut(id)
+            .ok_or_else(|| LayoutError::NoTask(id.into()))?;
+        tk.session = session.into();
+        Ok(())
+    }
+
+    /// Clears the steward on every task that names pane.
+    pub fn drop_steward(&self, pane: &str) {
         let mut s = self.w();
         for tk in s.tasks.values_mut() {
-            if tk.foreman == pane {
-                tk.foreman.clear();
+            if tk.steward == pane {
+                tk.steward.clear();
             }
         }
     }

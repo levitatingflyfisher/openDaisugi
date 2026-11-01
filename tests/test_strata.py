@@ -8,7 +8,7 @@ enforcement state (the envelope, the deed ledger) but not reasoning, so a
 compacted agent re-explores dead branches and re-discovers facts it already had.
 
 This is a *store plus a reconstruction API a harness calls* — openDaisugi does not
-rewrite its own prompts. Facts and hypotheses inform reasoning but NEVER gate
+rewrite its own prompts. Facts and hypotheses inform reasoning but NEVER warden
 actions; only constraint-promotion touches authority, and it flows through the
 same monotone-narrowing tightening check (``verify_inheritance``) a captured
 invariant may only tighten.
@@ -203,7 +203,7 @@ def test_promote_by_removing_a_glob_tightens_and_verify_denies():
 
 def test_promote_by_invariant_enforces_and_denies_its_witness():
     """The advisor's crux: assert the promoted invariant actually causes verify() to
-    REJECT — a promotion that passes the tightening gate but compiles to a soft node is
+    REJECT — a promotion that passes the tightening warden but compiles to a soft node is
     a constraint that doesn't constrain."""
     store = strata.StrataStore()
     env = _multitenant_env()
@@ -277,7 +277,7 @@ def test_promote_rejects_an_unenforced_witness():
     env = _multitenant_env()
     con = store.emit("constraint", "don't touch tenant X")
     # The tenant-X invariant does NOT deny a tenant-Y write, so a tenant-Y witness is
-    # not actually denied → the enforceability gate must refuse.
+    # not actually denied → the enforceability warden must refuse.
     result = strata.promote_constraint(
         env, con, add_invariant=_tenant_x_invariant(), deny_witness=_write("/data/tenantY/ok.txt")
     )

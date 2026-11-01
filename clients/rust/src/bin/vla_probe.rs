@@ -11,7 +11,7 @@
 
 use std::time::Instant;
 
-use daisugi_verify::gate::pyjson::{loads, Value};
+use daisugi_verify::warden::pyjson::{loads, Value};
 use daisugi_verify::pathways::pmodel::{validate_model, Id, Mode};
 use daisugi_verify::robotics::smolvla_executor;
 use daisugi_verify::signing::{b64decode, b64encode};

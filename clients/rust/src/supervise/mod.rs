@@ -11,6 +11,8 @@
 
 pub mod agentic;
 pub mod agentic_sprig;
+pub mod branch;
+pub mod sweep;
 pub mod treerun;
 pub mod approval;
 pub mod executors;
@@ -19,7 +21,7 @@ pub mod supervisor;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::gate::pyjson::{canonical_json_ascii, py_repr, Object, Value};
+use crate::warden::pyjson::{canonical_json_ascii, py_repr, Object, Value};
 
 pub use approval::{Always, Approver, Decision, DefaultApproval};
 pub use executors::{default_executors, DryRun, Executor, Shell};
@@ -158,7 +160,7 @@ impl Session {
 /// sort_keys=True, separators=(",", ":"), default=str)`.
 pub fn evidence_hash(evidence: &Object) -> String {
     let text = canonical_json_ascii(&Value::Obj(evidence.clone()));
-    crate::gate::sha256::hexdigest(text.as_bytes())
+    crate::warden::sha256::hexdigest(text.as_bytes())
 }
 
 /// A step field that holds a string ("" when absent).
@@ -168,7 +170,7 @@ pub fn str_of(step: &Object, key: &str) -> String {
 
 /// Eight random hex digits, as `uuid4().hex[:8]` gives them.
 pub fn hex8() -> String {
-    crate::gate::random_hex(4).unwrap_or_else(|_| "00000000".into())
+    crate::warden::random_hex(4).unwrap_or_else(|_| "00000000".into())
 }
 
 /// `supervisor._now_iso`.

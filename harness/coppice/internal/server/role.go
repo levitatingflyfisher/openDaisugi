@@ -19,9 +19,9 @@ import (
 // only the operator may run.
 const PaneRefusal = "a pane can propose. It cannot allow."
 
-// ForemanRefusal is the message a pane or a plugin gets for a verb that
-// names a foreman.
-const ForemanRefusal = "only the operator names a foreman."
+// StewardRefusal is the message a pane or a plugin gets for a verb that
+// names a steward.
+const StewardRefusal = "only the operator names a steward."
 
 // PluginRefusal is the one message a plugin connection gets for an allow
 // verb.
@@ -381,12 +381,12 @@ func (s *Server) placeNamedPeers(r *proto.Request) (peerFacts, *proto.Response) 
 }
 
 // allowVerbs are the verbs only the operator may run, with one exception:
-// a foreman may deny an ask it holds. See foremanDeny.
+// a steward may deny an ask it holds. See stewardDeny.
 var allowVerbs = map[string]bool{"agent.allow": true, "agent.deny": true}
 
 // TalkRefusal is the message a pane or a plugin gets for floor.talk. The
-// owner's words go to the foreman, and a pane's words are not the owner's.
-const TalkRefusal = "only the operator talks to the floor's foreman."
+// owner's words go to the steward, and a pane's words are not the owner's.
+const TalkRefusal = "only the operator talks to the floor's steward."
 
 // ProjectRefusal is the message a pane or a plugin gets for project.remove.
 const ProjectRefusal = "only the operator edits the project list."
@@ -394,17 +394,18 @@ const ProjectRefusal = "only the operator edits the project list."
 // operatorVerbs are verbs only the operator may run, with no exception,
 // each with its refusal.
 var operatorVerbs = map[string]string{
-	"task.set_foreman": ForemanRefusal, "floor.talk": TalkRefusal, "floor.foreman": ForemanRefusal,
+	"task.set_steward": StewardRefusal, "floor.talk": TalkRefusal, "floor.steward": StewardRefusal,
 	"floor.chat": TalkRefusal, "floor.machines": MachinesRefusal, "floor.import": ImportRefusal,
 	"speech.say": SpeechRefusal, "speech.status": SpeechRefusal,
 	"pane.trust": TrustRefusal, "project.remove": ProjectRefusal,
-	"agent.set_mode": ModeRefusal, "agent.set_model": ModelRefusal, "agent.set_router": RouterRefusal,
+	"agent.set_mode": ModeRefusal, "agent.set_model": ModelRefusal, "agent.set_route": RouteRefusal,
 	"agent.move": MoveRefusal, "pane.ack_changed": AckRefusal,
+	"envelope.pending": ProposalRefusal, "envelope.approve": ProposalRefusal, "envelope.decline": ProposalRefusal,
 }
 
-// ForemanLabelRefusal is the message a pane or a plugin gets for a pane
-// label that would read as the floor's foreman.
-const ForemanLabelRefusal = "only the operator names a pane foreman."
+// StewardLabelRefusal is the message a pane or a plugin gets for a pane
+// label that would read as the floor's steward.
+const StewardLabelRefusal = "only the operator names a pane steward."
 
 // labelVerbs are the verbs that give a pane a label.
 var labelVerbs = map[string]bool{"pane.create": true, "pane.split": true, "pane.fork": true, "pane.rename": true}
@@ -450,9 +451,9 @@ func validHarness(name string) bool {
 // not pose as another.
 const LabelTakenRefusal = "another live pane has that label. Only the operator gives two panes one name."
 
-// isForemanLabel reports whether label, once cleaned, reads as foreman.
-func isForemanLabel(label string) bool {
-	return strings.EqualFold(cleanLabel(label), DefaultForemanLabel)
+// isStewardLabel reports whether label, once cleaned, reads as steward.
+func isStewardLabel(label string) bool {
+	return strings.EqualFold(cleanLabel(label), DefaultStewardLabel)
 }
 
 // roleOrOperator is c's role, or the operator's for a call the server
@@ -469,32 +470,32 @@ func roleOrOperator(c *Client) role {
 // agent may not relabel another.
 const RenameRefusal = "a pane may rename only itself. The operator renames any pane."
 
-// takesForemanLabel reports whether r gives a pane the foreman's label.
-// The server finds the foreman by its id, but people read the label, so a
-// pane may not dress up as the foreman.
-func takesForemanLabel(r *proto.Request) bool {
+// takesStewardLabel reports whether r gives a pane the steward's label.
+// The server finds the steward by its id, but people read the label, so a
+// pane may not dress up as the steward.
+func takesStewardLabel(r *proto.Request) bool {
 	if !labelVerbs[r.Cmd] {
 		return false
 	}
 	label, _ := r.Str("label")
-	return isForemanLabel(label)
+	return isStewardLabel(label)
 }
 
-// resumesForemanLabel reports whether r is a pane.resume of a record
-// labelled foreman. A resume keeps the record's label.
-func (s *Server) resumesForemanLabel(r *proto.Request) bool {
+// resumesStewardLabel reports whether r is a pane.resume of a record
+// labelled steward. A resume keeps the record's label.
+func (s *Server) resumesStewardLabel(r *proto.Request) bool {
 	if r.Cmd != "pane.resume" {
 		return false
 	}
 	id, _ := r.Str("pane")
 	rec, ok := s.tree.Pane(id)
-	return ok && isForemanLabel(rec.Label)
+	return ok && isStewardLabel(rec.Label)
 }
 
-// foremanDeny reports whether a connection with role ro may run the deny
+// stewardDeny reports whether a connection with role ro may run the deny
 // in r: it is a pane the kernel placed or named, it is no plugin, and it
-// is the foreman that holds that exact ask of that exact pane now.
-func (s *Server) foremanDeny(ro role, r *proto.Request) bool {
+// is the steward that holds that exact ask of that exact pane now.
+func (s *Server) stewardDeny(ro role, r *proto.Request) bool {
 	if r.Cmd != "agent.deny" || !ro.pane || ro.unknown || ro.plugin != "" || ro.paneID == "" {
 		return false
 	}
@@ -505,7 +506,7 @@ func (s *Server) foremanDeny(ro role, r *proto.Request) bool {
 }
 
 // quietVerbs are verbs a pane runs that make no note: the hello, the
-// reports a gate hook sends on every tool call, the event verbs, and the
+// reports a warden hook sends on every tool call, the event verbs, and the
 // note verbs themselves.
 var quietVerbs = map[string]bool{
 	"hello": true, "pane.report_state": true, "pane.report_child": true,
@@ -532,13 +533,13 @@ func (s *Server) guard(c *Client, r *proto.Request) (proto.Response, bool) {
 	if (r.Cmd == "speech.say" || r.Cmd == "speech.status") && c.tokenNamed() {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, SpeechRefusal), false
 	}
-	// A model on a prompt and a router on a resume are swaps too.
+	// A model on a prompt and a route on a resume are swaps too.
 	if ro.noAllow {
 		if m, _ := r.Str("model"); m != "" && r.Cmd == "agent.prompt" {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, ModelRefusal), false
 		}
-		if m, _ := r.Str("router"); m != "" && r.Cmd == "pane.resume" {
-			return proto.ErrResp(r.ID, proto.ErrUnauthorized, RouterRefusal), false
+		if m, _ := r.Str("route"); m != "" && r.Cmd == "pane.resume" {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, RouteRefusal), false
 		}
 	}
 	if resp, ok := s.chatGuard(c, ro, r); !ok {
@@ -547,20 +548,20 @@ func (s *Server) guard(c *Client, r *proto.Request) (proto.Response, bool) {
 	if resp, ok := s.sprigGuard(ro, r); !ok {
 		return resp, false
 	}
-	if ro.noAllow && (takesForemanLabel(r) || s.resumesForemanLabel(r)) {
-		return proto.ErrResp(r.ID, proto.ErrUnauthorized, ForemanLabelRefusal), false
+	if ro.noAllow && (takesStewardLabel(r) || s.resumesStewardLabel(r)) {
+		return proto.ErrResp(r.ID, proto.ErrUnauthorized, StewardLabelRefusal), false
 	}
 	if r.Cmd == "pane.rename" && ro.noAllow {
 		if pane, _ := r.Str("pane"); ro.paneID == "" || pane != ro.paneID {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, RenameRefusal), false
 		}
 	}
-	// A move can put a task under a foreman the operator did not choose,
+	// A move can put a task under a steward the operator did not choose,
 	// so a pane, or a peer the server cannot place, may not move one.
 	if r.Cmd == "task.move" && (ro.pane || ro.unknown) {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, PaneRefusal), false
 	}
-	if allowVerbs[r.Cmd] && ro.noAllow && !s.foremanDeny(ro, r) {
+	if allowVerbs[r.Cmd] && ro.noAllow && !s.stewardDeny(ro, r) {
 		if ro.plugin != "" {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, PluginRefusal), false
 		}
@@ -582,9 +583,9 @@ func (s *Server) guard(c *Client, r *proto.Request) (proto.Response, bool) {
 	if msg, ok := s.fenceGuard(ro, r.Cmd, paneOf(r)); !ok {
 		return proto.ErrResp(r.ID, proto.ErrUnauthorized, msg), false
 	}
-	// A prompt to a gated pane gets the handler's own refusal, which names
+	// A prompt to a checked pane gets the handler's own refusal, which names
 	// the pane and says to answer its question first. See ready.go.
-	if typingVerbs[r.Cmd] && ro.noAllow && !(isPromptRequest(r) && s.gated(paneOf(r))) {
+	if typingVerbs[r.Cmd] && ro.noAllow && !(isPromptRequest(r) && s.checked(paneOf(r))) {
 		id, _ := r.Str("pane")
 		if eff, ok := s.effectiveState(id); ok && eff.State == proto.StateBlocked {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, PaneRefusal), false
@@ -745,16 +746,16 @@ func (s *Server) handleNotes(c *Client, r *proto.Request) proto.Response {
 	return proto.OKResp(r.ID, map[string]any{"notes": out})
 }
 
-// handleAnswer answers the gate's ask with decision, through the same file
-// the phone writes. guard lets through only the operator, and a foreman's
-// deny of the ask it holds. The foreman check runs again here, so a hold
+// handleAnswer answers the warden's ask with decision, through the same file
+// the phone writes. guard lets through only the operator, and a steward's
+// deny of the ask it holds. The steward check runs again here, so a hold
 // that ended between the two leaves the ask alone.
 func (s *Server) handleAnswer(decision string) Handler {
 	return func(c *Client, r *proto.Request) proto.Response {
 		verb := "agent." + decision
 		ro := c.roleOf()
-		foreman := ro.noAllow
-		if foreman && !s.foremanDeny(ro, r) {
+		steward := ro.noAllow
+		if steward && !s.stewardDeny(ro, r) {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, PaneRefusal)
 		}
 		id, ok := r.Str("pane")
@@ -779,8 +780,8 @@ func (s *Server) handleAnswer(decision string) Handler {
 		}
 		reason, _ := r.Str("reason")
 		switch {
-		case foreman:
-			reason = "denied by the foreman " + s.labelOf(ro.paneID)
+		case steward:
+			reason = "denied by the steward " + s.labelOf(ro.paneID)
 		case reason == "":
 			reason = "answered from coppice by the operator"
 		}
@@ -789,7 +790,7 @@ func (s *Server) handleAnswer(decision string) Handler {
 		by, from := c.Who()
 		var err error
 		if an := s.harnessAsker(id, ask); an != nil {
-			// The harness holds this ask itself, not the gate. The same
+			// The harness holds this ask itself, not the warden. The same
 			// allow rule applies: a permanent ask needs the pane name.
 			if decision == "allow" {
 				err = web.CheckAllow(tier, s.labelOf(id), confirm, scope)
@@ -800,7 +801,7 @@ func (s *Server) handleAnswer(decision string) Handler {
 				}
 			}
 		} else {
-			err = web.AskChannel{Root: s.cfg.GateRoot}.Answer(web.Reply{
+			err = web.AskChannel{Root: s.cfg.WardenRoot}.Answer(web.Reply{
 				ToolUseID: ask, Decision: decision, Reason: reason,
 				Scope: scope, Confirm: confirm, Tier: tier, Name: s.labelOf(id),
 				By: by, WhoFrom: from,
@@ -814,7 +815,7 @@ func (s *Server) handleAnswer(decision string) Handler {
 		switch {
 		case errors.Is(err, web.ErrNoAsk):
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("no pending ask %q. The gate timed out, or someone answered it.", ask))
+				fmt.Sprintf("no pending ask %q. The warden timed out, or someone answered it.", ask))
 		case errors.Is(err, web.ErrBadScope):
 			return proto.ErrResp(r.ID, proto.ErrBadRequest, "scope must be once or task.")
 		case errors.As(err, &needsName):
@@ -890,7 +891,7 @@ func (s *Server) forgetAsk(paneID, id string) {
 }
 
 // forgetAsks drops every ask of a pane that closed, ends its hold, and
-// sends every ask it held as a foreman to the operator.
+// sends every ask it held as a steward to the operator.
 func (s *Server) forgetAsks(paneID string) {
 	s.endHolds(paneID)
 	s.asksMu.Lock()

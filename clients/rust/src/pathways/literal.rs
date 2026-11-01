@@ -10,8 +10,8 @@
 //! 0o377, a number run into a keyword), since Python then writes to
 //! stderr. The Go client's `pyjson.LiteralEval` is the reference.
 
-use crate::gate::py::text::{as_surrogate, cp_char};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{as_surrogate, cp_char};
+use crate::warden::pyjson::{Object, Value};
 
 /// What `ast.literal_eval` does with a text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1019,7 +1019,7 @@ impl Eval {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::dumps;
+    use crate::warden::pyjson::dumps;
 
     fn lit(s: &str) -> (Status, Option<String>, bool) {
         let l = literal_eval(s);

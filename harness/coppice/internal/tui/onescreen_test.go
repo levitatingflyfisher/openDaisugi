@@ -301,7 +301,7 @@ func TestTypeAheadAfterTheEndReachesNoOtherPane(t *testing.T) {
 	other := createShellPane(t, s.Socket(), "sh", "-c", "echo other; sleep 30")
 	short := createShellPane(t, s.Socket(), "sh", "-c", "echo hello; sleep 2; exit 0")
 	rawCall(t, s.Socket(), "pane.report_state", map[string]any{"pane": short, "event": map[string]any{
-		"v": 1, "ts": nowSeconds(), "session_id": "s", "harness": "claude-code", "pane": short, "state": "blocked", "source": "gate",
+		"v": 1, "ts": nowSeconds(), "session_id": "s", "harness": "claude-code", "pane": short, "state": "blocked", "source": "warden",
 		"ask": map[string]any{"id": "toolu_1", "tool": "Bash", "summary": "ls", "deadline": 9999999999.0},
 	}})
 	p := newRecordingProxy(t, s.Socket())
@@ -477,7 +477,7 @@ func TestARowShowsItsWindowNumber(t *testing.T) {
 	m.Tiles.Fill("b")
 	m.Tiles.Fill("a")
 	joined := stripSGR(strings.Join(Render(m, 200, 20), "\n"))
-	if !strings.Contains(joined, "  › 2 gate-refactor") || !strings.Contains(joined, "    1 docs") {
+	if !strings.Contains(joined, "  › 2 gear-refactor") || !strings.Contains(joined, "    1 docs") {
 		t.Fatalf("window numbers missing: %s", joined)
 	}
 }
@@ -799,12 +799,12 @@ func TestResumeAndForgetFromRecent(t *testing.T) {
 func TestTheStackLineShowsWhatTheServerSends(t *testing.T) {
 	rows := RowsFrom([]map[string]any{{
 		"id": "a", "state": "working",
-		"stack": map[string]any{"loop": "claude", "model": "opus", "router": "gateway",
+		"stack": map[string]any{"loop": "claude", "model": "opus", "route": "router",
 			"daisugi": map[string]any{"mode": "enforcing", "armed": false}},
-		"gate":   map[string]any{"decision": "allow", "tool": "Bash"},
+		"warden": map[string]any{"decision": "allow", "tool": "Bash"},
 		"tokens": map[string]any{"fresh": 950.0, "cache_read": 1200000.0, "out": 12000.0},
 	}, {"id": "b", "state": "working"}}, 0)
-	want := "claude · opus · gateway · daisugi enforcing disarmed · gate allow Bash · tokens 950 fresh 1.2M cache read 12k out"
+	want := "claude · opus · router · daisugi enforcing disarmed · warden allow Bash · tokens 950 fresh 1.2M cache read 12k out"
 	if rows[0].Stack != want {
 		t.Fatalf("stack %q\nwant  %q", rows[0].Stack, want)
 	}

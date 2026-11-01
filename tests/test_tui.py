@@ -1,6 +1,6 @@
 """Smoke tests for the wiring screen (`daisugi dashboard --tui`, `:wiring`).
 
-Gated on the [tui] extra: where Textual is absent these skip, and the pure swap
+Checked on the [tui] extra: where Textual is absent these skip, and the pure swap
 logic (test_swap.py) plus the stdlib view (test_dashboard.py) still cover the
 behaviour. B2/B1: the swap floor moved onto ``WiringScreen`` over the shared
 base, so we reach it with ``:wiring`` and query ``app.screen`` (never
@@ -64,9 +64,9 @@ def test_a_cfg_stage_shows_its_reason_and_a_live_stage_shows_none(tmp_path):
         app = DashboardApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await _to_wiring(pilot)
-            # gate is a cfg knob: option buttons render AND a note says why
-            assert app.screen.query_one("#swap-gate-0", Button)
-            assert app.screen.query("#effnote-gate")
+            # warden is a cfg knob: option buttons render AND a note says why
+            assert app.screen.query_one("#swap-warden-0", Button)
+            assert app.screen.query("#effnote-warden")
             # shell and verifier are live swaps: no note
             assert not app.screen.query("#effnote-shell")
             assert not app.screen.query("#effnote-verifier")
@@ -104,10 +104,10 @@ def test_command_line_on_a_cfg_stage_confirms_the_gap_not_a_fake_effect(tmp_path
         app = DashboardApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await _to_wiring(pilot)
-            app.screen.on_cmd_submitted("gate enforce")
+            app.screen.on_cmd_submitted("warden enforce")
             await pilot.pause()
             # honest: names the install step, never implies it took effect
-            assert "set gate" in app.status_text and "install --enforce" in app.status_text
+            assert "set warden" in app.status_text and "install --enforce" in app.status_text
 
     asyncio.run(scenario())
 
@@ -119,8 +119,8 @@ def test_wiring_swap_never_prints_a_config_repr(tmp_path):
         app = DashboardApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await _to_wiring(pilot)
-            app.screen.on_cmd_submitted("gate audit")
+            app.screen.on_cmd_submitted("warden audit")
             await pilot.pause()
-            assert "Config" not in app.status_text and "gate_mode=" not in app.status_text
+            assert "Config" not in app.status_text and "warden_mode=" not in app.status_text
 
     asyncio.run(scenario())

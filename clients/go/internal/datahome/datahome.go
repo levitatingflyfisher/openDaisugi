@@ -7,7 +7,7 @@
 //  3. else ~/.opendaisugi.
 //
 // An existing install keeps its directory. coppice keeps its own rule
-// (CoppiceDir). The gate guards every directory
+// (CoppiceDir). The warden guards every directory
 // the rule can pick (Guarded), with no exists check. Paths print as
 // pathlib prints them. The package imports nothing outside the standard
 // library, so every other package can use it.
@@ -55,7 +55,7 @@ func Dir(getenv func(string) string, home string, exists func(string) bool) stri
 
 // CoppiceDir is the rule coppice uses for its data directory
 // (harness/coppice/internal/datahome). It never asks whether ~/.opendaisugi
-// exists, because `daisugi install --gate` creates it and the same box
+// exists, because `daisugi install` creates it and the same box
 // would then use two places, depending on the order of two commands:
 // $OPENDAISUGI_HOME, else $XDG_DATA_HOME/opendaisugi when that is usable,
 // else ~/.opendaisugi. XDG is chosen only when the variable is set,
@@ -74,7 +74,8 @@ func CoppiceDir(getenv func(string) string, home string, has func(string) bool) 
 		return dot
 	}
 	xdg := join(x, "opendaisugi")
-	if !has(join(xdg, "coppice")) && has(join(dot, "coppice")) {
+	if !has(join(xdg, "coppice")) && !has(join(xdg, "foreman")) && // names-ok: the on-disk store name
+		(has(join(dot, "coppice")) || has(join(dot, "foreman"))) { // names-ok: the on-disk store name
 		return dot
 	}
 	return xdg

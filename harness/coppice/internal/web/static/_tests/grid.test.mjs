@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ATTR, newGrid, applyFrame, gridToText, drawGrid, measureAdvance } from '../grid.js';
+import { ATTR, newGrid, applyFrame, gridToText, drawGrid, measureAdvance, lastContentRow } from '../grid.js';
 
 // The seven bits come from PINS.md, which is read from vt.go by
 // static_test.go. Reading the same line here means a bump to that row and a
@@ -175,4 +175,15 @@ test('measureAdvance reads the glyph advance per pixel of font', () => {
   assert.equal(measureAdvance({ font: '', measureText() { return { width: 0 }; } }), 0.6);
   assert.equal(measureAdvance({}), 0.6, 'a context that cannot measure reads as the common advance');
   assert.equal(measureAdvance(null), 0.6);
+});
+
+test('lastContentRow is the lowest row that shows a character', () => {
+  const g = newGrid(4, 5);
+  assert.equal(lastContentRow(g), -1);
+  g.cells[1][2] = ['x', '', '', 0];
+  assert.equal(lastContentRow(g), 1);
+  g.cells[3][0] = [' ', '', '', 0];
+  assert.equal(lastContentRow(g), 1, 'a space is not a character');
+  g.cells[4][3] = ['y', '', '', 0];
+  assert.equal(lastContentRow(g), 4);
 });

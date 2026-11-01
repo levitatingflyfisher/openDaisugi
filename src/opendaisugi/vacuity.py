@@ -76,7 +76,7 @@ def check_vacuity(expr: Expression, *, timeout_ms: int = 500) -> Verdict:
     except Exception:
         # Non-serializable expr — fall through to the uncached path. Cannot
         # happen for shipped Expression types but keeps the cache from
-        # gating correctness on Pydantic's serializer.
+        # checking correctness on Pydantic's serializer.
         key = None
     if key is not None and key in _VACUITY_CACHE:
         _VACUITY_CACHE.move_to_end(key)
@@ -95,8 +95,8 @@ def _compute_vacuity(expr: Expression, timeout_ms: int) -> Verdict:
     # Shared with z3_checks.py/predicate_z3.py/subsumption.py — see
     # Z3_SOLVE_LOCK's docstring in z3_checks.py. check_vacuity() is reached
     # from verify.py's per-invariant/postcondition predicate check (inside
-    # the gate's timeout worker thread) and from aliases.py's registration
-    # path, both on the same shared Z3 global context the resident gate
+    # the warden's timeout worker thread) and from aliases.py's registration
+    # path, both on the same shared Z3 global context the resident warden
     # server's other connection threads may be solving on concurrently. The
     # LRU memo lookup/store around this call stays outside the lock — only
     # the AST-build + both solver.check() calls need it.

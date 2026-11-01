@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+  --bg: #12181a; --fg: #e8eae7; --muted: #98a3a0; --mark: #d98b4a; --line: #2a3335; --ok: #8fb996;
+}
+body { margin: 0; padding: .6rem .8rem; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 system-ui, sans-serif; }
+#cards-bar { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: baseline; margin: 0 0 .6rem; }
+#cards-status { color: var(--muted); min-height: 1.2em; }
+#cards-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.card { border: 1px solid var(--line); border-radius: 6px; padding: .6rem .7rem; }
+.card h2 { font-size: 1rem; margin: 0 0 .2rem; }
+.card p { margin: .15rem 0; }
+.card .muted { color: var(--muted); }
+.card .elim { color: var(--muted); font-size: .9em; }
+.card .buttons { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .5rem; }
+.card button, #cards-sort { font: inherit; background: none; color: var(--fg); border: 1px solid var(--muted);
+  border-radius: 4px; padding: .3rem .7rem; min-height: 2.4rem; cursor: pointer; }
+.card button.keep { border-color: var(--ok); }
+.card pre { overflow: auto; max-height: 24rem; background: #0c1112; padding: .4rem; border-radius: 4px;
+  font: 12px/1.4 ui-monospace, monospace; }
+@media (max-width: 600px) { body { padding: .5rem; } .card { width: auto; } }

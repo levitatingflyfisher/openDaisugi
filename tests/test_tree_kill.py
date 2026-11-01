@@ -43,7 +43,7 @@ if spec.get("grandchild"):
     from opendaisugi import tree
     from opendaisugi.models import Envelope
     me = argv[argv.index("--session") + 1]
-    d, g = Path(spec["data_dir"]), Path(spec["gate"])
+    d, g = Path(spec["data_dir"]), Path(spec["warden"])
     tree.spawn(d, g, Envelope(**spec["envelope"]), parent=me, session="gc", tokens=None, turns=None)
     p = subprocess.Popen(["sleep", "300"], start_new_session=True, **quiet)
     tree.record_group(d, "gc", p.pid)
@@ -62,7 +62,7 @@ def run(tmp_path, monkeypatch):
     bin_.parent.mkdir()
     bin_.write_text(FAKE.replace("{PY}", sys.executable))
     bin_.chmod(bin_.stat().st_mode | stat.S_IEXEC)
-    d, g = tmp_path / "d", tmp_path / "d" / "gate"
+    d, g = tmp_path / "d", tmp_path / "d" / "warden"
     tree.make_root(d, g, Envelope(**ENV), "top", tokens=None, turns=None)
     spec, pids = tmp_path / "spec.json", tmp_path / "pids"
     monkeypatch.setenv("FAKE_SPEC", str(spec))
@@ -71,7 +71,7 @@ def run(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     def go(**kw):
-        spec.write_text(json.dumps({"data_dir": str(d), "gate": str(g), "envelope": ENV, **kw}))
+        spec.write_text(json.dumps({"data_dir": str(d), "warden": str(g), "envelope": ENV, **kw}))
         args = ["tree", "run", "--parent", "top", "--profile", "default", "--session", "kid"]
         args += ["--data-dir", str(d), "--root", str(g), "-"]
         req = {"task": "t", "envelope": ENV, "tools": ["Read"]}

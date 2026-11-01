@@ -1135,7 +1135,7 @@ mod tests {
             .iter()
             .filter_map(|(p, _)| p.strip_suffix("/manifest.json").map(String::from))
             .collect();
-        assert_eq!(ids.len(), 13);
+        assert_eq!(ids.len(), 14);
         for id in ids {
             let r = load_one(&Source::Shipped, &id);
             assert!(matches!(r, Ok(Some(_))), "{id}");

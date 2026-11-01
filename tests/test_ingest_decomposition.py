@@ -44,7 +44,7 @@ async def test_ingest_leaves_the_opt_in_off_by_default(journal):
     await ingest_episodes(_parse_result(), journal)
     record = journal.load_trace(journal.list_recent(limit=1)[0].id)
     assert record.envelope.permissions.shell_allow_decomposition is False
-    assert record.result.ok is False  # metachar gate holds without the opt-in
+    assert record.result.ok is False  # metachar warden holds without the opt-in
 
 
 async def test_ingest_opt_in_round_trips_a_real_compound_episode(journal):

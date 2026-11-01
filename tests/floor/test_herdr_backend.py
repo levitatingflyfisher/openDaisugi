@@ -160,7 +160,7 @@ def test_report_state_never_raises_when_herdr_is_not_on_path(monkeypatch):
 
     monkeypatch.setattr("shutil.which", lambda name: None)
     ev = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=1.0, pane="p1"
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=1.0, pane="p1"
     )
     HerdrBackend().report_state(PaneRef("herdr", "p1"), ev)  # must not raise
 
@@ -442,13 +442,13 @@ def test_read_passes_the_pinned_source_names(fake_herdr):
 def test_report_state_uses_report_agent_with_the_daisugi_source(fake_herdr):
     from opendaisugi.floor import PaneStateEvent
 
-    # A gate-sourced blocked event always carries an Ask; PaneStateEvent
+    # A warden-sourced blocked event always carries an Ask; PaneStateEvent
     # refuses one that does not.
     ev = PaneStateEvent(
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1.0,
         pane="p1",
         ask=Ask(id="a1", tool="Bash", summary="rm -rf build/", deadline=61.0),
@@ -475,12 +475,12 @@ def test_the_pin_records_the_authority_path_not_a_substring_rule():
     assert verbs.authority_value == "daisugi"
 
 
-def test_a_blocked_row_sources_as_manifest_with_a_gate_blocked_detail_when_the_field_says_daisugi(
+def test_a_blocked_row_sources_as_manifest_with_a_warden_blocked_detail_when_the_field_says_daisugi(
     fake_herdr,
 ):
-    """agent list gives no Ask, so a blocked row can never be a gate source.
+    """agent list gives no Ask, so a blocked row can never be a warden source.
 
-    PaneStateEvent refuses source gate on state blocked without an Ask. A
+    PaneStateEvent refuses source warden on state blocked without an Ask. A
     block Herdr attributes to daisugi is reported as manifest instead, and
     the detail says where it really came from.
     """
@@ -488,7 +488,7 @@ def test_a_blocked_row_sources_as_manifest_with_a_gate_blocked_detail_when_the_f
         fake_herdr, {"agent": "claude-code", "state": "blocked", "authority": {"source": "daisugi"}}
     )
     assert states and states[0].source == "manifest"
-    assert states[0].detail == "reported by herdr as gate-blocked"
+    assert states[0].detail == "reported by herdr as warden-blocked"
 
 
 def test_state_source_is_manifest_when_the_field_names_someone_else(fake_herdr):
@@ -497,10 +497,10 @@ def test_state_source_is_manifest_when_the_field_names_someone_else(fake_herdr):
         {"agent": "claude-code", "state": "blocked", "authority": {"source": "screen-manifest"}},
     )
     assert states and states[0].source == "manifest"
-    assert states[0].detail != "reported by herdr as gate-blocked"
+    assert states[0].detail != "reported by herdr as warden-blocked"
 
 
-def test_daisugi_anywhere_else_in_the_document_never_forges_a_gate_source(fake_herdr):
+def test_daisugi_anywhere_else_in_the_document_never_forges_a_warden_source(fake_herdr):
     """The operator's own repo lives at .../openDaisugi. A cwd is not an authority."""
     states = _explain(
         fake_herdr,
@@ -514,16 +514,16 @@ def test_daisugi_anywhere_else_in_the_document_never_forges_a_gate_source(fake_h
         },
     )
     assert states and states[0].source == "manifest"
-    assert states[0].detail != "reported by herdr as gate-blocked"
+    assert states[0].detail != "reported by herdr as warden-blocked"
 
 
-def test_a_missing_authority_field_is_manifest_not_gate(fake_herdr):
+def test_a_missing_authority_field_is_manifest_not_warden(fake_herdr):
     states = _explain(fake_herdr, {"agent": "claude-code", "state": "blocked"})
     assert states and states[0].source == "manifest"
-    assert states[0].detail != "reported by herdr as gate-blocked"
+    assert states[0].detail != "reported by herdr as warden-blocked"
 
 
-def test_an_authority_field_of_the_wrong_shape_is_manifest_not_gate(fake_herdr):
+def test_an_authority_field_of_the_wrong_shape_is_manifest_not_warden(fake_herdr):
     for payload in (
         {"authority": "daisugi"},  # not a dict at the first hop
         {"authority": {"source": {"name": "daisugi"}}},  # a dict where a name belongs
@@ -533,20 +533,20 @@ def test_an_authority_field_of_the_wrong_shape_is_manifest_not_gate(fake_herdr):
         payload.update({"agent": "claude-code", "state": "blocked"})
         states = _explain(fake_herdr, payload)
         assert states and states[0].source == "manifest", payload
-        assert states[0].detail != "reported by herdr as gate-blocked", payload
+        assert states[0].detail != "reported by herdr as warden-blocked", payload
 
 
-def test_explain_that_fails_is_manifest_not_gate(fake_herdr):
+def test_explain_that_fails_is_manifest_not_warden(fake_herdr):
     fake_herdr.reply("pane list", out="p1\n", rc=0)
     fake_herdr.reply("agent explain", out="", rc=1)
     fake_herdr.reply("agent list", out="p1 claude-code blocked\n", rc=0)
     infos = HerdrBackend().list()
     states = [i.state for i in infos if i.state is not None]
     assert states and states[0].source == "manifest"
-    assert states[0].detail != "reported by herdr as gate-blocked"
+    assert states[0].detail != "reported by herdr as warden-blocked"
 
 
-def test_state_source_is_gate_for_a_non_blocked_state_when_the_field_says_daisugi(fake_herdr):
+def test_state_source_is_warden_for_a_non_blocked_state_when_the_field_says_daisugi(fake_herdr):
     """Only a blocked state needs an Ask. Idle, working and unknown do not."""
     fake_herdr.reply("pane list", out="p1\n", rc=0)
     fake_herdr.reply(
@@ -559,7 +559,7 @@ def test_state_source_is_gate_for_a_non_blocked_state_when_the_field_says_daisug
     fake_herdr.reply("agent list", out="p1 claude-code working\n", rc=0)
     infos = HerdrBackend().list()
     states = [i.state for i in infos if i.state is not None]
-    assert states and states[0].state == "working" and states[0].source == "gate"
+    assert states and states[0].state == "working" and states[0].source == "warden"
 
 
 def test_the_pin_records_every_verb_the_backend_runs():

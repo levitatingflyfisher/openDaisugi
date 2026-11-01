@@ -71,7 +71,7 @@ class AskActionsMixin:
         - ``is_destructive_action`` matches the ask's text (defence in depth, and
           it covers a destructive command issued through a NON-shell tool)."""
         a = row.pending_ask or {}
-        # The gate's tier comes first: only an ask the gate called undoable
+        # The warden's tier comes first: only an ask the warden called undoable
         # may use the two-step. A missing tier is permanent.
         if a.get("tier") != "undoable":
             return True
@@ -127,7 +127,7 @@ class AskActionsMixin:
             # not the row read at arm time.
             try:
                 refusal, _ = ask.answer_allow(
-                    self.app.data_dir / "gate",
+                    self.app.data_dir / "warden",
                     tool_use_id=self._armed,
                     name=row.session_id,
                     confirm=None,
@@ -157,7 +157,7 @@ class AskActionsMixin:
         _, tid = p
         try:
             ask.answer(
-                self.app.data_dir / "gate",
+                self.app.data_dir / "warden",
                 tool_use_id=tid,
                 decision="deny",
                 reason=f"operator denied from the {self._ask_origin}",
@@ -184,7 +184,7 @@ class AskActionsMixin:
             return True
         try:
             refusal, _ = ask.answer_allow(
-                self.app.data_dir / "gate",
+                self.app.data_dir / "warden",
                 tool_use_id=tid,
                 name=token,
                 confirm=value,

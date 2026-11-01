@@ -204,10 +204,10 @@ func TestClassifyPeerMarksTheServerItself(t *testing.T) {
 	}
 }
 
-// answerOf reads the answer file the gate reads for ask id.
+// answerOf reads the answer file the warden reads for ask id.
 func answerOf(t *testing.T, s *Server, id string) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(s.cfg.GateRoot, "answers", id+".json"))
+	raw, err := os.ReadFile(filepath.Join(s.cfg.WardenRoot, "answers", id+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,11 +221,11 @@ func answerOf(t *testing.T, s *Server, id string) map[string]any {
 // An allow from a connection named alice names alice in the answer.
 func TestAnAllowFromAliceNamesAlice(t *testing.T) {
 	s := newAgentServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	got := roundTrip(t, s,
 		`{"id":"0","cmd":"hello","name":"alice"}`,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
 		`{"id":"2","cmd":"agent.allow","pane":"w1:p1","ask":"ask-3","confirm":"auth fix"}`)
 	if !got[3].OK {
 		t.Fatalf("agent.allow: %+v", got[3].Error)
@@ -238,10 +238,10 @@ func TestAnAllowFromAliceNamesAlice(t *testing.T) {
 // An answer from an unnamed operator is local, never empty.
 func TestADenyFromNoNameIsLocal(t *testing.T) {
 	s := newAgentServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
 		`{"id":"2","cmd":"agent.deny","pane":"w1:p1","ask":"ask-3"}`)
 	if !got[2].OK {
 		t.Fatalf("agent.deny: %+v", got[2].Error)
@@ -284,7 +284,7 @@ func TestAnOperatorReportCarriesTheConnectionsName(t *testing.T) {
 }
 
 // A report that is not the operator's carries no name, whatever it says.
-func TestAGateReportCarriesNoName(t *testing.T) {
+func TestAWardenReportCarriesNoName(t *testing.T) {
 	s := newAgentServer(t)
 	got := roundTrip(t, s,
 		`{"id":"0","cmd":"hello","name":"alice"}`,

@@ -259,7 +259,7 @@ func (m *Model) cursorToEnded(id string) {
 }
 
 // startOrder is the order the windows fill in when the floor opens: the
-// agents that need you, then the foreman while it holds a reply no window
+// agents that need you, then the steward while it holds a reply no window
 // showed, then the working ones, then the rest, each group in rail order.
 // Subagents never fill a window. An agent only ever takes a free window.
 func (m *Model) startOrder() []string {
@@ -267,9 +267,9 @@ func (m *Model) startOrder() []string {
 	var out []string
 	for _, pick := range []func(Row) bool{
 		func(r Row) bool { return r.needsYou() },
-		func(r Row) bool { return !r.needsYou() && m.foremanFirst(r.ID) },
-		func(r Row) bool { return !r.needsYou() && r.State == "working" && !m.foremanFirst(r.ID) },
-		func(r Row) bool { return !r.needsYou() && r.State != "working" && !m.foremanFirst(r.ID) },
+		func(r Row) bool { return !r.needsYou() && m.stewardFirst(r.ID) },
+		func(r Row) bool { return !r.needsYou() && r.State == "working" && !m.stewardFirst(r.ID) },
+		func(r Row) bool { return !r.needsYou() && r.State != "working" && !m.stewardFirst(r.ID) },
 	} {
 		for _, r := range rows {
 			if r.Parent == "" && pick(r) {

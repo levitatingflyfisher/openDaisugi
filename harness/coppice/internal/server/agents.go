@@ -25,7 +25,7 @@ func (s *Server) RegisterAgentCommands() {
 	_ = s.Handle("agent.read", s.handleAgentRead)
 	_ = s.Handle("agent.set_mode", s.handleSetMode)
 	_ = s.Handle("agent.set_model", s.handleSetModel)
-	_ = s.Handle("agent.set_router", s.handleSetRouter)
+	_ = s.Handle("agent.set_route", s.handleSetRoute)
 	_ = s.Handle("agent.move", s.handleMove)
 }
 
@@ -61,7 +61,7 @@ func truncate(s string, n int) string {
 // broadcast. A caller that built ev from a request and echoes ev back to
 // its own caller - handleReportState, before this fix - can otherwise answer
 // "ok" with the very state that got rejected, or with a fact Merge's own
-// precedence held back (a gate blocked hold outranking an operator report),
+// precedence held back (a warden blocked hold outranking an operator report),
 // while something else entirely landed in the store. Every caller must reply
 // with what THIS function returns, never with the ev it was given.
 func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneStateEvent {
@@ -85,7 +85,7 @@ func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneSt
 		s.noteAsk(paneID, ev.Ask)
 	}
 	prev, hadPrev := s.states.Current(paneID)
-	// The gate-idle stamp follows the merge under one lock (CP-R-57), so two
+	// The warden-idle stamp follows the merge under one lock (CP-R-57), so two
 	// hook reports that race cannot leave a stamp over a working pane.
 	lp, live := s.Live(paneID)
 	if live {
@@ -107,7 +107,7 @@ func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneSt
 		s.Broadcast("state", paneID, stateEvent{Event: "state", PaneStateEvent: merged, Held: esc.held})
 	}
 	if esc.note != "" {
-		s.NoteTo(esc.note, paneID, esc.foreman)
+		s.NoteTo(esc.note, paneID, esc.steward)
 	}
 	for _, h := range esc.release {
 		s.surface(h.pane, h.ask)
@@ -125,27 +125,27 @@ func (s *Server) ApplyState(paneID string, ev proto.PaneStateEvent) proto.PaneSt
 	return merged
 }
 
-// restamp keeps the gate-idle stamp in step with the merge (CP-R-57). The
-// hooks speak as gate (PreToolUse) and as headless (Stop and Notification,
+// restamp keeps the warden-idle stamp in step with the merge (CP-R-57). The
+// hooks speak as warden (PreToolUse) and as headless (Stop and Notification,
 // whose hook reports source "headless"); the process and manifest sources
 // never touch it. Only an event the merge took counts: one it held back
 // changes nothing. Call it under lp.stampMu.
 func (s *Server) restamp(lp *LivePane, in, merged proto.PaneStateEvent) {
-	if in.Source != proto.SrcGate && in.Source != proto.SrcHeadless {
+	if in.Source != proto.SrcWarden && in.Source != proto.SrcHeadless {
 		return
 	}
 	if merged.Source != in.Source || merged.State != in.State || merged.TS != in.TS {
 		return
 	}
 	if in.State == proto.StateIdle {
-		lp.gateIdleSince.CompareAndSwap(0, s.clock().UnixNano())
+		lp.wardenIdleSince.CompareAndSwap(0, s.clock().UnixNano())
 	} else {
-		lp.gateIdleSince.Store(0)
+		lp.wardenIdleSince.Store(0)
 	}
 }
 
 // stateEvent is the state event on the wire. Held is set only by the
-// server, when a foreman hears the ask first. No pane report can set it.
+// server, when a steward hears the ask first. No pane report can set it.
 type stateEvent struct {
 	Event string `json:"event"`
 	proto.PaneStateEvent
@@ -157,7 +157,7 @@ type stateEvent struct {
 // the pane can be speaking for the human in front of it.
 //
 // The limit of that check, stated plainly: a caller can simply send
-// source: "gate" and be believed. The socket's uid check is the only
+// source: "warden" and be believed. The socket's uid check is the only
 // boundary, and it is the right one for a one-user machine. If coppice ever
 // serves more than one uid, this is the function that needs a real
 // credential.
@@ -193,7 +193,7 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	real, refusal := s.checkTranscript(c, id, ev.Harness, extras.TranscriptPath)
 	ev.Pane = &id
 	// Only the server marks an ask as held by a harness: when the pane's
-	// live harness owns the ask the report names, as it does when the gate
+	// live harness owns the ask the report names, as it does when the warden
 	// plugin reports the same ask the adapter already did.
 	if ev.Ask != nil {
 		ev.Ask.Holder = ""
@@ -206,11 +206,11 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 	ev.Who = nil
 	downgraded := false
 	if ev.Source == proto.SrcOperator && !c.Operator(id) {
-		ev.Source = proto.SrcGate
+		ev.Source = proto.SrcWarden
 		downgraded = true
 		// A blocked claim with no ask is valid as
 		// operator (a human needs no ask to say "I'm blocked"), but that
-		// same claim is invalid as gate (a gate's blocked claim always
+		// same claim is invalid as warden (a warden's blocked claim always
 		// carries the ask it is holding). ParseStateEvent already validated
 		// the event as it arrived, against its ORIGINAL source, so this is
 		// the one mutation in this handler that can turn a valid report into
@@ -219,7 +219,7 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 		// this handler still answered ok.
 		if err := ev.Validate(); err != nil {
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("a gate blocked report needs an ask: %v. "+
+				fmt.Sprintf("a warden blocked report needs an ask: %v. "+
 					"Attach to this pane to report as operator instead.", err))
 		}
 	}
@@ -245,7 +245,7 @@ func (s *Server) handleReportState(c *Client, r *proto.Request) proto.Response {
 		res["ask"] = merged.Ask
 	}
 	if downgraded {
-		res["note"] = "source became gate. Attach to this pane to speak as the operator."
+		res["note"] = "source became warden. Attach to this pane to speak as the operator."
 	}
 	if refusal != "" {
 		res["transcript"] = refusal
@@ -275,7 +275,7 @@ func sessionIDOK(sid string) bool {
 // hook reported, so pane.resume can resume that session once the pane
 // ends. A headless pane's adapter already names its session, and its fork
 // bookkeeping must not change under it, so only pty panes take this. The
-// layout is written only when the id changes, since a gate hook reports on
+// layout is written only when the id changes, since a warden hook reports on
 // every tool call. A report whose harness is not the pane's own names
 // some other session, so it sets nothing: pane.resume would run the
 // pane's harness on it.
@@ -288,6 +288,8 @@ func (s *Server) noteHarnessSession(id, harness, sid string) {
 		!sameHarness(harness, rec.Harness) {
 		return
 	}
+	// A resumed or forked long-running agent: its new session is its branch's.
+	s.routePaneSession(rec, sid)
 	_ = s.updatePane(id, func(p *layout.Pane) {
 		if p.Kind == layout.KindPTY && !p.Closed {
 			p.HarnessSessionID = sid
@@ -574,7 +576,7 @@ func (s *Server) handleAgentPrompt(c *Client, r *proto.Request) proto.Response {
 		if err != nil {
 			return proto.ErrResp(r.ID, proto.ErrAdapter, err.Error())
 		}
-	} else if s.gated(id) {
+	} else if s.checked(id) {
 		// A sender that still waits when a drop comes hears of it as its
 		// error, and a drop after it gave up tells it as for any sender.
 		// See queuedPrompt.wait.

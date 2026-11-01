@@ -4,7 +4,7 @@ be silently fixed.
 
 ``subsumption._glob_to_z3`` encodes a single-``*`` glob as ``And(PrefixOf, SuffixOf)``
 over a *free, un-normalized* string, so a single ``*`` crosses ``/`` and ``..`` is not
-collapsed. ``verify._path_matches_any`` — the matcher the executor gate actually uses —
+collapsed. ``verify._path_matches_any`` — the matcher the executor warden actually uses —
 normalizes with ``posixpath.normpath`` and matches with ``PurePosixPath.match``, where a
 single ``*`` does **not** cross ``/``. They disagree.
 
@@ -12,7 +12,7 @@ Impact (why this is real but does NOT block Stage 9):
 - The divergence makes ``_patterns_subsume`` under-approximate ``¬outer_ok``, so
   ``envelope_subsumes`` can incorrectly *hold* — a **false formal claim**, the
   fail-open edge of ``check_skill_delegations``.
-- It is NOT an unauthorized write: the concrete gate (``_path_matches_any``) still
+- It is NOT an unauthorized write: the concrete warden (``_path_matches_any``) still
   denies the actual effect at runtime. So the damage is a wrong *proof*, not a wrong
   *action*.
 - Stage 9's ``batch.prove_footprint`` deliberately avoids this encoding and proves the
@@ -46,7 +46,7 @@ def test_known_gap_glob_z3_diverges_from_concrete_matcher():
     sub_path = "/x/sub/c.txt"
     single_star = "/x/*.txt"
 
-    # The concrete runtime gate DENIES the sub-path (single * does not cross /).
+    # The concrete runtime warden DENIES the sub-path (single * does not cross /).
     assert _path_matches_any(sub_path, [single_star]) is False
 
     # …but subsumption's Z3 glob encoding BLESSES an inner envelope that admits it.

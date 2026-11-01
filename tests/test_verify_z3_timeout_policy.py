@@ -23,7 +23,7 @@ _contracts_mod = importlib.import_module("opendaisugi.contracts")
 
 
 def _env(stakes="low", **perm_kwargs) -> Envelope:
-    perms = {"shell": True, "shell_allowlist": ["ls"], **perm_kwargs}
+    perms = {"shell": True, "shell_allowlist": ["ls"], "file_read": ["**"], **perm_kwargs}
     return Envelope(generated_by="t", task="t", permissions=Permission(**perms), stakes=stakes)
 
 

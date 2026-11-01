@@ -312,8 +312,8 @@ func TestClipsTogetherAndStop(t *testing.T) {
 // A machine that cannot use Parakeet skips its tier, so voice does not
 // pick an engine that ensure_parakeet then refuses.
 func TestChooseEngineSkipsParakeetWhereItCannotRun(t *testing.T) {
-	ram := 15.5
-	desk := VoiceHardware{RAMGB: &ram, CPUs: 4}
+	ram := 12.5
+	desk := VoiceHardware{RAMGB: &ram, CPUs: 6}
 	e, m, line := ChooseEngine(desk, map[string]bool{"parakeet": true, "moonshine": true}, false, false)
 	if e != "moonshine" || m != "small" || strings.Contains(line, "Parakeet") {
 		t.Fatal(e, m, line)
@@ -322,10 +322,10 @@ func TestChooseEngineSkipsParakeetWhereItCannotRun(t *testing.T) {
 
 func TestChooseEngine(t *testing.T) {
 	ram := func(f float64) *float64 { return &f }
-	desk := VoiceHardware{RAMGB: ram(15.5), CPUs: 4}
+	desk := VoiceHardware{RAMGB: ram(12.5), CPUs: 6}
 	all := map[string]bool{"parakeet": true, "moonshine": true, "faster-whisper": true}
 	e, m, line := ChooseEngine(desk, all, true, true)
-	if e != "parakeet" || m != "v2" || line != "No voice engine is set, so voice uses Parakeet v2: this box has 15.5 GB of RAM and 4 cores." {
+	if e != "parakeet" || m != "v2" || line != "No voice engine is set, so voice uses Parakeet v2: this box has 12.5 GB of RAM and 6 cores." {
 		t.Fatal(e, m, line)
 	}
 	_, _, line = ChooseEngine(desk, map[string]bool{"moonshine": true}, false, true)

@@ -1,4 +1,4 @@
-"""v0.27.0 — vacuity verdicts gate alias registration and invariant compilation."""
+"""v0.27.0 — vacuity verdicts warden alias registration and invariant compilation."""
 
 from __future__ import annotations
 
@@ -30,7 +30,9 @@ def test_contradiction_invariant_is_hard_error_even_at_low_stakes():
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="low",
         invariants=[
             Invariant(type="always_false", description="x", expr=_contradiction(), enforce=True)

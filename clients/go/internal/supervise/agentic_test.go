@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/wardenroot"
 )
 
 func agenticEnvelope(t *testing.T, id string, read []string, shell bool) *pyjson.Object {
@@ -17,7 +17,7 @@ func agenticEnvelope(t *testing.T, id string, read []string, shell bool) *pyjson
 	for _, r := range read {
 		reads = append(reads, r)
 	}
-	env, err := gateroot.Validate(pyjson.NewObject().Set("id", id).Set("generated_by", "test").Set("task", "t").
+	env, err := wardenroot.Validate(pyjson.NewObject().Set("id", id).Set("generated_by", "test").Set("task", "t").
 		Set("permissions", pyjson.NewObject().Set("file_read", reads).Set("shell", shell)))
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func agenticStep(ws string, tools []string, child *pyjson.Object) *pyjson.Object
 	return s
 }
 
-func TestAgenticRunsUnderTheGate(t *testing.T) {
+func TestAgenticRunsUnderTheWarden(t *testing.T) {
 	dir, ws := t.TempDir(), t.TempDir()
 	tmp := t.TempDir()
 	parent := agenticEnvelope(t, "env_parent", []string{ws + "/**"}, true)
@@ -73,8 +73,8 @@ func TestAgenticRunsUnderTheGate(t *testing.T) {
 	if len(dirs) != 1 {
 		t.Fatalf("tree dirs %v", dirs)
 	}
-	root := filepath.Join(dirs[0], "gate")
-	if !strings.Contains(string(args), "/opt/daisugi gate check --mode enforce --root "+root) ||
+	root := filepath.Join(dirs[0], "warden")
+	if !strings.Contains(string(args), "/opt/daisugi warden check --mode enforce --root "+root) ||
 		!strings.Contains(string(args), "--session agentic-g") {
 		t.Fatalf("settings %s", args)
 	}

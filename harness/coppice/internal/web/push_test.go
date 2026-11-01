@@ -62,7 +62,7 @@ func newPublisher(t *testing.T, base string, now *time.Time, tokenEnv string) *P
 }
 
 func blockedEvent(pane string) StateEvent {
-	return StateEvent{Pane: pane, Harness: "claude-code", State: "blocked", Source: "gate",
+	return StateEvent{Pane: pane, Harness: "claude-code", State: "blocked", Source: "warden",
 		Ask: &Ask{ID: "toolu_1", Tool: "Bash", Summary: "rm -rf build/"}}
 }
 
@@ -82,7 +82,7 @@ func TestPublishesOnceWhenAPaneBecomesBlocked(t *testing.T) {
 	if got.Title != "auth fix needs you." {
 		t.Errorf("title was %q", got.Title)
 	}
-	if got.Body != "Wants rm -rf build/. Gate says no." {
+	if got.Body != "Wants rm -rf build/. Warden says no." {
 		t.Errorf("body was %q", got.Body)
 	}
 	if got.Click != "https://box.tail1234.ts.net:8443/#/pane/w1:p1?ask=toolu_1" {
@@ -223,15 +223,15 @@ func TestBodyFallsBackToThePlaceholderWithNeitherAskNorDetail(t *testing.T) {
 	cap, base := newNtfy(t)
 	now := time.Unix(1_757_300_000, 0)
 	p := newPublisher(t, base, &now, "")
-	ev := StateEvent{Pane: "w1:p1", State: "blocked", Source: "gate"}
+	ev := StateEvent{Pane: "w1:p1", State: "blocked", Source: "warden"}
 	p.OnState(ev, "auth fix")
-	if cap.reqs[0].Body != BlockedByGate {
+	if cap.reqs[0].Body != BlockedByWarden {
 		t.Fatalf("body was %q", cap.reqs[0].Body)
 	}
 }
 
 // A block the screen manifest found says the agent asks, never that the
-// gate gave no detail, and never the name of the rule that matched.
+// warden gave no detail, and never the name of the rule that matched.
 func TestAScreenBlockPushSaysTheAgentAsks(t *testing.T) {
 	cap, base := newNtfy(t)
 	now := time.Unix(1_757_300_000, 0)
@@ -352,7 +352,7 @@ func TestWatchTurnsSocketStateEventsIntoPushes(t *testing.T) {
 		case "events.subscribe":
 			return []map[string]any{
 				{"id": req["id"], "ok": true},
-				{"event": "state", "pane": "w1:p1", "state": "blocked", "source": "gate", "harness": "claude-code",
+				{"event": "state", "pane": "w1:p1", "state": "blocked", "source": "warden", "harness": "claude-code",
 					"ask": map[string]any{"id": "toolu_1", "tool": "Bash", "summary": "rm -rf build/"}},
 			}
 		}
@@ -430,7 +430,7 @@ func TestUnlistedPaneCostsOneLookupNotOnePerEvent(t *testing.T) {
 			for i := 0; i < 10; i++ {
 				replies = append(replies, map[string]any{
 					"event": "state", "pane": "w9:p9", "state": "working",
-					"source": "gate", "harness": "claude-code",
+					"source": "warden", "harness": "claude-code",
 				})
 			}
 			return replies
@@ -519,15 +519,15 @@ func TestAnUndoableAskCardHasAllowLast(t *testing.T) {
 	}
 }
 
-func TestTheBodySaysTheRuleWhenTheGateGivesOne(t *testing.T) {
+func TestTheBodySaysTheRuleWhenTheWardenGivesOne(t *testing.T) {
 	cap, base := newNtfy(t)
 	now := time.Unix(1_757_300_000, 0)
 	p := newPublisher(t, base, &now, "")
 	ev := tieredEvent("w1:p1", "permanent")
 	rule := 3
-	ev.Ask.Gate = &AskGate{Verdict: "deny", Rule: &rule}
+	ev.Ask.Warden = &AskWarden{Verdict: "deny", Rule: &rule}
 	p.OnState(ev, "auth fix")
-	if cap.reqs[0].Body != "Wants rm -rf build/. Gate says no, rule 3." {
+	if cap.reqs[0].Body != "Wants rm -rf build/. Warden says no, rule 3." {
 		t.Fatalf("body %q", cap.reqs[0].Body)
 	}
 }
@@ -727,7 +727,7 @@ func TestAPaneIDIsEscapedInTheClick(t *testing.T) {
 	}
 }
 
-// A held ask waits on a foreman, so the phone stays quiet. When the hold
+// A held ask waits on a steward, so the phone stays quiet. When the hold
 // ends and the same ask goes out with no hold, that is the edge the
 // phone hears.
 func TestAHeldAskPublishesOnlyWhenTheHoldEnds(t *testing.T) {
@@ -758,7 +758,7 @@ func TestPushBlockWordsMatchTheFloor(t *testing.T) {
 	if err := json.Unmarshal(b, &w); err != nil {
 		t.Fatal(err)
 	}
-	if w["blocked_by_gate"] != BlockedByGate || w["blocked_own_question"] != BlockedOwnQuestion {
-		t.Fatalf("push words %q / %q differ from words.json", BlockedByGate, BlockedOwnQuestion)
+	if w["blocked_by_warden"] != BlockedByWarden || w["blocked_own_question"] != BlockedOwnQuestion {
+		t.Fatalf("push words %q / %q differ from words.json", BlockedByWarden, BlockedOwnQuestion)
 	}
 }

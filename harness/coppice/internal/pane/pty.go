@@ -14,7 +14,7 @@ import (
 
 // SpawnOpts is everything a pty pane needs to start. Sock and PaneID become
 // COPPICE_SOCK and COPPICE_PANE in the child's environment: that pair is how
-// the gate hook in the child finds its way back to report state.
+// the warden hook in the child finds its way back to report state.
 type SpawnOpts struct {
 	Cwd    string
 	Argv   []string
@@ -56,7 +56,7 @@ func sessionMarker(k string) bool {
 // later values replace earlier ones rather than appending.
 //
 // COPPICE_DATA_DIR is the server's data directory, where it keeps the
-// phone's token, the local CA's key and the voice token. The gate hook in
+// phone's token, the local CA's key and the voice token. The warden hook in
 // the child guards that directory's secrets, so a server with its own
 // --data-dir is guarded as well as the default one. Only the server names
 // it: it is set after the pane's extras, and an empty dataDir removes an
@@ -65,7 +65,7 @@ func sessionMarker(k string) bool {
 // Spec-02 makes the injection unconditional: every spawned process gets
 // COPPICE_SOCK and COPPICE_PANE. When an argument is empty the inherited value
 // is REMOVED, never left in place. A server started from inside a coppice pane
-// inherits that pane's COPPICE_PANE, and passing it on would make the gate hook
+// inherits that pane's COPPICE_PANE, and passing it on would make the warden hook
 // in the child report state for somebody else's pane.
 func BuildEnv(base []string, extra map[string]string, sock, paneID, dataDir string) []string {
 	merged := map[string]string{}
@@ -148,7 +148,7 @@ func StartPTY(o SpawnOpts, g *Grid) (*PTY, error) {
 		return nil, fmt.Errorf("pane needs a command to run")
 	}
 	// Spec-02 makes the two coppice variables unconditional. An empty one here
-	// means the caller forgot, and a pane whose gate hook cannot find its way
+	// means the caller forgot, and a pane whose warden hook cannot find its way
 	// home is worse than a pane that refuses to start.
 	if o.Sock == "" || o.PaneID == "" {
 		return nil, fmt.Errorf("a pane needs both a socket path and a pane id in SpawnOpts")

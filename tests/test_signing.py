@@ -25,7 +25,9 @@ def _unsigned_contract(skill_id: str = "echo-skill") -> Contract:
         envelope=Envelope(
             generated_by=skill_id,
             task="skill task",
-            permissions=Permission(shell=True, shell_allowlist=["echo"]),
+            permissions=Permission(
+                shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+            ),
         ),
         guarantees=["safe"],
     )
@@ -153,7 +155,12 @@ def test_delegation_accepts_signed_contract_with_trusted_registry(tmp_path: Path
     caller = Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo", "ls", "pytest"]),
+        permissions=Permission(
+            shell=True,
+            shell_allowlist=["echo", "ls", "pytest"],
+            file_read=["**"],
+            file_write=["**"],
+        ),
     )
     c = _unsigned_contract()
     c.signer = "robin-v1"
@@ -178,7 +185,9 @@ def test_delegation_rejects_tampered_signed_contract(tmp_path: Path):
     caller = Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     c = _unsigned_contract()
     c.signature = sign_contract(c, priv)
@@ -199,7 +208,9 @@ def test_delegation_unsigned_contract_still_works_without_trust_config():
     caller = Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     c = _unsigned_contract()
     d = verify_delegation(caller, c)

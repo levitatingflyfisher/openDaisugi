@@ -85,7 +85,7 @@ const list = (v) => (Array.isArray(v) ? v : []);
 // or a ring the server refused.
 export function connect(win) {
   const framed = Boolean(win && win.parent && win.parent !== win);
-  let data = { panes: [], tasks: [], events: [], sel: [], from: null };
+  let data = { panes: [], tasks: [], events: [], sel: [], from: null, cards: [], diffs: {}, tree: null, notice: '' };
   const onData = [];
   const onFrame = [];
   const onWatch = [];
@@ -101,6 +101,10 @@ export function connect(win) {
           events: list(m.events),
           sel: list(m.sel),
           from: typeof m.from === 'number' ? m.from : null,
+          cards: list(m.cards),
+          diffs: m.diffs && typeof m.diffs === 'object' ? m.diffs : {},
+          tree: m.tree && typeof m.tree === 'object' ? m.tree : null,
+          notice: typeof m.notice === 'string' ? m.notice : '',
         };
         for (const fn of onData) fn(data);
       } else if (m.type === 'coppice.frame' && typeof m.pane === 'string') {
@@ -124,6 +128,10 @@ export function connect(win) {
     events: () => data.events,
     sel: () => data.sel,
     from: () => data.from,
+    cards: () => data.cards,
+    diffs: () => data.diffs,
+    tree: () => data.tree,
+    notice: () => data.notice,
     onData: (fn) => { onData.push(fn); },
     onFrame: (fn) => { onFrame.push(fn); },
     onWatch: (fn) => { onWatch.push(fn); },
@@ -131,6 +139,11 @@ export function connect(win) {
     setSel: (ids) => post({ type: 'set-sel', sel: list(ids).filter((p) => typeof p === 'string') }),
     watch: (ids) => post({ type: 'watch', panes: list(ids).filter((p) => typeof p === 'string').slice(0, WATCH_MAX) }),
     close: () => post({ type: 'close' }),
+    // answer posts a card's outcome: keep, drop, or switch with the pick.
+    answer: (choice_id, outcome, pick = '') => post({ type: 'answer', choice_id, outcome, pick }),
+    // diff asks the floor for the edits of one card.
+    diff: (choice_id) => post({ type: 'card-diff', choice_id }),
+    treeAnswer: (ask_id, decision) => post({ type: 'tree-answer', ask_id, decision }),
   };
 }
 

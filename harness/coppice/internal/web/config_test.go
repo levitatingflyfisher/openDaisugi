@@ -119,7 +119,7 @@ func TestServeOverPlainLoopbackAnswersTheTokenCheck(t *testing.T) {
 	defer cancel()
 	addr := freeAddr(t)
 	cfg := Config{Enabled: true, Listen: addr, TLS: "off"}
-	go Serve(ctx, cfg, Options{Dial: d, Tokens: store, Gate: AskChannel{Root: home}})
+	go Serve(ctx, cfg, Options{Dial: d, Tokens: store, Warden: AskChannel{Root: home}})
 	waitForPort(t, addr)
 
 	if code := getStatus(t, "http://"+addr+"/api/token/check", tok); code != 200 {
@@ -191,9 +191,9 @@ func TestAutoStartStopsTheCAHandoffWhenServeFailsToListen(t *testing.T) {
 // alone. A voice_url written once by --voice-url --persist and never read
 // back by Serve would leave every restart after the first answering 409,
 // with the phone's record button pointed at nothing, and nothing red to
-// say so. gate_root is pinned in the same test since Serve's copy of it
+// say so. warden_root is pinned in the same test since Serve's copy of it
 // works the same way and costs nothing extra to check here.
-func TestServeReadsVoiceURLAndGateRootFromTheSavedConfig(t *testing.T) {
+func TestServeReadsVoiceURLAndWardenRootFromTheSavedConfig(t *testing.T) {
 	dataDir := t.TempDir()
 	upstream, upstreamURL := newVoiceUpstream(t, 200, `{"text":"hello"}`)
 	store := TokenStore{Path: TokenPath(dataDir)}
@@ -202,10 +202,10 @@ func TestServeReadsVoiceURLAndGateRootFromTheSavedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := freeAddr(t)
-	gateRoot := filepath.Join(dataDir, "gate")
+	wardenRoot := filepath.Join(dataDir, "warden")
 
 	configPath := filepath.Join(dataDir, "web.json")
-	cfg := Config{Enabled: true, Listen: addr, TLS: "off", VoiceURL: upstreamURL, GateRoot: gateRoot}
+	cfg := Config{Enabled: true, Listen: addr, TLS: "off", VoiceURL: upstreamURL, WardenRoot: wardenRoot}
 	if err := SaveConfig(configPath, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestServeReadsVoiceURLAndGateRootFromTheSavedConfig(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, d := newFakeServer(t, echoOK)
-	// Options here carries no VoiceURL and no Gate, the same as AutoStart's
+	// Options here carries no VoiceURL and no Warden, the same as AutoStart's
 	// own call: only Serve's own read of the loaded Config can supply them.
 	go Serve(ctx, loaded, Options{Dial: d, Tokens: store})
 	waitForPort(t, addr)
@@ -239,10 +239,10 @@ func TestServeReadsVoiceURLAndGateRootFromTheSavedConfig(t *testing.T) {
 		t.Fatalf("the voice server saw %d requests, want 1", upstream.count())
 	}
 
-	// gate_root: a made-up tool_use_id must read as ErrNoAsk, status 409,
-	// the answer for a real, empty gate directory. A Root Serve never set
+	// warden_root: a made-up tool_use_id must read as ErrNoAsk, status 409,
+	// the answer for a real, empty warden directory. A Root Serve never set
 	// answers a different, generic error at status 500 instead. A deny goes
-	// straight to the gate directory, so it tests the root and nothing else.
+	// straight to the warden directory, so it tests the root and nothing else.
 	answerReq, err := http.NewRequest("POST", "http://"+addr+"/api/ask/answer",
 		strings.NewReader(`{"tool_use_id":"toolu_nonexistent","decision":"deny"}`))
 	if err != nil {
@@ -257,7 +257,7 @@ func TestServeReadsVoiceURLAndGateRootFromTheSavedConfig(t *testing.T) {
 	if answerResp.StatusCode != http.StatusConflict {
 		var body map[string]any
 		json.NewDecoder(answerResp.Body).Decode(&body)
-		t.Fatalf("status %d, want 409: Serve did not read gate_root out of the saved config: %v", answerResp.StatusCode, body)
+		t.Fatalf("status %d, want 409: Serve did not read warden_root out of the saved config: %v", answerResp.StatusCode, body)
 	}
 }
 

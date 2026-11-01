@@ -66,7 +66,7 @@ func TestReportChildRefusals(t *testing.T) {
 	}
 }
 
-// A pane connection reports its subagents with no note: the gate hook
+// A pane connection reports its subagents with no note: the warden hook
 // runs on every subagent start and stop.
 func TestAPaneReportsChildrenWithNoNote(t *testing.T) {
 	s := newAgentServer(t)

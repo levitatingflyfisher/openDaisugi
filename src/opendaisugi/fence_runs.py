@@ -1,6 +1,6 @@
-"""What the resident gate trusts about a caller, and what it never takes (FN-R-21).
+"""What the resident warden trusts about a caller, and what it never takes (FN-R-21).
 
-The resident gate runs outside the fence and makes every write. So it takes
+The resident warden runs outside the fence and makes every write. So it takes
 no path from a request: its root and its captures root are fixed when it
 starts, by the trusted parent that starts it. A request whose argv names
 ``--root`` or ``--captures-root`` (or a prefix argparse would read as one)
@@ -10,10 +10,10 @@ A session id names files, so a resident call's session id must match
 ``[A-Za-z0-9._-]{1,128}`` and must not be ``.`` or ``..``.
 
 A checkpoint writes into the repository at the payload's cwd. The resident
-gate takes one only inside the workspace a fence run bound: ``daisugi
+warden takes one only inside the workspace a fence run bound: ``daisugi
 fence``, before it applies its ruleset and still outside the fence, writes
 ``<root>/fence-runs/<pid>.json`` with its pid, the start time the kernel
-gives that pid, and the resolved workspace. The gate state is read only
+gives that pid, and the resolved workspace. The warden state is read only
 inside the fence, so no fenced process can write such a file. The server
 reads the caller's pid with SO_PEERCRED and walks its parents to the fence
 run. A caller with no fence run above it has no bound workspace.
@@ -56,21 +56,21 @@ _PATH_FLAGS = ("--root", "--captures-root")
 _MAX_DEPTH = 64
 
 SESSION_REFUSAL = (
-    "the resident gate takes a session id only when it matches [A-Za-z0-9._-]{1,128}, "
+    "the resident warden takes a session id only when it matches [A-Za-z0-9._-]{1,128}, "
     "so it denies this call"
 )
 PATH_REFUSAL = (
-    "the resident gate takes no path from a request: its root and captures root are "
+    "the resident warden takes no path from a request: its root and captures root are "
     "fixed when it starts. Drop --root and --captures-root from the request"
 )
 NO_WORKSPACE_REFUSAL = (
-    "the resident gate takes a checkpoint only inside the workspace a fence run bound, "
+    "the resident warden takes a checkpoint only inside the workspace a fence run bound, "
     "and this caller runs under no fence run, so it denies this call"
 )
 GITDIR_REFUSAL = (
     "the workspace's git dir is not a plain directory inside the workspace this caller's "
     "fence run bound (a gitfile, a link, a common dir, or objects or refs that lead out), "
-    "so the resident gate denies this call"
+    "so the resident warden denies this call"
 )
 # A transcript bigger than this is not read: no checkpoint.
 TRANSCRIPT_CAP = 128 * 1024 * 1024
@@ -79,12 +79,12 @@ TRANSCRIPT_CAP = 128 * 1024 * 1024
 FENCED_CHECKPOINT_REFUSAL = "checkpoints are off inside the fence"
 OUTSIDE_REFUSAL = (
     "the checkpoint cwd is not inside the workspace this caller's fence run bound, "
-    "so the resident gate denies this call"
+    "so the resident warden denies this call"
 )
 
 
 def session_ok(sid: object) -> bool:
-    """A session id the resident gate may build a path from."""
+    """A session id the resident warden may build a path from."""
     return isinstance(sid, str) and bool(_SESSION.fullmatch(sid)) and sid not in (".", "..")
 
 
@@ -137,6 +137,16 @@ def proc_start(pid: int) -> str | None:
     return f[19] if f is not None and len(f) > 19 else None
 
 
+def boot_id() -> str | None:
+    """The kernel's boot id, so a record from an earlier boot never matches
+    (a pid and a start time in clock ticks can repeat after a reboot)."""
+    try:
+        text = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+    except (OSError, ValueError):
+        return None
+    return text or None
+
+
 def _parent(pid: int) -> int | None:
     f = _stat_fields(pid)
     try:
@@ -167,6 +177,8 @@ def bound_workspace(root: Path, peer_pid: int | None) -> str | None:
                 and rec.get("pid") == pid
                 and isinstance(rec.get("start"), str)
                 and rec["start"] == proc_start(pid)
+                and isinstance(rec.get("boot"), str)
+                and rec["boot"] == boot_id()
                 and isinstance(rec.get("workspace"), str)
                 and os.path.isabs(rec["workspace"])
             ):
@@ -179,7 +191,12 @@ def register(root: Path, pid: int, workspace: str) -> None:
     """Write the fence run record (the Go and Rust fences write the same)."""
     from opendaisugi._state_files import write_state_file
 
-    rec = {"pid": pid, "start": proc_start(pid), "workspace": os.path.realpath(workspace)}
+    rec = {
+        "pid": pid,
+        "start": proc_start(pid),
+        "boot": boot_id(),
+        "workspace": os.path.realpath(workspace),
+    }
     write_state_file(root, (RUNS_DIR,), f"{pid}.json", json.dumps(rec), replace_link=True)
 
 

@@ -62,7 +62,11 @@ def _initial_commit(repo: Path, *, trusted_signers: dict[str, str] | None = None
 
 def _pathway() -> CompiledPathway:
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",

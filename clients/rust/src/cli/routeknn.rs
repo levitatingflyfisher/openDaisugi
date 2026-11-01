@@ -1,4 +1,4 @@
-//! The knn router on the command line: the router the gateway builds, the
+//! The knn router on the command line: the router the router builds, the
 //! `route --knn` view, `route feedback`, and the knn part of
 //! `router status`. The Go client's `routeknn.go` and `routecmd.go` are the
 //! reference.
@@ -7,12 +7,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, Env, Res};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{Object, Value};
-use crate::gateway::knn::{self, EmbedFn, Knn, OutcomeStore, View};
-use crate::gateway::meter::default_prices;
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{Object, Value};
+use crate::router::knn::{self, EmbedFn, Knn, OutcomeStore, View};
+use crate::router::meter::default_prices;
 use crate::pathways::find::Embedder;
 use crate::pathways::potion;
 
@@ -116,7 +116,7 @@ pub(super) fn view_object(v: &View) -> Object {
 }
 
 impl Env {
-    /// `build_default_gateway`'s KnnRouter: the outcome table under the data
+    /// `build_default_router`'s KnnRouter: the outcome table under the data
     /// dir, the active matcher as the embedder, and its threshold. A matcher
     /// this binary cannot run gives a threshold of 1.0 and an embedder that
     /// fails, so every turn falls back to the rules router.
@@ -154,7 +154,7 @@ impl Env {
                 None => Err("no embedder".to_string()),
             }
         });
-        Arc::new(Knn { store: OutcomeStore { path: join(&join(data_dir, "gateway"), "routing.db") }, embed, threshold })
+        Arc::new(Knn { store: OutcomeStore { path: join(&join(data_dir, "router"), "routing.db") }, embed, threshold })
     }
 
     /// `knn_view`: the knn router's choice for a task, read only.
@@ -177,12 +177,12 @@ impl Env {
         if outcome != knn::GOOD && outcome != knn::BAD {
             return self.usage(cmd, format!("Invalid value: the outcome must be good or bad, not {}", repr(outcome)));
         }
-        let store = OutcomeStore { path: join(&join(&path_str(data_dir), "gateway"), "routing.db") };
+        let store = OutcomeStore { path: join(&join(&path_str(data_dir), "router"), "routing.db") };
         match store.set_outcome(turn_id, outcome, knn::SOURCE_HUMAN) {
             Err(why) => self.fail(cmd, &why),
             Ok(false) => {
                 self.errf(&format!(
-                    "no booked turn {}.\nthe knn router books turns in <data-dir>/gateway/routing.db.\n\
+                    "no booked turn {}.\nthe knn router books turns in <data-dir>/router/routing.db.\n\
                      see the turn ids with: daisugi router status\n",
                     repr(turn_id)
                 ));
@@ -193,7 +193,7 @@ impl Env {
                     let mut o = Object::new();
                     o.set("turn_id", turn_id.as_str());
                     o.set("outcome", outcome.as_str());
-                    self.out(&format!("{}\n", crate::gate::pyjson::dumps(&Value::Obj(o), true)));
+                    self.out(&format!("{}\n", crate::warden::pyjson::dumps(&Value::Obj(o), true)));
                 } else {
                     self.out(&format!("turn {turn_id}: outcome set to {outcome}\n"));
                 }

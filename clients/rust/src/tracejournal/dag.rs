@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{Object, Value};
 
 /// An exception the oracle raises: its type and str().
 #[derive(Debug, Clone)]

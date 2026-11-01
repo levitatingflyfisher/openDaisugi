@@ -1,4 +1,4 @@
-"""report_state(): the one function every gate/hook/extension call site
+"""report_state(): the one function every warden/hook/extension call site
 uses to tell a listening floor (coppice or Herdr) about a state change.
 
 Implemented in the layer (opendaisugi._state_report, stdlib only, no floor

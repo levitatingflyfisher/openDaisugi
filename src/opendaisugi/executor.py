@@ -480,7 +480,7 @@ class NetworkExecutor:
         if not isinstance(step, NetworkStep):
             raise TypeError(f"NetworkExecutor cannot run step of type {type(step).__name__}")
         start = time.monotonic()
-        # Defense in depth (verify already gates this): urllib's default opener
+        # Defense in depth (verify already checks this): urllib's default opener
         # honors file://, ftp://, data: — refuse anything but http(s) so a
         # NetworkStep can never read a local file or reach a non-network scheme.
         scheme = urllib.parse.urlparse(step.url).scheme.lower()

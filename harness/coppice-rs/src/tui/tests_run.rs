@@ -50,7 +50,7 @@ fn new_test_server(tag: &str) -> TestServer {
             off: true,
             ..Default::default()
         },
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     srv.acquire_start_lock().unwrap();
     let ln = srv.listen().unwrap();
@@ -368,7 +368,7 @@ fn a_wide_floor_opens_with_the_agent_that_needs_you_typing() {
             (
                 "event",
                 json!({"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":b,"state":"blocked",
-                       "source":"gate","ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":4102444800u64,"tier":"undoable"},
+                       "source":"warden","ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":4102444800u64,"tier":"undoable"},
                        "detail":"verdict=ask"}),
             ),
         ]),

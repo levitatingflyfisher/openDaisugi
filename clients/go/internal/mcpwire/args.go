@@ -59,7 +59,7 @@ var Args = map[string]*pmodel.Model{
 	"recent_runs": {Name: "recent_runsArguments", Fields: []pmodel.Field{
 		{Name: "limit", Schema: pmodel.Int{}, Default: constant(pyjson.Int{Text: "20"})},
 	}},
-	"delegate": {Name: "delegateArguments", Fields: []pmodel.Field{
+	"spawn": {Name: "spawnArguments", Fields: []pmodel.Field{
 		{Name: "path", Schema: str, Required: true},
 		{Name: "question", Schema: str, Required: true},
 		{Name: "mode", Schema: str, Default: constant("bulk_read")},

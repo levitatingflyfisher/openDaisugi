@@ -43,7 +43,7 @@ def _effect_hint(stage_key: str) -> str:
 def swap_confirmation(stage_key: str, label: str, *, config_path) -> str:
     """Apply the swap and return an HONEST one-line confirmation.
 
-    Widget-free (touches no Buttons), so the App can use it for a ``:gate``
+    Widget-free (touches no Buttons), so the App can use it for a ``:warden``
     command from ANY screen without querying the wiring screen's buttons — and
     it never returns the ``Config`` ``apply_swap`` hands back (that would print a
     ``Config`` repr and lose the honest "needs a restart/reinstall" tail)."""
@@ -170,7 +170,7 @@ class WiringScreen(CockpitScreen):
     # --- the honest swap (command line + click share it) ------------------
     def on_cmd_submitted(self, value: str) -> bool:
         """A ``:`` command on the wiring screen is a swap (``shell reject``,
-        ``gate enforce``). If it does not parse as one, hand it back so the App's
+        ``warden enforce``). If it does not parse as one, hand it back so the App's
         global parser can switch views or quit."""
         try:
             stage, label = resolve_command(value)

@@ -3,6 +3,7 @@
 import atexit
 import os
 import shutil
+import sys
 
 # typer reads these once, when it is first imported, and then forces colour
 # and a terminal width on every help screen, even into a pipe. GitHub Actions
@@ -14,7 +15,7 @@ for _name in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS", "TTY_COMPATIBLE"):
 
 def _isolate_home() -> tuple[str, str]:
     """Point HOME at a new scratch directory before anything imports
-    opendaisugi, so no test reads or writes the operator's own config, gate
+    opendaisugi, so no test reads or writes the operator's own config, warden
     root, data dirs, ~/.claude or ~/.codex. The XDG homes and the data dir
     variables go, so their defaults fall under the scratch home too. The
     tool caches stay where they are (Go, Cargo, rustup, uv, Hugging Face),
@@ -122,6 +123,18 @@ def sentence_transformers_installed(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def fake_daisugi_exe(tmp_path_factory, monkeypatch):
+    """The installed entry point is a fake executable in a temp dir, so no test
+    writes (or checks) the real machine's path. Returns the path."""
+    d = tmp_path_factory.mktemp("daisugi_bin")
+    exe = d / "daisugi"
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr(sys, "argv", [str(exe)] + sys.argv[1:])
+    return str(exe)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_default_data_dir(tmp_path_factory, monkeypatch):
     """Redirect the default data dir to a per-test tmp dir for every test.
 
@@ -203,6 +216,7 @@ def sample_envelope() -> Envelope:
             shell=True,
             shell_allowlist=["find"],
             file_read=["/var/log/**"],
+            file_write=["/var/log/**"],
         ),
         postconditions=[Postcondition(type="exit_code", expected=0)],
     )

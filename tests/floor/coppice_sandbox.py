@@ -123,7 +123,7 @@ def _run_cli(
     env = dict(os.environ)
     # A pane.list row's stack.router comes from these two, which every pane
     # inherits from the server. A shape test must not change with whatever
-    # the person running the tests exported, such as a gateway install.
+    # the person running the tests exported, such as a router install.
     for key in ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"):
         env.pop(key, None)
     if allow_autostart:
@@ -380,7 +380,7 @@ def record_reported_pane_list_fixture(server: CoppiceServer) -> dict:
                 "harness": "claude-code",
                 "pane": pane_id,
                 "state": "blocked",
-                "source": "gate",
+                "source": "warden",
                 "ask": {"id": "a1", "tool": "Bash", "summary": "rm -rf", "deadline": 9999999999.5},
                 "detail": "needs an answer",
             },

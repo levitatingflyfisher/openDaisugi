@@ -8,25 +8,25 @@ and neither wall alone is it:
   with the capabilities the envelope actually grants. A tool the envelope
   doesn't back never reaches the argv. String patterns, not proof — which is
   exactly why it is not the primary mechanism.
-- **Dynamic inner wall.** The sub-agent runs under the call-time gate in
+- **Dynamic inner wall.** The sub-agent runs under the call-time warden in
   enforce mode: every tool call it makes is synthesized into a one-step plan
-  and proved inside the envelope before it runs. The gate's settings and the
+  and proved inside the envelope before it runs. The warden's settings and the
   registered envelope live in a freshly created private root *outside the
   workspace* — supplied from outside anything the sub-agent can write.
 
 Two runtimes run the sub-agent. ``claude`` (the default) is ``claude -p``
-with the gate as its PreToolUse hook. ``sprig`` is the ``sprig`` binary
-(``DAISUGI_SPRIG`` names it) with the gate as its ``--gate-cmd``: the same
-edge proof, private gate root, pinned session and tool wall, with the wall
+with the warden as its PreToolUse hook. ``sprig`` is the ``sprig`` binary
+(``DAISUGI_SPRIG`` names it) with the warden as its ``--warden-cmd``: the same
+edge proof, private warden root, pinned session and tool wall, with the wall
 handed over as ``--tools``. sprig runs Read, Write, Edit and Bash only; a
 requested tool it has no tool for is left out of the wall.
 
 A failed sub-agent (``is_error``, spawn failure, missing workspace) surfaces
-as a failed step — never a swallowed one. The gate root's audit log is the
+as a failed step — never a swallowed one. The warden root's audit log is the
 action transcript; with ``capture=True`` every tool call is also mirrored
 into passive-capture format, so a delegated run feeds the same
 captures → to-trace → journal pipeline distillation already reads. On the
-sprig runtime the gate root also keeps sprig's own session file under
+sprig runtime the warden root also keeps sprig's own session file under
 ``sessions/``.
 """
 
@@ -52,10 +52,10 @@ from typing import Any
 from opendaisugi import agent_profiles
 from opendaisugi.claude_code_llm import call_claude_p_sync
 from opendaisugi.executor import ExecutorResult, truncate_output
-from opendaisugi.gate import gate_settings_json
 from opendaisugi.hook import _safe_session_id
 from opendaisugi.models import AgenticStep, Envelope
 from opendaisugi.verify import _AGENTIC_TOOL_CAPABILITIES, agentic_tool_granted
+from opendaisugi.warden import warden_settings_json
 
 RUNTIMES = ("claude", "sprig")
 
@@ -74,13 +74,13 @@ SPRIG_TOOLS = {
 _CANON_TOOLS = {name.lower(): name for name in SPRIG_TOOLS}
 
 # sprig's session dir under the sprig fence: in the data dir, outside the
-# gate root, which the fence keeps read only (FN-R-25).
+# warden root, which the fence keeps read only (FN-R-25).
 FENCE_SESSIONS_DIR = "sprig-sessions"
 
 # A spawn wall under the sprig fence: a nested tree run would write the
-# gate root from inside the fence.
+# warden root from inside the fence.
 SPAWN_FENCE_TEXT = (
-    "the spawn tool cannot run under the sprig fence: a child tree run writes the gate "
+    "the spawn tool cannot run under the sprig fence: a child tree run writes the warden "
     "root, which the fence keeps read only"
 )
 
@@ -88,8 +88,8 @@ SPAWN_FENCE_TEXT = (
 KEY_FD = 3
 SPAWN_KEYS_FD = 4
 
-# sprig splits --gate-cmd at whitespace (Go's strings.Fields), so a word
-# that holds whitespace would reach the gate as two words. These are the
+# sprig splits --warden-cmd at whitespace (Go's strings.Fields), so a word
+# that holds whitespace would reach the warden as two words. These are the
 # characters Go counts as whitespace there.
 _GO_SPACE = frozenset(
     "\t\n\v\f\r \x85\xa0\u1680\u2028\u2029\u202f\u205f\u3000"
@@ -98,7 +98,7 @@ _GO_SPACE = frozenset(
 
 # The fixed texts of a failed sprig run. The Go and Rust clients copy them.
 SPRIG_SPACE_TEXT = (
-    "the sprig gate command has a word with a space in it, and sprig splits that "
+    "the sprig warden command has a word with a space in it, and sprig splits that "
     "command at spaces. Use a TMPDIR path and a daisugi path with no spaces."
 )
 
@@ -371,17 +371,17 @@ _USAGE_FIELDS = (
 )
 
 
-def sprig_gate_program() -> list[str]:
-    """The program sprig runs as its gate: this oracle's hook entry.
+def sprig_warden_program() -> list[str]:
+    """The program sprig runs as its warden: this oracle's hook entry.
     sprig runs it in the workspace with the sub-agent's environment, so
     -I (isolated) keeps that directory, PYTHONPATH and the user site off
     sys.path: a module the sub-agent writes there is never imported."""
-    return [sys.executable, "-I", "-m", "opendaisugi.gate_client"]
+    return [sys.executable, "-I", "-m", "opendaisugi.warden_client"]
 
 
 def tree_cmd_base() -> list[str]:
     """The command sprig's spawn tool runs: this oracle's one starter,
-    `tree run`, isolated as the gate program is."""
+    `tree run`, isolated as the warden program is."""
     return [sys.executable, "-I", "-m", "opendaisugi.cli", "tree", "run"]
 
 
@@ -389,10 +389,10 @@ def has_go_space(words: list[str]) -> bool:
     return any(c in _GO_SPACE for w in words for c in w)
 
 
-def sprig_gate_words(spawn: bool) -> list[str]:
+def sprig_warden_words(spawn: bool) -> list[str]:
     """The words sprig splits at whitespace that are not the tree's own
-    paths: the gate program, TMPDIR, and the tree command with spawn."""
-    words = [*sprig_gate_program(), tempfile.gettempdir()]
+    paths: the warden program, TMPDIR, and the tree command with spawn."""
+    words = [*sprig_warden_program(), tempfile.gettempdir()]
     if spawn:
         words += tree_cmd_base()
     return words
@@ -433,7 +433,7 @@ def sprig_start(
     sprig_binary: str,
     wall: list[str],
     model: str,
-    gate_root: Path,
+    warden_root: Path,
     data_dir: Path,
     session: str,
     profile: agent_profiles.Profile,
@@ -447,25 +447,25 @@ def sprig_start(
 ) -> tuple[list[str], dict[int, bytes], dict[str, str] | None]:
     """The argv, descriptors and environment of a sprig child: one builder
     for every starter, so a child starts the same whoever starts it. The
-    gate is pinned by its own command (--root, --session), never by the
+    warden is pinned by its own command (--root, --session), never by the
     payload sprig sends."""
-    gate_words = [
-        *sprig_gate_program(),
+    warden_words = [
+        *sprig_warden_program(),
         "--mode",
         "enforce",
         "--root",
-        str(gate_root),
+        str(warden_root),
         "--session",
         session,
     ]
     if capture:
-        gate_words += ["--captures-root", str(gate_root / "captures")]
+        warden_words += ["--captures-root", str(warden_root / "captures")]
     argv = [
         sprig_binary,
         "--json",
-        "--gate",
-        "--gate-cmd",
-        " ".join(gate_words),
+        "--warden",
+        "--warden-cmd",
+        " ".join(warden_words),
         "--tools",
         ",".join(wall),
         "--model",
@@ -484,10 +484,10 @@ def sprig_start(
     if (profiled or spawn) and names:
         argv += ["--scrub-env", ",".join(names)]
     if spawn:
-        tree_cmd = [*tree_cmd_base(), "--data-dir", str(data_dir), "--root", str(gate_root)]
+        tree_cmd = [*tree_cmd_base(), "--data-dir", str(data_dir), "--root", str(warden_root)]
         argv += ["--spawn-keys-fd", str(SPAWN_KEYS_FD), "--tree-cmd", " ".join(tree_cmd)]
         fds[SPAWN_KEYS_FD] = profiles.bundle()
-    sess = session_dir if session_dir is not None else gate_root / "sessions"
+    sess = session_dir if session_dir is not None else warden_root / "sessions"
     argv += ["--session-dir", str(sess), "--session", session]
     if max_turns is not None:
         argv += ["--max-turns", str(max_turns)]
@@ -583,8 +583,8 @@ class AgenticExecutor:
     ``sprig`` on PATH.
 
     Every step runs as a delegation tree (tree mode): a fresh private
-    directory holds ``gate/`` (the gate root) and ``tree/`` (the ledger),
-    so the gate guards both. Its root is the caller's envelope with the
+    directory holds ``warden/`` (the warden root) and ``tree/`` (the ledger),
+    so the warden guards both. Its root is the caller's envelope with the
     budget ``tokens`` and ``turns`` (none by default); the sub-agent is
     the root's child under the session ``agentic-<step id>``, started by
     the one starter (tree_run.run_node) on sprig.
@@ -597,7 +597,7 @@ class AgenticExecutor:
         model: str = "haiku",
         binary: str = "claude",
         capture: bool = True,
-        keep_gate_root: bool = True,
+        keep_warden_root: bool = True,
         runtime: str = "claude",
         sprig_binary: str | None = None,
         profiles: Any = None,
@@ -611,7 +611,7 @@ class AgenticExecutor:
         self.model = model
         self.binary = binary
         self.capture = capture
-        self.keep_gate_root = keep_gate_root
+        self.keep_warden_root = keep_warden_root
         self.runtime = runtime
         self.sprig_binary = (
             sprig_binary if sprig_binary is not None else os.environ.get("DAISUGI_SPRIG", "sprig")
@@ -619,7 +619,7 @@ class AgenticExecutor:
         self.tokens = tokens
         self.turns = turns
         self.last = _LastAgentic()
-        self.last_gate_root: Path | None = None
+        self.last_warden_root: Path | None = None
         # The root starter reads each profile's key variable here, once.
         self.environ = dict(os.environ if environ is None else environ)
         self.profiles = agent_profiles.resolve(profiles, self.environ)
@@ -652,7 +652,7 @@ class AgenticExecutor:
 
         started = time.time()
         self.last = _LastAgentic(model=self.model)
-        self.last_gate_root = None
+        self.last_warden_root = None
         profile, why = self.profiles.lookup(step.profile)
 
         def _fail(msg: str) -> ExecutorResult:
@@ -689,30 +689,30 @@ class AgenticExecutor:
                 f"(requested {step.tools!r}); nothing to delegate"
             )
 
-        # sprig splits its gate command at whitespace: a gate program or a
+        # sprig splits its warden command at whitespace: a warden program or a
         # tree directory with a space in its path would break the pin, so
         # the step fails before anything is made or started. The tree's own
         # name (mkdtemp) never holds one.
-        if runtime == "sprig" and has_go_space(sprig_gate_words("Spawn" in allowed)):
+        if runtime == "sprig" and has_go_space(sprig_warden_words("Spawn" in allowed)):
             return _fail(SPRIG_SPACE_TEXT)
 
         # The tree lives OUTSIDE the workspace on purpose: the sub-agent
         # must not be able to rewrite its hook configuration, its envelope
-        # or the ledger mid-session. gate/ and tree/ under one directory,
-        # so the gate guards both.
+        # or the ledger mid-session. warden/ and tree/ under one directory,
+        # so the warden guards both.
         data_dir = Path(tempfile.mkdtemp(prefix="daisugi-agentic-"))
-        gate_root = data_dir / "gate"
+        warden_root = data_dir / "warden"
         # Private like the directory mkdtemp made: no other user reads the
         # envelopes, the audit log or the ledger.
-        gate_root.mkdir(mode=0o700)
+        warden_root.mkdir(mode=0o700)
         (data_dir / "tree").mkdir(mode=0o700)
-        self.last_gate_root = gate_root
+        self.last_warden_root = warden_root
         # The executor, not the sub-agent, picks the session the envelope
-        # binds to, and pins the gate to it: the sub-agent's payload cannot
+        # binds to, and pins the warden to it: the sub-agent's payload cannot
         # name another session, and no call falls back to a default.
         session = "agentic-" + _safe_session_id(step.id)
         tree.make_root(
-            data_dir, gate_root, self.envelope, ROOT_SESSION, tokens=self.tokens, turns=self.turns
+            data_dir, warden_root, self.envelope, ROOT_SESSION, tokens=self.tokens, turns=self.turns
         )
         try:
             if runtime == "sprig":
@@ -720,7 +720,7 @@ class AgenticExecutor:
                     step,
                     workspace,
                     data_dir,
-                    gate_root,
+                    warden_root,
                     session,
                     timeout_s,
                     model,
@@ -733,7 +733,7 @@ class AgenticExecutor:
                     allowed,
                     workspace,
                     data_dir,
-                    gate_root,
+                    warden_root,
                     session,
                     timeout_s,
                     model,
@@ -741,9 +741,9 @@ class AgenticExecutor:
                     max_output_bytes,
                 )
         finally:
-            tree.end_subtree(data_dir, gate_root, session)
+            tree.end_subtree(data_dir, warden_root, session)
             with contextlib.suppress(tree.TreeError):
-                tree.end(data_dir, gate_root, ROOT_SESSION, tokens_used=0, turns_used=0)
+                tree.end(data_dir, warden_root, ROOT_SESSION, tokens_used=0, turns_used=0)
         if res.rc != 0:
             self._cleanup(data_dir)
             return res
@@ -754,7 +754,7 @@ class AgenticExecutor:
         step,
         workspace,
         data_dir,
-        gate_root,
+        warden_root,
         session,
         timeout_s,
         model,
@@ -765,7 +765,7 @@ class AgenticExecutor:
 
         node = tree_run.run_node(
             data_dir,
-            gate_root,
+            warden_root,
             parent=ROOT_SESSION,
             session=session,
             envelope=step.child_envelope or self.envelope,
@@ -806,7 +806,7 @@ class AgenticExecutor:
         allowed,
         workspace,
         data_dir,
-        gate_root,
+        warden_root,
         session,
         timeout_s,
         model,
@@ -817,7 +817,7 @@ class AgenticExecutor:
 
         sp = tree.spawn(
             data_dir,
-            gate_root,
+            warden_root,
             step.child_envelope or self.envelope,
             parent=ROOT_SESSION,
             session=session,
@@ -829,10 +829,10 @@ class AgenticExecutor:
         if sp.status != "started":
             return _fail("the child envelope is refused: " + "; ".join(sp.reasons))
 
-        settings = gate_settings_json(
+        settings = warden_settings_json(
             mode="enforce",
-            root=gate_root,
-            captures_root=(gate_root / "captures") if self.capture else None,
+            root=warden_root,
+            captures_root=(warden_root / "captures") if self.capture else None,
             session=session,
         )
         extra_args: list[str] = [
@@ -879,7 +879,7 @@ class AgenticExecutor:
         turns = turns if isinstance(turns, int) and not isinstance(turns, bool) else None
         tree.end(
             data_dir,
-            gate_root,
+            warden_root,
             session,
             tokens_used=own,
             turns_used=None if turns is None else max(0, min(turns, tree.MAX_COUNT)),
@@ -892,9 +892,9 @@ class AgenticExecutor:
         )
 
     # Kept for callers of the old names.
-    _sprig_gate_program = staticmethod(sprig_gate_program)
+    _sprig_warden_program = staticmethod(sprig_warden_program)
     _tree_cmd = staticmethod(tree_cmd_base)
 
     def _cleanup(self, data_dir: Path) -> None:
-        if not self.keep_gate_root:
+        if not self.keep_warden_root:
             shutil.rmtree(data_dir, ignore_errors=True)

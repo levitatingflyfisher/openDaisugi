@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // ErrUnsupported marks a settings file this package does not edit: text
@@ -48,6 +51,18 @@ type Edit struct {
 	// Listed is an edit reported among the files written even when it
 	// changes nothing (the skill, as _link_skill returns its target).
 	Listed bool
+	// Note is a line said after the file list: a warden hook stepped up
+	// from audit to enforce, or kept in enforce.
+	Note string
+	// NoteOnly is an edit that only carries Note: it writes nothing and
+	// is not listed.
+	NoteOnly bool
+	// Undo marks an edit of an uninstall (PlanReverseAll sets it, with
+	// Home). A file it leaves empty, or holding only {}, is removed, and
+	// so is each directory above a removed path that is left empty, up to
+	// a harness root or Home: uninstall leaves the config as it found it.
+	Undo bool
+	Home string
 }
 
 // readState is how Python's json.loads(path.read_text()) went.
@@ -115,7 +130,7 @@ func kind(v any) string {
 }
 
 // commandHooks returns every hook of type "command" under entries, in
-// order, as _patch_claude_gate and _patch_codex_gate walk them.
+// order, as _patch_claude_warden and _patch_codex_warden walk them.
 func commandHooks(entries []any) ([]*pyjson.Object, error) {
 	var out []*pyjson.Object
 	for _, e := range entries {
@@ -174,27 +189,27 @@ func preToolUse(settings any) (*pyjson.Object, []any, error) {
 
 func dumpSettings(v any) string { return pyjson.DumpsIndent(v, 2, true) + "\n" }
 
-// PlanClaudeGate is _patch_claude_gate with the Go hook command: nil when
-// the exact hook is already installed, a warning when another gate hook
+// PlanClaudeWarden is _patch_claude_warden with the Go hook command: nil when
+// the exact hook is already installed, a warning when another warden hook
 // is, else the new settings.json. Python's in-place upgrade of an old
-// `-m opendaisugi.gate` hook to gate_client never matches the Go command,
+// `-m opendaisugi.warden` hook to warden_client never matches the Go command,
 // so such a hook is warned about and left as it is.
-func PlanClaudeGate(settingsPath string, entry *pyjson.Object) (*Edit, error) {
-	return PlanClaudeGateOn(settingsPath, entry, nil)
+func PlanClaudeWarden(settingsPath string, entry *pyjson.Object) (*Edit, error) {
+	return PlanClaudeWardenOn(settingsPath, entry, nil)
 }
 
-// PlanClaudeGateOn is PlanClaudeGate on the content an earlier edit of
+// PlanClaudeWardenOn is PlanClaudeWarden on the content an earlier edit of
 // this run left (prior), or the file.
-func PlanClaudeGateOn(settingsPath string, entry *pyjson.Object, prior *Edit) (*Edit, error) {
+func PlanClaudeWardenOn(settingsPath string, entry *pyjson.Object, prior *Edit) (*Edit, error) {
 	cmdV, _ := entry.Value("hooks").([]any)[0].(*pyjson.Object).Get("command")
-	gateCommand := cmdV.(string)
+	wardenCommand := cmdV.(string)
 	v, st, err := jsonOf(settingsPath, prior)
 	if err != nil {
 		return nil, err
 	}
 	existed := st != readMissing
 	if st == readBad {
-		return &Edit{Path: settingsPath, Warning: settingsPath + " is not valid JSON; skipping gate hook installation " +
+		return &Edit{Path: settingsPath, Warning: settingsPath + " is not valid JSON; skipping warden hook installation " +
 			"to avoid overwriting your Claude Code settings (permissions/env). " +
 			"Fix the file and re-run `daisugi install`."}, nil
 	}
@@ -222,13 +237,44 @@ func PlanClaudeGateOn(settingsPath string, entry *pyjson.Object, prior *Edit) (*
 		existing = append(existing, c)
 	}
 	for _, c := range existing {
-		if c == gateCommand {
+		if c == wardenCommand {
 			return nil, nil
 		}
 	}
+	anyWarden := false
 	for _, c := range existing {
-		if config.GateHookKind(c) != config.KindNone {
-			return &Edit{Path: settingsPath, Warning: "a gate hook is already installed in " + settingsPath +
+		if config.WardenHookKind(c) != config.KindNone {
+			anyWarden = true
+		}
+	}
+	if anyWarden {
+		// Audit to enforce, nothing else different, is the one step
+		// `daisugi install --enforce` asks for: the hook is rewritten in
+		// place. Enforce is never lowered by a plain install.
+		stepped, kept := false, false
+		newHook, _ := entry.Value("hooks").([]any)[0].(*pyjson.Object)
+		for _, h := range cmds {
+			old, _ := h.Value("command").(string)
+			switch WardenModeRelation(old, wardenCommand) {
+			case "up":
+				h.Set("command", wardenCommand)
+				h.Set("timeout", newHook.Value("timeout"))
+				stepped = true
+			case "keep":
+				kept = true
+			}
+		}
+		if stepped {
+			return &Edit{Path: settingsPath, Existed: existed, Content: dumpSettings(v),
+				Note: wardenStepUpNote("Claude Code", settingsPath)}, nil
+		}
+		if kept {
+			return &Edit{Path: settingsPath, NoteOnly: true, Note: wardenKeepNote("Claude Code", settingsPath)}, nil
+		}
+	}
+	for _, c := range existing {
+		if config.WardenHookKind(c) != config.KindNone {
+			return &Edit{Path: settingsPath, Warning: "a warden hook is already installed in " + settingsPath +
 				" with a different mode/config; run `daisugi install --uninstall` first if you want to " +
 				"change it (idempotent by presence, not content)." + notIsolatedNote(existing)}, nil
 		}
@@ -237,9 +283,9 @@ func PlanClaudeGateOn(settingsPath string, entry *pyjson.Object, prior *Edit) (*
 	return &Edit{Path: settingsPath, Existed: existed, Content: dumpSettings(v)}, nil
 }
 
-// PlanCodexGate is _patch_codex_gate: the gate entry with matcher ".*",
-// added unless any gate hook is there already.
-func PlanCodexGate(hooksPath string, entry *pyjson.Object) (*Edit, error) {
+// PlanCodexWarden is _patch_codex_warden: the warden entry with matcher ".*",
+// added unless any warden hook is there already.
+func PlanCodexWarden(hooksPath string, entry *pyjson.Object) (*Edit, error) {
 	entry.Set("matcher", ".*")
 	v, st, err := readJSON(hooksPath)
 	if err != nil {
@@ -247,7 +293,7 @@ func PlanCodexGate(hooksPath string, entry *pyjson.Object) (*Edit, error) {
 	}
 	existed := st != readMissing
 	if st == readBad {
-		return &Edit{Path: hooksPath, Warning: hooksPath + " is not valid JSON; skipping gate hook installation. " +
+		return &Edit{Path: hooksPath, Warning: hooksPath + " is not valid JSON; skipping warden hook installation. " +
 			"Fix the file and re-run `daisugi install`."}, nil
 	}
 	if st == readMissing {
@@ -267,10 +313,30 @@ func PlanCodexGate(hooksPath string, entry *pyjson.Object) (*Edit, error) {
 			return nil, failf("a hook command is a %s", kind(h.Value("command"))) // unhashable in a set
 		}
 	}
+	newCommand, _ := entry.Value("hooks").([]any)[0].(*pyjson.Object).Value("command").(string)
+	anyWarden, stepped, kept := false, false, false
 	for _, h := range cmds {
-		if config.GateHookKind(h.Value("command")) != config.KindNone {
-			return nil, nil
+		if config.WardenHookKind(h.Value("command")) != config.KindNone {
+			anyWarden = true
+			old, _ := h.Value("command").(string)
+			switch WardenModeRelation(old, newCommand) {
+			case "up":
+				h.Set("command", newCommand)
+				stepped = true
+			case "keep":
+				kept = true
+			}
 		}
+	}
+	if anyWarden {
+		if stepped {
+			return &Edit{Path: hooksPath, Existed: existed, Content: dumpSettings(v),
+				Note: wardenStepUpNote("Codex", hooksPath)}, nil
+		}
+		if kept {
+			return &Edit{Path: hooksPath, NoteOnly: true, Note: wardenKeepNote("Codex", hooksPath)}, nil
+		}
+		return nil, nil
 	}
 	hooks.Set("PreToolUse", append(pre, entry))
 	return &Edit{Path: hooksPath, Existed: existed, Content: dumpSettings(v)}, nil
@@ -450,17 +516,184 @@ func Backup(p string) error {
 // it existed, then the write. Two edits of one file are applied in order,
 // so each backup holds what the earlier edit left, as in Python. followed
 // is the file written when Path was a symlink.
-func Apply(e *Edit) (followed string, err error) {
-	if e == nil || e.Warning != "" {
+func Apply(e *Edit) (followed string, err error) { return applyEdit(e, nil) }
+
+// applyEdit is Apply with the files this run has already backed up: a file
+// gets one backup per run, of the file as the run found it. nil backs up on
+// every edit.
+func applyEdit(e *Edit, backed map[string]bool) (followed string, err error) {
+	if e == nil || e.Warning != "" || e.NoteOnly {
 		return "", nil
 	}
+	if e.Undo {
+		defer func() {
+			if err == nil {
+				pruneEmptyParents(e.Path, e.Home)
+			}
+		}()
+	}
 	if e.Kind != "" {
-		return applyLayerEdit(e)
+		return applyLayerEdit(e, backed)
+	}
+	// An undo that empties the file removes it with no backup: what is
+	// left is daisugi's own text, or nothing.
+	if e.Undo && emptyContent(e.Content) && isRegular(e.Path) {
+		return "", os.Remove(e.Path)
 	}
 	if e.Existed {
-		if err := Backup(e.Path); err != nil {
+		if err := backupOnce(e.Path, backed); err != nil {
 			return "", fmt.Errorf("backup %s: %w", e.Path, err)
 		}
+	} else if backed != nil {
+		// This run makes the file: a later edit of it in the same run
+		// would back up only daisugi's own half-write.
+		backed[e.Path] = true
 	}
-	return gateroot.WriteFile(e.Path, e.Content)
+	content := e.Content
+	if e.Existed {
+		content = keepFileForm(e.Path, content)
+	}
+	return wardenroot.WriteFile(e.Path, content)
+}
+
+// backupOnce is Backup, skipped for a file this run has already backed up.
+func backupOnce(p string, backed map[string]bool) error {
+	if backed != nil && backed[p] {
+		return nil
+	}
+	if err := Backup(p); err != nil {
+		return err
+	}
+	if backed != nil {
+		backed[p] = true
+	}
+	return nil
+}
+
+// emptyContent is a file an uninstall leaves with nothing in it: no text,
+// or a JSON object with no keys.
+func emptyContent(c string) bool {
+	t := strings.TrimSpace(c)
+	return t == "" || t == "{}"
+}
+
+func isRegular(p string) bool {
+	st, err := os.Lstat(p)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// keepFileForm keeps two things of the file a rewrite replaces, so an
+// edit and its undo give back the same bytes: UTF-8 text stays UTF-8 (a
+// JSON rewrite escapes every non-ASCII rune, and Claude Code writes
+// ~/.claude.json with JSON.stringify, which does not), and a file with no
+// final newline gets none.
+func keepFileForm(p, content string) string {
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		return content
+	}
+	if hasNonASCII(b) && strings.HasPrefix(strings.TrimSpace(content), "{") {
+		if v, err := pyjson.Loads(content); err == nil {
+			content = pyjson.DumpsIndent(v, 2, false) + "\n"
+		}
+	}
+	if b[len(b)-1] != '\n' {
+		content = strings.TrimSuffix(content, "\n")
+	}
+	return content
+}
+
+func hasNonASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+
+// harnessRoots are the directories an uninstall never removes, even when
+// it leaves them empty: each harness's own root, and the shared homes.
+var harnessRoots = []string{
+	".claude", ".codex", ".hermes", ".openclaw", ".pi", ".pi/agent",
+	".config", ".config/opencode", ".local", ".local/share", ".local/state", ".cache",
+}
+
+// pruneEmptyParents removes each directory above p that is empty, going
+// up, and stops at the first one that is not empty, at a harness root, at
+// home, or at a symlink: os.Remove would unlink a link whatever its target
+// holds, so only a real directory is ever removed.
+func pruneEmptyParents(p, home string) {
+	if home == "" {
+		return
+	}
+	home = filepath.Clean(home)
+	stop := map[string]bool{home: true}
+	for _, r := range harnessRoots {
+		stop[filepath.Join(home, r)] = true
+	}
+	for dir := filepath.Dir(filepath.Clean(p)); strings.HasPrefix(dir, home+"/") && !stop[dir]; dir = filepath.Dir(dir) {
+		if !removeEmptyDir(dir) {
+			return
+		}
+	}
+}
+
+// removeEmptyDir removes dir when it is a real, empty directory, and says
+// whether it did. A symlink to a directory is never removed.
+func removeEmptyDir(dir string) bool {
+	st, err := os.Lstat(dir)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	return os.Remove(dir) == nil
+}
+
+var (
+	wardenModeRe = regexp.MustCompile(` --mode (audit|enforce) `)
+	wardenAskRe  = regexp.MustCompile(` --ask --ask-timeout \d+`)
+)
+
+// wardenShape is a warden command without its mode, its ask words and its
+// enforce tail: two commands with the same shape differ only in those.
+func wardenShape(command string) string {
+	shape := strings.TrimSuffix(command, " || exit 2")
+	shape = wardenAskRe.ReplaceAllString(shape, "")
+	if loc := wardenModeRe.FindStringIndex(shape); loc != nil {
+		shape = shape[:loc[0]] + " --mode _ " + shape[loc[1]:]
+	}
+	return shape
+}
+
+func wardenModeOf(command string) string {
+	if m := wardenModeRe.FindStringSubmatch(command); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// WardenModeRelation is how an installed warden command relates to the one a
+// run asks for when only the mode (and the ask words that go with enforce)
+// differ: "up" for audit installed and enforce asked, "keep" for enforce
+// installed and audit asked, else "".
+func WardenModeRelation(oldCommand, newCommand string) string {
+	if wardenShape(oldCommand) != wardenShape(newCommand) {
+		return ""
+	}
+	switch wardenModeOf(oldCommand) + ">" + wardenModeOf(newCommand) {
+	case "audit>enforce":
+		return "up"
+	case "enforce>audit":
+		return "keep"
+	}
+	return ""
+}
+
+func wardenStepUpNote(runtime, path string) string {
+	return "Warden: the " + runtime + " hook in " + path + " now runs in enforce mode (it was audit)."
+}
+
+func wardenKeepNote(runtime, path string) string {
+	return "Warden: the " + runtime + " hook in " + path + " stays in enforce mode; a plain install never " +
+		"lowers it. To go back to audit, run daisugi install --uninstall, then daisugi install."
 }

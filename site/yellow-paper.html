@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openDaisugi: Yellow Paper | openDaisugi</title>
+<meta name="description" content="A formal specification of the verification semantics: the envelope algebra, subsumption, and the fail-closed guarantees.">
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.className+=" js"</script>
+</head>
+<body>
+<div class="vert" lang="ja" aria-hidden="true">台杉</div>
+<header class="top"><div class="col">
+  <a class="mark" href="index.html" style="text-decoration:none;color:inherit"><span class="seal" lang="ja" aria-hidden="true">台杉</span><span>openDaisugi</span></a>
+  <nav class="sc" aria-label="Site pages">
+    <a href="index.html">Home</a>
+    <a href="whitepaper.html">Whitepaper</a>
+    <a href="yellow-paper.html" aria-current="page">Yellow paper</a>
+    <a href="start-here.html">Start here</a>
+    <a href="index.html#try">Install</a>
+  </nav>
+</div></header>
+<main class="paper">
+<nav class="toc" aria-label="Contents">
+<p class="cap sc">Contents</p>
+<ol>
+<li><a href="#1-notation">1. Notation</a></li>
+<li><a href="#2-objects">2. Objects</a></li>
+<li><a href="#3-admissibility">3. Admissibility</a></li>
+<li><a href="#4-the-verification-pipeline">4. The verification pipeline</a></li>
+<li><a href="#5-subsumption-delegation-safety">5. Subsumption (delegation safety)</a></li>
+<li><a href="#6-strict-mode-vacuity-and-the-fail-closed-law">6. Strict mode, vacuity, and the fail-closed law</a></li>
+<li><a href="#7-what-is-guaranteed-and-what-is-not">7. What is guaranteed, and what is not</a></li>
+<li><a href="#8-two-checkpoints-plan-time-verification-and-call-time-checking">8. Two checkpoints: plan-time verification and call-time checking</a></li>
+</ol>
+</nav>
+<article>
+<p class="srcline"><a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/spec/yellow-paper.md">Source on GitHub</a></p>
+<h1 id="opendaisugi-yellow-paper">openDaisugi: Yellow Paper</h1>
+<p><em>A formal specification of the verification semantics: the envelope algebra,
+subsumption, and the fail-closed guarantees.</em></p>
+<p><strong>Register.</strong> &quot;Yellow paper&quot; is the crypto/protocol convention for a rigorous
+formal specification (after Wood's <em>Ethereum Yellow Paper</em>). This document plays
+that role for openDaisugi's verification core. It is precise about <em>intent and
+current behavior</em>; it is <strong>not</strong> a machine-checked proof. Where a property is
+tested-and-intended rather than mechanically verified, it says so. The code it
+describes was authored by an AI assistant. Treat it as the current implementation
+to be checked against this spec, not as an oracle. A machine-checked proof of the
+whole checker (Coq/Lean) remains aspirational. The Lean 4 client
+(<code>clients/lean/DaisugiVerify/Theorems.lean</code>) proves a few properties of the Core
+stages only (permissions, decomposition over a small token model, strict rejects at
+least what lenient rejects). Nothing proves the SMT encoders or <code>U_D</code> (§2.4).</p>
+<p>Sections marked <strong>Proposed</strong> (§2.4, parts of §5.5, and the dialect clauses of §6)
+specify behavior the code does not have yet. They fix the law an implementation must
+meet.</p>
+<p>For the intuition, read <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/architecture/OVERVIEW.md">architecture/OVERVIEW.md</a>
+first; for <em>why</em>, the <a href="https://github.com/levitatingflyfisher/openDaisugi/tree/master/docs/adr">ADRs</a>.</p>
+<hr />
+<h2 id="1-notation">1. Notation</h2>
+<p>We write <code>⊑</code> for &quot;is subsumed by / is at most as permissive as&quot;, <code>⊨</code> for &quot;admits /
+satisfies&quot;, <code>⊥</code> for the reject/deny outcome. <code>𝒮</code> is the (infinite) space of concrete
+<em>steps</em> an execution could attempt. Globs and hostnames are treated as sets of the
+concrete strings they match. A predicate over steps is a total function
+<code>𝒮 → {⊤, ⊥}</code>. All relations are decided <strong>fail-closed</strong>: when a decision procedure
+returns <code>unknown</code>, times out, or encounters an unsupported construct, the result is
+<code>⊥</code> (deny), never <code>⊤</code>.</p>
+<p>For dialects (§2.4, Proposed): <code>D</code> is a dialect; <code>w@h</code> is a word <code>w</code> with content
+hash <code>h</code>; <code>≺_D</code> is the well-founded &quot;defined earlier than&quot; order on words; <code>U_D</code> is
+the unfolding of a dialect term to a kernel term; <code>⟦t⟧_D</code> and <code>δ_D</code> are the meaning of
+a dialect term and a decision procedure run on its unfolding. For delegation (§5.5):
+<code>edge_ok(E_parent, E_child)</code> is the edge rule, and <code>E_child ⊑ E_parent</code> reads &quot;the
+child admits no more than the parent&quot;.</p>
+<h2 id="2-objects">2. Objects</h2>
+<h3 id="2-1-permission">2.1 Permission</h3>
+<p>A <code>Permission</code> <code>P</code> is a tuple of capability grants over disjoint capability
+<em>dimensions</em>:</p>
+<pre><code>P = ⟨ file_read, file_write : set of glob,
+      network : bool, network_hosts : set of host,
+      shell : bool, shell_allowlist : set of command-head,
+      mcp_allowlist : set of tool-pattern,
+      mcp_rules : list of (tool-pattern, predicate list, known-keys),
+      workspace_bounds : AABB ∪ {⊥}, velocity/torque : ℝ⁺ ∪ {⊥},
+      joint_limits : map ∪ {}, obstacles : set of AABB,
+      max_execution_time_s, max_output_size_mb : ℕ ⟩
+</code></pre>
+<p>Each dimension <code>d</code> induces an <strong>admitted-set</strong> <code>⟦P⟧_d ⊆ 𝒮</code>: the concrete steps on
+that dimension the permission allows (e.g. <code>⟦P⟧_shell</code> = shell steps whose command
+head ∈ <code>shell_allowlist</code>, if <code>shell</code>; else ∅). The permission's admitted set is
+<code>⟦P⟧ = ⋃_d ⟦P⟧_d</code>, augmented by the robotics dimensions as arithmetic constraints on
+trajectory steps (§5.3).</p>
+<h3 id="2-2-envelope">2.2 Envelope</h3>
+<p>An <code>Envelope</code> <code>E = ⟨P, I, Q, stakes, parent, deadline⟩</code> where <code>P</code> is a Permission, <code>I</code> a set of
+<em>invariants</em> (predicates that must hold over all steps), <code>Q</code> a set of
+<em>postconditions</em> (predicates over completed-step evidence), <code>stakes ∈ {low, medium, high, physical}</code>, <code>parent</code> an optional parent envelope, and <code>deadline</code> an optional
+time (seconds since the epoch) after which it starts no new work (§5.5). <code>strict</code>
+is a derived mode, on by default for <code>stakes ∈ {high, physical}</code> (§6).</p>
+<p>An envelope's admitted set is the permission's set <em>intersected</em> with the invariants:</p>
+<pre><code>⟦E⟧ = { s ∈ ⟦P⟧ : ∀ φ ∈ I . φ(s) = ⊤ }
+</code></pre>
+<h3 id="2-3-actionplan">2.3 ActionPlan</h3>
+<p>An <code>ActionPlan</code> <code>π = ⟨V, D⟩</code> is a set of steps <code>V ⊆ 𝒮</code> with a dependency relation
+<code>D ⊆ V×V</code>. <code>π</code> is well-formed iff <code>(V, D)</code> is a DAG with unique step ids and every
+<code>(u,v) ∈ D</code> has <code>u,v ∈ V</code> (§4.5).</p>
+<h3 id="2-3-1-the-write-paths-of-a-step-built">2.3.1 The write paths of a step (Built)</h3>
+<p><strong>Status.</strong> Built 2026-09-30 in Python, Go and Rust (<code>src/opendaisugi/write_paths.py</code>,
+<code>forall_writes</code> in <code>predicate.py</code>). Ruled DI-10; rulings DL-1 to DL-3 and DL-11 to
+DL-13. Version 3 of the write paths (rulings SG-1 to SG-7) adds the reads, the trees
+and the two bases below; <code>writes(s)</code> is the write half of the access analysis of §4.2.</p>
+<p>Each step <code>s</code> has a derived field <code>writes(s)</code>, a finite list of normalized paths, or
+<code>?</code> (unknown). It is not stored in the step record; only the quantifier below reads it.</p>
+<pre><code>writes(s) = [ norm(s.path) ]                          if s is a file_write step
+          = W(s.command, 0, no)                        if s is a shell step
+          = [ ]                                        otherwise
+
+W(c, k, a) = ?                                         if k &gt; 4
+           = [ ]                                       if strip(c) = &quot;&quot;
+           = P(c, k, a)                                if c has no shell metacharacter
+           = ?                                         if the shell grammar refuses c
+           = ?                                         if c moves its cwd (cwd movers below)
+                                                       and the list below holds a relative path
+           = [ norm(t) : t ∈ writes_redirect(c), t ∉ Sinks ] ++ P(c₁, k, a) ++ … ++ P(cₙ, k, a)
+                                                       else, c₁ … cₙ its simple commands
+P(c, k, a) = W(i₁, k+1, a') ++ … ++ W(iₘ, k+1, a')     i₁ … iₘ the payloads of a
+                                                       command-taking wrapper (sh -c,
+                                                       xargs, find -exec, env, …);
+                                                       a' = a or the wrapper is xargs or find
+           = O(c, a)                                   otherwise, an opaque interpreter
+                                                       included
+O(c, a)    = [ ]                                       if c's head is not a writer
+           = ?                                         if a, or c holds a word the shell
+                                                       changes, or a flag outside the
+                                                       writer's closed set
+           = [ norm(t) : t ∈ operands_written(c), t ∉ Sinks ]   otherwise
+</code></pre>
+<p><code>norm</code> is <code>posixpath.normpath</code>, <code>writes_redirect</code> the literal write redirect targets
+of the shell decomposition (the targets §4.2 checks against <code>file_write</code>), and
+<code>Sinks = {/dev/null, /dev/stdout, /dev/stderr}</code>. Any part that is <code>?</code> makes the whole
+<code>?</code>. The writers are <code>write_paths.WRITERS</code>: <code>cp</code>, <code>mv</code>, <code>ln</code>, <code>install</code>, <code>tee</code>, <code>sed</code>,
+<code>truncate</code>, <code>dd</code>, <code>rsync</code>, <code>touch</code>, <code>mkdir</code>, <code>rm</code>, <code>rmdir</code>, <code>unlink</code> and <code>shred</code>, each
+with its closed flag sets. <code>operands_written</code> follows each command's argument rules:
+the destination of <code>cp</code>, <code>ln</code>, <code>install</code> and <code>rsync</code> (the last operand or the <code>-t</code>
+directory) and <code>DEST/basename(SOURCE)</code> for each source, unless <code>-T</code>; <code>mv</code> adds its
+sources; every operand of the others (<code>install -d</code> too); the files after the script of
+<code>sed -i</code>, with each backup; the <code>of=</code> of <code>dd</code>; no remote <code>rsync</code> destination, and the
+local sources under <code>--remove-source-files</code>. A recursive command shows its top path
+only. An interpreter's work (<code>python</code>, <code>awk</code>, <code>sed</code> without <code>-i</code>, <code>sudo</code>), a command
+that is not a writer, an MCP tool and a delegated agent write nothing here.</p>
+<p><strong>Placed writes.</strong> <code>writes_b(s)</code> resolves each relative path of <code>writes(s)</code> against a
+base <code>b</code>, an absolute normalized directory: <code>norm(b + &quot;/&quot; + p)</code>. A path that starts
+with <code>~</code> makes it <code>?</code>. Only a word's unfolding reads <code>writes_b</code> (§2.4); a hand-written
+<code>forall_writes</code> reads <code>writes</code>.</p>
+<p><strong>Quantifier.</strong> <code>forall_writes(φ)</code> stands inside <code>forall_steps</code> or <code>exists_step</code>. On a
+step <code>s</code>:</p>
+<pre><code>⟦forall_writes(φ)⟧(s) = ⊥                             if writes(s) = ?
+                      = ∀ p ∈ writes(s) . ⟦φ⟧({path: p})   otherwise
+</code></pre>
+<p>At the plan root, inside <code>forall_outputs</code>, or inside another <code>forall_writes</code> it is an
+evaluation error, a violation, never <code>⊤</code>. Z3: a concrete step unrolls into a
+conjunction; a symbolic step (vacuity, subsumption) has one free write path <code>w</code> and a
+free Boolean <code>n</code> (&quot;the step writes&quot;), and compiles to <code>n ⟹ φ(w)</code>. So the quantifier is
+a tautology exactly when <code>φ</code> is, and it is never a contradiction.</p>
+<p><strong>The cwd and the two bases (version 3).</strong> A cwd mover is <code>cd</code>, <code>pushd</code>, <code>popd</code>,
+<code>builtin</code>, <code>command</code>, <code>exec</code>, <code>eval</code>, <code>source</code>, <code>.</code>, and <code>env</code> with <code>-C</code>, <code>-S</code> or
+<code>--chdir</code>. If the first command of a level is <code>cd LIT</code> (one literal operand: no <code>-</code>,
+<code>~</code>, <code>$</code>, glob or brace) and the level's text starts with that command, and no other cwd
+mover appears at any level (a <code>cd</code> inside a loop, a function or a group is one), each relative path
+at that level and below is placed from both <code>b</code> and <code>b/LIT</code>, because a failed <code>cd</code>
+leaves the cwd where it was. Any other cwd mover makes every relative path <code>?</code>. <code>exec</code>, <code>eval</code>, <code>builtin</code>, <code>source</code> and <code>.</code>
+given an argument make the whole line <code>?</code>: they run a command the placer cannot read. Without
+a base the relative paths stay relative.</p>
+<p><strong>What <code>writes</code> does not see.</strong> The work of an interpreter (<code>python</code>, <code>awk</code>, <code>make</code>,
+<code>node</code>, <code>perl</code>, and <code>sed</code> script commands such as <code>w</code>), a command that is in neither
+table (<code>git</code>, <code>npm</code>, <code>curl</code>, <code>pip</code>, …), the file arguments of MCP tools, symlinks and
+bind mounts (every scope is a path string), a persistent shell whose cwd is not the
+payload's cwd, and the heredoc body as data. A predicate over <code>writes</code> says nothing
+about them. §4.2 places the operands of the commands in its tables; it does not place
+these either.</p>
+<h3 id="2-4-dialects-proposed-stage-0-built">2.4 Dialects (Proposed; stage 0 Built)</h3>
+<p><strong>Status.</strong> Proposed (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-dialects.md">design-dialects.md</a>).
+What exists today is the definition store (<code>src/opendaisugi/aliases.py</code>): named,
+parameterized predicates unfolded by <code>resolve()</code> before a check, and the <strong>system
+dialect</strong> of stage 0 below. Permission words, population dialects, envelope-level pins,
+the register-time order check and the size bound are <strong>not built</strong>. Today the warden
+passes no definition registry, so an <code>alias</code> reference at the warden is an unresolved
+definition: a violation (a deny in enforce mode; logged in audit mode).</p>
+<p><strong>Stage 0 (Built 2026-09-30; rulings DL-1 to DL-17).</strong> The system dialect
+(<code>src/opendaisugi/dialect.py</code>, tables generated for Go and Rust) holds one predicate
+word and its synonyms:</p>
+<pre><code>keep_unchanged(target : glob = &quot;**&quot;)  :=  forall_steps(forall_writes(not_matches(path, R(target))))
+</code></pre>
+<p><code>R</code> is a typed hole of sort glob: <code>R(g)</code> is a regex that matches exactly the normalized
+paths the file-scope matcher of §5.2 matches with <code>g</code> (a <code>/**</code> suffix, <code>**</code> segments,
+<code>*</code> and <code>?</code> inside a segment). A glob with <code>[</code> or <code>]</code>, a <code>/**</code> glob whose prefix is
+<code>.</code>, or one over the size limits is refused, and a refused target is <code>⊥</code>. 23 invariant
+type names that models write for the same meaning (<code>file_unchanged</code>, <code>read_only</code>,
+<code>no_modifications</code>, <code>file_immutable</code>, <code>file_preservation</code>, …) are synonyms: each
+unfolds to the same term. An <strong>opaque</strong> invariant (no <code>expr</code>) whose <code>type</code> names a word
+is a use of it, with its <code>target</code> as the argument. The dialect's identity is the first
+16 hex digits of the SHA-256 of the canonical JSON of its definitions, with the
+versions of <code>R</code> and of the write paths.</p>
+<p>At the warden a word is placed from the call's cwd <code>b</code> (DL-13): a relative target <code>g</code>
+becomes <code>b/g</code>, and the unfolded <code>forall_writes</code> reads <code>writes_b</code> (§2.3.1). A target
+that starts with <code>/</code> or <code>**</code> is left as it is, so the default <code>**</code> still names every
+path. A cwd with a glob character, a target that starts with <code>~</code>, and a target with a
+<code>.</code> or <code>..</code> segment that does not end in <code>/**</code> are refused. A plan verified outside the
+warden has no base, and nothing is placed.</p>
+<p>Audit first (DI-1), enforce when the warden enforces (SG-9). The pin the warden uses is
+<code>dialect_enforce</code> from <code>config.yaml</code> when it is set; else this build's dialect hash when
+the warden's mode is <code>enforce</code>; else none. With no pin (audit mode) a word use is
+evaluated and a failure is recorded as a warning (<code>dialect audit: …</code>); the verdict is
+the one the opaque invariant gets (§6). A pin equal to the dialect hash enforces the
+word: the word decides the invariant. A pin that names another hash makes every word use
+<code>⊥</code>, in both modes. A plan verified outside the warden has no pin and audits. Version 3
+of the write paths is a new dialect hash, so a pin from an earlier build makes every
+word use <code>⊥</code> until the operator sets the new hash or removes the pin.
+The pin lives in the operator's config, not in the envelope (DL-4), and a hard-deny
+rule stops an agent's tool call from writing or naming that config (DL-15). A second
+hard-deny rule stops every agent write the warden can place under the warden's own state:
+the warden root (the disarm marker, envelopes, graft rules, asks, audit logs) and each
+data dir's <code>router</code>, <code>journal</code>, <code>tree</code>, <code>router</code>, <code>weave</code> and <code>envelope_cache.db</code>
+(SW-17). Reads stay allowed.</p>
+<p><strong>Kernel.</strong> Let <code>K</code> be the kernel: the <code>Permission</code> record (§2.1), the predicate
+algebra without definition references, and the envelope and plan objects of §2.2 and §2.3.
+<code>⟦·⟧</code> is the kernel semantics of §2 to §5.</p>
+<p><strong>Dialect.</strong> A dialect <code>D</code> is a finite list of definitions</p>
+<pre><code>w(x₁ : τ₁, …, xₙ : τₙ) := body_w
+</code></pre>
+<p>where:</p>
+<ul>
+<li><code>w</code> is a name. It carries no meaning for any decision procedure.</li>
+<li>each <code>τᵢ</code> is a kernel sort: string literal, glob, host, command head, number, or
+regex. A parameter fills one whole field of the body (a <em>typed hole</em>). It is never
+spliced into the middle of another string.</li>
+<li><code>body_w</code> is a kernel term that may use only words defined <strong>earlier</strong> in <code>D</code>. This
+order <code>≺_D</code> is well-founded, and it is checked when a word is registered.</li>
+<li><code>w</code> has one <strong>kind</strong>: a <em>permission word</em> (its body is a partial <code>Permission</code> with
+set-valued fields only) or a <em>predicate word</em> (its body is an algebra expression,
+used in an invariant or a postcondition).</li>
+</ul>
+<p><strong>Identity.</strong> A word's identity is <code>w@h</code>, where</p>
+<pre><code>h = H( canon(signature_w, body_w), { id(v) : v used in body_w } )
+</code></pre>
+<p>for a fixed hash <code>H</code> over canonical JSON. A new definition is a new identity; a name
+never changes meaning in place. An envelope that uses words pins the hash of its
+dialect.</p>
+<p><strong>Unfolding.</strong> <code>U_D</code> maps a term over <code>K + D</code> to a term over <code>K</code>:</p>
+<pre><code>U_D(t)             = t                                    if t contains no word
+U_D(w(a₁ … aₙ))    = U_D( body_w[x₁ := a₁, …, xₙ := aₙ] )
+</code></pre>
+<p>The substitution is simultaneous, typed and single-pass: each argument is a literal
+placed into its hole, and is never read again as a template. For a permission word,
+the result is merged into the envelope's <code>P</code> by <strong>union</strong> on each set field
+(<code>file_read</code>, <code>file_write</code>, <code>network_hosts</code>, <code>shell_allowlist</code>, <code>mcp_allowlist</code>,
+<code>custom_step_allowlist</code>); a word that lists hosts sets <code>network</code>, and a word that
+lists shell heads sets <code>shell</code>. Scalar and bound fields (<code>max_execution_time_s</code>,
+<code>max_output_size_mb</code>, <code>workspace_bounds</code>, velocity, torque, <code>joint_limits</code>,
+<code>obstacles</code>) may <strong>not</strong> appear in a permission word, because union is not a sound
+join for them.</p>
+<p><strong>Bound.</strong> Unfolding can grow exponentially with nesting. A dialect term is admitted
+only if its nesting depth is at most <code>d_max</code> and <code>|U_D(t)| ≤ min(k·|t|, n_max)</code> nodes.
+The design proposes <code>d_max = 4</code>, <code>k = 4</code>, <code>n_max = 2000</code>, to be tuned on real
+dialects; these values are provisional.</p>
+<p><strong>Semantics.</strong> The meaning of a dialect term is <strong>defined</strong> as the meaning of its
+unfolding, and every decision procedure runs on the unfolding:</p>
+<pre><code>⟦t⟧_D  ≝  ⟦U_D(t)⟧            δ_D(x)  ≝  δ(U_D(x))
+</code></pre>
+<p>for every <code>δ</code> in §4, §5, §6 and §8 (verify, the warden, subsumption, vacuity,
+deconfliction).</p>
+<p><strong>Intended properties</strong> (with the same caveat as §7: tested and intended, not
+machine-checked):</p>
+<ol>
+<li><strong>Conservativity.</strong> For a kernel term <code>t</code>, <code>U_D(t) = t</code>, so <code>⟦t⟧_D = ⟦t⟧</code>. Adding a
+dialect changes the meaning of no existing envelope. This is an extension by
+definitions, which is always conservative.</li>
+<li><strong>Soundness is inherited.</strong> <code>verify_D(π, E) = verify(π, U_D(E))</code>, and <code>U_D(E)</code> is
+the envelope enforced. So §3's <code>verify(π, E) = ok ⟹ E ⊨ π</code> gives
+<code>verify_D(π, E) = ok ⟹ U_D(E) ⊨ π</code>. Nothing new is proved about the checker; only
+<code>U_D</code> must be correct.</li>
+<li><strong>Totality.</strong> <code>U_D</code> terminates, because <code>≺_D</code> is well-founded and each step
+replaces a word by a body that uses only earlier words.</li>
+<li><strong>Decidability is the kernel's, no better and no worse.</strong> Unfolding adds no
+theory. A dialect question is decidable exactly where the same kernel question is:
+set and glob membership over finite allowlists, and linear real arithmetic (ranges,
+boxes). The kernel is <strong>not</strong> decidable as a whole as encoded: <code>matches</code> compiles to
+Z3 regular membership and <code>length_range</code> to string length. For strings with word
+equations, lengths and regular membership, decidability is known only for
+restricted fragments, and our encoding is not shown to lie in one. Z3 can therefore
+answer <code>unknown</code> on legal input, and by §6 that is <code>⊥</code>. Nonlinear robot dynamics
+would bring the same outcome.</li>
+<li><strong>Cross-dialect relations.</strong> Equivalence, subsumption and disjointness of words or
+envelopes from two dialects are defined on their unfoldings. Two words are equal iff
+<code>UNSAT(U(a) ≠ U(b))</code> with parameters matched by position and sort and left free.</li>
+</ol>
+<p><strong>Grants.</strong> A predicate word only narrows: an invariant removes steps from <code>⟦E⟧</code>
+(§2.2). A permission word grants, but only through an envelope that uses it; importing
+a dialect grants nothing.</p>
+<p><strong>Journal.</strong> Each verdict on a dialect envelope records the surface envelope, the
+dialect hash and the hash of <code>U_D(E)</code>, so a replay checks the same kernel term.</p>
+<h2 id="3-admissibility">3. Admissibility</h2>
+<p>A plan <code>π</code> is <strong>admitted</strong> by <code>E</code> iff every step is in the envelope's admitted set:</p>
+<pre><code>E ⊨ π   ⟺   ∀ s ∈ V(π) . s ∈ ⟦E⟧
+</code></pre>
+<p><code>verify(π, E)</code> (§4) is the <em>decision procedure</em> for <code>E ⊨ π</code>. The central soundness
+obligation (§6) is one-directional and fail-closed:</p>
+<blockquote>
+<p><strong>(Soundness, intended.)</strong> <code>verify(π, E) = ok ⟹ E ⊨ π</code>.
+Equivalently: if any step of <code>π</code> lies outside <code>⟦E⟧</code>, <code>verify</code> returns <code>⊥</code>.</p>
+</blockquote>
+<p>The converse (completeness, that every admitted plan verifies) is <strong>not</strong> claimed:
+<code>verify</code> may reject an admitted plan it cannot <em>prove</em> admitted (e.g. an unsupported
+glob). That asymmetry is deliberate. See §6.</p>
+<h2 id="4-the-verification-pipeline">4. The verification pipeline</h2>
+<p><code>verify(π, E, strict)</code> is a short-circuiting conjunction of stage predicates. It
+returns <code>ok</code> iff <strong>all</strong> stages pass; the first violating stage yields <code>⊥</code> with a
+diagnostic. Stages are ordered cheap→expensive; SMT runs only after set/string
+checks pass.</p>
+<h3 id="4-1-stage-0-5-delegation-safety">4.1 Stage 0.5: delegation safety</h3>
+<p>Reject a plan that delegates a physical-stakes action to a probabilistic/contained
+leaf that carries no verification story. (Guards the boundary between deterministic
+and stochastic execution.)</p>
+<h3 id="4-2-stage-1-permissions">4.2 Stage 1: permissions</h3>
+<p>For each step <code>s</code> and its capability dimension <code>d</code>, require <code>s ∈ ⟦P⟧_d</code>. Set/glob/
+scheme membership; no SMT. <strong>Default rule (fail-closed):</strong> a step whose type has no
+permission surface and no handler (an unknown custom <code>@step_type</code>) is <em>rejected</em>
+under <code>strict</code>, never waved through.</p>
+<p><strong>Shell file accesses (Built; SG-1 to SG-6).</strong> A shell step <code>s</code> has two derived lists,
+<code>reads(s)</code> and <code>writes(s)</code> (§2.3.1), each a list of accesses <code>(p, tree)</code> or <code>?</code>. A
+<code>tree</code> access is the path and everything under it: a recursive copy's source, <code>rm -r</code>,
+<code>tar -x</code> into a directory, <code>grep -r</code>, <code>find</code> from a start, and <code>mv</code> (a directory moves
+whole). The read set comes from a closed table of reading commands (<code>cat</code>, <code>head</code>,
+<code>tail</code>, <code>grep</code>, <code>rg</code>, <code>ls</code>, <code>find</code>, <code>diff</code>, <code>sort</code>, <code>wc</code>, …), from the source side of
+<code>cp</code>, <code>mv</code>, <code>install</code>, <code>rsync</code>, <code>tar</code>, <code>dd</code> and <code>sed</code>, and from redirects. <code>ls</code>, <code>find</code>
+and <code>grep -r</code> read names and contents under a path, as the <code>Glob</code> and <code>Grep</code> tools do.
+<code>xargs</code> adds operands the line does not show, so a reader or writer under it is <code>?</code>;
+under <code>find -exec</code> a writer is <code>?</code> and a reader adds its literal operands that are not
+<code>{}</code>. For a glob list <code>G</code>:</p>
+<pre><code>in(p, G)         = ∃ g ∈ G . p ⊨ g                                   p a path
+in(p, G)         = ∃ g ∈ G . g ∈ {**, /**}  ∨  (g ends in /**  ∧  p ⊨ g or p ⊨ g minus /**)
+                                                                      p a tree
+⟦s⟧_perm         = ∀ (p,t) ∈ writes(s) . in(p, file_write)  ∧  ∀ (p,t) ∈ reads(s) . in(p, file_read)
+                   ∧ (writes(s) = ?  ⟹  file_write ∋ ** or /**)  ∧ (reads(s) = ?  ⟹  file_read ∋ ** or /**)
+</code></pre>
+<p>A glob that does not end in <code>/**</code> never covers a tree, and <code>/**/*</code> or <code>/home/**</code> is not
+everything. A relative path is placed from the call's cwd under the rule of §2.3.1; a
+plan verified without a cwd matches the path as written. A line that is blanket-rejected
+for its metacharacters, and a line whose head the allowlist refuses, are denied already;
+the first also names its files after the reject. The work an interpreter does and the
+commands in neither table are not placed (§2.3.1).</p>
+<h3 id="4-3-stage-1b-skill-delegation-subsumption">4.3 Stage 1b: skill-delegation subsumption</h3>
+<p>Each <code>SkillStep</code> carries a contract envelope <code>E_c</code>; require <code>envelope_subsumes(E, E_c)</code> (§5). A skill may run only within authority the caller already holds.</p>
+<h3 id="4-4-stage-2-z3-self-consistency-plan-vs-envelope">4.4 Stage 2: Z3 (self-consistency + plan-vs-envelope)</h3>
+<p>Two SMT queries: (i) <code>E</code> is internally satisfiable (its invariants aren't mutually
+contradictory / vacuous, see §6 vacuity); (ii) no step of <code>π</code> can violate <code>E</code>'s
+predicate constraints. Encoded via §5.</p>
+<h3 id="4-5-stage-3-dag">4.5 Stage 3: DAG</h3>
+<p><code>(V,D)</code> has unique ids, all dependencies resolve, and is acyclic. Duplicate ids are
+rejected (they would collapse graph nodes and defeat the receipt-integrity check).</p>
+<p>Post-execution, <strong>Stage 2b</strong> re-checks each completed step's evidence against <code>Q</code>
+(postconditions), and a <strong>run-integrity</strong> predicate requires that the set of
+executed steps (in topological order) is exactly covered by receipts. A silently
+skipped step falsifies it.</p>
+<h2 id="5-subsumption-delegation-safety">5. Subsumption (delegation safety)</h2>
+<p><code>envelope_subsumes(E_out, E_in)</code> decides <code>E_in ⊑ E_out</code>: <em>inner admits no more than
+outer</em>.</p>
+<pre><code>E_in ⊑ E_out   ⟺   ⟦E_in⟧ ⊆ ⟦E_out⟧
+</code></pre>
+<p>This is the one relation behind delegation, inheritance (a generated child must be a
+<em>tightening</em>: <code>E_child ⊑ E_parent</code>), and pathway reuse (a reused plan is bounded by
+the caller's envelope, never its own). It is decided dimension-wise, all fail-closed:</p>
+<h3 id="5-1-set-dimensions-network-hosts-mcp-shell-heads">5.1 Set dimensions (network hosts, mcp, shell heads)</h3>
+<p>Exact set-subset: <code>⟦E_in⟧_d ⊆ ⟦E_out⟧_d</code>. For hosts this is literal set-subset.</p>
+<h3 id="5-2-glob-dimensions-file-read-file-write">5.2 Glob dimensions (file_read, file_write)</h3>
+<p><code>E_in</code>'s globs must be contained in <code>E_out</code>'s glob <em>language</em>. Decided by an
+existential SMT search for a witness <code>w</code> matched by an inner glob but no outer glob;
+<code>unsat</code> (no witness) ⟹ contained. An inner glob whose form is unsupported by the
+glob→SMT translation ⟹ <code>⊥</code> (deny). MCP scope uses the same construction.</p>
+<h3 id="5-3-robotics-dimensions">5.3 Robotics dimensions</h3>
+<p><code>workspace_bounds</code> (inner AABB ⊆ outer AABB), <code>velocity</code>/<code>torque</code> (inner ≤ outer),
+<code>joint_limits</code> (inner ⊆ outer), <code>obstacles</code> (inner ⊇ outer: inner must forbid at
+least what outer forbids). <strong>An undeclared bound where outer constrains it ⟹ deny</strong>
+(you cannot delegate into an unbounded region).</p>
+<h3 id="5-4-predicate-soft-dimensions">5.4 Predicate / soft dimensions</h3>
+<p>Invariants with a supported predicate expression are compiled to SMT and checked by
+polarity (§6). An invariant that compiles to a <em>soft</em> node (unsupported regex,
+free-text <code>LLMCheck</code>) present in <code>E_out</code> but not <code>E_in</code> is treated as an
+unverifiable outer constraint the inner doesn't share ⟹ <code>⊑</code> fails (fail-closed).</p>
+<blockquote>
+<p><strong>(Delegation safety, intended.)</strong> If <code>envelope_subsumes(E_out, E_in) = holds</code> and
+<code>verify(π, E_in) = ok</code>, then <code>verify(π, E_out)</code> would also hold. Running <code>π</code> under
+a delegation bounded by <code>E_in</code> cannot exceed <code>E_out</code>.</p>
+</blockquote>
+<h3 id="5-5-delegation-edges-built-for-daisugi-coppice-and-sprig-proposed">5.5 Delegation edges (Built for daisugi; coppice and sprig Proposed)</h3>
+<p>A parent that starts a child agent delegates authority to a second model. The edge
+rule (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-delegation-tree.md">design-delegation-tree.md</a>) is:</p>
+<blockquote>
+<p><strong>(Edge rule.)</strong> A child with envelope <code>E_child</code> may start under a parent with
+envelope <code>E_parent</code> only if <code>edge_ok(E_parent, E_child)</code>. A failure, a timeout, or a
+check that cannot be made is <code>⊥</code>, and the child does not start.</p>
+</blockquote>
+<p><code>edge_ok</code> is subsumption made total over every field that grants authority:</p>
+<pre><code>edge_ok(E_parent, E_child)  ⟺  E_child declared
+                              ∧ envelope_subsumes(E_parent, E_child, strict = ⊤) = holds
+                              ∧ I_parent ⊆ I_child ∧ Q_parent ⊆ Q_child
+                              ∧ policy_interp(E_child) ⪰ policy_interp(E_parent)
+</code></pre>
+<p>where <code>policy_interp(E)</code> is <code>E.shell_interpreter_policy</code> ordered
+<code>allow ≺ surface ≺ strict</code>, and <code>envelope_subsumes</code> must itself cover the fields
+below. Per-step caps and aggregate budgets differ. A per-step cap bounds each step
+and is compared directly. An aggregate budget (tokens, turns, a deadline) must be
+<strong>split, not copied</strong>: each child reserves its share from the parent's remaining
+budget, or N children spend N times the parent's budget.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Table"><table>
+<thead>
+<tr>
+<th>Field that grants authority</th>
+<th>Required relation</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>file globs, hosts, shell heads, MCP tools, compiled invariants, robot bounds</td>
+<td>§5.1 to §5.4</td>
+<td>Built, all three clients</td>
+</tr>
+<tr>
+<td><code>stakes</code></td>
+<td><code>stakes_child ≥ stakes_parent</code> in <code>low &lt; medium &lt; high &lt; physical</code> (a lower stakes turns strict mode off)</td>
+<td>Built, all three</td>
+</tr>
+<tr>
+<td><code>custom_step_allowlist</code></td>
+<td>child ⊆ parent (strict runs a custom step only if listed)</td>
+<td>Built, all three</td>
+</tr>
+<tr>
+<td>per-step caps <code>max_execution_time_s</code>, <code>max_output_size_mb</code></td>
+<td>child ≤ parent</td>
+<td>Built, all three</td>
+</tr>
+<tr>
+<td>deadline (an envelope field, seconds since the epoch)</td>
+<td><code>deadline_child ≤ deadline_parent</code>; a child with none takes the parent's</td>
+<td>Built: proved per edge (TR-R-1). Not enforced at call time</td>
+</tr>
+<tr>
+<td>aggregate tokens, turns</td>
+<td>child's reservation ≤ parent's remaining budget, kept in the tree ledger outside the envelope</td>
+<td>Built (TR-R-5). Not proved: the counts are the starter's estimates and reports</td>
+</tr>
+<tr>
+<td>Z3 <code>unknown</code> or timeout in the final query</td>
+<td><code>⊥</code> in every mode</td>
+<td>Built, all three</td>
+</tr>
+<tr>
+<td>invariants and postconditions, by value</td>
+<td>parent's enforced ⊆ child's, at any depth</td>
+<td>Built (TR-R-2)</td>
+</tr>
+<tr>
+<td><code>shell_interpreter_policy</code></td>
+<td>child not looser than parent</td>
+<td>Built (TR-R-2)</td>
+</tr>
+<tr>
+<td>an opaque skill or a child with no envelope</td>
+<td><code>⊥</code> at every stakes level</td>
+<td>Built for edges (TR-R-2); <code>check_skill_delegations</code> still allows an opaque skill with a warning in lenient mode, and an edge never calls it</td>
+</tr>
+<tr>
+<td>sequence invariants (<code>forall_steps</code>, <code>exists_step</code> over a plan)</td>
+<td>not compared</td>
+<td>Open; subsumption reasons over one symbolic step</td>
+</tr>
+</tbody>
+</table>
+</div><p><strong>What the edge proves, exactly</strong> (<code>tree.edge_ok</code>, rulings TR-R-2 and TR-R-3). Every step a
+child's envelope admits, as one symbolic step, its parent's admits: the scope axes by Z3 one
+child pattern at a time, the shell heads by the head rule (a child head is a parent head, or a
+parent head and a space), and, when either side has an enforced invariant with an expression,
+the whole step by <code>envelope_subsumes(strict = ⊤)</code>. With no such invariant the Z3 query over one
+step reduces to the head rule, which decides it exactly, so Z3 does not run there. The reasons
+name the part that fails, never a solver model.</p>
+<p><strong>What it does not prove.</strong> That the child stays inside its envelope at run time (the warden checks
+that, call by call); that a plan's order or count properties hold (sequence invariants are not
+compared); that the budgets the starter reports are true (tokens and turns are estimates in a
+ledger, not a proof); that the deadline is kept after it passes (the warden does not read it yet);
+that a child the operator allowed after a refusal fits inside its parent (it is marked not
+proved; it is proved inside the root of its branch, so the induction below still holds, TR-R-7).</p>
+<p><strong>Induction.</strong> If every edge satisfies <code>edge_ok</code>, then by transitivity of <code>⊑</code> (§5)
+every node satisfies <code>E_node ⊑ E_root</code>. A node the operator allowed after a refusal is
+proved against its branch's root instead of its parent (TR-R-7), so the induction holds
+through it. There is no depth limit, and strict mode is on at every edge whatever the stakes.</p>
+<p><strong>Registration</strong> (Built for daisugi, TR-R-8 and TR-R-9). Only the operator registers an envelope
+with no parent (a root): the warden denies an agent's shell line that runs <code>warden register</code>,
+<code>warden init</code>, <code>start</code> or a tree verb that writes. <code>warden disarm</code> and the other verbs that
+change enforcement are denied too (SW-1), and so is a write to the disarm marker or an
+envelope file (SW-17). Any other registration names its parent and runs <code>edge_ok</code>
+(<code>warden register --parent</code>, <code>tree spawn</code>). The starter, not the
+child, binds the child's session. A child session with no exact registered envelope is
+<code>⊥</code>, never the <code>default</code> envelope. What is built today: a hook payload's session id
+never selects an envelope; an unpinned warden checks every call against <code>default</code>, and a
+warden pinned to a session with no envelope denies (commit <code>31871c4d</code>).</p>
+<p><strong>What an edge does not give.</strong> The proof bounds actions, not the quality of the
+child's work. It does not see data flow (§8.3), collusion between siblings whose
+envelopes each fit, or the joint motion of sibling robots. The tree never exceeds the
+root; it promises no more than the root.</p>
+<h3 id="5-6-mcp-argument-rules">5.6 MCP argument rules</h3>
+<p>A call to <code>server/tool</code> is decided in five steps. (1) Caps: arguments longer than 262144
+characters or nested deeper than 64 levels deny, with or without a rule. (2) Match: the rules whose
+pattern matches the name; with none, <code>mcp_allowlist</code> decides on the name alone, and the host-name
+guard can still deny an allowlisted name: a tool of server <code>opencode</code> or <code>pi</code> that a rule names
+once case is ignored and every character but a letter or digit is read as <code>_</code> is denied when only
+an allowlist entry for another name admits it. When rules match, the rules the host-name guard
+finds apply with them. (3) Keys: arguments
+that are not an object deny; every top-level key must be in the union of the matching rules' known
+keys. (4) Predicates: every expression of every matching rule holds over the arguments object; a
+<code>matches</code> or <code>not_matches</code> must match the whole string, over a string of at most 4096
+characters of valid UTF-8 text, with a regex inside one small subset (a hand-written validator,
+the same in every port; the engine runs in linear time);
+otherwise the call is denied. (5) Reads: a string argument that starts
+with <code>/</code> or <code>~/</code> and exists is a read that <code>file_read</code> must admit (a directory as the directory and
+as a tree below it).
+<code>path_in</code> places a string against the call's cwd and matches the scope's globs. It places no
+value with a URI scheme, a Windows drive prefix, a backslash, a NUL or white space at either end,
+and no relative value with a <code>..</code> segment. <code>equals</code>, <code>not_equals</code>,
+<code>in_set</code> and <code>not_in_set</code> compare a bool and a number as different kinds. Subsumption of a rule
+set: for each inner rule, the outer has a rule whose pattern covers it with a known set at least as
+large and an <code>and</code> of expressions the inner implies (Z3; a timeout is not subsumed), or the outer has
+no overlapping rule and admits the tool by name. The Go and Rust standalone verifiers prove only the
+structural case (every outer expression stands in the inner rule, equal as JSON) and refuse the rest
+(<code>clients/ADJUDICATIONS.md</code>, MP-R-1). Built, all three clients: the warden and the standalone
+verifier decide the same calls message for message (2479 warden cases, 2000 fuzzed MCP calls per
+port and seed, no disagreement).</p>
+<h2 id="6-strict-mode-vacuity-and-the-fail-closed-law">6. Strict mode, vacuity, and the fail-closed law</h2>
+<p><code>strict</code> (default-on at high/physical stakes) closes the gaps where an <em>unenforceable</em>
+constraint could masquerade as enforcement:</p>
+<ul>
+<li><strong>Opaque invariants.</strong> An enforced invariant or postcondition with no verifiable
+expression, no registered handler and no definition is rejected at every stakes
+(SG-8), never assumed satisfied. A word of the system dialect with no pin is audited
+below strict stakes and rejected under strict. <code>daisugi warden register</code> refuses an
+envelope that holds such an item, and generation turns it into documentation
+(<code>enforce: false</code>) with a warning.</li>
+<li><strong>Vacuity.</strong> A predicate that is tautological (always ⊤) or contradictory is
+caught before the solver: a &quot;safety&quot; invariant that is vacuously true enforces
+nothing. A recognized robotics invariant declared <em>without its backing bound</em>
+(e.g. <code>end_effector_in_workspace</code> with <code>workspace_bounds = ⊥</code>) is rejected as
+vacuous. Its handler would no-op.</li>
+<li><strong>Soft-node polarity.</strong> A soft (unverifiable) node must be handled so that it can
+never <em>weaken</em> a constraint under negation. In particular an outer deny-rule that
+degrades to a soft node is failed closed, not silently dropped.</li>
+</ul>
+<p><strong>The fail-closed law (governing all of the above).</strong> For every decision procedure
+<code>δ</code> in this spec:</p>
+<pre><code>δ returns unknown / times out / hits an unsupported construct   ⟹   δ ≔ ⊥
+</code></pre>
+<p>No stage may return <code>ok</code> on the basis of <em>absence of a found counterexample by an
+incomplete method</em>. &quot;Not disproven&quot; is not &quot;proven&quot;.</p>
+<p><strong>Dialect clauses (Proposed, §2.4).</strong> Before any procedure runs on a dialect term,
+unfolding itself is fail-closed. Each of these is <code>⊥</code>:</p>
+<ul>
+<li>a word that is not in the pinned dialect (an unknown word);</li>
+<li>an envelope that uses words but pins no dialect, or pins a hash the checker cannot
+load, or a word whose hash does not match the pinned dialect;</li>
+<li>a cycle, or a definition that uses a word not earlier in <code>≺_D</code>;</li>
+<li>a missing, extra or ill-typed argument;</li>
+<li>a term over the depth or size bound;</li>
+<li>a word of the wrong kind in a field (a permission word in an invariant, or the
+reverse);</li>
+<li>a permission word whose body sets a scalar or bound field.</li>
+</ul>
+<p>Once unfolded, the law above applies unchanged: an unfolding on which Z3 answers
+<code>unknown</code> is <code>⊥</code>, exactly as the same kernel term written by hand. Built today: an
+definition with no registry, an unknown definition, a cycle found at resolve time, and a missing
+argument each deny; a register-time vacuity error refuses the definition
+(<code>src/opendaisugi/aliases.py</code>, <code>src/opendaisugi/verify.py</code>). For the system dialect
+of stage 0 (§2.4), built: a target glob outside the supported set, and an enforcement
+pin that names a hash this build does not have, are each <code>⊥</code>; <code>writes(s) = ?</code> makes
+<code>forall_writes</code> false (§2.3.1).</p>
+<h2 id="7-what-is-guaranteed-and-what-is-not">7. What is guaranteed, and what is not</h2>
+<p><strong>Guaranteed (by construction + test):</strong></p>
+<ul>
+<li>Soundness-for-what-it-checks (§3): a plan that <code>verify</code>s <code>ok</code> has every step inside
+the envelope's admitted set <em>on the dimensions the spec covers</em>.</li>
+<li>Fail-closed on every incomplete/unknown result (§6).</li>
+<li>Delegation is transitive containment (§5), so skills-as-contracts, safe
+sub-agents, inheritance, and pathway reuse all reduce to one checked relation.</li>
+</ul>
+<p><strong>A law for the cost levers (Stages 8-10), stated now:</strong></p>
+<ul>
+<li><strong>Admissibility-preservation.</strong> The cost levers, namely within-instance batch
+compilation, model routing, pathway reuse, and the deed / rationale ledgers
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0011-verifiable-execution-substrate.md">ADR-0011</a>), change <em>which</em> model or
+script produces an action, never <em>what is admitted</em>. Each reused, batched, or routed
+action is re-verified against the <strong>caller's</strong> envelope (§5; VISION invariant 3), so
+no lever can widen <code>⟦E⟧</code>. The two ledgers are observational: they record deeds and
+rationale but never warden an action. The one lever that touches authority is
+<em>constraint promotion</em> (a mid-task invariant captured into the envelope), and it is
+admitted only through the monotone-narrowing subsumption of §5, so it may only
+tighten. A lever that cannot exhibit this reduction is a design regression, not an
+optimization. (The <strong>deed ledger</strong> is built and observes this law by construction: a
+reversal only ever writes to a path the run itself wrote: it restores a prior state or
+deletes a file the run created. So it cannot widen <code>⟦E⟧</code>, and it is valid only
+against the run's own ledger. Batch compilation (v0.42) and the rationale store
+with constraint promotion (v0.43) are built to the mechanism line; a batch proves
+each write inside both the envelope and its declared footprint before it runs. The
+learned router is not built; the law it must satisfy is fixed here so the
+implementation cannot quietly relax it.)</li>
+</ul>
+<p><strong>Not guaranteed / out of scope:</strong></p>
+<ul>
+<li><strong>The checker is not machine-verified.</strong> These properties are the design intent,
+enforced by tests and by differential agreement of three implementations (Python,
+Go, Rust) on shared cases, not by a Coq/Lean proof of the checker. The translation
+layer (glob→SMT, regex→SMT, and <code>U_D</code> once dialects exist) is itself trusted code and a place bugs can hide; a
+soundness bug there is a <em>silent</em> fail-open, which is why it is the most
+safety-critical surface and the target of ongoing adversarial review.</li>
+<li><strong>Completeness is not claimed</strong> (§3): admissible plans may be rejected.</li>
+<li><strong>Decidability is not claimed for the whole kernel</strong> (§2.4, property 4). String
+constraints with regular membership and length may give <code>unknown</code>, which denies.</li>
+<li><strong>Names carry no meaning</strong> (§2.4). The checker proves a word's definition, never its
+name. A check of a name against its definition is advice to humans, not part of any
+proof. <code>keep_unchanged</code> is the example: its definition covers <code>file_write</code> steps,
+shell write redirects and the operand writes of the known writers only (§2.3.1),
+not a file changed by an interpreter, an unknown command or an MCP tool.</li>
+<li><strong>An edge proves containment, not quality</strong> (§5.5).</li>
+<li><strong>Actions, not understanding.</strong> <code>⟦E⟧</code> bounds what a step <em>does</em>, never whether the
+model <em>understood the task</em>. An envelope proves the arm stayed under 5N; it cannot
+prove the model meant the fork and not the knife. Every guarantee here is
+additionally conditional on the honesty of the evidence a step reports and on the
+envelope's <code>parent</code>/provenance being independent of the plan's author (§VISION
+invariant 4).</li>
+<li><strong>Call-time checking is safety-only, and narrower than &quot;benign.&quot;</strong> The
+call-time warden (§8) soundly enforces that every executed action is in <code>⟦E⟧</code>,
+but cannot establish plan-structure or liveness properties (no plan exists to
+range over), cannot enforce information-flow (a hyperproperty), and does not
+make an in-envelope <em>trajectory</em> benign. Individually-admitted calls compose
+into harm (§8.3). Its guarantee is additionally conditioned on the host
+invoking it and on a working deny path (§8.5).</li>
+<li><strong>Physical-stakes caveats.</strong> Swarm deconfliction is analytic AABB geometry, not a
+flight-safety certificate: waypoint-in-box ≠ path-in-box, and disjoint boxes ≠
+collision-free unless margins ≥ vehicle radius + position uncertainty.</li>
+</ul>
+<h2 id="8-two-checkpoints-plan-time-verification-and-call-time-checking">8. Two checkpoints: plan-time verification and call-time checking</h2>
+<p>Everything above concerns <strong>plan-time</strong> verification: a declared plan <code>π</code> is
+handed to <code>verify(π, E)</code> before any step runs. A second checkpoint operates
+where no <code>π</code> exists: an agent already running inside a host harness, emitting
+tool calls one at a time. The <strong>call-time warden</strong> (ADR-0007) intercepts each
+call, synthesizes it into a one-step plan <code>⟨aᵢ⟩</code>, and evaluates
+<code>verify(⟨aᵢ⟩, E) </code> before the call executes, preventing <code>aᵢ</code> when
+<code>aᵢ ∉ ⟦E⟧</code>. The two checkpoints share the decision procedure of §4; they do
+<strong>not</strong> share what they can guarantee, and conflating them would over-claim.</p>
+<h3 id="8-1-the-warden-as-an-execution-monitor">8.1 The warden as an execution monitor</h3>
+<p>Model the running agent as emitting a trace <code>a₁ a₂ a₃ …</code>. The warden is an
+<strong>execution monitor</strong> in the sense of Schneider [Sch00]: it observes the trace
+step by step and prevents any action that would violate the policy. The policy
+it enforces is</p>
+<pre><code>P(a₁ … aₙ)  ≝  ∀ i ≤ n .  aᵢ ∈ ⟦E⟧
+</code></pre>
+<p><code>P</code> is <strong>prefix-closed</strong>: if a trace satisfies it, so does every prefix, and a
+single out-of-envelope action falsifies it irrecoverably. A prefix-closed trace
+property is a <strong>safety property</strong> (Alpern–Schneider [AS85]), and safety
+properties are exactly the class an execution monitor can soundly enforce
+[Sch00]. So the warden's guarantee is real and not weaker than its mechanism:
+<em>every executed action lies in <code>⟦E⟧</code>.</em> Whether the target <strong>halts</strong> after a
+denial or <strong>continues</strong> with that one action suppressed is a host-contract
+detail (on the Claude Code path the call is blocked and the agent continues);
+the per-action guarantee holds either way.</p>
+<h3 id="8-2-what-plan-time-has-that-call-time-structurally-cannot-class-limit">8.2 What plan-time has that call-time structurally cannot (class limit)</h3>
+<p>Two properties are provable at plan time and <strong>not</strong> at call time. The first
+fails by construction of this codebase, the second by the enforceability class.</p>
+<ul>
+<li><strong>No cross-step structure at call time.</strong> A call-time evaluation has no <code>π</code>:
+the warden builds a <em>singleton</em> plan per call. Exactly the checks that quantify
+over multiple steps therefore have nothing to range over and are not run:
+DAG ordering (§4.5), the predicate invariants <code>exists_step</code> / <code>forall_steps</code>
+(§4.4, §2b), and postconditions spanning more than one step. This is not a
+gap to be closed later; it is what &quot;one call at a time, no plan&quot; means, and
+the implementation says so (<code>verify_step</code> deliberately omits the plan-level
+stages). Ordering, completeness, and &quot;the plan as a whole establishes X&quot; are
+<strong>plan-time properties</strong>.</li>
+<li><strong>Liveness and hyperproperties are outside the monitor class.</strong> An execution
+monitor cannot enforce a <strong>liveness</strong> property (&quot;eventually returns to
+base,&quot; &quot;the task is eventually completed&quot;) because no finite prefix
+witnesses its violation [AS85]. Nor can it enforce a <strong>hyperproperty</strong>:
+information-flow / non-interference is 2-safety over <em>pairs</em> of traces
+[CS10], not a property of the single trace in front of the monitor, so no
+per-call warden enforces &quot;this run leaked nothing.&quot; These are limits of the
+mechanism, independent of <code>E</code>.</li>
+</ul>
+<h3 id="8-3-in-envelope-trajectory-benign-policy-adequacy-gap">8.3 In-envelope ≠ trajectory-benign (policy-adequacy gap)</h3>
+<p>Distinct from §8.2, and the easier one to mistake for a bug: <code>⟦E⟧</code> is a
+predicate on <strong>individual actions</strong>. The warden soundly enforces
+<code>∀ i . aᵢ ∈ ⟦E⟧</code>. That predicate does <strong>not</strong> entail &quot;the trajectory is
+benign.&quot; Concretely, let <code>E</code> grant <code>file_read : /work/**</code> and
+<code>network → api.github.com</code>. Then</p>
+<pre><code>a₁ = read  /work/secret           a₁ ∈ ⟦E⟧
+a₂ = POST  api.github.com  ⟨secret⟩ a₂ ∈ ⟦E⟧
+</code></pre>
+<p>Each call is inside the envelope. The composition is exfiltration. Nothing is
+broken: this is <strong>not</strong> an enforcement failure but the difference between
+<em>per-action authorization</em> and a <em>trajectory specification</em>. A warden cannot make
+<code>⟦E⟧</code> say more than it says; tightening the envelope (drop the network grant,
+or bound the host set) is the only remedy, and it is the envelope author's, not
+the warden's. Stated plainly for the scorecard: <strong>a call being inside the
+envelope does not make the trajectory benign.</strong></p>
+<h3 id="8-4-threat-model-and-boundaries">8.4 Threat model and boundaries</h3>
+<ul>
+<li><strong>Assumed hostile:</strong> the model's outputs and hence every tool-call argument;
+instructions injected into the model's context (prompt injection); a
+sub-agent that attempts to widen its own authority.</li>
+<li><strong>Assumed trusted (out of scope):</strong> the verifier and its translation layer
+(§7: a soundness bug there is a silent fail-open); the envelope's provenance
+being independent of the plan's author (VISION invariant 4: a self-authored
+envelope authorizes nothing meaningfully); and the host faithfully invoking
+the warden.</li>
+<li><strong>Mediation boundary.</strong> The warden sees only what the host routes through the
+<strong>hooked tool surface</strong>. An action taken over a channel the host does not
+hook is unmediated. It is outside the warden's view and therefore outside its
+guarantee. Enforcement is per-harness and per-version (roadmap Stage 5).</li>
+</ul>
+<h3 id="8-5-the-conditioned-guarantee-and-the-fail-open-edges">8.5 The conditioned guarantee, and the fail-open edges</h3>
+<p>The safety guarantee of §8.1 holds <strong>conditioned on</strong> all of: (i) the host
+invokes the warden on <em>every</em> tool call; (ii) the host's deny path actually
+blocks; (iii) the action traverses a hooked surface (§8.4). Where a condition
+can fail outside our control, it is named here, not buried:</p>
+<ul>
+<li><strong>Host outer hook timeout</strong>: fails open on every harness measured. Mitigated,
+not eliminated: the warden owns an <em>inner</em> timeout that denies first (§6's
+fail-closed law applied to the clock).</li>
+<li><strong>A harness that silently stops firing hooks</strong>: condition (i) fails with no
+signal; only a per-version contract test detects it (Stage 5).</li>
+<li><strong>Warden-process death / import failure</strong>: would make condition (ii) fail
+(a non-deny exit is non-blocking on the host). Closed at the process
+boundary: the emitted hook command maps every non-deny exit to a deny.</li>
+</ul>
+<h3 id="8-6-relation-to-simplex-rta">8.6 Relation to Simplex / RTA</h3>
+<p>The two-checkpoint design descends from Simplex runtime assurance [Sha01]:
+a trusted safety layer vetoing an untrusted controller. The lineage is
+<strong>inspirational, and the call-time guarantee is strictly weaker.</strong> Simplex
+guarantees the system remains in a <em>recoverable safe state over time</em>. This is a
+trajectory-level, liveness-flavored property delivered by a safety controller
+that can <em>act</em>. The call-time warden only <strong>prevents</strong> individual actions; it
+provides no recoverable-state guarantee over the trajectory (indeed §8.2 says
+it cannot). A reader who knows Simplex should not import its temporal guarantee
+here.</p>
+<h3 id="references">References</h3>
+<p>Standard citations, given for provenance; verify wording and venue against the
+sources (this document is AI-authored, so the grain-of-salt law applies).</p>
+<ul>
+<li><strong>[Sch00]</strong> F. B. Schneider. <em>Enforceable Security Policies.</em> ACM TISSEC 3(1), 2000. (Execution monitors enforce safety properties.)</li>
+<li><strong>[AS85]</strong> B. Alpern, F. B. Schneider. <em>Defining Liveness.</em> Information Processing Letters 21(4), 1985. (safety / liveness decomposition.)</li>
+<li><strong>[CS10]</strong> M. R. Clarkson, F. B. Schneider. <em>Hyperproperties.</em> Journal of Computer Security 18(6), 2010. (information flow as 2-safety.)</li>
+<li><strong>[LBW05]</strong> J. Ligatti, L. Bauer, D. Walker. <em>Edit automata: enforcement mechanisms for run-time security policies.</em> Int. J. Information Security 4(1-2), 2005. (suppression/insertion beyond truncation.)</li>
+<li><strong>[Sha01]</strong> L. Sha. <em>Using Simplicity to Control Complexity.</em> IEEE Software 18(4), 2001. (the Simplex architecture.)</li>
+</ul>
+<hr />
+<p><em>This specification describes the current implementation as authored by an AI
+assistant. Discrepancies between this document and the code are bugs in one or the
+other. Verify against the tests before relying on any stated property.</em></p>
+</article>
+</main>
+<footer><div class="col">MIT license. This page loads only its own files. <a href="index.html">Back to the overview</a>.</div></footer>
+</body>
+</html>

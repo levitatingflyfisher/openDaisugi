@@ -47,6 +47,70 @@ def wav_duration_s(wav_bytes: bytes) -> float:
         return n_frames / float(w.getframerate())
 
 
+WINDOW_SECONDS = 30.0
+CUT_SEARCH_SECONDS = 3.0
+_CUT_FRAME_SAMPLES = 320  # 20 ms at 16 kHz
+
+
+def split_wav(wav_bytes: bytes) -> list[bytes]:
+    """Cut a 16 kHz mono WAV into windows of at most WINDOW_SECONDS.
+
+    Each cut falls at the middle of the quietest 20 ms frame in the last
+    CUT_SEARCH_SECONDS of a window, so it lands in a pause and not in a
+    word. The windows do not overlap. A clip that fits in one window comes
+    back whole. The first of equal frames wins, so the cut is the same in
+    every port.
+    """
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        rate, width, channels = w.getframerate(), w.getsampwidth(), w.getnchannels()
+        frames = w.readframes(w.getnframes())
+    if width != 2 or channels != 1 or rate <= 0:
+        return [wav_bytes]
+    pcm = np.frombuffer(frames[: len(frames) // 2 * 2], dtype="<i2")
+    total = len(pcm)
+    window = int(WINDOW_SECONDS * rate)
+    if total <= window:
+        return [wav_bytes]
+    search = int(CUT_SEARCH_SECONDS * rate)
+    out: list[bytes] = []
+    pos = 0
+    while total - pos > window:
+        lo, hi = pos + window - search, pos + window
+        best, best_at = None, (lo + hi) // 2
+        start = lo
+        while start + _CUT_FRAME_SAMPLES <= hi:
+            chunk = pcm[start : start + _CUT_FRAME_SAMPLES].astype(np.int64)
+            energy = int(np.sum(chunk * chunk))
+            if best is None or energy < best:
+                best, best_at = energy, start + _CUT_FRAME_SAMPLES // 2
+            start += _CUT_FRAME_SAMPLES // 2
+        out.append(write_wav_16k_mono(pcm[pos:best_at], sample_rate=rate))
+        pos = best_at
+    out.append(write_wav_16k_mono(pcm[pos:], sample_rate=rate))
+    return out
+
+
+def truncate_wav(wav_bytes: bytes, max_seconds: float) -> tuple[bytes, int]:
+    """Keep the first max_seconds of a 16 kHz mono WAV.
+
+    Returns the clip and the whole seconds cut from its end, rounded up, so
+    the reply can say how much was left out. A clip that fits comes back as
+    it is with 0 cut. Frames are counted as integers, so every port cuts at
+    the same sample.
+    """
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        rate, width, channels = w.getframerate(), w.getsampwidth(), w.getnchannels()
+        frames = w.readframes(w.getnframes())
+    if width != 2 or channels != 1 or rate <= 0:
+        return wav_bytes, 0
+    pcm = np.frombuffer(frames[: len(frames) // 2 * 2], dtype="<i2")
+    keep = int(max_seconds * rate)
+    if len(pcm) <= keep:
+        return wav_bytes, 0
+    cut = len(pcm) - keep
+    return write_wav_16k_mono(pcm[:keep], sample_rate=rate), -(-cut // rate)
+
+
 def write_wav_16k_mono(samples: np.ndarray, *, sample_rate: int = 16000) -> bytes:
     """Pack float or int samples into 16 kHz mono 16-bit PCM WAV bytes."""
     buf = io.BytesIO()

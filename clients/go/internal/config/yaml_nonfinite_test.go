@@ -7,7 +7,7 @@ import (
 )
 
 // PyYAML reads .nan and .inf as floats. They resolve to a Float whose text
-// strconv.ParseFloat reads, so gate register can refuse an envelope that
+// strconv.ParseFloat reads, so warden register can refuse an envelope that
 // holds one (models.non_finite_error) instead of saying it cannot read it.
 func TestPlainNonFiniteFloats(t *testing.T) {
 	for in, want := range map[string]float64{

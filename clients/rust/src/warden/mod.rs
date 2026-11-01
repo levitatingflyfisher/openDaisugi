@@ -1,0 +1,866 @@
+//! A port of `opendaisugi.warden`: one hook payload in, the host's verdict
+//! contract out, with the same audit log, session tree, captures mirror
+//! and coppice report the Python warden writes. It runs no Python.
+//!
+//! A call the port cannot decide exactly as the Python warden would is
+//! denied, with exit 2 and a reason, in the contract of the call's host
+//! format. That is decided before anything is written, so an undecided
+//! call leaves no log line.
+
+pub mod argparse;
+pub mod ask;
+pub mod check;
+pub mod checkpoints;
+pub mod config;
+pub mod decide;
+pub mod dispatch;
+pub mod effects;
+pub mod envelope;
+pub mod fenced;
+pub mod fenceruns;
+pub mod frames;
+pub mod wardenstate;
+pub mod globs;
+pub mod graft;
+pub mod hook;
+pub mod hookrecord;
+pub mod llm;
+pub mod logs;
+pub mod mcprules;
+pub mod py;
+pub mod paths;
+pub mod predicate;
+pub mod procgroup;
+pub mod pydantic;
+pub mod pymodel;
+pub mod pyjson;
+pub mod pystr;
+pub mod rank;
+pub mod record;
+pub mod replay;
+pub mod resident;
+pub mod rules;
+pub mod search;
+pub mod sha256;
+pub mod state_report;
+pub mod statefile;
+pub mod statewrite;
+pub mod urls;
+
+use decide::Decision;
+use effects::PERMANENT;
+use paths::{path_join, path_str};
+use py::text::{as_surrogate, fsdecode, has_surrogate};
+use pyjson::{dumps, loads, Object, Value};
+use pystr::py_strip;
+use record::join_of;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::sync::{mpsc, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub use py::PyErr;
+
+/// Why a step of the warden did not return a value: a Python exception the
+/// oracle raises at the same point, or a case the port cannot decide.
+/// Python catches its exceptions at fixed places, and so does the port
+/// (`catch`). An undecided case is never caught: it denies the call.
+#[derive(Debug, Clone)]
+pub enum Fault {
+    Raised(PyErr),
+    Undecided(String),
+}
+
+impl From<PyErr> for Fault {
+    fn from(e: PyErr) -> Self {
+        if e.is("Undecided") {
+            Fault::Undecided(e.msg)
+        } else {
+            Fault::Raised(e)
+        }
+    }
+}
+
+pub type R<T> = Result<T, Fault>;
+
+pub fn undecided<T>(why: impl Into<String>) -> R<T> {
+    Err(Fault::Undecided(why.into()))
+}
+
+/// Raises a Python exception.
+pub fn raise<T>(e: PyErr) -> R<T> {
+    Err(Fault::Raised(e))
+}
+
+/// Python's `try: ... except Exception as e:` around a step: the value, or
+/// the exception it raised. An undecided case passes through.
+pub fn catch<T>(r: R<T>) -> R<Result<T, PyErr>> {
+    match r {
+        Ok(v) => Ok(Ok(v)),
+        Err(Fault::Raised(e)) => Ok(Err(e)),
+        Err(Fault::Undecided(w)) => Err(Fault::Undecided(w)),
+    }
+}
+
+/// A best-effort step after the verdict is final (the session tree, a
+/// checkpoint, the captures mirror, a report): Python swallows its
+/// exceptions, and a case the port cannot decide there must not change a
+/// verdict already given, so both end the step.
+pub fn best_effort<T>(r: R<T>) -> Option<T> {
+    r.ok()
+}
+
+/// `warden.MAX_PAYLOAD_BYTES` and `warden.MAX_SHELL_COMMAND_CHARS`: past them
+/// the warden denies an input unread.
+pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_SHELL_COMMAND_CHARS: usize = 256 * 1024;
+
+/// What the warden process emits.
+#[derive(Debug, Clone, Default)]
+pub struct WardenResult {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit: i32,
+    /// False when the port could not decide the call; `why` says why.
+    pub native: bool,
+    pub why: String,
+    /// The outcome as `warden.WardenOutcome` holds it, before `main()` prints
+    /// it: no newline added, a lone surrogate kept, argparse's own text
+    /// left out. A resident server's reply carries these.
+    pub out_stdout: String,
+    pub out_stderr: String,
+    /// argparse's --help: SystemExit(0), which run_argv lets through. A
+    /// resident server gives no reply to it.
+    pub help: bool,
+    /// The stderr notes of a resident call's child (GR-R-3), for the
+    /// server to print; a hook call's child puts them in `stderr`.
+    pub notes: Vec<u8>,
+}
+
+/// One call's inputs.
+#[derive(Debug, Clone)]
+pub struct Runner {
+    pub env: HashMap<String, String>,
+    pub home: String,
+    wd: OnceLock<Option<String>>,
+    /// realpath answers for the length of one call (see `paths::realpath`):
+    /// the answer, and the deepest symlink nesting it took.
+    real_cache: std::sync::Arc<std::sync::Mutex<HashMap<String, (Result<String, PyErr>, i64)>>>,
+    pub root: String,
+    pub default_root: String,
+    pub mode: String,
+    pub fmt: String,
+    pub session: Option<String>,
+    pub captures: Option<String>,
+    pub verify_timeout_s: f64,
+    pub ask: bool,
+    pub ask_timeout_s: f64,
+    pub checkpoints: bool,
+    pub t0: Instant,
+    /// Set on a call a resident server serves; `caller` is the pane
+    /// identity its request named (see resident.rs).
+    pub resident: bool,
+    pub caller: resident::Caller,
+}
+
+impl Runner {
+    /// `warden.caller_fenced`: the resident warden found a fence run above
+    /// the caller's SO_PEERCRED pid (ADR-0028). An in-process call is never
+    /// fenced, and no variable makes one so.
+    pub fn fenced_call(&self) -> bool {
+        self.resident && self.caller.workspace.is_some()
+    }
+}
+
+/// `n` random bytes as hex, from the kernel.
+pub fn random_hex(n: usize) -> R<String> {
+    use std::io::Read;
+    let mut b = vec![0u8; n];
+    match std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)) {
+        Ok(()) => Ok(b.iter().map(|x| format!("{x:02x}")).collect()),
+        Err(_) => undecided("no randomness"),
+    }
+}
+
+/// `time.time()`.
+pub fn now_float() -> f64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// The environment variable the outer process sets on its worker with the
+/// width of the terminal on its own stdout, when it has one. Python reads
+/// that width for argparse's text; the worker's stdout is a pipe.
+pub const TTY_ENV: &str = "DAISUGI_WARDEN_TTY_COLUMNS";
+
+/// Answers one call, with `env` as the whole environment.
+pub fn run(argv: &[String], stdin: &[u8], env: HashMap<String, String>) -> WardenResult {
+    answer(argv, stdin, &env, None)
+}
+
+/// `warden._fmt_from_argv`: the first `--format X` or `--format=X`, as
+/// written, else claude.
+fn fmt_from_argv(argv: &[String]) -> String {
+    for (i, a) in argv.iter().enumerate() {
+        if a == "--format" && i + 1 < argv.len() {
+            return argv[i + 1].clone();
+        }
+        if let Some(v) = a.strip_prefix("--format=") {
+            return v.to_string();
+        }
+    }
+    "claude".into()
+}
+
+/// The argv as Python reads it (UTF-8, undecodable bytes as surrogates).
+pub(crate) fn py_argv(args: &[OsString]) -> Vec<String> {
+    use std::os::unix::ffi::OsStrExt;
+    args.iter().map(|a| fsdecode(a.as_bytes())).collect()
+}
+
+/// How long the outer process waits for its worker: the verify budget,
+/// plus the ask budget with --ask, plus 3 s (at most 3,600 s of budget;
+/// 13 s when argparse refuses the argv). The installer gives the host hook
+/// at least the verify budget plus 5 s (the ask budget too with --ask),
+/// and a host that times a hook out lets the call through, so the worker
+/// must end, and deny, first.
+pub fn child_deadline_s(args: &[OsString]) -> f64 {
+    child_deadline_text(&py_argv(args))
+}
+
+/// `child_deadline_s` for an argv that is already text.
+pub fn child_deadline_text(argv: &[String]) -> f64 {
+    let a = match argparse::parse(argv, 80) {
+        Ok(a) => a,
+        Err(_) => return 13.0,
+    };
+    let mut budget = a.verify_timeout;
+    if a.ask {
+        budget += a.ask_timeout.max(0.0);
+    }
+    if budget.is_nan() || budget > 3600.0 {
+        budget = 3600.0;
+    }
+    budget.max(1.0) + 3.0
+}
+
+/// The host format a deny of this argv takes, read as argparse reads it
+/// (an abbreviated or repeated --format included); for an argv argparse
+/// refuses, the format `_fmt_from_argv` guesses, as the oracle's escape
+/// does.
+pub fn deny_format(args: &[OsString]) -> String {
+    deny_format_text(&py_argv(args))
+}
+
+/// `deny_format` for an argv that is already text.
+pub fn deny_format_text(argv: &[String]) -> String {
+    match argparse::parse(argv, 80) {
+        Ok(a) => a.fmt,
+        Err(_) => fmt_from_argv(argv),
+    }
+}
+
+/// `run` for this process: its own argv and environment, each read as
+/// Python reads it (UTF-8, with undecodable bytes kept as surrogates).
+pub fn run_process(args: Vec<OsString>, stdin: &[u8]) -> WardenResult {
+    use std::os::unix::ffi::OsStrExt;
+    let mut env = HashMap::new();
+    for (k, v) in std::env::vars_os() {
+        env.insert(fsdecode(k.as_bytes()), fsdecode(v.as_bytes()));
+    }
+    let argv: Vec<String> = args.iter().map(|a| fsdecode(a.as_bytes())).collect();
+    answer(&argv, stdin, &env, None)
+}
+
+/// A resident call decided in this process: run_argv inside
+/// resident_call, with `env` as the server's own (pane-free) environment.
+pub fn run_resident(q: &resident::Request, env: &HashMap<String, String>) -> WardenResult {
+    answer(&q.argv, &q.stdin, env, Some(&q.caller))
+}
+
+fn answer(argv: &[String], stdin: &[u8], env: &HashMap<String, String>, rc: Option<&resident::Caller>) -> WardenResult {
+    let native = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_native(argv, stdin, env, rc)));
+    let why = match native {
+        Ok(Ok(mut res)) => {
+            res.native = true;
+            return res;
+        }
+        Ok(Err(Fault::Undecided(why))) => why,
+        Ok(Err(Fault::Raised(e))) => format!("unexpected: an uncaught {}: {}", e.kind, e.msg),
+        Err(_) => "unexpected: a panic in the port".to_string(),
+    };
+    undecided_deny(argv, &why)
+}
+
+/// The deny for a call the port cannot decide.
+fn undecided_deny(argv: &[String], why: &str) -> WardenResult {
+    let mut out = backstop_deny_text(argv, &format!("the Rust warden cannot decide this call: {why}"));
+    out.native = false;
+    out.why = why.to_string();
+    out
+}
+
+/// `main()`'s printing: stdout then stderr, each with print()'s newline.
+/// stdout is strict UTF-8 and stderr backslash-escapes what it cannot
+/// encode; a stdout print that raises skips the stderr print.
+fn printed(stdout: &str, stderr: &str, exit: i32) -> WardenResult {
+    let mut res =
+        WardenResult { exit, out_stdout: stdout.to_string(), out_stderr: stderr.to_string(), ..Default::default() };
+    if !stdout.is_empty() {
+        if has_surrogate(stdout) {
+            return res;
+        }
+        res.stdout = format!("{stdout}\n").into_bytes();
+    }
+    if !stderr.is_empty() {
+        res.stderr = format!("{}\n", backslashreplace(stderr)).into_bytes();
+    }
+    res
+}
+
+/// The text with each lone surrogate written as `\udXXX`, as a stream with
+/// errors="backslashreplace" writes it.
+fn backslashreplace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match as_surrogate(c) {
+            Some(u) => out.push_str(&format!("\\u{u:04x}")),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
+/// `warden_client.mode_from_argv`: the `--mode` text of argv, else enforce.
+/// Anything but `audit` reads as enforce.
+fn mode_from_argv(argv: &[String]) -> &'static str {
+    let mut mode = "enforce";
+    for (i, a) in argv.iter().enumerate() {
+        if a == "--mode" && i + 1 < argv.len() {
+            mode = argv[i + 1].as_str();
+        } else if let Some(v) = a.strip_prefix("--mode=") {
+            mode = v;
+        }
+    }
+    if mode == "audit" {
+        "audit"
+    } else {
+        "enforce"
+    }
+}
+
+/// The mode the child will check in, worked out with the child's own
+/// functions (`argparse::parse`, `config_warden_mode`, `effective_mode`).
+/// The hook parent reads it before it starts the child, so a signal that
+/// ends the check can give the mode's verdict: the allow body in audit, a
+/// deny in enforce. Anything it cannot read stands as the text of `--mode`
+/// in argv (audit only when that says audit), else enforce.
+pub fn mode_for(args: &[OsString]) -> &'static str {
+    let mut env: HashMap<String, String> = HashMap::new();
+    for (k, v) in std::env::vars_os() {
+        use std::os::unix::ffi::OsStrExt;
+        env.insert(py::text::fsdecode(k.as_bytes()), py::text::fsdecode(v.as_bytes()));
+    }
+    mode_for_env(args, env)
+}
+
+/// `mode_for` with the environment given (the tests name theirs).
+pub fn mode_for_env(args: &[OsString], env: HashMap<String, String>) -> &'static str {
+    let argv = py_argv(args);
+    let fallback = mode_from_argv(&argv);
+    // Reading the mode can note a refused state file. The child notes it
+    // again when it decides the call, so the parent keeps these to itself.
+    statefile::collect_notes();
+    let got = std::panic::catch_unwind(move || -> Option<String> {
+        let parsed = argparse::parse(&argv, 78).ok()?;
+        let home = env.get("HOME").cloned().unwrap_or_default();
+        let mut r = Runner {
+            env: env.clone(),
+            home,
+            wd: OnceLock::new(),
+            real_cache: Default::default(),
+            root: String::new(),
+            default_root: String::new(),
+            mode: String::new(),
+            fmt: parsed.fmt.clone(),
+            session: parsed.session.clone(),
+            captures: parsed.captures_root.as_deref().map(path_str),
+            verify_timeout_s: parsed.verify_timeout,
+            ask: parsed.ask,
+            ask_timeout_s: parsed.ask_timeout,
+            checkpoints: parsed.checkpoints,
+            t0: Instant::now(),
+            resident: false,
+            caller: Default::default(),
+        };
+        let home_dir = catch(r.path_home()).ok()?.ok()?;
+        r.default_root = path_join(&r.data_home_at(&home_dir), "warden");
+        r.root = match &parsed.root {
+            Some(x) => path_str(x),
+            None => r.default_root.clone(),
+        };
+        let mode = match &parsed.mode {
+            Some(m) => m.clone(),
+            None => r.config_warden_mode().ok()?,
+        };
+        Some(r.effective_mode(mode))
+    });
+    statefile::take_notes();
+    match got {
+        Ok(Some(m)) if m == "audit" => "audit",
+        Ok(Some(m)) if m == "enforce" => "enforce",
+        _ => fallback,
+    }
+}
+
+/// `warden._escape_outcome` in audit mode: the format's allow body and exit
+/// 0. An audit warden never blocks.
+pub fn audit_escape(args: &[OsString], why: &str) -> WardenResult {
+    let fmt = deny_format_text(&py_argv(args));
+    let mut res = printed(&stdout_for(&fmt, false, ""), "", 0);
+    res.why = why.to_string();
+    res
+}
+
+fn run_native(
+    argv: &[String],
+    stdin: &[u8],
+    env: &HashMap<String, String>,
+    rc: Option<&resident::Caller>,
+) -> R<WardenResult> {
+    let t0 = Instant::now();
+    let tty = env.get(TTY_ENV).and_then(|v| v.parse::<i64>().ok()).map(|c| (c, 24));
+    let mut env = env.clone();
+    env.remove(TTY_ENV);
+    let width = argparse::terminal_columns(
+        env.get("COLUMNS").map(String::as_str),
+        env.get("LINES").map(String::as_str),
+        tty,
+    ) - 2;
+    let args = match argparse::parse(argv, width) {
+        Ok(a) => a,
+        Err(argparse::Exit::Help(text)) => {
+            // print_help writes the text as is; a SystemExit(0) follows.
+            return Ok(WardenResult { stdout: text.into_bytes(), exit: 0, help: true, ..Default::default() });
+        }
+        Err(argparse::Exit::Error(text)) => {
+            // parser.error prints the usage and the error, and run_argv
+            // turns its SystemExit(2) into a deny: a block body on stdout
+            // for the formats that read stdout (the format guessed from the
+            // raw argv), else exit 2.
+            let fmt = fmt_from_argv(argv);
+            let mut res = if fmt == "hermes" || fmt == "openclaw" {
+                let d = Decision {
+                    allow: false,
+                    would_deny: true,
+                    reason: "warden escape: 2".into(),
+                    ..Default::default()
+                };
+                outcome(&d, &fmt)?
+            } else {
+                printed("", "openDaisugi warden: DENIED (fail-closed on error): 2", 2)
+            };
+            let mut err = backslashreplace(&text).into_bytes();
+            err.extend(res.stderr);
+            res.stderr = err;
+            return Ok(res);
+        }
+    };
+    if env.get("OPENDAISUGI_CONFORMANCE_RECORD").is_some_and(|v| !v.is_empty()) {
+        return undecided("conformance recording is on");
+    }
+    let home = env.get("HOME").cloned().unwrap_or_default();
+    let mut r = Runner {
+        env: env.clone(),
+        home,
+        wd: OnceLock::new(),
+        real_cache: Default::default(),
+        root: String::new(),
+        default_root: String::new(),
+        mode: String::new(),
+        fmt: args.fmt.clone(),
+        session: args.session.clone(),
+        captures: args.captures_root.as_deref().map(path_str),
+        verify_timeout_s: args.verify_timeout,
+        ask: args.ask,
+        ask_timeout_s: args.ask_timeout,
+        checkpoints: args.checkpoints,
+        t0,
+        resident: rc.is_some(),
+        caller: rc.cloned().unwrap_or_default(),
+    };
+    // DEFAULT_WARDEN_ROOT is worked out when the module is imported: an
+    // error there ends the Python warden before it reads its input.
+    let home_dir = match catch(r.path_home())? {
+        Ok(h) => h,
+        Err(e) => return undecided(format!("Path.home() raises at import: {}", e.msg)),
+    };
+    r.default_root = path_join(&r.data_home_at(&home_dir), "warden");
+    r.root = match &args.root {
+        Some(x) => path_str(x),
+        None => r.default_root.clone(),
+    };
+    let t = r.verify_timeout_s;
+    if !t.is_finite() || (t > 0.0 && t < 1.0) {
+        // The verifier thread's join would raise, or would race a budget
+        // this small.
+        return undecided("a --verify-timeout that is not finite, or under one second");
+    }
+    r.mode = match &args.mode {
+        Some(m) => m.clone(),
+        None => {
+            // resolve_warden_mode runs in run_argv, before warden_and_contract.
+            let _f = frames::at(5);
+            r.config_warden_mode()?
+        }
+    };
+    // effective_warden_mode: the calling pane's marker can lower enforce.
+    let mode = std::mem::take(&mut r.mode);
+    r.mode = r.effective_mode(mode);
+    r.decide(stdin)
+}
+
+impl Runner {
+    pub fn elapsed_ms(&self) -> f64 {
+        self.t0.elapsed().as_nanos() as f64 / 1e6
+    }
+
+    /// Runs `f` under the `--verify-timeout` budget on a thread of its own,
+    /// with `base` Python frames on its stack, as the Python warden runs its
+    /// verifier in a worker thread. `None` when the budget ran out; the
+    /// worker is then abandoned (the process ends soon after).
+    pub fn run_bounded<T: Send + 'static>(
+        &self,
+        base: i64,
+        f: impl FnOnce(&Runner) -> R<T> + Send + 'static,
+    ) -> R<Option<T>> {
+        let (tx, rx) = mpsc::channel();
+        let me = self.clone();
+        let spawned = std::thread::Builder::new().stack_size(256 << 20).spawn(move || {
+            let _f = frames::at(base);
+            let out = f(&me);
+            let _ = tx.send(out);
+        });
+        if spawned.is_err() {
+            return undecided("the warden could not start a thread");
+        }
+        let budget = if self.verify_timeout_s > 0.0 { self.verify_timeout_s } else { 0.0 };
+        match rx.recv_timeout(Duration::from_secs_f64(budget)) {
+            Ok(r) => r.map(Some),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => undecided("unexpected: a panic in a native check"),
+        }
+    }
+
+    /// Runs `f` to its end on a thread of its own with a large stack and
+    /// `base` Python frames on it: a step the oracle runs with no deadline.
+    pub fn run_unbounded<T: Send + 'static>(
+        &self,
+        base: i64,
+        f: impl FnOnce(&Runner) -> R<T> + Send + 'static,
+    ) -> R<T> {
+        let me = self.clone();
+        let spawned = std::thread::Builder::new().stack_size(256 << 20).spawn(move || {
+            let _f = frames::at(base);
+            f(&me)
+        });
+        match spawned {
+            Err(_) => undecided("the warden could not start a thread"),
+            Ok(h) => match h.join() {
+                Ok(r) => r,
+                Err(_) => undecided("unexpected: a panic in a native check"),
+            },
+        }
+    }
+
+    fn is_disarmed(&self) -> R<bool> {
+        let _f = frames::frame();
+        // GR-R-1: a regular file this user owns, read through no link.
+        Ok(statefile::open(&path_str(&self.root), &[], "DISARMED", None).is_some())
+    }
+
+    /// `warden.warden_and_contract`: the verdict, its log lines, and the host
+    /// outcome.
+    fn decide(&self, stdin: &[u8]) -> R<WardenResult> {
+        let _f = frames::at(6);
+        let d = match catch(self.decide_body(stdin))? {
+            Ok(d) => d,
+            Err(e) => {
+                // The mode-selected failure policy.
+                if self.mode == "enforce" {
+                    self.deny(&format!("warden I/O error (denied fail-closed): {}", e.msg))
+                } else {
+                    Decision {
+                        allow: true,
+                        would_deny: true,
+                        reason: format!("warden I/O error (audit mode allows): {}", e.msg),
+                        elapsed_ms: self.elapsed_ms(),
+                        tier: PERMANENT.into(),
+                        ..Default::default()
+                    }
+                }
+            }
+        };
+        outcome(&d, &self.fmt)
+    }
+
+    /// `warden._resident_refusal`: why a resident call is denied before it is
+    /// checked, or None (FN-R-21).
+    fn resident_refusal(&self, obj: Option<&Object>) -> Option<String> {
+        if !self.resident {
+            return None;
+        }
+        if let Some(s) = self.session.as_deref().filter(|s| !s.is_empty()) {
+            if !fenceruns::session_ok(s) {
+                return Some(fenceruns::SESSION_REFUSAL.into());
+            }
+        }
+        let p = obj?;
+        match p.value("session_id") {
+            Value::Null => {}
+            Value::Str(s) if fenceruns::session_ok(s) => {}
+            _ => return Some(fenceruns::SESSION_REFUSAL.into()),
+        }
+        if self.checkpoints && self.caller.workspace.is_some() {
+            // A fenced session (FN-R-36): the server would run git on
+            // config the agent writes, so it takes no checkpoint at all.
+            return Some(fenceruns::FENCED_CHECKPOINT_REFUSAL.into());
+        }
+        let cwd = p.value("cwd");
+        if self.checkpoints && cwd.truthy() {
+            let Some(ws) = self.caller.workspace.as_deref() else {
+                return Some(fenceruns::NO_WORKSPACE_REFUSAL.into());
+            };
+            match cwd.as_str() {
+                Some(c) if !c.contains('\0') && c.starts_with('/') && fenceruns::inside(c, ws) => {}
+                _ => return Some(fenceruns::OUTSIDE_REFUSAL.into()),
+            }
+            if let Some(why) = fenceruns::git_dir_refusal(ws) {
+                return Some(why.into());
+            }
+        }
+        None
+    }
+
+    fn decide_body(&self, stdin: &[u8]) -> R<Decision> {
+        if self.is_disarmed()? {
+            let d = Decision {
+                allow: true,
+                reason: "warden disarmed by operator (marker file present)".into(),
+                elapsed_ms: self.elapsed_ms(),
+                tier: PERMANENT.into(),
+                ..Default::default()
+            };
+            self.log_audit(&Value::Null, &d, &Value::Null, None)?;
+            return Ok(d);
+        }
+        let too_big = stdin.len() > MAX_PAYLOAD_BYTES;
+        let text = if too_big { String::new() } else { String::from_utf8_lossy(stdin).into_owned() };
+        let mut payload: Option<Value> = None;
+        if !py_strip(&text).is_empty() {
+            match loads(&text) {
+                // JSON null is Python's None, which reads as no payload.
+                Ok(Value::Null) | Err(_) => {}
+                Ok(v) => payload = Some(v),
+            }
+        }
+        let obj = match &payload {
+            Some(Value::Obj(o)) => Some(o),
+            _ => None,
+        };
+        let payload_session = obj.map(|p| p.value("session_id").clone()).unwrap_or(Value::Null);
+        let session_id = match &self.session {
+            Some(s) if !s.is_empty() => Value::Str(s.clone()),
+            _ => payload_session.clone(),
+        };
+        // The payload's session id is recorded but never selects an
+        // envelope: pinned, the pin's own envelope or none; unpinned, default.
+        let pin = match &self.session {
+            Some(s) if !s.is_empty() => Value::Str(s.clone()),
+            _ => Value::Null,
+        };
+        // warden._resident_refusal: denied before it is checked (FN-R-21).
+        let why = self.resident_refusal(obj);
+        let (env, refusal) = if why.is_some() { (None, None) } else { self.load_envelope_checked(&pin)? };
+        // Only the predicate stage needs Z3, and a context takes about
+        // 9 ms to make: start it now, on a thread, when that stage may run.
+        if env.as_ref().is_some_and(|e| !e.invariants.is_empty() || !e.postconditions.is_empty()) {
+            crate::z3py::prewarm();
+        }
+        let mut d = match (&env, &payload, obj) {
+            // Denied in every mode: the server makes the writes, so it must
+            // not make them where the caller points.
+            _ if why.is_some() => Decision {
+                allow: false,
+                would_deny: true,
+                reason: why.clone().unwrap_or_default(),
+                elapsed_ms: self.elapsed_ms(),
+                tier: PERMANENT.into(),
+                ..Default::default()
+            },
+            // A refusal is not an absence: say which file, and the fix (GR-R-8).
+            (None, _, _) if refusal.is_some() => {
+                self.deny(&format!("the warden refused its envelope state: {}", refusal.as_deref().unwrap_or("")))
+            }
+            (None, _, _) => self.deny(
+                "no envelope registered for this session — run `daisugi warden register <envelope.json>` to \
+                 authorize it, or `daisugi warden disarm` to switch the warden off",
+            ),
+            _ if too_big => {
+                self.deny(&format!("hook payload is larger than {MAX_PAYLOAD_BYTES} bytes; the warden does not read it"))
+            }
+            (_, None, _) => self.deny("hook payload was not parseable JSON"),
+            (_, _, None) => self.deny("hook payload is not a JSON object"),
+            (Some(env), _, Some(p)) => self.evaluate_call(p, env)?,
+        };
+        if why.is_none() && self.ask && self.mode == "enforce" && d.would_deny && !d.pane_rule {
+            if let Some(p) = obj {
+                d = self.maybe_ask(p, d, &session_id)?;
+                if d.allow && d.updated_input.is_some() {
+                    if let Some(env) = &env {
+                        d = self.recheck_edit(p, d, env)?;
+                    }
+                }
+            }
+        }
+        // warden._maybe_graft, on the evaluate_call branch only.
+        if why.is_none() && !d.ask && !too_big {
+            if let (Some(env), Some(_), Some(p)) = (&env, &payload, obj) {
+                d = self.maybe_graft(p, d, env, &session_id)?;
+            }
+        }
+        d.elapsed_ms = d.elapsed_ms.max(0.0);
+        let join = obj.map(join_of).unwrap_or_default();
+        let logged = self.log_audit(&session_id, &d, &payload_session, Some(&join))?;
+        if let Some(p) = obj {
+            let tree = self.log_tree(p, &d, &session_id)?;
+            if self.checkpoints && d.allow {
+                self.maybe_checkpoint(p, &session_id)?;
+            }
+            if let (Some(c), true) = (&self.captures, d.allow) {
+                self.capture_mirror(c, p)?;
+            }
+            self.report_state(p, &d, &session_id, tree)?;
+        }
+        // An enforce-mode allow whose audit line did not land is denied
+        // (warden.AUDIT_REFUSAL, FN-R-17).
+        if !logged && self.mode == "enforce" && d.allow {
+            return Ok(self.deny(AUDIT_REFUSAL));
+        }
+        Ok(d)
+    }
+}
+
+/// `warden.AUDIT_REFUSAL`.
+pub const AUDIT_REFUSAL: &str = "the warden cannot write its audit log, so it denies the call";
+
+/// The deny the outer process gives when its worker did not answer: the
+/// call's host format read as argparse reads it (the last `--format` wins,
+/// a unique prefix counts), in that format's contract.
+pub fn backstop_deny(args: &[OsString], why: &str) -> WardenResult {
+    backstop_deny_text(&py_argv(args), why)
+}
+
+/// `backstop_deny` for an argv that is already text.
+pub fn backstop_deny_text(argv: &[String], why: &str) -> WardenResult {
+    let fmt = deny_format_text(argv);
+    let d = Decision {
+        allow: false,
+        would_deny: true,
+        reason: format!("warden internal error (denied fail-closed): {why}"),
+        ..Default::default()
+    };
+    outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi warden: DENIED — {}", d.reason), 2))
+}
+
+/// The deny in the format `warden._fmt_from_argv` reads off argv, with
+/// `reason`: the resident server's deny for a request that names a path.
+pub fn deny_fmt(argv: &[String], reason: &str) -> WardenResult {
+    let fmt = fmt_from_argv(argv);
+    let d = Decision { allow: false, would_deny: true, reason: reason.to_string(), ..Default::default() };
+    outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi warden: DENIED — {}", d.reason), 2))
+}
+
+/// The format's deny for `argv`, with `reason`.
+pub fn deny_text(argv: &[String], reason: &str) -> WardenResult {
+    let fmt = deny_format_text(argv);
+    let d = Decision { allow: false, would_deny: true, reason: reason.to_string(), ..Default::default() };
+    outcome(&d, &fmt).unwrap_or_else(|_| printed("", &format!("openDaisugi warden: DENIED — {}", d.reason), 2))
+}
+
+/// `warden._outcome`, printed as `main()` prints it.
+fn outcome(d: &Decision, f: &str) -> R<WardenResult> {
+    let deny_now = !d.allow;
+    Ok(match f {
+        "claude" | "pi" | "opencode" => {
+            if deny_now {
+                printed("", &format!("openDaisugi warden: DENIED — {}", d.reason), 2)
+            } else if let Some(edit) = &d.updated_input {
+                // An operator edited the call before allowing it: only
+                // claude's hookSpecificOutput carries an edit.
+                if f == "claude" {
+                    let body = Object::new().with(
+                        "hookSpecificOutput",
+                        Object::new()
+                            .with("hookEventName", "PreToolUse")
+                            .with("permissionDecision", "allow")
+                            .with("permissionDecisionReason", d.reason.as_str())
+                            .with("updatedInput", edit.clone()),
+                    );
+                    printed(&dumps(&Value::Obj(body), true), "", 0)
+                } else {
+                    printed(
+                        "",
+                        &format!(
+                            "openDaisugi warden: DENIED: {}. The operator edit cannot be carried on the {} format. \
+                             It has no updatedInput channel. Denied fail-closed rather than running the original input.",
+                            d.reason,
+                            py::text::repr(f)
+                        ),
+                        2,
+                    )
+                }
+            } else {
+                printed(&stdout_for(f, false, ""), "", 0)
+            }
+        }
+        "hermes" | "openclaw" => {
+            if d.updated_input.is_some() {
+                let why = format!(
+                    "{}. The operator edit cannot be carried on the {} format. It has no updatedInput channel. \
+                     Denied fail-closed rather than running the original input",
+                    d.reason,
+                    py::text::repr(f)
+                );
+                printed(&stdout_for(f, true, &why), "", 0)
+            } else {
+                printed(&stdout_for(f, deny_now, &d.reason), "", 0)
+            }
+        }
+        _ => printed(
+            "",
+            &format!(
+                "openDaisugi warden: DENIED: unknown host format {}. Use --format claude, pi, opencode, hermes, or openclaw.",
+                py::text::repr(f)
+            ),
+            2,
+        ),
+    })
+}
+
+/// `hook.stdout_for_format`.
+fn stdout_for(f: &str, block: bool, reason: &str) -> String {
+    match f {
+        "hermes" if block => dumps(
+            &Value::Obj(Object::new().with("decision", "block").with("action", "block").with("reason", reason)),
+            true,
+        ),
+        "openclaw" if block => {
+            dumps(&Value::Obj(Object::new().with("block", true).with("blockReason", reason)), true)
+        }
+        "hermes" | "openclaw" => "{}".into(),
+        _ => r#"{"continue": true}"#.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests;

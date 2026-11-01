@@ -8,6 +8,9 @@
 #   --fetchable   skip the tools install.sh fetches itself (zig, cmake, and
 #                 a go older than 1.26, which GOTOOLCHAIN=auto replaces).
 #                 What is left is what only your distribution can supply.
+#                 On success it prints nothing: its job is to fail early and
+#                 name the missing packages. The full run, with no option,
+#                 prints the one success line.
 set -uo pipefail
 
 fetchable=0
@@ -73,4 +76,6 @@ if [ "$missing" -ne 0 ]; then
   echo "The build cannot run here yet. Fix the lines above, then run it again." >&2
   exit 1
 fi
-echo "preflight: every build tool is here."
+if [ "$fetchable" -eq 0 ]; then
+  echo "preflight: every build tool is here."
+fi

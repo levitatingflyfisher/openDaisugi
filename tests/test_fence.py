@@ -59,28 +59,28 @@ def test_default_plan_shuts_every_secret_and_the_rest_of_home():
     assert not reach(out, "/usr/bin/env", write=True)
 
 
-def test_gate_state_is_never_writable_and_its_gate_dir_is_readable():
+def test_warden_state_is_never_writable_and_its_warden_dir_is_readable():
     out = plan(inp())
-    assert reach(out, HOME + "/.opendaisugi/gate/envelopes/default.json")
-    assert not reach(out, HOME + "/.opendaisugi/gate/DISARMED", write=True)
+    assert reach(out, HOME + "/.opendaisugi/warden/envelopes/default.json")
+    assert not reach(out, HOME + "/.opendaisugi/warden/DISARMED", write=True)
     assert not reach(out, HOME + "/.opendaisugi/journal")
 
 
-def test_fn_v4_nothing_under_the_gate_state_is_writable_and_gate_sock_connects():
-    out = plan(inp(gate_root="/srv/gate"))
+def test_fn_v4_nothing_under_the_warden_state_is_writable_and_warden_sock_connects():
+    out = plan(inp(warden_root="/srv/warden"))
     g = HOME + "/.opendaisugi"
     for sub in (
-        "gate/audit/s.jsonl",
-        "gate/asks/a.json",
-        "gate/checkpoint-state/x",
-        "gate/answers/a.json",
+        "warden/audit/s.jsonl",
+        "warden/asks/a.json",
+        "warden/checkpoint-state/x",
+        "warden/answers/a.json",
         "sessions/s.jsonl",
-        "gate/DISARMED",
+        "warden/DISARMED",
     ):
         assert not reach(out, f"{g}/{sub}", write=True), sub
-    assert not reach(out, "/srv/gate/asks/a.json", write=True)
-    assert connect(out, g + "/gate/gate.sock")
-    assert connect(out, "/srv/gate/gate.sock")
+    assert not reach(out, "/srv/warden/asks/a.json", write=True)
+    assert connect(out, g + "/warden/warden.sock")
+    assert connect(out, "/srv/warden/warden.sock")
     assert not connect(out, HOME + "/proj/agent.sock")
 
 
@@ -171,7 +171,6 @@ def test_fn_v6_harness_config_stays_read_only():
         assert not reach(out, f"{HOME}/{p}", write=True), p
     for p in (
         ".claude/projects/" + fence.claude_project_name(fence_cases.WS) + "/x.jsonl",
-        ".claude/todos/t",
         ".claude/.credentials.json",
     ):
         assert reach(out, f"{HOME}/{p}", write=True), p
@@ -191,13 +190,13 @@ def test_fn_v6_harness_config_stays_read_only():
     assert reach(out, HOME + "/.pi/agent/sessions/s", write=True)
     out = plan(inp(harness="sprig"))
     assert not reach(out, HOME + "/.local/share/sprig/config", write=True)
-    # N-2: OpenCode's config (plugins, MCP servers, the gate plugin), its
+    # N-2: OpenCode's config (plugins, MCP servers, the warden plugin), its
     # downloaded binaries and its plugin packages run later outside any
     # fence: read only. Its sessions, logs and state stay writable.
     out = plan(inp(harness="opencode"))
     for p in (
         ".config/opencode/opencode.json",
-        ".config/opencode/plugins/daisugi-gate.ts",
+        ".config/opencode/plugins/daisugi-warden.ts",
         ".local/share/opencode/bin/lsp",
         ".cache/opencode/node_modules/x/index.js",
     ):
@@ -230,7 +229,7 @@ def test_fn_v9_tmp_is_not_granted_and_the_private_temp_dir_is():
     assert reach(plan(inp(tmpdir="", allow=["/tmp:rw"])), "/tmp/x", write=True)
 
 
-def test_fn_v2_only_the_coppice_socket_dir_and_gate_root_connect():
+def test_fn_v2_only_the_coppice_socket_dir_and_warden_root_connect():
     out = plan(inp(sockets=["/mnt/c/run/server.sock"]))
     assert connect(out, "/mnt/c/run/server.sock")
     assert not reach(out, "/mnt/c/run/token")
@@ -256,8 +255,8 @@ def test_a_secret_named_exactly_is_granted():
     assert modes(out)[HOME + "/.ssh"] == "ro"
 
 
-def test_a_writable_grant_on_gate_state_is_refused_even_when_named():
-    for spec in ("~/.opendaisugi/gate:rw", "~/.opendaisugi:rw", "~/.opendaisugi/gate/x:rw"):
+def test_a_writable_grant_on_warden_state_is_refused_even_when_named():
+    for spec in ("~/.opendaisugi/warden:rw", "~/.opendaisugi:rw", "~/.opendaisugi/warden/x:rw"):
         assert plan(inp(allow=[spec]))["refusals"], spec
 
 
@@ -277,7 +276,7 @@ def test_envelope_globs_are_cut_to_their_literal_directory():
     assert glob_prefix("../x/[ab]", HOME, "/w/p") == "/w/x"
 
 
-def test_envelope_cannot_widen_past_home_or_into_gate_state():
+def test_envelope_cannot_widen_past_home_or_into_warden_state():
     out = plan(
         inp(
             envelope={
@@ -288,7 +287,7 @@ def test_envelope_cannot_widen_past_home_or_into_gate_state():
     )
     assert len(out["notes"]) == 4
     assert not reach(out, HOME + "/Documents")
-    assert not reach(out, HOME + "/.opendaisugi/gate/DISARMED", write=True)
+    assert not reach(out, HOME + "/.opendaisugi/warden/DISARMED", write=True)
 
 
 def test_plan_is_pure_and_deterministic():
@@ -324,9 +323,14 @@ def test_r2_3_harness_data_that_steers_a_later_run_is_read_only():
     out = plan(inp(harness="claude"))
     assert reach(out, own + "/s.jsonl", write=True)
     assert reach(out, own + "/s/subagents/a.jsonl", write=True)
+    # Another project's transcripts and memory are not reachable at all:
+    # ~/.claude is granted entry by entry, never whole (Pando fix 1).
     for p in ("-elsewhere/memory/MEMORY.md", "-elsewhere/s.jsonl"):
-        assert reach(out, HOME + "/.claude/projects/" + p), p
-        assert not reach(out, HOME + "/.claude/projects/" + p, write=True), p
+        assert not reach(out, HOME + "/.claude/projects/" + p), p
+    assert not reach(out, HOME + "/.claude/projects")
+    assert reach(out, HOME + "/.claude/settings.json")
+    assert not reach(out, HOME + "/.claude/settings.json", write=True)
+    assert not reach(out, HOME + "/.claude/todos/t.json")
     out = plan(inp(harness="claude", allow=["~/.claude/projects/-elsewhere/memory:rw"]))
     assert out["refusals"] == []
     assert reach(out, HOME + "/.claude/projects/-elsewhere/memory/MEMORY.md", write=True)
@@ -336,7 +340,135 @@ def test_r2_3_claude_project_name_is_claudes_own():
     assert fence.claude_project_name("/mnt/tera/a_b/c.d") == "-mnt-tera-a-b-c-d"
     # A name Claude would shorten, or a path with other than ASCII, cannot
     # be named: the whole projects dir stays writable, and a note says so.
+    # Pando fix 2 (G7): granting all of projects/ would open every
+    # project's chats, so the plan refuses unless --allow names it.
     for ws in ("/w/" + "x" * 200, "/w/caf\u00e9"):
         out = plan(inp(harness="claude", workspace=ws))
-        assert reach(out, HOME + "/.claude/projects/-elsewhere/memory/M.md", write=True), ws
-        assert any("cannot name" in n for n in out["notes"]), ws
+        assert not reach(out, HOME + "/.claude/projects/-elsewhere/memory/M.md"), ws
+        assert any("cannot name" in r for r in out["refusals"]), ws
+        out = plan(inp(harness="claude", workspace=ws, allow=["~/.claude/projects:rw"]))
+        assert out["refusals"] == [] and reach(
+            out, HOME + "/.claude/projects/x.jsonl", write=True
+        ), ws
+
+
+def test_pando_fix2_owner_data_in_dot_claude_stays_shut():
+    out = plan(inp(harness="claude"))
+    for p in (
+        "history.jsonl",
+        "backups/.claude.json.backup.1",
+        "sessions/1.key",
+        "file-history/s/a",
+        "todos/t.json",
+        "plans/p.md",
+        "debug/d.txt",
+        "shell-snapshots/s.sh",
+        "session-env/e",
+        "ide/1.lock",
+    ):
+        assert not reach(out, HOME + "/.claude/" + p), p
+    assert reach(out, HOME + "/.claude/statsig/x", write=True)
+
+
+def test_pando_fix2_a_linked_worktree_gets_its_git_dirs():
+    ws = "/home/user/proj-worktrees/lead-t"
+    gd, cd = "/home/user/proj/.git/worktrees/lead-t", "/home/user/proj/.git"
+    out = plan(inp(workspace=ws, git_dirs=[gd, cd]))
+    assert out["refusals"] == []
+    assert reach(out, gd + "/index", write=True) and reach(out, cd + "/objects/ab/cd", write=True)
+    out = plan(inp(git_dirs=[HOME + "/.ssh/x.git"]))
+    assert any("the git dir" in r for r in out["refusals"])
+
+
+# Plan task 5: the memory stores are shut like a secret, read and write.
+def test_memory_stores_are_never_granted_by_the_envelope() -> None:
+    from opendaisugi.fence import plan as _plan
+
+    home = "/home/u"
+    out = _plan(
+        {
+            "harness": "claude",
+            "workspace": home + "/proj",
+            "home": home,
+            "env": {"XDG_DATA_HOME": home + "/.local/share"},
+            "envelope": {
+                "file_read": [
+                    home + "/.opendaisugi/**",
+                    home + "/.local/share/opendaisugi/pando/**",
+                ],
+                "file_write": [home + "/.opendaisugi/foreman/x"],
+            },
+        }
+    )
+    for r in out["rules"]:
+        for d in (home + "/.opendaisugi", home + "/.local/share/opendaisugi"):
+            for m in ("pando", "foreman"):
+                store = d + "/" + m
+                assert not (store == r["path"] or store.startswith(r["path"] + "/")), r
+    assert len(out["notes"]) == 3 and out["refusals"] == []
+
+
+def test_a_workspace_in_the_pando_store_is_refused() -> None:
+    from opendaisugi.fence import plan as _plan
+
+    out = _plan({"workspace": "/home/u/.opendaisugi/pando/work", "home": "/home/u"})
+    assert out["refusals"] and "pando" in out["refusals"][0]
+
+
+# Review F3: the memory stores stay shut when the data dir, or a store, is a
+# link. The caller resolves links and passes state_extra (the data dir as it
+# resolves) and never_extra (the store as it resolves).
+def _reaches(out: dict, path: str) -> bool:
+    return any(r["path"] == path or path.startswith(r["path"] + "/") for r in out["rules"])
+
+
+def test_memory_stays_shut_under_a_linked_data_dir() -> None:
+    from opendaisugi.fence import plan as _plan
+
+    home = "/home/u"
+    out = _plan(
+        {
+            "harness": "claude",
+            "workspace": home + "/proj",
+            "home": home,
+            "real": {
+                home + "/.opendaisugi/pando": "/r/ods/pando",
+                home + "/.opendaisugi": "/r/ods",
+            },
+            "state_extra": ["/r/ods"],
+            "envelope": {
+                "file_read": [home + "/.opendaisugi/pando/**", home + "/.opendaisugi/**", "/r/**"],
+                "file_write": [],
+            },
+        }
+    )
+    assert not _reaches(out, "/r/ods/pando/x"), out["rules"]
+    assert not _reaches(out, "/r/ods/foreman/x"), out["rules"]
+    assert out["refusals"] == []
+
+
+def test_memory_stays_shut_when_the_store_is_a_link() -> None:
+    from opendaisugi.fence import plan as _plan
+
+    home = "/home/u"
+    out = _plan(
+        {
+            "harness": "claude",
+            "workspace": home + "/proj",
+            "home": home,
+            "real": {home + "/.opendaisugi/pando": "/elsewhere/p"},
+            "never_extra": ["/elsewhere/p"],
+            "envelope": {
+                "file_read": [home + "/.opendaisugi/pando/**", "/elsewhere/**"],
+                "file_write": [],
+            },
+        }
+    )
+    assert not _reaches(out, "/elsewhere/p/x"), out["rules"]
+
+
+def test_a_workspace_in_a_linked_store_is_refused() -> None:
+    from opendaisugi.fence import plan as _plan
+
+    out = _plan({"workspace": "/r/ods/pando/work", "home": "/home/u", "state_extra": ["/r/ods"]})
+    assert out["refusals"] and "pando" in out["refusals"][0]

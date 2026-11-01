@@ -113,7 +113,7 @@ func (s *Server) forgetChildren(paneID string) {
 	s.childMu.Unlock()
 }
 
-// handleReportChild is pane.report_child: a gate hook reports a subagent
+// handleReportChild is pane.report_child: a warden hook reports a subagent
 // that started or stopped inside a pane's harness.
 func (s *Server) handleReportChild(c *Client, r *proto.Request) proto.Response {
 	id, ok := r.Str("pane")

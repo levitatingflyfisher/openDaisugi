@@ -120,7 +120,102 @@ def test_run_ptt_prints_the_message_and_continues_after_a_server_error(capsys):
     results = run_ptt("w1:p1", client=client, keys=[" ", " ", "q"], open_stream=lambda: stream)
     assert results == []
     out = capsys.readouterr().out.strip().splitlines()
-    assert out == ["The voice server answered 503. Install faster-whisper."]
+    assert out == [
+        "The voice server answered 503. Install faster-whisper.",
+        "Your recording is kept and goes out with the next one.",
+        "A kept recording was not sent.",
+    ]
+
+
+def test_run_ptt_keeps_a_clip_the_busy_server_refused_and_sends_it_with_the_next(capsys):
+    class BusyOnce(FakeClient):
+        def transcribe(self, wav_bytes: bytes) -> dict:
+            if not self.transcribe_calls:
+                self.transcribe_calls.append(wav_bytes)
+                raise ptt.VoiceServerError(
+                    "The voice server is still turning an earlier clip.", busy=True
+                )
+            return super().transcribe(wav_bytes)
+
+    client = BusyOnce()
+    streams = iter([FakeStream([b"\x00\x01" * 400]), FakeStream([b"\x00\x02" * 400])])
+    results = run_ptt(
+        "w1:p1", client=client, keys=[" ", " ", " ", " ", "q"], open_stream=lambda: next(streams)
+    )
+    assert "kept" in capsys.readouterr().out
+    assert len(client.transcribe_calls) == 2
+    first, second = client.transcribe_calls
+    # The second post holds the first clip's audio and the new audio.
+    assert len(second) > len(first)
+    assert first[44:] in second
+    assert [r[0] for r in results] == ["hello world"]
+
+
+def test_run_ptt_keeps_a_clip_after_an_error_that_is_not_busy():
+    class Failing(FakeClient):
+        def transcribe(self, wav_bytes: bytes) -> dict:
+            self.transcribe_calls.append(wav_bytes)
+            raise ptt.VoiceServerError("The voice server answered 500.")
+
+    client = Failing()
+    streams = iter([FakeStream([b"\x00\x01" * 400]), FakeStream([b"\x00\x02" * 400])])
+    run_ptt(
+        "w1:p1", client=client, keys=[" ", " ", " ", " ", "q"], open_stream=lambda: next(streams)
+    )
+    first, second = client.transcribe_calls
+    assert len(second) > len(first)
+    assert first[44:] in second
+
+
+def test_http_voice_client_marks_a_409_busy_reply(tmp_path, monkeypatch):
+    client = _loopback_client(tmp_path)
+    body = json.dumps({"error": "busy", "message": "still working"}).encode()
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 409, "Conflict", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(ptt.urllib_request, "urlopen", boom)
+    with pytest.raises(ptt.VoiceServerError) as ei:
+        client.transcribe(b"x")
+    assert ei.value.busy and "still working" in str(ei.value)
+
+
+def test_http_voice_client_turns_a_timeout_into_a_server_error(tmp_path, monkeypatch):
+    client = _loopback_client(tmp_path)
+
+    def slow(req, timeout=None):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(ptt.urllib_request, "urlopen", slow)
+    with pytest.raises(ptt.VoiceServerError) as ei:
+        client.transcribe(b"x")
+    assert not ei.value.busy
+    assert str(ei.value) == "The voice server did not answer in time."
+
+
+def test_http_voice_client_turns_a_reply_that_is_not_json_into_a_server_error(
+    tmp_path, monkeypatch
+):
+    client = _loopback_client(tmp_path)
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"<html>oops"
+
+    monkeypatch.setattr(ptt.urllib_request, "urlopen", lambda req, timeout=None: Reply())
+    for call in (
+        lambda: client.transcribe(b"x"),
+        lambda: client.deliver("w1:p1", "hi", mode="preview"),
+    ):
+        with pytest.raises(ptt.VoiceServerError) as ei:
+            call()
+        assert str(ei.value) == "The voice server sent an answer that is not JSON."
 
 
 def test_main_loop_reads_from_a_fake_non_tty_stdin_and_quits(monkeypatch):
@@ -446,3 +541,32 @@ def test_ptt_module_imports_with_sounddevice_hidden_and_default_stream_names_the
     fresh_ptt = importlib.import_module("opendaisugi.voice.ptt")
     with pytest.raises(RuntimeError, match=r"opendaisugi\[voice\]"):
         fresh_ptt._default_stream()
+
+
+def test_run_ptt_keeps_a_joined_clip_after_an_error_that_is_not_busy_and_names_it_on_quit(capsys):
+    class BusyThenFails(FakeClient):
+        def transcribe(self, wav_bytes: bytes) -> dict:
+            self.transcribe_calls.append(wav_bytes)
+            if len(self.transcribe_calls) == 1:
+                raise ptt.VoiceServerError("still working", busy=True)
+            raise ptt.VoiceServerError("The voice server answered 500.")
+
+    client = BusyThenFails()
+    streams = iter([FakeStream([b"\x00\x01" * 400]), FakeStream([b"\x00\x02" * 400])])
+    run_ptt(
+        "w1:p1", client=client, keys=[" ", " ", " ", " ", "q"], open_stream=lambda: next(streams)
+    )
+    out = capsys.readouterr().out
+    assert out.count("kept and goes out with the next one") == 2
+    assert "A kept recording was not sent." in out
+
+
+def test_run_ptt_says_nothing_about_a_kept_clip_when_none_is_kept(capsys):
+    client = FakeClient()
+    run_ptt(
+        "w1:p1",
+        client=client,
+        keys=[" ", " ", "q"],
+        open_stream=lambda: FakeStream([b"\x00\x01" * 400]),
+    )
+    assert "not sent" not in capsys.readouterr().out

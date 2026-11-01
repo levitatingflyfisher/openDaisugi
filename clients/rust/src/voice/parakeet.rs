@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::gate::py::text;
+use crate::warden::py::text;
 
 use super::audio::{run_with_input, which};
 use super::engine::{py_path_str, Engine, EngineError};

@@ -5,10 +5,10 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::{rstrip, splitlines};
-use crate::gate::pyjson::{dumps_indent, Object, Value};
+use crate::warden::py::text::{rstrip, splitlines};
+use crate::warden::pyjson::{dumps_indent, Object, Value};
 use crate::pathways::pmodel::{validate_model, Id, Mode};
 use crate::pathways::verify::Outcome;
 use crate::pathways::PwErr;

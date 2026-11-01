@@ -1,0 +1,37 @@
+{
+  "name": "warden-only",
+  "title": "The warden alone, in Claude Code",
+  "doc": "docs/recipes/warden-only.md",
+  "slots": {
+    "harness": "Claude Code (theirs)",
+    "warden": "daisugi warden (ours)",
+    "router": "none"
+  },
+  "params": {
+    "workspace": {
+      "help": "the directory the starter envelope admits",
+      "required": false,
+      "metavar": "DIR"
+    }
+  },
+  "steps": [
+    {
+      "kind": "warden-init",
+      "workspace": "{workspace}",
+      "when": "workspace"
+    },
+    {
+      "kind": "install",
+      "only": [
+        "warden"
+      ],
+      "runtime": [
+        "claude"
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "For one session instead: claude --settings \"$(daisugi warden settings)\". Add --enforce to deny; it needs an envelope."
+    }
+  ]
+}

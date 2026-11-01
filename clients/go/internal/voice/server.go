@@ -2,6 +2,7 @@ package voice
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"errors"
@@ -25,8 +26,8 @@ import (
 
 // The server's ceilings, as voice/server.py sets them.
 const (
-	MaxAudioSeconds      = 60.0
-	MaxContentLength     = 30_000_000
+	MaxAudioSeconds      = 1200.0
+	MaxContentLength     = 64_000_000
 	MaxDeliverBytes      = 65536
 	MaxDeliverTextChars  = 20000
 	banWindow            = 60.0
@@ -70,6 +71,20 @@ type Server struct {
 	ln       net.Listener
 	mu       sync.Mutex
 	failures map[string][]float64
+	// job is the kind of work that holds the engine: "" when it is free,
+	// "clip" for a clip turned into text, "partial" for the text so far.
+	// Only this server can see a job that outlives the request that began
+	// it.
+	jobMu sync.Mutex
+	job   string
+	// seq counts partials for a caller that sends no sequence number.
+	seq int64
+	// windows is the text of each finished window a partial has read, by
+	// the hash of its audio.
+	windows map[[32]byte]string
+	// order is the windows' keys, oldest first, for dropping the oldest
+	// when the cache is full.
+	order [][32]byte
 }
 
 // RefuseNoToken is build_server's refusal for an address with no token.
@@ -133,7 +148,7 @@ func Listen(host string, port int, cfg ServerConfig, certFile, keyFile *string) 
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Server{cfg: cfg, ln: ln, failures: map[string][]float64{}}, nil
+	return &Server{cfg: cfg, ln: ln, failures: map[string][]float64{}, windows: map[[32]byte]string{}}, nil
 }
 
 // oserrorText is str(OSError) for a failed bind: "[Errno N] text".
@@ -529,10 +544,25 @@ func isHex(c byte) bool {
 func (s *Server) doGet(req *request, rs *responder) {
 	p, _ := urlPath(req.path)
 	if p == "/health" {
-		rs.json(200, obj("ok", true))
+		rs.json(200, obj("ok", true, "max_seconds", MaxAudioSeconds))
+		return
+	}
+	if p == "/status" {
+		s.status(req, rs)
 		return
 	}
 	rs.json(404, errBody("not_found", notFoundMessage))
+}
+
+// status is GET /status: what this server does. Like /health it needs no
+// token: it names only the engine and whether /partial is there, and a
+// probe must never count toward the ban that guards the token. partial is
+// true because this server answers /partial, and partial_engine names the
+// engine that reads it.
+func (s *Server) status(req *request, rs *responder) {
+	name := s.cfg.Engine.Name
+	rs.json(200, obj("ok", true, "max_seconds", MaxAudioSeconds, "engine", name,
+		"partial", true, "partial_engine", name))
 }
 
 // authorized is _authorized. errDrop when the oracle's compare_digest
@@ -589,7 +619,7 @@ func (s *Server) doPost(req *request, rs *responder) {
 		rs.json(401, errBody("unauthorized", "This request needs a bearer token. Run coppice web token on the box that runs this server."))
 		return
 	}
-	if p != "/transcribe" && p != "/deliver" {
+	if p != "/transcribe" && p != "/deliver" && p != "/partial" {
 		rs.json(404, errBody("not_found", notFoundMessage))
 		return
 	}
@@ -605,6 +635,8 @@ func (s *Server) doPost(req *request, rs *responder) {
 	if p == "/transcribe" {
 		v, _ := firstQueryValue(query, "cleanup")
 		herr = s.transcribe(req, rs, v == "1")
+	} else if p == "/partial" {
+		herr = s.partial(req, rs, query)
 	} else {
 		herr = s.deliver(req, rs)
 	}
@@ -633,19 +665,21 @@ func readBody(req *request, n int64) []byte {
 	return buf[:got]
 }
 
-func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error {
+// clipWav reads a request's clip as a 16 kHz mono WAV, cut to the cap. ok
+// is false when a reply was already sent.
+func clipWav(req *request, rs *responder) (wav []byte, cutS int64, ok bool, err error) {
 	n := contentLength(req)
 	if n == nil {
 		rs.json(400, errBody("bad_content_length", "Send a valid Content-Length header with the request."))
-		return nil
+		return nil, 0, false, nil
 	}
 	if n.Cmp(big.NewInt(MaxContentLength)) > 0 {
 		rs.json(413, errBody("payload_too_large", fmt.Sprintf("The request body must be %d bytes or smaller.", MaxContentLength)))
-		return nil
+		return nil, 0, false, nil
 	}
 	body := readBody(req, n.Int64())
-	ctype, ok := req.header("Content-Type")
-	if !ok {
+	ctype, has := req.header("Content-Type")
+	if !has {
 		ctype = "application/octet-stream"
 	}
 	audio := body
@@ -653,7 +687,7 @@ func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error
 		a, _, err := ExtractMultipartAudio(body, ctype)
 		if err != nil {
 			rs.json(400, errBody("bad_audio", "This audio could not be decoded. Send WAV, WebM, Ogg, MP3, or M4A."))
-			return nil
+			return nil, 0, false, nil
 		}
 		audio = a
 	}
@@ -661,28 +695,85 @@ func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error
 	if aerr != nil {
 		if aerr.BadAudio() {
 			rs.json(400, errBody("bad_audio", "This audio could not be decoded. Send WAV, WebM, Ogg, MP3, or M4A."))
-			return nil
+			return nil, 0, false, nil
 		}
-		return aerr
+		return nil, 0, false, aerr
 	}
-	duration, derr := WavDurationS(wav)
-	if derr != nil {
-		return derr
+	// A clip a little over the cap is read up to the cap, and the reply says
+	// how much was left out. The page stops a few seconds early, but a clip
+	// it recorded must never be refused for a few seconds.
+	wav, cutS, terr := TruncateWav(wav, MaxAudioSeconds)
+	if terr != nil {
+		return nil, 0, false, terr
 	}
-	if duration > MaxAudioSeconds {
-		rs.json(413, obj("error", "audio_too_long", "max_seconds", MaxAudioSeconds,
-			"message", "The clip is longer than 60 seconds. Send a shorter clip."))
+	return wav, cutS, true, nil
+}
+
+// busyMessage is the 409 a clip or a partial meets while another clip is
+// turned into text.
+const busyMessage = "The voice server is still turning an earlier clip into text. Wait for it to finish, then send this one again."
+
+// partialWait bounds how long a clip waits for a partial that holds the
+// engine. A partial reads at most one new window, so it ends well inside.
+var partialWait = 30 * time.Second
+
+// take claims the engine for kind. A clip that finds a partial running
+// waits for it, up to partialWait: the owner taps Stop while a partial
+// runs, and the clip must never be refused for that. A partial never
+// waits; it is dropped, and the caller sends a newer one.
+func (s *Server) take(kind string) bool {
+	deadline := time.Now().Add(partialWait)
+	for {
+		s.jobMu.Lock()
+		cur := s.job
+		if cur == "" {
+			s.job = kind
+		}
+		s.jobMu.Unlock()
+		if cur == "" {
+			return true
+		}
+		if kind != "clip" || cur != "partial" || time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (s *Server) release() {
+	s.jobMu.Lock()
+	s.job = ""
+	s.jobMu.Unlock()
+}
+
+// engineReply sends the 503 for an engine that is loading or missing, and
+// answers false for any other error.
+func engineReply(rs *responder, err error) bool {
+	var ee *EngineError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	code := "engine_unavailable"
+	if ee.Kind == "loading" {
+		code = "engine_loading"
+	}
+	rs.json(503, errBody(code, ee.Msg))
+	return true
+}
+
+func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error {
+	wav, cutS, ok, err := clipWav(req, rs)
+	if !ok {
+		return err
+	}
+	if !s.take("clip") {
+		rs.json(409, errBody("busy", busyMessage))
 		return nil
 	}
-	t, err := s.cfg.Engine.Transcribe(wav, nil)
+	defer s.release()
+	t, err := s.cfg.Engine.TranscribeLong(wav, nil)
 	if err != nil {
-		var ee *EngineError
-		if errors.As(err, &ee) {
-			code := "engine_unavailable"
-			if ee.Kind == "loading" {
-				code = "engine_loading"
-			}
-			rs.json(503, errBody(code, ee.Msg))
+		if engineReply(rs, err) {
 			return nil
 		}
 		return err
@@ -692,7 +783,7 @@ func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error
 	var reason *string
 	if wantCleanup {
 		tr := HTTPTransport{Client: s.cfg.LLM, BaseURL: s.cfg.Cleanup.BaseURL, Timeout: 30.0}
-		res, err := CleanTranscript(text, s.cfg.Cleanup, tr, s.cfg.Now())
+		res, err := CleanParts(t, s.cfg.Cleanup, tr, s.cfg.Now())
 		if err != nil {
 			return err
 		}
@@ -703,8 +794,116 @@ func (s *Server) transcribe(req *request, rs *responder, wantCleanup bool) error
 	if reason != nil {
 		o.Set("reason", *reason)
 	}
+	if t.Gaps > 0 {
+		o.Set("gaps", t.Gaps)
+	}
+	if cutS > 0 {
+		o.Set("cut_s", int(cutS))
+	}
 	rs.json(200, o)
 	return nil
+}
+
+// maxWindowCache bounds the window texts a server keeps for partials. A
+// 20 minute clip has 40 windows, so this holds several dictations. When
+// it is full the oldest window goes.
+var maxWindowCache = 256
+
+// partial is POST /partial: the text of the clip so far, for the page to
+// show while the owner still talks. The reply carries the caller's seq
+// (a query value), or the server's own count when there is none, so the
+// caller can drop a reply that comes after a newer one. A partial never
+// cleans up, never delivers and never arms. It never waits for the
+// engine: while another job runs it is dropped with 409, and the caller
+// sends a newer one.
+func (s *Server) partial(req *request, rs *responder, query string) error {
+	wav, _, ok, err := clipWav(req, rs)
+	if !ok {
+		return err
+	}
+	seq := int64(0)
+	if v, has := firstQueryValue(query, "seq"); has {
+		if n, perr := strconv.ParseInt(v, 10, 64); perr == nil && n >= 0 {
+			seq = n
+		}
+	}
+	s.jobMu.Lock()
+	s.seq++
+	if seq == 0 {
+		seq = s.seq
+	}
+	s.jobMu.Unlock()
+	if !s.take("partial") {
+		rs.json(409, errBody("busy", busyMessage))
+		return nil
+	}
+	defer s.release()
+	start := time.Now()
+	text, dur, err := s.partialText(wav)
+	if err != nil {
+		if engineReply(rs, err) {
+			return nil
+		}
+		return err
+	}
+	rs.json(200, obj("text", text, "seq", int(seq), "duration_s", dur, "engine", s.cfg.Engine.Name,
+		"ms", int(time.Since(start).Milliseconds())))
+	return nil
+}
+
+// partialText reads a clip window by window, as TranscribeLong cuts it.
+// A window that is not the last one is finished: its cut depends only on
+// the audio up to its own end, so the same audio comes again in the next
+// partial. Its text is kept by the hash of its audio and not read again.
+// Only the window still growing is read every time.
+func (s *Server) partialText(wav []byte) (string, float64, error) {
+	dur, aerr := WavDurationS(wav)
+	if aerr != nil {
+		return "", 0, aerr
+	}
+	pieces, aerr := SplitWav(wav)
+	if aerr != nil {
+		return "", 0, aerr
+	}
+	parts := make([]string, len(pieces))
+	for i, p := range pieces {
+		last := i == len(pieces)-1
+		key := sha256.Sum256(p)
+		if !last {
+			s.jobMu.Lock()
+			t, hit := s.windows[key]
+			s.jobMu.Unlock()
+			if hit {
+				parts[i] = t
+				continue
+			}
+		}
+		t, err := s.cfg.Engine.Transcribe(p, nil)
+		if err != nil {
+			var ee *EngineError
+			if errors.As(err, &ee) || len(pieces) == 1 {
+				return "", 0, err
+			}
+			parts[i] = GapMarker
+			continue
+		}
+		parts[i] = t.Text
+		if !last {
+			s.jobMu.Lock()
+			if _, had := s.windows[key]; !had {
+				// Full: drop the oldest window. The clip being dictated
+				// holds the newest ones, so its windows stay.
+				for len(s.order) >= maxWindowCache {
+					delete(s.windows, s.order[0])
+					s.order = s.order[1:]
+				}
+				s.order = append(s.order, key)
+			}
+			s.windows[key] = t.Text
+			s.jobMu.Unlock()
+		}
+	}
+	return JoinTexts(parts), dur, nil
 }
 
 func (s *Server) deliver(req *request, rs *responder) error {

@@ -16,7 +16,6 @@ import (
 	"unicode/utf8"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/journal"
 	"daisugi-verify/internal/pathways"
@@ -25,6 +24,7 @@ import (
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // matcherThresholds is active_threshold for each built matcher.
@@ -60,7 +60,7 @@ func pyRound1(f float64) float64 {
 // dataDir is a --data-dir option as pathlib prints it.
 func (e *Env) dataDir(p *parsed) string {
 	if p.has("--data-dir") {
-		return gateroot.PathStr(p.str("--data-dir", ""))
+		return wardenroot.PathStr(p.str("--data-dir", ""))
 	}
 	return e.dataHome()
 }
@@ -101,7 +101,7 @@ func (e *Env) statusCmd(args []string) error {
 	// The matcher comes from ~/.opendaisugi/config.yaml, as the pathway
 	// commands read it. The binary carries lexical and potion only; under
 	// any other matcher it reuses no pathway, so it says so (C-12).
-	home := gateroot.Join(e.dataHome(), "config.yaml")
+	home := wardenroot.Join(e.dataHome(), "config.yaml")
 	hcfg, herr := config.Load(home)
 	key := "lexical"
 	if herr == nil {
@@ -129,11 +129,12 @@ func (e *Env) statusCmd(args []string) error {
 	}
 	rep.decomposeEnabled = cfg.ShellAllowDecomposition
 	rep.plansWouldDeny = tracejournal.WordWouldDeny(rep.dataDir, verify.DialectAuditPrefix)
-	calls, err := journal.WordWouldDeny(gateroot.Join(rep.dataDir, "gate"))
+	calls, err := journal.WordWouldDeny(wardenroot.Join(rep.dataDir, "warden"))
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
 	rep.callsWouldDeny = calls
+	openFiles := e.unconfined(wardenroot.Join(rep.dataDir, "warden"))
 	tokenReady := rep.searchInstalled && rep.pathwayCount > 0
 	trustReady := rep.total > 0
 	// The bash grammar is linked into this binary.
@@ -150,6 +151,9 @@ func (e *Env) statusCmd(args []string) error {
 			Set("word_would_deny_calls", pyjson.Int{Text: strconv.Itoa(rep.callsWouldDeny)}).
 			Set("token_savings_ready", tokenReady).Set("trust_ready", trustReady).
 			Set("shell_decomposition_ready", decomposeReady)
+		if openFiles {
+			o.Set("unconfined", true)
+		}
 		e.out("%s\n", pyjson.DumpsIndent(o, 2, true))
 		return nil
 	}
@@ -172,7 +176,10 @@ func (e *Env) statusCmd(args []string) error {
 	e.out("\nTrust (verified actions):\n")
 	e.out("  • journal traces: %d (%d verified, %d rejected)\n", rep.total, rep.passed, rep.failed)
 	e.out("  • verification: strict at stakes high/physical (rejects unprovable invariants)\n")
-	e.out("  • dialect would-denies: %d plans in the journal, %d calls in the gate's audit log\n",
+	if openFiles {
+		e.out("  • %s\n", unconfinedLine)
+	}
+	e.out("  • dialect would-denies: %d plans in the journal, %d calls in the warden's audit log\n",
 		rep.plansWouldDeny, rep.callsWouldDeny)
 	if !rep.decomposeEnabled {
 		e.out("  • compound shell (`a && b`): rejected outright (ADR-0010 opt-in is off)\n")

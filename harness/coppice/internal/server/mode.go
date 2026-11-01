@@ -18,32 +18,32 @@ import (
 
 // The per-agent daisugi mode (F11). The owner lowers one agent from
 // enforcing to watching from its stack bar; coppice writes a marker the
-// gate reads on that agent's next tool call:
-// <gate root>/agents/<floor>/<pane>.mode. The gate lowers an enforce hook to
+// warden reads on that agent's next tool call:
+// <warden root>/agents/<floor>/<pane>.mode. The warden lowers an enforce hook to
 // audit only when the marker holds exactly "watching" (F11-R-1). Turning
-// the gate off stays a typed command, so this verb never offers off.
+// the warden off stays a typed command, so this verb never offers off.
 
 // ModeRefusal is what a pane, a plugin or an unplaced peer gets for
 // agent.set_mode.
 const ModeRefusal = "only the operator sets an agent's daisugi mode."
 
 // ModeWordsRefusal is what agent.set_mode says to a mode it does not take.
-const ModeWordsRefusal = "mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm"
+const ModeWordsRefusal = "mode must be enforcing or watching. Turning the warden off stays a command: daisugi warden disarm"
 
-// modeDir is the directory under the gate root that holds the markers.
+// modeDir is the directory under the warden root that holds the markers.
 const modeDir = "agents"
 
 // modeWatching is the marker's whole text.
 const modeWatching = "watching\n"
 
 // markerPaneID is the shape of a pane id a marker may be named for, the
-// shape the gate checks before it reads one.
+// shape the warden checks before it reads one.
 var markerPaneID = regexp.MustCompile(`^w[0-9]{1,9}:p[0-9]{1,9}$`)
 
 // floorKey is this floor's directory under agents/: the first 16 hex
 // digits of the SHA-256 of the socket path every pane gets as
 // COPPICE_SOCK. Pane ids start at w1:p1 on every floor, and two floors
-// whose data dirs share a parent share one gate root, so each floor keeps
+// whose data dirs share a parent share one warden root, so each floor keeps
 // its markers apart (F11-R-6).
 func (s *Server) floorKey() string {
 	sum := sha256.Sum256([]byte(s.cfg.SocketPath))
@@ -52,13 +52,13 @@ func (s *Server) floorKey() string {
 
 // floorDir is this floor's marker directory.
 func (s *Server) floorDir() string {
-	return filepath.Join(s.cfg.GateRoot, modeDir, s.floorKey())
+	return filepath.Join(s.cfg.WardenRoot, modeDir, s.floorKey())
 }
 
 // realDir is true when p is a directory, false with no error when
 // nothing is there, and an error when something else is there: a symlink
 // (even to a directory) or a file. coppice makes and sweeps markers only
-// in real directories, so a link in the gate root never leads its writes
+// in real directories, so a link in the warden root never leads its writes
 // or removals elsewhere (F11-R-8).
 func realDir(p string) (bool, error) {
 	fi, err := os.Lstat(p)
@@ -113,34 +113,34 @@ func (s *Server) makeFloorDir() error {
 
 // markerPath is the marker of pane id, or "" when id has not the shape.
 func (s *Server) markerPath(id string) string {
-	if s.cfg.GateRoot == "" || !markerPaneID.MatchString(id) {
+	if s.cfg.WardenRoot == "" || !markerPaneID.MatchString(id) {
 		return ""
 	}
 	return filepath.Join(s.floorDir(), id+".mode")
 }
 
-// markerMax is the largest marker read, as the gate's
+// markerMax is the largest marker read, as the warden's
 // AGENT_MODE_MAX_BYTES.
 const markerMax = 64
 
-// MarkerRefused is the marker value the stack shows when the gate would
-// refuse a path on the way to the pane's marker: the gate root, agents/,
-// the floor's directory or the marker file. The gate then lowers nothing,
+// MarkerRefused is the marker value the stack shows when the warden would
+// refuse a path on the way to the pane's marker: the warden root, agents/,
+// the floor's directory or the marker file. The warden then lowers nothing,
 // and refuses the root or a directory outright, so every call is denied.
-// markerNote carries the gate's one line and the fix.
+// markerNote carries the warden's one line and the fix.
 const MarkerRefused = "refused"
 
-// modeMarker is "watching" when pane id's marker reads as the gate reads
-// it (readMarker) and holds the marker text, "refused" with the gate's one
-// line when the gate would refuse a path on the way to it, and "" with no
+// modeMarker is "watching" when pane id's marker reads as the warden reads
+// it (readMarker) and holds the marker text, "refused" with the warden's one
+// line when the warden would refuse a path on the way to it, and "" with no
 // line otherwise. The read is by fd from the root down, never a path read
-// after a check, so the stack shows "watching" only when the gate would
+// after a check, so the stack shows "watching" only when the warden would
 // lower the agent (F11-R-9, GR-R-11).
 func (s *Server) modeMarker(id string) (marker, note string) {
 	if s.markerPath(id) == "" {
 		return "", ""
 	}
-	b, ok, refusal := readMarker(s.cfg.GateRoot, s.floorKey(), id+".mode")
+	b, ok, refusal := readMarker(s.cfg.WardenRoot, s.floorKey(), id+".mode")
 	if refusal != "" {
 		return MarkerRefused, refusal
 	}
@@ -152,7 +152,7 @@ func (s *Server) modeMarker(id string) (marker, note string) {
 
 // writeModeMarker writes the watching marker for pane id: a new file
 // 0600 in the agents directory (0700), renamed over the old one, so the
-// gate reads either the old marker or the whole new one.
+// warden reads either the old marker or the whole new one.
 func (s *Server) writeModeMarker(id string) error {
 	p := s.markerPath(id)
 	if p == "" {
@@ -205,7 +205,7 @@ func (s *Server) clearModeMarker(id string) error {
 // agent starts enforcing again (F11-R-4). Another floor's directory and
 // other files stay (F11-R-6).
 func (s *Server) clearAllModeMarkers() {
-	if s.cfg.GateRoot == "" {
+	if s.cfg.WardenRoot == "" {
 		return
 	}
 	dir := s.floorDir()
@@ -229,7 +229,7 @@ func (s *Server) clearAllModeMarkers() {
 }
 
 // handleSetMode answers agent.set_mode {pane, mode}: watching writes the
-// pane's marker, enforcing removes it. The gate reads it on the agent's
+// pane's marker, enforcing removes it. The warden reads it on the agent's
 // next tool call. The role check (operatorVerbs) has already refused a
 // pane, a plugin and an unplaced peer.
 func (s *Server) handleSetMode(c *Client, r *proto.Request) proto.Response {
@@ -250,11 +250,11 @@ func (s *Server) handleSetMode(c *Client, r *proto.Request) proto.Response {
 	}
 	if rec.Closed {
 		return proto.ErrResp(r.ID, proto.ErrPaneClosed,
-			fmt.Sprintf("%s has ended, so no gate checks it.", s.labelOf(id)))
+			fmt.Sprintf("%s has ended, so no warden checks it.", s.labelOf(id)))
 	}
 	if rec.Harness == "" {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
-			fmt.Sprintf("%s runs no harness, so no gate checks it.", s.labelOf(id)))
+			fmt.Sprintf("%s runs no harness, so no warden checks it.", s.labelOf(id)))
 	}
 	var err error
 	if mode == "watching" {

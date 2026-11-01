@@ -115,6 +115,14 @@ func (c *CLI) projectRemove(argv []string) int {
 		out = append(out, p)
 	}
 	if !found {
+		// project list also shows the directories panes started in, which
+		// are not in coppice.toml. The server keeps those, and its
+		// project.remove takes them out. A server that is not running holds
+		// no list to take it from, so nothing is started for this.
+		if c.removeRecent(resolved) {
+			fmt.Fprintf(c.Out, "removed %s\n", abs)
+			return 0
+		}
 		fmt.Fprintf(c.Err, "%s is not a project. Run: coppice project list\n", resolved)
 		return 1
 	}
@@ -125,4 +133,16 @@ func (c *CLI) projectRemove(argv []string) int {
 	}
 	fmt.Fprintf(c.Out, "removed %s\n", abs)
 	return 0
+}
+
+// removeRecent asks a running server to drop dir from its recent directory
+// list. It is true when the server removed it.
+func (c *CLI) removeRecent(dir string) bool {
+	cl, err := dialExisting(c.Socket, 0)
+	if err != nil {
+		return false
+	}
+	defer cl.Close()
+	_, err = cl.Do("project.remove", map[string]any{"path": dir})
+	return err == nil
 }

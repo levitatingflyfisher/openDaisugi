@@ -23,7 +23,7 @@ reported as an amortization curve, not a flat ratio:
 **2. Compilable fraction — of ALL interactions, how many could be compiled into
 a reusable pathway?** "Nobody has measured this" was the professor-facing claim;
 this is the ruler for it. The denominator is *all* interactions (the pessimistic,
-honest denominator — not "tasks that already cleared the hotness gate", which is
+honest denominator — not "tasks that already cleared the hotness warden", which is
 near-100% and worthless). A trace counts as compilable when it lands in a cluster
 of ``>= min_traces`` similar successes (the distiller's own precondition) **and**
 the guard passes on reuse. This is an explicitly-labelled **upper bound**: it

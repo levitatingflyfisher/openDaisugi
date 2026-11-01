@@ -107,7 +107,7 @@ def test_health_returns_ok_without_a_token(running_server):
     conn.request("GET", "/health")
     resp = conn.getresponse()
     assert resp.status == 200
-    assert json.loads(resp.read()) == {"ok": True}
+    assert json.loads(resp.read()) == {"ok": True, "max_seconds": 1200.0}
 
 
 def test_get_of_an_unknown_path_is_404_with_a_message(running_server):
@@ -236,21 +236,104 @@ def test_transcribe_accepts_a_multipart_form_upload(running_server):
     assert engine.calls[-1][:4] == b"RIFF"
 
 
-def test_audio_over_the_duration_ceiling_is_413(running_server):
-    server, _engine, _backend, _send, token_file, _tmp = running_server
+def test_audio_a_little_over_the_ceiling_is_read_to_the_ceiling_and_says_what_was_cut(
+    running_server,
+):
+    server, engine, _backend, _send, token_file, _tmp = running_server
     conn = _conn(server)
-    oversized = _wav_bytes(seconds=61.0)
+    over = _wav_bytes(seconds=voice_server.MAX_AUDIO_SECONDS + 0.5)
     conn.request(
         "POST",
         "/transcribe",
-        body=oversized,
+        body=over,
         headers={"Content-Type": "audio/wav", **_auth(token_file)},
     )
     resp = conn.getresponse()
-    assert resp.status == 413
+    assert resp.status == 200
     payload = json.loads(resp.read())
-    assert payload["error"] == "audio_too_long"
-    assert "60 seconds" in payload["message"]
+    assert payload["text"]
+    assert payload["cut_s"] == 1  # half a second, rounded up
+    assert payload["duration_s"] == voice_server.MAX_AUDIO_SECONDS
+    from opendaisugi.voice.audio import wav_duration_s
+
+    heard = sum(wav_duration_s(c) for c in engine.calls)
+    assert abs(heard - voice_server.MAX_AUDIO_SECONDS) < 1e-6
+
+
+def test_a_clip_at_the_ceiling_says_nothing_was_cut(running_server):
+    server, _engine, _backend, _send, token_file, _tmp = running_server
+    conn = _conn(server)
+    conn.request(
+        "POST",
+        "/transcribe",
+        body=_wav_bytes(seconds=voice_server.MAX_AUDIO_SECONDS),
+        headers={"Content-Type": "audio/wav", **_auth(token_file)},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    assert "cut_s" not in json.loads(resp.read())
+
+
+def test_health_names_the_longest_clip(running_server):
+    server, _engine, _backend, _send, _token_file, _tmp = running_server
+    conn = _conn(server)
+    conn.request("GET", "/health")
+    resp = conn.getresponse()
+    assert json.loads(resp.read()) == {"ok": True, "max_seconds": voice_server.MAX_AUDIO_SECONDS}
+
+
+def test_a_second_clip_while_one_runs_is_refused_with_409(running_server):
+    server, engine, _backend, _send, token_file, _tmp = running_server
+    started, release = threading.Event(), threading.Event()
+    real = engine.transcribe
+
+    def slow(wav, *, language=None):
+        started.set()
+        assert release.wait(timeout=10)
+        return real(wav, language=language)
+
+    engine.transcribe = slow
+    first = {}
+
+    def post_first():
+        c = _conn(server)
+        c.timeout = 15
+        c.request(
+            "POST",
+            "/transcribe",
+            body=_wav_bytes(seconds=1.0),
+            headers={"Content-Type": "audio/wav", **_auth(token_file)},
+        )
+        r = c.getresponse()
+        first["status"] = r.status
+        r.read()
+
+    t = threading.Thread(target=post_first)
+    t.start()
+    try:
+        assert started.wait(timeout=5)
+        conn = _conn(server)
+        conn.request(
+            "POST",
+            "/transcribe",
+            body=_wav_bytes(seconds=1.0),
+            headers={"Content-Type": "audio/wav", **_auth(token_file)},
+        )
+        resp = conn.getresponse()
+        assert resp.status == 409
+        assert json.loads(resp.read())["error"] == "busy"
+    finally:
+        release.set()
+        t.join(timeout=10)
+    assert first["status"] == 200
+    conn = _conn(server)
+    conn.request(
+        "POST",
+        "/transcribe",
+        body=_wav_bytes(seconds=1.0),
+        headers={"Content-Type": "audio/wav", **_auth(token_file)},
+    )
+    assert conn.getresponse().status == 200  # the lock is let go
 
 
 def test_oversized_content_length_is_413_before_any_body_is_read(running_server):
@@ -1287,7 +1370,7 @@ def test_serve_end_to_end_answers_health(tmp_path, monkeypatch):
         conn.request("GET", "/health")
         resp = conn.getresponse()
         assert resp.status == 200
-        assert json.loads(resp.read()) == {"ok": True}
+        assert json.loads(resp.read()) == {"ok": True, "max_seconds": 1200.0}
     finally:
         captured[0].shutdown()
         thread.join(timeout=5)
@@ -1329,3 +1412,76 @@ def test_serve_calls_on_bound_once_the_socket_is_bound_and_before_it_blocks(tmp_
     finally:
         captured[0].shutdown()
         thread.join(timeout=5)
+
+
+def test_a_long_clip_is_cut_into_windows_and_the_texts_are_joined(running_server):
+    server, engine, _backend, _send, token_file, _tmp = running_server
+    conn = _conn(server)
+    conn.request(
+        "POST",
+        "/transcribe",
+        body=_wav_bytes(seconds=90.0),
+        headers={"Content-Type": "audio/wav", **_auth(token_file)},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    payload = json.loads(resp.read())
+    # 90 s in windows of at most 30 s: the engine heard each one, in order.
+    assert len(engine.calls) >= 3
+    assert payload["text"] == " ".join(["hello from the fixture"] * len(engine.calls))
+    assert payload["duration_s"] == 90.0  # the clip's own length
+
+
+def test_split_wav_cuts_in_the_pause_near_the_boundary():
+    import numpy as np
+
+    from opendaisugi.voice.audio import split_wav, wav_duration_s, write_wav_16k_mono
+
+    t = np.arange(65 * 16000)
+    samples = (8000 * np.sin(t / 7.0)).astype(np.int16)
+    samples[28 * 16000 : 28 * 16000 + 3200] = 0
+    wav = write_wav_16k_mono(samples)
+    pieces = split_wav(wav)
+    assert len(pieces) == 3
+    durations = [wav_duration_s(p) for p in pieces]
+    assert all(d <= 30.0 for d in durations)
+    assert abs(sum(durations) - 65.0) < 1e-6
+    assert 28.0 <= durations[0] <= 28.2
+    short = write_wav_16k_mono(samples[: 30 * 16000])
+    assert split_wav(short) == [short]
+
+
+def test_a_long_clip_runs_whisper_cpp_once_and_marks_a_failed_window(monkeypatch, tmp_path):
+    import numpy as np
+
+    from opendaisugi.voice import engines
+    from opendaisugi.voice.audio import write_wav_16k_mono
+    from opendaisugi.voice.server import _transcribe_long
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    runs = tmp_path / "runs"
+    script = bin_dir / "whisper-cli"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"echo x >> {runs}\n"
+        'prev=""; n=0\n'
+        'for a in "$@"; do\n'
+        '  if [ "$prev" = "-f" ]; then\n'
+        "    n=$((n+1))\n"
+        '    if [ $n != 2 ]; then echo "window $n" > "$a.txt"; fi\n'
+        "  fi\n"
+        '  prev="$a"\n'
+        "done\n"
+    )
+    script.chmod(0o755)
+    model = tmp_path / "ggml.bin"
+    model.write_bytes(b"x")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    engine = engines.WhisperCppEngine(model)
+    t = np.arange(100 * 16000)
+    wav = write_wav_16k_mono((8000 * np.sin(t / 7.0)).astype(np.int16))
+    result = _transcribe_long(engine, wav)
+    assert result.text == "window 1 [gap in the recording] window 3 window 4"
+    assert result.gaps == 1
+    assert len(runs.read_text().splitlines()) == 1, "the model must load once"

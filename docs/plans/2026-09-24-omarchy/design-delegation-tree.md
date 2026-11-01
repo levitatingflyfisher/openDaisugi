@@ -1,11 +1,15 @@
 # Design: the delegation tree, each edge proved
 
-Status: **Built in part**, 2026-09-30. The owner adopted every recommendation in "Open
+Status: **Built**, 2026-09-30 and 2026-10-31. The owner adopted every recommendation in "Open
 questions" (owner rulings AT-1 to AT-7, marked there). Recommendation steps 1 to 3 are built in
 Python, Go and Rust: `edge_ok`, the deadline field, proof at registration, the tree ledger with
 its budgets and asks, and the agentic step's child envelope (rulings TR-R-1 to TR-R-12 in
-`clients/ADJUDICATIONS.md`; see "Built, 2026-09-30" below). Step 4 (coppice) is not built: the
-adversarial test of the session binding in coppice comes first. Step 5 (sprig) waits for sprig.
+`clients/ADJUDICATIONS.md`; see "Built, 2026-09-30" below). Step 4 (coppice, Option 3) is built
+in Go and Rust after the session-binding adversarial test passed (AT-1): an envelope on a task,
+proved on `task.create`, registered under a minted session on the first pane and pinned in that
+pane's warden hook; the tree and its asks on the floor (rulings W3K-5, W3K-12). Step 5 (sprig) is
+built (`design-sprig.md`), and branching with it (W3K-7 to W3K-13). Known limit: only a fenced
+claude pane has a hook the server writes, so only that pane can be pinned.
 The code facts in the next sections were read on 2026-09-26; where a fact changed since, the text
 says so.
 

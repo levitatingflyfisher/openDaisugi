@@ -96,7 +96,7 @@ func claudeArgs(binary, model string, noTools bool, mcpConfig string, mcpServers
 	}
 	// --no-session-persistence: a sprig call is one shot and never resumes,
 	// so it leaves no transcript in ~/.claude/projects. Without it the
-	// foreman's compactor calls would come back as "past chats" (FM-R-78).
+	// steward's compactor calls would come back as "past chats" (FM-R-78).
 	args := []string{binary, "-p", "--output-format", "json", "--no-session-persistence", "--allowedTools", allowed}
 	switch {
 	case noTools && mcpConfig == "":
@@ -107,6 +107,14 @@ func claudeArgs(binary, model string, noTools bool, mcpConfig string, mcpServers
 		args = append(args, "--tools", "", "--strict-mcp-config", "--mcp-config="+mcpConfig)
 	case mcpConfig != "":
 		args = append(args, "--strict-mcp-config", "--mcp-config="+mcpConfig)
+	default:
+		// sprig's tools ride in the prompt as text, and sprig runs them
+		// itself in the worker's folder. With Claude's built-ins left on,
+		// the model reaches for its own Bash and Read in the neutral cwd,
+		// is refused ("you haven't granted it yet"), and reports a
+		// sandbox it never had. So the built-ins are off: the call is a
+		// responder that answers in sprig's tool format.
+		args = append(args, "--tools", "")
 	}
 	if model != "" {
 		args = append(args, "--model="+model)
@@ -189,7 +197,7 @@ const _toolFence = "```sprig-tool"
 // knownTools is sprig's fixed protocol vocabulary. It guards the forgiving
 // parser: an UNfenced JSON object counts as a call only if it names one of
 // these, so a final answer that merely contains some JSON is never misread.
-var knownTools = map[string]bool{"read": true, "write": true, "edit": true, "bash": true, "spawn": true}
+var knownTools = map[string]bool{"read": true, "write": true, "edit": true, "bash": true, "spawn": true, "help": true}
 
 // promptToolLines is each tool's line in the prompt's tool list, and
 // promptExamples a call of it for the prompt's example.
@@ -198,7 +206,8 @@ var promptToolLines = map[string]string{
 	"write": "  write {\"path\",\"content\"} — write a file\n",
 	"edit":  "  edit  {\"path\",\"old\",\"new\"} — replace a unique string\n",
 	"bash":  "  bash  {\"cmd\"}           — run a shell command\n",
-	"spawn": "  spawn {\"task\",\"envelope\",\"profile\",\"model\",\"tools\",\"tokens\",\"turns\"}: start a child agent and wait for its answer\n",
+	"help":  "  help {\"kind\",\"text\"}: " + HelpDescription + "\n",
+	"spawn": "  spawn {\"task\",\"envelope\",\"profile\",\"model\",\"tools\",\"tokens\",\"turns\",\"attempts\",\"why\"}: start a child agent and wait for its answer; attempts 2 to 8 with why starts that many in parallel and keeps the best\n",
 }
 
 var promptExamples = map[string]string{
@@ -206,10 +215,11 @@ var promptExamples = map[string]string{
 	"write": `{"tool":"write","input":{"path":"notes.txt","content":"hi"}}`,
 	"edit":  `{"tool":"edit","input":{"path":"main.go","old":"Run","new":"Start"}}`,
 	"bash":  `{"tool":"bash","input":{"cmd":"ls"}}`,
+	"help":  `{"tool":"help","input":{"kind":"need_info","text":"Which database should the test use?"}}`,
 	"spawn": `{"tool":"spawn","input":{"task":"list the TODOs","envelope":{"permissions":{"file_read":["/w/**"]}}}}`,
 }
 
-var countWords = []string{"no tools", "one tool", "two tools", "three tools", "four tools", "five tools"}
+var countWords = []string{"no tools", "one tool", "two tools", "three tools", "four tools", "five tools", "six tools"}
 
 // formatPromptWith renders the prompt for a run with no tools or with a
 // system file. With no tools there is no tool protocol: the opening is the

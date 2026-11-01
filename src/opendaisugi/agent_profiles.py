@@ -29,7 +29,13 @@ from typing import Any
 
 DEFAULT = "default"
 WIRES = ("claude-code", "anthropic", "openai")
-FIELDS = ("wire", "base_url", "model", "key_env")
+FIELDS = ("wire", "base_url", "model", "key_env", "max_tokens", "timeout_s", "thinking")
+#: The values a profile's ``thinking`` may take.
+THINKING = ("off", "low", "medium", "high")
+#: The most tokens a profile may let one pando summary call produce.
+MAX_TOKENS_LIMIT = 1_000_000
+#: The most seconds a profile may let one pando summary call take (a day).
+TIMEOUT_LIMIT = 86_400
 #: The server a wire talks to when the profile names none.
 DEFAULT_BASE = {"anthropic": "https://api.anthropic.com", "openai": "https://api.openai.com/v1"}
 #: The variables that can hold a provider key or point a key elsewhere. A
@@ -67,6 +73,21 @@ class Profile:
     key_env: str | None = None
     #: The key read from key_env, or None (no key_env, or it is not set).
     key: str | None = None
+    #: The most tokens one pando summary call may produce, or None for the
+    #: summarizer's default. Only the pando summarizer reads it; the bundle a
+    #: child agent gets does not carry it.
+    max_tokens: int | None = None
+    #: The most seconds one pando summary call may take, or None for the
+    #: summarizer's default (120). Only the pando summarizer reads it; the
+    #: bundle a child agent gets does not carry it.
+    timeout_s: int | None = None
+    #: How hard a thinking model may think on one pando summary call: off,
+    #: low, medium or high; None leaves the server's own default. The openai
+    #: wire sends it as ``reasoning_effort`` (off is "none"); the anthropic
+    #: wire turns on extended thinking with a token budget (off sends
+    #: nothing). Only the pando summarizer reads it; the bundle a child
+    #: agent gets does not carry it.
+    thinking: str | None = None
 
     def entry(self) -> dict[str, Any]:
         """The profile as the bundle carries it."""
@@ -100,11 +121,29 @@ def _check(name: str, doc: Any) -> str | None:
             return f"{f} must be text"
     if doc.get("key_env") is not None and not _VAR.fullmatch(doc["key_env"]):
         return "key_env must be a variable name"
+    mt = doc.get("max_tokens")
+    if mt is not None and (
+        isinstance(mt, bool) or not isinstance(mt, int) or not 1 <= mt <= MAX_TOKENS_LIMIT
+    ):
+        return f"max_tokens must be a whole number from 1 to {MAX_TOKENS_LIMIT}"
+    ts = doc.get("timeout_s")
+    if ts is not None and (
+        isinstance(ts, bool) or not isinstance(ts, int) or not 1 <= ts <= TIMEOUT_LIMIT
+    ):
+        return f"timeout_s must be a whole number from 1 to {TIMEOUT_LIMIT}"
+    th = doc.get("thinking")
+    # YAML 1.1 reads a bare ``off`` as False, so False counts as off.
+    if th is not None and th is not False and th not in THINKING:
+        return "thinking must be off, low, medium or high"
     if doc["wire"] == "claude-code":
+        if th is not None:
+            return "the claude-code wire takes no thinking"
         if doc.get("base_url") is not None:
             return "the claude-code wire takes no base_url"
         if doc.get("key_env") is not None:
             return "the claude-code wire takes no key_env"
+        if mt is not None:
+            return "the claude-code wire takes no max_tokens"
     return None
 
 
@@ -205,6 +244,9 @@ def resolve(raw: Any, environ: Mapping[str, str]) -> Profiles:
                 doc.get("model"),
                 key_env,
                 key or None,
+                doc.get("max_tokens"),
+                doc.get("timeout_s"),
+                "off" if doc.get("thinking") is False else doc.get("thinking"),
             )
     return Profiles(valid, invalid)
 

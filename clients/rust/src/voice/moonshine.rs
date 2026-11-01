@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::gate::sha256;
+use crate::warden::sha256;
 use crate::netproxy;
 use crate::pathways::potion::fetch::get_to;
 
@@ -232,7 +232,7 @@ pub fn fetch_file(url: &str, digest: &str, dest: &str, size: Option<u64>, env: &
     // The body goes to a temporary file of its own as it arrives, hashed
     // on the way, so a model file of a gigabyte is never held in memory.
     let name = std::path::Path::new(dest).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let part = dir.join(format!("{name}.part-{}", crate::gate::random_hex(8).unwrap_or_else(|_| "0".into())));
+    let part = dir.join(format!("{name}.part-{}", crate::warden::random_hex(8).unwrap_or_else(|_| "0".into())));
     let r = stream_to(url, cap, &proxies, &part, size, digest);
     if r.is_err() {
         let _ = std::fs::remove_file(&part);

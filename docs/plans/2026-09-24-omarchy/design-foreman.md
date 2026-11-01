@@ -55,7 +55,7 @@ See docs/how-to/bring-your-own-foreman.md.
 
 ## Parts
 
-M1. **The log, the tree and the view.** Deterministic code with no model: append-only JSONL
+M1. **The log, the tree and the view.** *Moved to daisugi, 2026-11-02: package `pando` in each port, store at `<data home>/pando/<store>`, `daisugi pando` (ADR-0023).* Deterministic code with no model: append-only JSONL
 by day, node ids `id+n`, the merge order `due = (T - last) / 2^l`, the sawtooth (merge from
 128 KB down to 64 KB in one batch), `view.json` saved and never rebuilt. Python first as the
 oracle, then Go and Rust with compare cases, as for every other part. Tests: the merge order

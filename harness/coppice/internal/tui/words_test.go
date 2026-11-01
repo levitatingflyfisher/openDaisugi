@@ -28,7 +28,7 @@ func TestTheSharedWordsMatchTheWebPage(t *testing.T) {
 		"kill_confirm":         StopQuestion("fine"),
 		"clear_all_confirm_2":  ClearAllQuestion(2),
 		"clear_all_confirm_1":  ClearAllQuestion(1),
-		"blocked_by_gate":      BlockedByGate,
+		"blocked_by_warden":    BlockedByWarden,
 		"blocked_own_question": BlockedOwnQuestion,
 		"ended_clear_ms":       float64(EndedClear.Milliseconds()),
 	}
@@ -45,15 +45,15 @@ func TestTheSharedWordsMatchTheWebPage(t *testing.T) {
 	}
 }
 
-// A blocked row with no ask says what found the block. Only the gate's
-// own block blames the gate.
+// A blocked row with no ask says what found the block. Only the warden's
+// own block blames the warden.
 func TestABlockWithNoAskSaysWhoFoundIt(t *testing.T) {
 	rows := RowsFrom([]map[string]any{
 		{"id": "a", "state": "blocked", "source": "manifest", "detail": "live_prompt_box"},
-		{"id": "b", "state": "blocked", "source": "gate"},
-		{"id": "c", "state": "blocked", "source": "gate", "ask": map[string]any{"tool": "Bash", "summary": "rm"}},
+		{"id": "b", "state": "blocked", "source": "warden"},
+		{"id": "c", "state": "blocked", "source": "warden", "ask": map[string]any{"tool": "Bash", "summary": "rm"}},
 	}, 0)
-	if rows[0].Line != BlockedOwnQuestion || rows[1].Line != BlockedByGate || rows[2].Line != "Bash: rm" {
+	if rows[0].Line != BlockedOwnQuestion || rows[1].Line != BlockedByWarden || rows[2].Line != "Bash: rm" {
 		t.Fatalf("lines %q %q %q", rows[0].Line, rows[1].Line, rows[2].Line)
 	}
 }

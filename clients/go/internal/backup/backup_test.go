@@ -28,7 +28,7 @@ func write(t *testing.T, p, body string) {
 
 func spec(root string) Spec {
 	return Spec{Tool: "daisugi", Version: "9.9", Roots: map[string]string{"data": root},
-		Units: []Unit{{"data", "config.yaml"}, {"data", "journal"}, {"data", "gate/envelopes"}}}
+		Units: []Unit{{"data", "config.yaml"}, {"data", "journal"}, {"data", "warden/envelopes"}}}
 }
 
 func TestRoundTripKeepsAllowedAndDropsSecrets(t *testing.T) {
@@ -36,10 +36,10 @@ func TestRoundTripKeepsAllowedAndDropsSecrets(t *testing.T) {
 	write(t, src+"/config.yaml", "a: 1\n")
 	write(t, src+"/journal/index.db", "db")
 	write(t, src+"/journal/traces/x.json", "{}")
-	write(t, src+"/gate/envelopes/s.json", "{}")
-	write(t, src+"/gate/token", "SECRET")
+	write(t, src+"/warden/envelopes/s.json", "{}")
+	write(t, src+"/warden/token", "SECRET")
 	write(t, src+"/journal/api-token.txt", "SECRET")
-	write(t, src+"/journal/gate.lock", "")
+	write(t, src+"/journal/warden.lock", "")
 	write(t, src+"/keys/id_ed25519", "SECRET")
 	r, err := Create(spec(src), out, t0)
 	if err != nil || r.Files != 4 {
@@ -48,12 +48,12 @@ func TestRoundTripKeepsAllowedAndDropsSecrets(t *testing.T) {
 	if _, err := Restore(spec(dst), out, false, t0); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"config.yaml", "journal/index.db", "journal/traces/x.json", "gate/envelopes/s.json"} {
+	for _, p := range []string{"config.yaml", "journal/index.db", "journal/traces/x.json", "warden/envelopes/s.json"} {
 		if _, err := os.Stat(filepath.Join(dst, p)); err != nil {
 			t.Errorf("missing %s", p)
 		}
 	}
-	for _, p := range []string{"gate/token", "journal/api-token.txt", "journal/gate.lock", "keys"} {
+	for _, p := range []string{"warden/token", "journal/api-token.txt", "journal/warden.lock", "keys"} {
 		if _, err := os.Stat(filepath.Join(dst, p)); err == nil {
 			t.Errorf("restored %s", p)
 		}
@@ -246,14 +246,14 @@ func TestFailedSwapPutsTheOldFilesBack(t *testing.T) {
 	src, dst, out := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "b.tgz")
 	write(t, src+"/config.yaml", "new\n")
 	write(t, src+"/journal/a", "new")
-	write(t, src+"/gate/envelopes/s.json", "{}")
+	write(t, src+"/warden/envelopes/s.json", "{}")
 	if _, err := Create(spec(src), out, t0); err != nil {
 		t.Fatal(err)
 	}
 	write(t, dst+"/config.yaml", "old\n")
 	write(t, dst+"/journal/old", "old")
-	// "gate" is a file, so gate/envelopes cannot be put in place.
-	write(t, dst+"/gate", "a file")
+	// "warden" is a file, so warden/envelopes cannot be put in place.
+	write(t, dst+"/warden", "a file")
 	r, err := Restore(spec(dst), out, true, t0)
 	if err == nil || !strings.Contains(err.Error(), "back in place") || !strings.Contains(err.Error(), ".restore-") {
 		t.Fatalf("want a rolled-back error naming the staging dir, got %v", err)
@@ -261,7 +261,7 @@ func TestFailedSwapPutsTheOldFilesBack(t *testing.T) {
 	if len(r.Aside) != 0 {
 		t.Errorf("aside after a clean rollback: %v", r.Aside)
 	}
-	for p, want := range map[string]string{"config.yaml": "old\n", "journal/old": "old", "gate": "a file"} {
+	for p, want := range map[string]string{"config.yaml": "old\n", "journal/old": "old", "warden": "a file"} {
 		if b, _ := os.ReadFile(filepath.Join(dst, p)); string(b) != want {
 			t.Errorf("%s = %q", p, b)
 		}
@@ -287,12 +287,12 @@ func TestFailedSwapPutsTheOldFilesBack(t *testing.T) {
 func TestFailedUndoReportsWhatStaysAside(t *testing.T) {
 	src, dst, out := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "b.tgz")
 	write(t, src+"/config.yaml", "new\n")
-	write(t, src+"/gate/envelopes/s.json", "{}")
+	write(t, src+"/warden/envelopes/s.json", "{}")
 	if _, err := Create(spec(src), out, t0); err != nil {
 		t.Fatal(err)
 	}
 	write(t, dst+"/config.yaml", "old\n")
-	write(t, dst+"/gate", "a file")
+	write(t, dst+"/warden", "a file")
 	// Undo of the move-aside fails too.
 	rename = func(a, b string) error {
 		if strings.Contains(a, ".broken-") {

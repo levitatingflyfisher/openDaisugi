@@ -9,7 +9,7 @@ the daisugi CLI's capped mismatch report) and classifies every mismatch:
   - verify mismatch: reported separately (predicate/z3/delegation-subsumption
     stages are out of scope, so some are expected — see README).
   - error: our client emitted a bare error verdict (should be near-zero;
-    task 1's gate is zero crashes, meaning every case gets SOME verdict,
+    task 1's check is zero crashes, meaning every case gets SOME verdict,
     but an `error` verdict is still a mismatch worth counting separately).
 
 Usage: CUDA_VISIBLE_DEVICES="" .venv/bin/python3 clients/lean/analysis/classify.py

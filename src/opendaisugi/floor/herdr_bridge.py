@@ -21,7 +21,7 @@ Two facts are not verified, since no box that built this has Herdr on it:
 
 The rules read screen text, so they are a guess. attach makes each run of
 spaces in a label one space, so a label cannot push the real state word out
-of reach. A label that reads like a state, such as `blocked via gate`, can
+of reach. A label that reads like a state, such as `blocked via warden`, can
 still fake that state in Herdr's read. An agent can set a label.
 """
 
@@ -39,7 +39,7 @@ MANIFEST_FILE = Path("agent-detection") / f"{AGENT_ID}.toml"
 # and the harness, then "<state> via <source>". Fields are joined by two
 # spaces, and a field holds single spaces only. The state word must come
 # right after those fields, so an ask summary later on the line that says
-# "blocked via gate" never matches.
+# "blocked via warden" never matches.
 _FIELDS = r"^\S+  (?:[^ ]+(?: [^ ]+)*  ){0,2}"
 _REGION = "bottom_non_empty_lines(1)"
 

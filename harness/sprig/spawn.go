@@ -18,7 +18,7 @@ import (
 
 // SpawnTool is sprig's spawn tool: start a child agent through the tree
 // command (daisugi tree run), wait for it and return its answer. The
-// gate sees it as mcp__sprig__spawn, so only an envelope whose
+// warden sees it as mcp__sprig__spawn, so only an envelope whose
 // mcp_allowlist names sprig/spawn lets it run. It is offered only with
 // --tree-cmd.
 //
@@ -104,6 +104,19 @@ type spawnReply struct {
 	HasTokens  bool
 	Reasons    []string
 	AskID      string
+	// Branches holds each branch's reported tokens (HasTokens false for a
+	// branch that reported none), and ChoiceID is the card a branched run
+	// opened. Both are empty for a single child.
+	Branches []branchUse
+	ChoiceID string
+	Branched bool
+}
+
+// branchUse is one branch of a branched run: its status and tokens.
+type branchUse struct {
+	Status    string
+	Tokens    int
+	HasTokens bool
 }
 
 func readSpawnReply(data []byte) (spawnReply, bool) {
@@ -127,6 +140,19 @@ func readSpawnReply(data []byte) (spawnReply, bool) {
 			if s, ok := x.(string); ok {
 				r.Reasons = append(r.Reasons, s)
 			}
+		}
+	}
+	if list, ok := o["branches"].([]any); ok {
+		r.Branched = true
+		r.ChoiceID, _ = o["choice_id"].(string)
+		for _, x := range list {
+			b, _ := x.(map[string]any)
+			var u branchUse
+			u.Status, _ = b["status"].(string)
+			if f, ok := b["tokens_used"].(float64); ok && f == math.Trunc(f) && f >= 0 && f <= 1<<53 {
+				u.Tokens, u.HasTokens = int(f), true
+			}
+			r.Branches = append(r.Branches, u)
 		}
 	}
 	return r, r.Status != ""
@@ -222,6 +248,24 @@ func (s *SpawnTool) run(in map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	attempts, hasAttempts, err := count(in, "attempts")
+	if err != nil {
+		return "", err
+	}
+	why, err := text(in, "why")
+	if err != nil {
+		return "", err
+	}
+	if hasAttempts && attempts != 1 {
+		if attempts < 2 || attempts > 8 {
+			return "", fmt.Errorf("spawn: attempts must be a whole number from 2 to 8")
+		}
+		switch why {
+		case "failed_verify", "failed_tests", "low_confidence", "operator":
+		default:
+			return "", fmt.Errorf("spawn: why must be one of failed_verify, failed_tests, low_confidence, operator")
+		}
+	}
 
 	args := append([]string{}, s.Command[1:]...)
 	args = append(args, "--parent", s.Session, "--profile", profile)
@@ -247,6 +291,10 @@ func (s *SpawnTool) run(in map[string]any) (string, error) {
 	req := map[string]any{"task": task, "envelope": env, "tools": tools}
 	if hasMaxTurns {
 		req["max_turns"] = maxTurns
+	}
+	if hasAttempts && attempts != 1 {
+		req["attempts"] = attempts
+		req["why"] = why
 	}
 	stdin, _ := json.Marshal(req)
 
@@ -276,7 +324,7 @@ func (s *SpawnTool) run(in map[string]any) (string, error) {
 	}
 	reply, ok := readSpawnReply(bytes.TrimSpace(out.Bytes()))
 	if !ok {
-		reason := gateReason(errb.String(), "")
+		reason := wardenReason(errb.String(), "")
 		if reason == "" && runErr != nil {
 			reason = runErr.Error()
 		}
@@ -284,6 +332,17 @@ func (s *SpawnTool) run(in map[string]any) (string, error) {
 	}
 	s.mu.Lock()
 	switch {
+	case reply.Branched:
+		// Every branch counts toward sprig's cap: its report, else its whole
+		// reservation.
+		for _, b := range reply.Branches {
+			switch {
+			case b.HasTokens:
+				s.branch = satAdd(s.branch, b.Tokens)
+			case hasTokens:
+				s.branch = satAdd(s.branch, tokens)
+			}
+		}
 	case reply.HasTokens:
 		s.branch = satAdd(s.branch, reply.TokensUsed)
 	case reply.Status == "ran" || reply.Status == "failed":
@@ -295,6 +354,13 @@ func (s *SpawnTool) run(in map[string]any) (string, error) {
 	s.mu.Unlock()
 	switch reply.Status {
 	case "ran":
+		if reply.Branched {
+			card := "no card"
+			if reply.ChoiceID != "" {
+				card = "card " + reply.ChoiceID
+			}
+			return fmt.Sprintf("%s\n%d branches; %s", reply.Answer, len(reply.Branches), card), nil
+		}
 		return reply.Answer, nil
 	case "asked":
 		return "sent to the operator as ask " + reply.AskID, nil

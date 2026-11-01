@@ -195,7 +195,7 @@ func (f *floor) renameKey(k key) error {
 }
 
 // startSwap is s: it opens the prompt line to swap the selected agent's
-// model or router, for an agent that has one to swap.
+// model or route, for an agent that has one to swap.
 func (f *floor) startSwap() {
 	m := f.m
 	r, ok := m.Selected()
@@ -214,7 +214,7 @@ func (f *floor) startSwap() {
 }
 
 // swapTypeKey applies one key while the prompt line swaps. Enter reads
-// the line: a model is sent at once, and a router asks first.
+// the line: a model is sent at once, and a route asks first.
 func (f *floor) swapTypeKey(k key) error {
 	m := f.m
 	switch {
@@ -223,7 +223,7 @@ func (f *floor) swapTypeKey(k key) error {
 	case k.kind == keyByte && (k.b == '\r' || k.b == '\n'):
 		id, words := m.Swapping, strings.Fields(m.Prompt)
 		m.Swapping, m.Prompt = "", ""
-		if len(words) != 2 || (words[0] != "model" && words[0] != "router" && words[0] != "loop") {
+		if len(words) != 2 || (words[0] != "model" && words[0] != "route" && words[0] != "loop") {
 			m.Message = SwapHint
 			return nil
 		}
@@ -237,12 +237,12 @@ func (f *floor) swapTypeKey(k key) error {
 			m.Confirm, m.ConfirmLoop, m.ConfirmLine = id, words[1], MoveLine(res, words[1])
 			return nil
 		}
-		if words[0] == "router" {
-			if words[1] != "direct" && words[1] != "gateway" {
+		if words[0] == "route" {
+			if words[1] != "direct" && words[1] != "router" {
 				m.Message = SwapHint
 				return nil
 			}
-			m.Confirm, m.ConfirmRouter = id, words[1]
+			m.Confirm, m.ConfirmRoute = id, words[1]
 			return nil
 		}
 		res, err := call(f.o.Socket, "agent.set_model", map[string]any{"pane": id, "model": words[1]})
@@ -286,8 +286,8 @@ func (f *floor) stopKey() error {
 // forgets every ended agent the fold lists. Any other key keeps them.
 func (f *floor) answerConfirm(k key) error {
 	m := f.m
-	id, all, mode, router, loop := m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRouter, m.ConfirmLoop
-	m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRouter = "", false, false, ""
+	id, all, mode, route, loop := m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRoute, m.ConfirmLoop
+	m.Confirm, m.ClearAll, m.ConfirmMode, m.ConfirmRoute = "", false, false, ""
 	m.ConfirmLoop, m.ConfirmLine = "", ""
 	if k.kind != keyByte || (k.b != '\r' && k.b != '\n') {
 		return nil
@@ -301,12 +301,12 @@ func (f *floor) answerConfirm(k key) error {
 		m.Message = LoopDone(label, loop, str(res, "when"))
 		return f.refresh()
 	}
-	if router != "" {
+	if route != "" {
 		label := m.labelOf(id)
-		if _, err := call(f.o.Socket, "agent.set_router", map[string]any{"pane": id, "router": router}); err != nil {
+		if _, err := call(f.o.Socket, "agent.set_route", map[string]any{"pane": id, "route": route}); err != nil {
 			return f.fail(err)
 		}
-		m.Message = RouterDone(label, router)
+		m.Message = RouteDone(label, route)
 		return f.refresh()
 	}
 	if all {
@@ -325,7 +325,7 @@ func (f *floor) answerConfirm(k key) error {
 // modeKey is m: the selected agent's daisugi mode. An agent the owner set
 // to watching goes back to enforcing at once. An enforcing agent asks once
 // first, and answerConfirm takes the next key. Off is never offered:
-// turning the gate off stays the command daisugi gate disarm.
+// turning the warden off stays the command daisugi warden disarm.
 func (f *floor) modeKey() error {
 	m := f.m
 	r, ok := m.Selected()
@@ -337,7 +337,7 @@ func (f *floor) modeKey() error {
 		return nil
 	}
 	if r.Mode == "" || r.Mode == "off" {
-		m.Message = ModeNoGate(m.labelOf(r.ID))
+		m.Message = ModeNoWarden(m.labelOf(r.ID))
 		return nil
 	}
 	if m.Facts != nil && m.Facts.HookRoot != "" {
@@ -348,7 +348,7 @@ func (f *floor) modeKey() error {
 		return f.setMode(r.ID, "enforcing")
 	}
 	if r.Mode == "watching" {
-		m.Message = GateWatches(m.labelOf(r.ID))
+		m.Message = WardenWatches(m.labelOf(r.ID))
 		return nil
 	}
 	m.Confirm, m.ConfirmMode = r.ID, true

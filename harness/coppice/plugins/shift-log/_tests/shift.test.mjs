@@ -30,7 +30,7 @@ test('a blocked event marks its cell ask, and a deny in the detail marks deny', 
   const by = new Map(rows.map((r) => [r.pane, r.cells]));
   assert.equal(by.get('a')[15], LEVEL.ask);
   assert.equal(by.get('b')[15], LEVEL.deny);
-  // An ask whose words hold deny is still an ask. Only the gate's verdict is a deny.
+  // An ask whose words hold deny is still an ask. Only the warden's verdict is a deny.
   assert.equal(by.get('c')[15], LEVEL.ask);
   assert.deepEqual(LEVEL, { working: 1, ask: 2, deny: 3 });
 });

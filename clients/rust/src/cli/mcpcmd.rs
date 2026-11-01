@@ -9,12 +9,12 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::rc::Rc;
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::runcmd::{prepare, PlanCheck};
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::envgen::{self, cache::Cache, GenErr};
-use crate::gate::py::text::{has_surrogate, repr};
-use crate::gate::pyjson::{dumps, py_float_repr, Object, Value};
+use crate::warden::py::text::{has_surrogate, repr};
+use crate::warden::pyjson::{dumps, py_float_repr, Object, Value};
 use crate::mcpwire::{self, Checked, Kind};
 use crate::pathways::find::{select_matcher, Embedder, Matcher};
 use crate::pathways::pathway::json_mode;
@@ -50,7 +50,7 @@ impl Env {
     /// is not one this binary reads, or the matcher is one it does not
     /// carry.
     pub(super) fn matcher_pick(&self, notes: &Rc<RefCell<String>>) -> Result<Pick, String> {
-        let cfg = super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml"))
+        let cfg = super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml"))
             .map_err(|e| format!("the config file is not one this binary reads: {e}"))?;
         let pe = self.potion_env(notes);
         match select_matcher(&cfg.matcher_model, &pe) {
@@ -346,7 +346,7 @@ impl Server {
             "run_plan" => self.run_plan(e, &a),
             "receipts_for_run" => self.receipts_for_run(&a),
             "recent_runs" => self.recent_runs(&a),
-            "delegate" => self.delegate(e, &a),
+            "spawn" => self.spawn(e, &a),
             _ => {
                 return Ok(mcpwire::tool_result(
                     &[format!("Unknown tool: {name}")],
@@ -469,9 +469,9 @@ impl Server {
         Ok(Value::List(out))
     }
 
-    /// The delegate tool: the router's worker reads the
+    /// The spawn tool: the router's worker reads the
     /// file and answers; each quote is checked against the file.
-    fn delegate(&mut self, e: &mut Env, a: &Object) -> TR<Value> {
+    fn spawn(&mut self, e: &mut Env, a: &Object) -> TR<Value> {
         let s = |k: &str| match a.value(k) {
             Value::Str(v) => v.clone(),
             _ => String::new(),
@@ -482,9 +482,9 @@ impl Server {
         let call = |m: &str, b: &str, msgs: &[(String, String)], o: &crate::llm::wire::Opts, t: f64| {
             c.complete_at(m, b, msgs, o, t)
         };
-        match crate::delegate::run(&s("path"), &s("question"), &s("mode"), &self.data_dir, &get, &call) {
+        match crate::spawn::run(&s("path"), &s("question"), &s("mode"), &self.data_dir, &get, &call) {
             Ok(o) => Ok(Value::Obj(o)),
-            Err(crate::delegate::Unsupported(why)) => refuse(why),
+            Err(crate::spawn::Unsupported(why)) => refuse(why),
         }
     }
 
@@ -661,7 +661,7 @@ impl Server {
         let mut c = e.llm_client();
         let task = a.value("task").as_str().unwrap_or("").to_string();
         let store = self.store.as_ref().expect("opened above");
-        let r = match crate::gateway::recall::recall(
+        let r = match crate::router::recall::recall(
             store,
             &key,
             &pe,
@@ -708,8 +708,8 @@ impl Server {
                 py_float_repr(max_age)
             )));
         }
-        let entries = match crate::gateway::answers::load_answers(&format!(
-            "{}/gateway/answers.jsonl",
+        let entries = match crate::router::answers::load_answers(&format!(
+            "{}/router/answers.jsonl",
             self.data_dir
         )) {
             Ok(x) => x,
@@ -738,7 +738,7 @@ impl Server {
         }
         let now = crate::tracejournal::runs::now();
         let task = a.value("task").as_str().unwrap_or("").to_string();
-        let r = match crate::gateway::recall::recall_answer(
+        let r = match crate::router::recall::recall_answer(
             &task,
             &entries,
             now,
@@ -849,7 +849,7 @@ impl Server {
                 executors.insert(k, ex);
             }
         }
-        // The real approval gate on a live run; stdin is the MCP stream,
+        // The real approval warden on a live run; stdin is the MCP stream,
         // never a terminal, so no prompt is read from it.
         let approval: Box<dyn supervise::approval::Approver> = if dry {
             Box::new(Always)

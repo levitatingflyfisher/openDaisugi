@@ -109,7 +109,7 @@ Three checkpoints, distinct purposes:
    checks permissions per step, records traces to the Journal.
 
 Stage 1 is the SMT proof. Stage 2 is bounded runtime checks. Supervision
-is the permission gate at execution time. Each catches a different class
+is the permission warden at execution time. Each catches a different class
 of failure.
 
 ## Skills as contracts (v0.11.0)

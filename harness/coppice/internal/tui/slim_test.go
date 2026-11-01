@@ -43,7 +43,7 @@ func TestSlimRailRowsAreSixColumnsAndEveryLineIsColsWide(t *testing.T) {
 		if !strings.Contains(joined, "  ●d  │") {
 			t.Fatalf("no slim row for pane b at %d columns:\n%s", cols, joined)
 		}
-		if !strings.Contains(joined, "gate-refactor  claude  blocked") {
+		if !strings.Contains(joined, "gear-refactor  claude  blocked") {
 			t.Fatalf("the window header lost the full name:\n%s", joined)
 		}
 	}
@@ -64,14 +64,14 @@ func TestSlimRailBarNamesTheRowUnderTheCursor(t *testing.T) {
 
 func TestSlimRailGivesWayToThePeek(t *testing.T) {
 	m := tiledModel()
-	m.Peek = &PeekView{Pane: "a", Label: "gate-refactor", Text: "hello\n"}
+	m.Peek = &PeekView{Pane: "a", Label: "gear-refactor", Text: "hello\n"}
 	lines := Render(m, 100, 24)
 	for _, l := range lines {
 		if strings.Contains(l, "│") {
 			t.Fatalf("a divider shows with the peek open: %q", l)
 		}
 	}
-	if !strings.Contains(stripSGR(strings.Join(lines, "\n")), "peek a gate-refactor") {
+	if !strings.Contains(stripSGR(strings.Join(lines, "\n")), "peek a gear-refactor") {
 		t.Fatal("the peek does not show")
 	}
 }
@@ -183,7 +183,7 @@ func TestSlimBarKeepsTheCountOnScreen(t *testing.T) {
 func TestSlimLabelsAreTheShortestUniquePrefix(t *testing.T) {
 	row := func(id, label string) item { return item{kind: itemRow, row: Row{ID: id, Label: label}} }
 	items := []item{
-		row("1", "gate"), row("2", "docs"), row("3", "docker"), row("4", "e2e shell"),
+		row("1", "gear"), row("2", "docs"), row("3", "docker"), row("4", "e2e shell"),
 		row("5", "e2e ask"), row("6", "e2e trust"), {kind: itemGroup}, row("7", "build"),
 	}
 	want := map[string]string{"1": "g ", "2": "do", "3": "do", "4": "e1", "5": "e2", "6": "e3", "7": "b "}

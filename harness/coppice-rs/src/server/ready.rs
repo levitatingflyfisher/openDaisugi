@@ -223,12 +223,12 @@ impl Server {
     }
 
     /// Whether prompts to pane id go through the prompt rules.
-    pub fn gated(&self, id: &str) -> bool {
+    pub fn checked(&self, id: &str) -> bool {
         self.screen_verdict(id).is_some()
     }
 
     /// Whether pane id waits on a question: its screen shows one, or
-    /// another source says it is blocked, as a gate ask does.
+    /// another source says it is blocked, as a warden ask does.
     fn waits_on_question(&self, id: &str, v: &Verdict) -> bool {
         if v.matched && v.state == detect::STATE_BLOCKED {
             return true;
@@ -537,7 +537,7 @@ impl Server {
             }
             if !p.from.is_empty() && p.from != id && told.insert(p.from.clone()) {
                 self.note_to(&text, id, &p.from);
-                if self.gated(&p.from) {
+                if self.checked(&p.from) {
                     let _ = self.submit_prompt(&p.from, &format!("coppice: {text}"), "", None);
                 }
             }
@@ -559,7 +559,7 @@ impl Server {
         }
     }
 
-    /// pane.send_text and pane.run for a prompt to a gated pane: sent now,
+    /// pane.send_text and pane.run for a prompt to a checked pane: sent now,
     /// queued, or refused.
     pub fn prompt_reply(
         self: &Arc<Server>,

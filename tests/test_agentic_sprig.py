@@ -1,5 +1,5 @@
 """Tests for AgenticExecutor's sprig runtime: the same edge proof, private
-gate root, pinned session and tool wall as the claude runtime, with the
+warden root, pinned session and tool wall as the claude runtime, with the
 `sprig` binary as the sub-agent.
 
 No real agent runs here: a spy stands in for the process call, and a small
@@ -51,7 +51,7 @@ def spy_run(monkeypatch):
 
     def _fake(argv, *, stdin, cwd, timeout_s, env=None, **_kw):
         seen.update(argv=list(argv), stdin=stdin, cwd=cwd, timeout_s=timeout_s, env=env)
-        root = Path(_flag(argv, "--gate-cmd").split(" --root ")[1].split(" ")[0])
+        root = Path(_flag(argv, "--warden-cmd").split(" --root ")[1].split(" ")[0])
         seen["root"] = root
         seen["envelopes"] = sorted(p.name for p in (root / "envelopes").iterdir())
         seen["registered"] = {
@@ -117,18 +117,18 @@ def test_no_usage_meters_no_tokens(tmp_path, spy_run):
     assert exe.last.tokens is None
 
 
-def test_the_argv_pins_the_gate_and_the_session(tmp_path, spy_run):
+def test_the_argv_pins_the_warden_and_the_session(tmp_path, spy_run):
     exe = _sprig(model="sonnet", envelope=_envelope(shell=True, shell_allowlist=["ls"]))
     _run(exe, _step(tmp_path, tools=["Read", "Bash"], max_turns=4), timeout_s=9)
     argv = spy_run["argv"]
-    root = exe.last_gate_root
-    gate = " ".join([sys.executable, "-I", "-m", "opendaisugi.gate_client"])
+    root = exe.last_warden_root
+    warden = " ".join([sys.executable, "-I", "-m", "opendaisugi.warden_client"])
     assert argv == [
         "sprig",
         "--json",
-        "--gate",
-        "--gate-cmd",
-        f"{gate} --mode enforce --root {root} --session agentic-a1"
+        "--warden",
+        "--warden-cmd",
+        f"{warden} --mode enforce --root {root} --session agentic-a1"
         f" --captures-root {root / 'captures'}",
         "--tools",
         "read,bash",
@@ -152,13 +152,13 @@ def test_the_argv_pins_the_gate_and_the_session(tmp_path, spy_run):
 
 def test_capture_false_leaves_out_the_captures_root(tmp_path, spy_run):
     _run(_sprig(capture=False), _step(tmp_path))
-    assert "--captures-root" not in _flag(spy_run["argv"], "--gate-cmd")
+    assert "--captures-root" not in _flag(spy_run["argv"], "--warden-cmd")
 
 
-def test_the_gate_root_is_outside_the_workspace(tmp_path, spy_run):
+def test_the_warden_root_is_outside_the_workspace(tmp_path, spy_run):
     exe = _sprig()
     _run(exe, _step(tmp_path))
-    assert not str(exe.last_gate_root).startswith(str(tmp_path))
+    assert not str(exe.last_warden_root).startswith(str(tmp_path))
     assert "agentic-a1.json" in spy_run["envelopes"]
 
 
@@ -210,7 +210,7 @@ def test_a_narrower_child_sets_the_wall(tmp_path, spy_run):
     assert reg["parent_envelope"] == parent.id
 
 
-def test_a_space_in_the_gate_command_fails_before_anything(tmp_path, monkeypatch):
+def test_a_space_in_the_warden_command_fails_before_anything(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(agentic_executor, "_run_sprig", lambda *a, **k: called.append(1))
     spaced = tmp_path / "t mp"
@@ -224,7 +224,7 @@ def test_a_space_in_the_gate_command_fails_before_anything(tmp_path, monkeypatch
     assert res.rc == 1
     assert res.stdout == agentic_executor.SPRIG_SPACE_TEXT
     assert not called
-    assert exe.last_gate_root is None
+    assert exe.last_warden_root is None
     assert list(spaced.iterdir()) == []
 
 
@@ -294,7 +294,7 @@ def test_a_real_process_runs_in_the_workspace_and_keeps_its_session(tmp_path):
     exe = _sprig(sprig_binary=_fake_sprig(tmp_path))
     res = _run(exe, _step(ws))
     assert (res.rc, res.stdout) == (0, f"ran in {ws}")
-    sess = exe.last_gate_root / "sessions" / "agentic-a1.jsonl"
+    sess = exe.last_warden_root / "sessions" / "agentic-a1.jsonl"
     assert json.loads(sess.read_text()) == {"task": "do the thing"}
 
 

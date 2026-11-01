@@ -90,7 +90,7 @@ class Entry:
 class SessionTree:
     """An append-only session file plus an in-memory head cache.
 
-    ``append`` is on the gate's blocking path, so it must not re-parse the
+    ``append`` is on the warden's blocking path, so it must not re-parse the
     whole file on every call (S6). We cache the head in this instance and
     update it incrementally on every write; a fresh reader (e.g. ``open()``
     from another process) rebuilds it once by scanning the file, which is
@@ -223,7 +223,7 @@ class SessionTree:
         *last* in the file among (a) a ``head`` entry's ``leafId`` and (b) a
         non-``_NO_MOVE`` entry's own id. That is exactly what scanning from
         the end and returning on the first such line finds — same answer,
-        but the common case (the gate opens a fresh tree, asks for ``head()``
+        but the common case (the warden opens a fresh tree, asks for ``head()``
         to parent the next append, and the just-appended entry usually *is*
         the head) costs one line, not the whole file. A torn/undecodable
         line is skipped, same as the forward reader.
@@ -252,7 +252,7 @@ class SessionTree:
 
         Cached in memory and updated incrementally by ``append``/``set_head``
         so a long-lived instance never recomputes; a cold instance (the
-        gate's usual pattern — ``open_or_create`` then one ``append``) still
+        warden's usual pattern — ``open_or_create`` then one ``append``) still
         must not re-parse the whole file (S6), so ``_compute_head`` itself
         scans backward with an early return instead of decoding every line.
         Single-writer-per-session-id is assumed: two writers racing the same

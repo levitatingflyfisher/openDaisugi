@@ -22,41 +22,41 @@ func TestTheStampFollowsTheHookIdleAsTheHookSendsIt(t *testing.T) {
 	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
 	lp, _ := s.Live(id)
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcProcess))
-	if lp.gateIdleSince.Load() != 0 {
+	if lp.wardenIdleSince.Load() != 0 {
 		t.Fatal("a process idle set the stamp")
 	}
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
-	first := lp.gateIdleSince.Load()
+	first := lp.wardenIdleSince.Load()
 	if first == 0 {
 		t.Fatal("the Stop hook idle (source headless) did not set the stamp")
 	}
-	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcGate))
-	if lp.gateIdleSince.Load() != first {
+	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcWarden))
+	if lp.wardenIdleSince.Load() != first {
 		t.Fatal("a second idle of the same run moved the stamp")
 	}
-	s.ApplyState(id, stampEvent(id, proto.StateWorking, proto.SrcGate))
-	if lp.gateIdleSince.Load() != 0 {
-		t.Fatal("a gate working did not clear the stamp")
+	s.ApplyState(id, stampEvent(id, proto.StateWorking, proto.SrcWarden))
+	if lp.wardenIdleSince.Load() != 0 {
+		t.Fatal("a warden working did not clear the stamp")
 	}
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
 	s.ApplyState(id, stampEvent(id, proto.StateWorking, proto.SrcHeadless))
-	if lp.gateIdleSince.Load() != 0 {
+	if lp.wardenIdleSince.Load() != 0 {
 		t.Fatal("a headless working did not clear the stamp")
 	}
 }
 
 // An event the merge held back changes nothing (CP-R-57): the pane stays
-// blocked behind a gate hold, so a headless idle there is not a stamp.
+// blocked behind a warden hold, so a headless idle there is not a stamp.
 func TestAHeldBackHookIdleSetsNoStamp(t *testing.T) {
 	s := newPaneServer(t)
 	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
 	lp, _ := s.Live(id)
-	ask := stampEvent(id, proto.StateBlocked, proto.SrcGate)
+	ask := stampEvent(id, proto.StateBlocked, proto.SrcWarden)
 	ask.Ask = &proto.Ask{ID: "a", Tool: "Bash", Summary: "x", Deadline: nowSeconds() + 600}
 	s.ApplyState(id, ask)
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
-	if lp.gateIdleSince.Load() != 0 {
-		t.Fatal("an idle the gate hold discarded set the stamp")
+	if lp.wardenIdleSince.Load() != 0 {
+		t.Fatal("an idle the warden hold discarded set the stamp")
 	}
 }
 
@@ -68,15 +68,15 @@ func TestAStampStandsOnlyAfterThreeSeconds(t *testing.T) {
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
 	working := stampEvent(id, proto.StateWorking, proto.SrcProcess)
 	s.clockSkew.Store(int64(2900 * time.Millisecond))
-	if s.gateIdleStands(lp, working) {
+	if s.wardenIdleStands(lp, working) {
 		t.Fatal("a stamp 2.9 s old stands")
 	}
 	s.clockSkew.Store(int64(3100 * time.Millisecond))
-	if !s.gateIdleStands(lp, working) {
+	if !s.wardenIdleStands(lp, working) {
 		t.Fatal("a stamp 3.1 s old does not stand")
 	}
-	if s.gateIdleStands(lp, stampEvent(id, proto.StateWorking, proto.SrcGate)) {
-		t.Fatal("a gate working stands as idle")
+	if s.wardenIdleStands(lp, stampEvent(id, proto.StateWorking, proto.SrcWarden)) {
+		t.Fatal("a warden working stands as idle")
 	}
 }
 
@@ -89,21 +89,21 @@ func TestASubmittedLineClearsAStaleStamp(t *testing.T) {
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
 	s.clockSkew.Store(int64(10 * time.Second))
 	working := stampEvent(id, proto.StateWorking, proto.SrcProcess)
-	if !s.gateIdleStands(lp, working) {
+	if !s.wardenIdleStands(lp, working) {
 		t.Fatal("a 10 s stamp does not stand before any input")
 	}
 	s.markInput(id, false)
-	if lp.gateIdleSince.Load() == 0 {
+	if lp.wardenIdleSince.Load() == 0 {
 		t.Fatal("a half line cleared the stamp")
 	}
 	s.markInput(id, true)
-	if s.gateIdleStands(lp, working) {
+	if s.wardenIdleStands(lp, working) {
 		t.Fatal("a stale stamp stands after a submitted line")
 	}
 }
 
-// The foreman's own page is such input: sendPage must clear the stamp.
-func TestTheForemansPageClearsAStaleStamp(t *testing.T) {
+// The steward's own page is such input: sendPage must clear the stamp.
+func TestTheStewardsPageClearsAStaleStamp(t *testing.T) {
 	s := newPaneServer(t)
 	id := createShellPane(t, s, "sh", "-c", "cat >/dev/null")
 	lp, _ := s.Live(id)
@@ -112,12 +112,12 @@ func TestTheForemansPageClearsAStaleStamp(t *testing.T) {
 	if err := s.sendPage(id); err != nil {
 		t.Fatal(err)
 	}
-	if s.gateIdleStands(lp, stampEvent(id, proto.StateWorking, proto.SrcProcess)) {
-		t.Fatal("a stale stamp stands after the foreman's page")
+	if s.wardenIdleStands(lp, stampEvent(id, proto.StateWorking, proto.SrcProcess)) {
+		t.Fatal("a stale stamp stands after the steward's page")
 	}
 }
 
-// The hold line the server types into the foreman submits a turn too, so it
+// The hold line the server types into the steward submits a turn too, so it
 // clears a stale stamp (CP-R-57).
 func TestTheHoldLineClearsAStaleStamp(t *testing.T) {
 	s := newPaneServer(t)
@@ -126,10 +126,10 @@ func TestTheHoldLineClearsAStaleStamp(t *testing.T) {
 	s.ApplyState(id, stampEvent(id, proto.StateIdle, proto.SrcHeadless))
 	s.clockSkew.Store(int64(10 * time.Second))
 	working := stampEvent(id, proto.StateWorking, proto.SrcProcess)
-	if !s.gateIdleStands(lp, working) {
+	if !s.wardenIdleStands(lp, working) {
 		t.Fatal("a 10 s stamp does not stand before the hold line")
 	}
-	h := &hold{pane: "p", ask: "a", foreman: id, task: "t", id: "h1", sending: true,
+	h := &hold{pane: "p", ask: "a", steward: id, task: "t", id: "h1", sending: true,
 		until: nowSeconds() + 60, timer: time.NewTimer(time.Hour)}
 	s.holdsMu.Lock()
 	s.holds["p"] = h
@@ -141,7 +141,7 @@ func TestTheHoldLineClearsAStaleStamp(t *testing.T) {
 	if !told {
 		t.Fatal("the hold line was not written")
 	}
-	if s.gateIdleStands(lp, working) {
+	if s.wardenIdleStands(lp, working) {
 		t.Fatal("a stale stamp stands after the hold line")
 	}
 }
@@ -163,7 +163,7 @@ func TestAStampOlderThanTheFirstDrawDoesNotSettleAFreshPane(t *testing.T) {
 		}
 	}
 	s.processTick(id, lp)
-	lp.gateIdleSince.Store(first.UnixNano() - int64(10*time.Second))
+	lp.wardenIdleSince.Store(first.UnixNano() - int64(10*time.Second))
 	idle := func(ev proto.PaneStateEvent) bool { return ev.State == proto.StateIdle }
 	settles := func(fresh bool) bool {
 		done := make(chan struct{})
@@ -190,12 +190,12 @@ func TestAStampOlderThanTheFirstDrawDoesNotSettleAFreshPane(t *testing.T) {
 // hold of CP-R-56 keeps a short draw from ever reaching the process source,
 // so no process idle replaces it. The pane that drew and then kept quiet for
 // processQuiet is ready all the same (the tui/chat compare case: a fake
-// foreman reports a gate idle, then prints a line and waits).
+// steward reports a warden idle, then prints a line and waits).
 func TestAStaleHookIdleDoesNotKeepAQuietFreshPaneFromSettling(t *testing.T) {
 	s := newPaneServer(t)
 	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
 	lp, _ := s.Live(id)
-	old := stampEvent(id, proto.StateIdle, proto.SrcGate)
+	old := stampEvent(id, proto.StateIdle, proto.SrcWarden)
 	old.TS = 1
 	s.ApplyState(id, old)
 	if _, err := lp.Grid.Write([]byte("REPORT ok")); err != nil {

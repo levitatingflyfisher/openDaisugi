@@ -23,6 +23,9 @@ type Tier1 struct {
 	// Name is the provider's name, part of the Tier-1 cache key.
 	Name    string
 	Timeout time.Duration
+	// ReasoningEffort is the chat body's reasoning_effort; empty leaves it
+	// out. An Ollama host gets OllamaNoThinkEffort.
+	ReasoningEffort string
 	// badBase is a base_url the config file gives as something other than
 	// a string: every call with it fails in the oracle, so it declines.
 	badBase bool
@@ -95,6 +98,9 @@ func LoadConfiguredTier1(dataDir string) (*Tier1, error) {
 	}
 	t := NewTier1(model, base, nil, "")
 	t.badBase = bad
+	if kind, isStr := cfg.Value("host_kind").(string); isStr && kind == "ollama" {
+		t.ReasoningEffort = OllamaNoThinkEffort
+	}
 	return t, nil
 }
 
@@ -122,7 +128,7 @@ func (t *Tier1) GenerateErr(c *llm.Client, task string, context *string) (*pyjso
 	}
 	call := llm.Call{Model: t.Model, System: Tier1Prompt, User: user,
 		Response: llm.Schema{Name: "Envelope", Model: pmodel.Envelope}, MaxRetries: 1,
-		Deadline: time.Now().Add(t.Timeout)}
+		ReasoningEffort: t.ReasoningEffort, Deadline: time.Now().Add(t.Timeout)}
 	if t.BaseURL != nil {
 		call.BaseURL = *t.BaseURL
 	}
@@ -143,18 +149,26 @@ const QualifyTimeout = 300 * time.Second
 
 // Outcomes of one qualification probe.
 const (
-	OutcomeValid    = "valid"
-	OutcomeDeclined = "declined"
-	OutcomeError    = "error"
-	OutcomeTimeout  = "timeout"
+	OutcomeValid     = "valid"
+	OutcomeDeclined  = "declined"
+	OutcomeTruncated = "truncated"
+	OutcomeError     = "error"
+	OutcomeTimeout   = "timeout"
 )
+
+// OllamaNoThinkEffort is tier1.OLLAMA_NO_THINK_EFFORT. Ollama's /v1 honours
+// reasoning_effort "none" and ignores "think": false.
+const OllamaNoThinkEffort = "none"
+
+// truncatedAdvice is tier1.TRUNCATED_ADVICE.
+const truncatedAdvice = " A model that thinks first spends the limit on thinking: turn thinking off at the server, or raise the limit."
 
 // maxReason is the longest reason kept, in characters.
 const maxReason = 200
 
 // Classify names the outcome of a failed probe and a one-line reason.
-// declined is a model that answered, but not with a valid envelope; error
-// is a call that failed (a server, a key, a wire); timeout is a probe
+// declined is a model that answered, but not with a valid envelope;
+// truncated is a reply cut at the token limit; error is a call that failed (a server, a key, a wire); timeout is a probe
 // that ran past its deadline.
 func Classify(err error) (outcome, reason string) {
 	if err == nil {
@@ -169,7 +183,7 @@ func Classify(err error) (outcome, reason string) {
 	case strings.HasPrefix(msg, "ValidationError"):
 		return OutcomeDeclined, cleanReason(msg)
 	case strings.HasPrefix(msg, "The output is incomplete due to a max_tokens"):
-		return OutcomeDeclined, cleanReason(msg + " A model that thinks first may have spent the token budget on thinking; raise max_tokens.")
+		return OutcomeTruncated, cleanReason(msg + truncatedAdvice)
 	}
 	return OutcomeError, cleanReason(msg)
 }

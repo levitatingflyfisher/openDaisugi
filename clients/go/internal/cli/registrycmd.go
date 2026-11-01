@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/registry"
 	"daisugi-verify/internal/signing"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is `daisugi registry init|pull|publish|status|pull-and-tend`
@@ -54,7 +54,7 @@ func (e *Env) registryCmd(args []string) error {
 	return exit(2)
 }
 
-func (e *Env) defaultRegistry() string { return gateroot.Join(e.dataHome(), "registry") }
+func (e *Env) defaultRegistry() string { return wardenroot.Join(e.dataHome(), "registry") }
 
 var repoPathOpt = opt{names: []string{"--repo-path"}, value: true, metavar: "PATH", help: "The registry's local clone."}
 
@@ -72,18 +72,18 @@ func (e *Env) registryInit(args []string) error {
 		return e.usageArgs(cmd, "GIT_URL", &usageError{"Missing argument 'git_url'."})
 	}
 	url := p.args[0]
-	cloneTo := gateroot.PathStr(p.str("--clone-to", e.defaultRegistry()))
+	cloneTo := wardenroot.PathStr(p.str("--clone-to", e.defaultRegistry()))
 	// git runs a command for an ext:: or fd:: URL at clone time.
 	if strings.HasPrefix(url, "ext::") || strings.HasPrefix(url, "fd::") {
 		e.errf("refusing registry URL %s: the git ext::/fd:: transports execute a command and are not allowed.\n",
 			pystr.Repr(url))
 		return exit(2)
 	}
-	if exists(cloneTo) && exists(gateroot.Join(cloneTo, ".git")) {
+	if exists(cloneTo) && exists(wardenroot.Join(cloneTo, ".git")) {
 		e.out("already cloned at %s\n", cloneTo)
 		return nil
 	}
-	if err := mkdirParentsPy(gateroot.PathStr(filepath.Dir(cloneTo))); err != nil {
+	if err := mkdirParentsPy(wardenroot.PathStr(filepath.Dir(cloneTo))); err != nil {
 		return e.raise(cmd, err)
 	}
 	e.out("cloning %s → %s\n", url, cloneTo)
@@ -169,16 +169,16 @@ func (e *Env) registryPublish(args []string) error {
 		}
 	}
 	id := p.args[0]
-	priv, err := readTextStrip(gateroot.PathStr(p.str("--private-key", "")))
+	priv, err := readTextStrip(wardenroot.PathStr(p.str("--private-key", "")))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
-	pub, err := readTextStrip(gateroot.PathStr(p.str("--public-key", "")))
+	pub, err := readTextStrip(wardenroot.PathStr(p.str("--public-key", "")))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
-	local, err := pathways.Open(gateroot.Join(dataDir, "pathways.db"))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
+	local, err := pathways.Open(wardenroot.Join(dataDir, "pathways.db"))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
@@ -272,7 +272,7 @@ func (e *Env) registryPullAndTend(args []string) error {
 		return e.raise(cmd, err)
 	}
 	e.out("pulled; %d new pathway(s) cached\n", n)
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	rep, err := e.runTendQuiet(dataDir)
 	if err != nil {
 		return err

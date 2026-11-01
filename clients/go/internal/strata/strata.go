@@ -278,7 +278,7 @@ func Promote(env *pyjson.Object, c *pyjson.Object, addInvariant *pyjson.Object, 
 	candidate *pyjson.Object, witness *pyjson.Object) (*Promotion, error) {
 	if k := c.Value("kind"); k != "constraint" {
 		return &Promotion{Envelope: env, Reason: fmt.Sprintf("only a 'constraint' stratum may touch authority; got kind "+
-			"'%v' — facts, hypotheses and goals inform reasoning, never gate actions", k)}, nil
+			"'%v' — facts, hypotheses and goals inform reasoning, never warden actions", k)}, nil
 	}
 	if c.Value("status") == "promoted" {
 		return &Promotion{Envelope: env, Reason: "constraint is already promoted; re-promoting against the original " +

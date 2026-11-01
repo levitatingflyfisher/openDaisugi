@@ -10,7 +10,7 @@
 //     client (internal/llm, the oracle's llm_client.py). Any failure is an
 //     errored result, which the evaluator turns into an evaluation error.
 //
-// The gate (internal/gate) and the verifier the commands share
+// The warden (internal/warden) and the verifier the commands share
 // (internal/verify) both call it, so there is one copy.
 package llmcheck
 
@@ -124,7 +124,7 @@ func Invoke(e Env, rule, payload string) Outcome {
 	proxies := netproxy.HttpxFromVars(netproxy.OrderedFromMap(e.Vars))
 	if r := proxies.Refusal(); r != nil && r.Invalid != "" {
 		// httpx.InvalidURL escapes llm_check's except clause: how the
-		// oracle's gate then answers is not modelled.
+		// oracle's warden then answers is not modelled.
 		return unported("an llm_check under a proxy setting httpx rejects (" + r.Invalid + ")")
 	}
 	status, text, err := llm.Post(w, body, llm.Timeout(e.Getenv), proxies)

@@ -13,15 +13,15 @@ import (
 	"github.com/opendaisugi/coppice/internal/layout"
 )
 
-// gateReportLine is one pane.report_state a gate hook sends, with extra
+// wardenReportLine is one pane.report_state a warden hook sends, with extra
 // JSON fields spliced into the event.
-func gateReportLine(id, pane, extra string) string {
+func wardenReportLine(id, pane, extra string) string {
 	if extra != "" {
 		extra = "," + extra
 	}
 	return `{"id":"` + id + `","cmd":"pane.report_state","pane":"` + pane + `","event":` +
 		`{"v":1,"ts":1757300000.0,"session_id":"fake-sid","harness_session_id":"fake-claude-session",` +
-		`"harness":"claude-code","pane":"` + pane + `","state":"working","source":"gate",` +
+		`"harness":"claude-code","pane":"` + pane + `","state":"working","source":"warden",` +
 		`"detail":"verdict=allow"` + extra + `}}`
 }
 
@@ -77,7 +77,7 @@ func projFixture(t *testing.T, s *Server, name string) string {
 	return f.Name()
 }
 
-// ownPane is a connection the kernel placed in pane id, the way a gate
+// ownPane is a connection the kernel placed in pane id, the way a warden
 // hook running inside that pane connects.
 func ownPane(t *testing.T, s *Server, id string) (send func(string), next func() map[string]any, stop func()) {
 	t.Helper()
@@ -106,21 +106,21 @@ func mustOK(t *testing.T, r map[string]any) {
 	}
 }
 
-func TestPaneListShowsTheLastVerdictAndModeAGateReported(t *testing.T) {
+func TestPaneListShowsTheLastVerdictAndModeAWardenReported(t *testing.T) {
 	s := newFactsServer(t)
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
-	send(gateReportLine("1", "w1:p1", `"mode":"watching","verdict":{"decision":"allow","tool":"Read","clause":""}`))
+	send(wardenReportLine("1", "w1:p1", `"mode":"watching","verdict":{"decision":"allow","tool":"Read","clause":""}`))
 	mustOK(t, next())
-	send(gateReportLine("2", "w1:p1", `"mode":"enforcing","verdict":{"decision":"deny","tool":"Bash","clause":"shell: curl"}`))
+	send(wardenReportLine("2", "w1:p1", `"mode":"enforcing","verdict":{"decision":"deny","tool":"Bash","clause":"shell: curl"}`))
 	mustOK(t, next())
 	row := listRow(t, s, "w1:p1")
-	g, _ := row["gate"].(map[string]any)
+	g, _ := row["warden"].(map[string]any)
 	if g == nil || g["decision"] != "deny" || g["tool"] != "Bash" || g["clause"] != "shell: curl" {
-		t.Fatalf("gate %v, want the last verdict", row["gate"])
+		t.Fatalf("warden %v, want the last verdict", row["warden"])
 	}
 	if at, _ := g["at"].(float64); at <= 0 {
-		t.Fatalf("gate at %v, want a time", g["at"])
+		t.Fatalf("warden at %v, want a time", g["at"])
 	}
 	st, _ := row["stack"].(map[string]any)
 	d, _ := st["daisugi"].(map[string]any)
@@ -135,14 +135,14 @@ func TestAPaneWithNoHarnessAndNoReportsHasNoFacts(t *testing.T) {
 	s.getenv = func(string) string { return "" }
 	roundTrip(t, s, strings.Replace(paneCreate, "%s", t.TempDir(), 1))
 	row := listRow(t, s, "w1:p1")
-	for _, k := range []string{"stack", "gate", "tokens"} {
+	for _, k := range []string{"stack", "warden", "tokens"} {
 		if _, ok := row[k]; ok {
 			t.Errorf("row has %s = %v, want it absent", k, row[k])
 		}
 	}
 }
 
-func TestAHarnessWithNoGateReportsIsOff(t *testing.T) {
+func TestAHarnessWithNoWardenReportsIsOff(t *testing.T) {
 	s := newFactsServer(t)
 	row := listRow(t, s, "w1:p1")
 	st, _ := row["stack"].(map[string]any)
@@ -150,7 +150,7 @@ func TestAHarnessWithNoGateReportsIsOff(t *testing.T) {
 	if d["mode"] != "off" {
 		t.Fatalf("daisugi %v, want off", st["daisugi"])
 	}
-	for _, k := range []string{"gate", "tokens"} {
+	for _, k := range []string{"warden", "tokens"} {
 		if _, ok := row[k]; ok {
 			t.Errorf("row has %s, want it absent", k)
 		}
@@ -160,12 +160,12 @@ func TestAHarnessWithNoGateReportsIsOff(t *testing.T) {
 	}
 }
 
-func TestTheDisarmMarkerShowsTheGateUnarmed(t *testing.T) {
+func TestTheDisarmMarkerShowsTheWardenUnarmed(t *testing.T) {
 	s := newFactsServer(t)
-	if err := os.MkdirAll(s.cfg.GateRoot, 0o700); err != nil {
+	if err := os.MkdirAll(s.cfg.WardenRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(s.cfg.GateRoot, "DISARMED"), []byte("x\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.cfg.WardenRoot, "DISARMED"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	row := listRow(t, s, "w1:p1")
@@ -181,7 +181,7 @@ func TestATranscriptThePanesOwnHookReportedGivesModelAndTokens(t *testing.T) {
 	p := projFixture(t, s, "claude-transcript.jsonl")
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
-	send(gateReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
+	send(wardenReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
 	mustOK(t, next())
 	row := listRow(t, s, "w1:p1")
 	st, _ := row["stack"].(map[string]any)
@@ -208,7 +208,7 @@ func TestATranscriptThePanesOwnHookReportedGivesModelAndTokens(t *testing.T) {
 func TestATranscriptPathFromAnotherConnectionIsNeverRead(t *testing.T) {
 	s := newFactsServer(t)
 	p := projFixture(t, s, "claude-transcript.jsonl")
-	got := roundTrip(t, s, gateReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
+	got := roundTrip(t, s, wardenReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
 	if !got[0].OK || result(t, got[0])["transcript"] != transcriptNotOwnRefusal {
 		t.Fatalf("report from another connection: %+v", got[0])
 	}
@@ -228,12 +228,12 @@ func TestAPathAnotherLivePaneReportedIsNotRead(t *testing.T) {
 	p := projFixture(t, s, "claude-transcript.jsonl")
 	send1, next1, stop1 := ownPane(t, s, "w1:p1")
 	defer stop1()
-	send1(gateReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
+	send1(wardenReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`))
 	mustOK(t, next1())
 	send2, next2, stop2 := ownPane(t, s, "w1:p2")
 	defer stop2()
 	// w1:p2 runs no Claude, so its report names no file the server reads.
-	send2(gateReportLine("2", "w1:p2", `"transcript_path":"`+p+`"`))
+	send2(wardenReportLine("2", "w1:p2", `"transcript_path":"`+p+`"`))
 	mustOK(t, next2())
 	if _, ok := listRow(t, s, "w1:p2")["tokens"]; ok {
 		t.Fatal("a second live pane read the first pane's transcript")
@@ -245,7 +245,7 @@ func TestAPathAnotherLivePaneReportedIsNotRead(t *testing.T) {
 
 func TestAPtyPanesOwnHookSetsItsHarnessSessionID(t *testing.T) {
 	s := newFactsServer(t)
-	got := roundTrip(t, s, gateReportLine("1", "w1:p1", ""))
+	got := roundTrip(t, s, wardenReportLine("1", "w1:p1", ""))
 	if !got[0].OK {
 		t.Fatalf("report: %+v", got[0].Error)
 	}
@@ -254,7 +254,7 @@ func TestAPtyPanesOwnHookSetsItsHarnessSessionID(t *testing.T) {
 	}
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
-	send(gateReportLine("2", "w1:p1", ""))
+	send(wardenReportLine("2", "w1:p1", ""))
 	mustOK(t, next())
 	if rec, _ := s.tree.Pane("w1:p1"); rec.HarnessSessionID != "fake-claude-session" {
 		t.Fatalf("session id %q, want the one the pane's own hook reported", rec.HarnessSessionID)
@@ -263,7 +263,7 @@ func TestAPtyPanesOwnHookSetsItsHarnessSessionID(t *testing.T) {
 
 func TestABadVerdictRefusesTheReport(t *testing.T) {
 	s := newFactsServer(t)
-	got := roundTrip(t, s, gateReportLine("1", "w1:p1", `"verdict":{"decision":"perhaps","tool":"Bash"}`))
+	got := roundTrip(t, s, wardenReportLine("1", "w1:p1", `"verdict":{"decision":"perhaps","tool":"Bash"}`))
 	if got[0].OK {
 		t.Fatal("a report with an unknown decision was taken")
 	}
@@ -288,9 +288,9 @@ func TestASprigPaneReadsItsOwnSessionTree(t *testing.T) {
 	if st["model"] != "sprig-fake-2" || tok.Out != 5 || tok.Fresh != 5 {
 		t.Fatalf("stack %v tokens %+v", st, row["tokens"])
 	}
-	g, _ := row["gate"].(*gateFact)
+	g, _ := row["warden"].(*wardenFact)
 	if g == nil || g.Decision != "deny" || g.Tool != "bash" {
-		t.Fatalf("gate %+v", row["gate"])
+		t.Fatalf("warden %+v", row["warden"])
 	}
 	d, _ := st["daisugi"].(map[string]any)
 	if d["mode"] != "enforcing" {
@@ -306,7 +306,7 @@ func TestAnEvictedTranscriptResumesWhereItStopped(t *testing.T) {
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
 	report := func(p string) {
-		send(gateReportLine("r", "w1:p1", `"transcript_path":"`+p+`"`))
+		send(wardenReportLine("r", "w1:p1", `"transcript_path":"`+p+`"`))
 		mustOK(t, next())
 		listRow(t, s, "w1:p1")
 	}
@@ -351,7 +351,7 @@ func TestAReportFromAnotherHarnessSetsNoSessionAndNoTranscript(t *testing.T) {
 	p := projFixture(t, s, "claude-transcript.jsonl")
 	send, next, stop := ownPane(t, s, "w1:p1")
 	defer stop()
-	line := strings.Replace(gateReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`),
+	line := strings.Replace(wardenReportLine("1", "w1:p1", `"transcript_path":"`+p+`"`),
 		`"harness":"claude-code"`, `"harness":"codex"`, 1)
 	send(line)
 	mustOK(t, next())
@@ -361,7 +361,7 @@ func TestAReportFromAnotherHarnessSetsNoSessionAndNoTranscript(t *testing.T) {
 	if err := s.updatePane("w1:p1", func(x *layout.Pane) { x.Harness = "codex" }); err != nil {
 		t.Fatal(err)
 	}
-	send(gateReportLine("2", "w1:p1", `"transcript_path":"`+p+`"`))
+	send(wardenReportLine("2", "w1:p1", `"transcript_path":"`+p+`"`))
 	mustOK(t, next())
 	if rec, _ := s.tree.Pane("w1:p1"); rec.HarnessSessionID != "" {
 		t.Fatalf("a claude report set a codex pane's session id to %q", rec.HarnessSessionID)

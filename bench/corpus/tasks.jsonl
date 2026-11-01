@@ -1,7 +1,7 @@
 {"id":"t01","task":"add a pytest test for the shell decomposer","kind":"code","stakes":"medium"}
 {"id":"t02","task":"bump the docker base image to bookworm","kind":"ops","stakes":"medium"}
 {"id":"t03","task":"summarise the last ten journal traces","kind":"read","stakes":"low"}
-{"id":"t04","task":"fix the flaky gateway streaming test","kind":"code","stakes":"medium"}
+{"id":"t04","task":"fix the flaky router streaming test","kind":"code","stakes":"medium"}
 {"id":"t05","task":"list every file larger than ten megabytes under build","kind":"shell","stakes":"low"}
 {"id":"t06","task":"write the release notes for version 0.44","kind":"write","stakes":"low"}
 {"id":"t07","task":"rotate the signing key used by the registry","kind":"ops","stakes":"high"}

@@ -611,14 +611,8 @@
   },
   {
    "command": "sed --in-place=.orig -f fix.sed a.py",
-   "writes": [
-    "a.py",
-    "a.py.orig"
-   ],
-   "placed": [
-    "/abs/proj/a.py",
-    "/abs/proj/a.py.orig"
-   ]
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed --in-place -e s/a/b/ a.py",
@@ -986,17 +980,13 @@
   },
   {
    "command": "sudo rm -rf /",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "command rm a",
-   "writes": [
-    "a"
-   ],
-   "placed": [
-    "/abs/proj/a"
-   ]
+   "writes": null,
+   "placed": null
   },
   {
    "command": "nice -n 5 cp a b",
@@ -1011,13 +1001,25 @@
   },
   {
    "command": "cd src && echo x > a.py",
-   "writes": null,
-   "placed": null
+   "writes": [
+    "a.py",
+    "src/a.py"
+   ],
+   "placed": [
+    "/abs/proj/a.py",
+    "/abs/proj/src/a.py"
+   ]
   },
   {
    "command": "cd src && touch a.py",
-   "writes": null,
-   "placed": null
+   "writes": [
+    "a.py",
+    "src/a.py"
+   ],
+   "placed": [
+    "/abs/proj/a.py",
+    "/abs/proj/src/a.py"
+   ]
   },
   {
    "command": "cd /repo && echo x > /repo/a.py",
@@ -1030,8 +1032,8 @@
   },
   {
    "command": "pushd src; ls",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "popd; rm a",
@@ -1049,13 +1051,25 @@
   },
   {
    "command": "cd src && sh -c 'touch a'",
-   "writes": null,
-   "placed": null
+   "writes": [
+    "a",
+    "src/a"
+   ],
+   "placed": [
+    "/abs/proj/a",
+    "/abs/proj/src/a"
+   ]
   },
   {
    "command": "sh -c 'cd src && touch a'",
-   "writes": null,
-   "placed": null
+   "writes": [
+    "a",
+    "src/a"
+   ],
+   "placed": [
+    "/abs/proj/a",
+    "/abs/proj/src/a"
+   ]
   },
   {
    "command": "x=$(cd a && pwd); touch b",
@@ -1096,24 +1110,22 @@
    "writes": [
     "../../a",
     "b",
-    "//c"
+    "/c"
    ],
    "placed": [
     "/a",
     "/abs/proj/b",
-    "//c"
+    "/c"
    ]
   },
   {
    "command": "cp --no-dereference -u --archive a a .",
    "writes": [
     ".",
-    "a",
     "a"
    ],
    "placed": [
     "/abs/proj",
-    "/abs/proj/a",
     "/abs/proj/a"
    ]
   },
@@ -1122,12 +1134,10 @@
    "writes": [
     "v",
     "v/a",
-    "v/a",
     "v/b c"
    ],
    "placed": [
     "/abs/proj/v",
-    "/abs/proj/v/a",
     "/abs/proj/v/a",
     "/abs/proj/v/b c"
    ]
@@ -1176,14 +1186,8 @@
   },
   {
    "command": "cp -x -a ../x -",
-   "writes": [
-    "-",
-    "-/x"
-   ],
-   "placed": [
-    "/abs/proj/-",
-    "/abs/proj/-/x"
-   ]
+   "writes": [],
+   "placed": []
   },
   {
    "command": "cp --force -r",
@@ -1267,14 +1271,12 @@
   {
    "command": "install 'b c' out/ -",
    "writes": [
-    "-",
-    "-/b c",
-    "-/out"
+    "out",
+    "out/b c"
    ],
    "placed": [
-    "/abs/proj/-",
-    "/abs/proj/-/b c",
-    "/abs/proj/-/out"
+    "/abs/proj/out",
+    "/abs/proj/out/b c"
    ]
   },
   {
@@ -1418,12 +1420,8 @@
   },
   {
    "command": "ln -",
-   "writes": [
-    "-"
-   ],
-   "placed": [
-    "/abs/proj/-"
-   ]
+   "writes": [],
+   "placed": []
   },
   {
    "command": "ln -tv -T -tv",
@@ -1523,13 +1521,11 @@
    "command": "mkdir --parents '' ../x ''",
    "writes": [
     ".",
-    "../x",
-    "."
+    "../x"
    ],
    "placed": [
     "/abs/proj",
-    "/abs/x",
-    "/abs/proj"
+    "/abs/x"
    ]
   },
   {
@@ -1599,12 +1595,10 @@
    "writes": [
     "/abs/y",
     ".",
-    ".",
     "y"
    ],
    "placed": [
     "/abs/y",
-    "/abs/proj",
     "/abs/proj",
     "/abs/proj/y"
    ]
@@ -1615,15 +1609,13 @@
     "src/a.py",
     "out",
     ".",
-    "a.py",
-    "out"
+    "a.py"
    ],
    "placed": [
     "/abs/proj/src/a.py",
     "/abs/proj/out",
     "/abs/proj",
-    "/abs/proj/a.py",
-    "/abs/proj/out"
+    "/abs/proj/a.py"
    ]
   },
   {
@@ -1646,16 +1638,12 @@
    "writes": [
     "a",
     "out",
-    ".",
-    "a",
-    "out"
+    "."
    ],
    "placed": [
     "/abs/proj/a",
     "/abs/proj/out",
-    "/abs/proj",
-    "/abs/proj/a",
-    "/abs/proj/out"
+    "/abs/proj"
    ]
   },
   {
@@ -1688,12 +1676,8 @@
   },
   {
    "command": "rm -I - --",
-   "writes": [
-    "-"
-   ],
-   "placed": [
-    "/abs/proj/-"
-   ]
+   "writes": [],
+   "placed": []
   },
   {
    "command": "rm --verbose --force",
@@ -1866,14 +1850,8 @@
   },
   {
    "command": "rsync --files-from=v -- - a",
-   "writes": [
-    "a",
-    "a/-"
-   ],
-   "placed": [
-    "/abs/proj/a",
-    "/abs/proj/a/-"
-   ]
+   "writes": [],
+   "placed": []
   },
   {
    "command": "rsync --cvs-exclude --suffix=v --no-group",
@@ -1941,23 +1919,23 @@
   },
   {
    "command": "sed -iv --line-length v --sandbox ../x",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed ../x src/a.py ../x",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed --follow-symlinks --line-length=v --sandbox -- src/a.py src/a.py",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed -f v",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed '' '' .",
@@ -1971,8 +1949,8 @@
   },
   {
    "command": "sed -s -r ../x",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "sed --separate --quiet",
@@ -1981,17 +1959,15 @@
   },
   {
    "command": "sed -r --file=v -- out/ ../x",
-   "writes": [],
-   "placed": []
+   "writes": null,
+   "placed": null
   },
   {
    "command": "shred --exact 'b c' 'b c'",
    "writes": [
-    "b c",
     "b c"
    ],
    "placed": [
-    "/abs/proj/b c",
     "/abs/proj/b c"
    ]
   },
@@ -2014,11 +1990,9 @@
   {
    "command": "shred --size v --size=v -nv 'b c' 'b c'",
    "writes": [
-    "b c",
     "b c"
    ],
    "placed": [
-    "/abs/proj/b c",
     "/abs/proj/b c"
    ]
   },
@@ -2026,12 +2000,10 @@
    "command": "shred ../x - /abs/y",
    "writes": [
     "../x",
-    "-",
     "/abs/y"
    ],
    "placed": [
     "/abs/x",
-    "/abs/proj/-",
     "/abs/y"
    ]
   },
@@ -2087,320 +2059,442 @@
    ]
   },
   {
-   "command": "tee --nope ''",
+   "command": "tar -P ''",
    "writes": null,
    "placed": null
   },
   {
-   "command": "tee --ignore-interrupts --ignore-interrupts --nope - .",
+   "command": "tar --create -C out -C out '' /abs/y -",
    "writes": null,
    "placed": null
   },
   {
-   "command": "tee --output-error=v --output-error=v -",
+   "command": "tar --create -xzf in.tgz out/ -",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar '' .",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar src/a.py src/a.py /abs/y",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar -t -czf out.tgz -C out",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar -P -c -c",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar --create '' out/",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar -f a.tgz -P ../x -- src/a.py",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar -x -f a.tgz --create",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tar -czf out.tgz out/ /abs/y",
    "writes": [
-    "-"
+    "out.tgz"
    ],
    "placed": [
-    "/abs/proj/-"
+    "/abs/proj/out.tgz"
    ]
   },
   {
-   "command": "tee '' .",
-   "writes": [
-    ".",
-    "."
-   ],
-   "placed": [
-    "/abs/proj",
-    "/abs/proj"
-   ]
-  },
-  {
-   "command": "tee src/a.py src/a.py /abs/y",
-   "writes": [
-    "src/a.py",
-    "src/a.py",
-    "/abs/y"
-   ],
-   "placed": [
-    "/abs/proj/src/a.py",
-    "/abs/proj/src/a.py",
-    "/abs/y"
-   ]
-  },
-  {
-   "command": "tee -p -Q --ignore-interrupts",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "tee --nope -a -a",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "tee --output-error=v ''",
-   "writes": [
-    "."
-   ],
-   "placed": [
-    "/abs/proj"
-   ]
-  },
-  {
-   "command": "tee --append --nope ../x -- src/a.py",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "tee",
-   "writes": [],
-   "placed": []
-  },
-  {
-   "command": "tee -i --append -a --",
-   "writes": [],
-   "placed": []
-  },
-  {
-   "command": "tee -p --ignore-interrupts",
-   "writes": [],
-   "placed": []
-  },
-  {
-   "command": "touch -tv --reference v -t v 'b c' src/a.py",
+   "command": "tee 'b c' /abs/y /abs/y",
    "writes": [
     "b c",
-    "src/a.py"
+    "/abs/y"
    ],
    "placed": [
     "/abs/proj/b c",
-    "/abs/proj/src/a.py"
+    "/abs/y"
    ]
   },
   {
-   "command": "touch src/a.py",
-   "writes": [
-    "src/a.py"
-   ],
-   "placed": [
-    "/abs/proj/src/a.py"
-   ]
-  },
-  {
-   "command": "touch -dv -tv",
+   "command": "tee -i -i --append",
    "writes": [],
    "placed": []
   },
   {
-   "command": "touch --reference=v 'b c'",
+   "command": "tee -Q --nope",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee -p - src/a.py ../x",
    "writes": [
+    "src/a.py",
+    "../x"
+   ],
+   "placed": [
+    "/abs/proj/src/a.py",
+    "/abs/x"
+   ]
+  },
+  {
+   "command": "tee -Q --output-error=v '' /abs/y src/a.py",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee --nope a a a",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee -a -Q --nope out/ ../x",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee --ignore-interrupts . -- -",
+   "writes": [
+    "."
+   ],
+   "placed": [
+    "/abs/proj"
+   ]
+  },
+  {
+   "command": "tee --append",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "tee -Q /abs/y ../x",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee --ignore-interrupts --nope --output-error=v - -",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "tee --append -a -Q ../x a src/a.py",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "touch -rv -tv -rv - a",
+   "writes": [
+    "a"
+   ],
+   "placed": [
+    "/abs/proj/a"
+   ]
+  },
+  {
+   "command": "touch --nope --date=v -m . -",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "touch . /abs/y",
+   "writes": [
+    ".",
+    "/abs/y"
+   ],
+   "placed": [
+    "/abs/proj",
+    "/abs/y"
+   ]
+  },
+  {
+   "command": "touch -dv -dv . . ../x",
+   "writes": [
+    ".",
+    "../x"
+   ],
+   "placed": [
+    "/abs/proj",
+    "/abs/x"
+   ]
+  },
+  {
+   "command": "touch -t v --nope --reference v out/ -",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "touch src/a.py /abs/y /abs/y",
+   "writes": [
+    "src/a.py",
+    "/abs/y"
+   ],
+   "placed": [
+    "/abs/proj/src/a.py",
+    "/abs/y"
+   ]
+  },
+  {
+   "command": "touch --reference v -Q -d v",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "touch -- /abs/y",
+   "writes": [
+    "/abs/y"
+   ],
+   "placed": [
+    "/abs/y"
+   ]
+  },
+  {
+   "command": "touch -r v",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "touch -d v '' .",
+   "writes": [
+    "."
+   ],
+   "placed": [
+    "/abs/proj"
+   ]
+  },
+  {
+   "command": "touch ../x '' ''",
+   "writes": [
+    "../x",
+    "."
+   ],
+   "placed": [
+    "/abs/x",
+    "/abs/proj"
+   ]
+  },
+  {
+   "command": "touch -a /abs/y",
+   "writes": [
+    "/abs/y"
+   ],
+   "placed": [
+    "/abs/y"
+   ]
+  },
+  {
+   "command": "truncate --size=v ../x -- a",
+   "writes": [
+    "../x",
+    "a"
+   ],
+   "placed": [
+    "/abs/x",
+    "/abs/proj/a"
+   ]
+  },
+  {
+   "command": "truncate -",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "truncate",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "truncate --reference v -s v --reference v a",
+   "writes": [
+    "a"
+   ],
+   "placed": [
+    "/abs/proj/a"
+   ]
+  },
+  {
+   "command": "truncate --nope --size=v -rv ../x ''",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "truncate --size=v a",
+   "writes": [
+    "a"
+   ],
+   "placed": [
+    "/abs/proj/a"
+   ]
+  },
+  {
+   "command": "truncate -sv",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "truncate -Q -sv -o 'b c'",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "truncate -c --size v --size=v /abs/y 'b c' /abs/y",
+   "writes": [
+    "/abs/y",
     "b c"
    ],
    "placed": [
+    "/abs/y",
     "/abs/proj/b c"
    ]
   },
   {
-   "command": "touch -Q -c -",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "touch -r v --reference v --date=v '' /abs/y src/a.py",
+   "command": "truncate --reference=v -r v -c ../x /abs/y src/a.py",
    "writes": [
-    ".",
+    "../x",
     "/abs/y",
     "src/a.py"
    ],
    "placed": [
-    "/abs/proj",
+    "/abs/x",
     "/abs/y",
     "/abs/proj/src/a.py"
    ]
   },
   {
-   "command": "touch -tv a a a",
-   "writes": [
-    "a",
-    "a",
-    "a"
-   ],
-   "placed": [
-    "/abs/proj/a",
-    "/abs/proj/a",
-    "/abs/proj/a"
-   ]
-  },
-  {
-   "command": "touch --date=v -a -dv /abs/y out/ ../x",
-   "writes": [
-    "/abs/y",
-    "out",
-    "../x"
-   ],
-   "placed": [
-    "/abs/y",
-    "/abs/proj/out",
-    "/abs/x"
-   ]
-  },
-  {
-   "command": "touch -rv 'b c' .",
-   "writes": [
-    "b c",
-    "."
-   ],
-   "placed": [
-    "/abs/proj/b c",
-    "/abs/proj"
-   ]
-  },
-  {
-   "command": "touch -r v --date=v -Q ../x",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "touch --",
+   "command": "truncate -c -c --no-create",
    "writes": [],
    "placed": []
   },
   {
-   "command": "touch -t v -d v /abs/y 'b c' -",
+   "command": "truncate -rv -o - out/ 'b c'",
    "writes": [
-    "/abs/y",
-    "b c",
-    "-"
-   ],
-   "placed": [
-    "/abs/y",
-    "/abs/proj/b c",
-    "/abs/proj/-"
-   ]
-  },
-  {
-   "command": "truncate --nope --nope - .",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "truncate -s v -c --size=v 'b c' ../x a",
-   "writes": [
-    "b c",
-    "../x",
-    "a"
-   ],
-   "placed": [
-    "/abs/proj/b c",
-    "/abs/x",
-    "/abs/proj/a"
-   ]
-  },
-  {
-   "command": "truncate '' 'b c' ''",
-   "writes": [
-    ".",
-    "b c",
-    "."
-   ],
-   "placed": [
-    "/abs/proj",
-    "/abs/proj/b c",
-    "/abs/proj"
-   ]
-  },
-  {
-   "command": "truncate -sv -c . out/ ''",
-   "writes": [
-    ".",
     "out",
-    "."
+    "b c"
    ],
    "placed": [
-    "/abs/proj",
     "/abs/proj/out",
-    "/abs/proj"
+    "/abs/proj/b c"
    ]
   },
   {
-   "command": "truncate --reference v --size=v src/a.py /abs/y",
-   "writes": [
-    "src/a.py",
-    "/abs/y"
-   ],
-   "placed": [
-    "/abs/proj/src/a.py",
-    "/abs/y"
-   ]
-  },
-  {
-   "command": "truncate -Q -sv -- '' 'b c'",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "truncate -Q /abs/y . /abs/y",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "truncate --size v '' a",
-   "writes": [
-    ".",
-    "a"
-   ],
-   "placed": [
-    "/abs/proj",
-    "/abs/proj/a"
-   ]
-  },
-  {
-   "command": "truncate -o -rv -rv ../x src/a.py src/a.py",
-   "writes": [
-    "../x",
-    "src/a.py",
-    "src/a.py"
-   ],
-   "placed": [
-    "/abs/x",
-    "/abs/proj/src/a.py",
-    "/abs/proj/src/a.py"
-   ]
-  },
-  {
-   "command": "truncate --io-blocks -rv -",
-   "writes": [
-    "-"
-   ],
-   "placed": [
-    "/abs/proj/-"
-   ]
-  },
-  {
-   "command": "truncate ../x",
-   "writes": [
-    "../x"
-   ],
-   "placed": [
-    "/abs/x"
-   ]
-  },
-  {
-   "command": "truncate --size v --reference=v",
+   "command": "uniq",
    "writes": [],
    "placed": []
   },
   {
-   "command": "unlink -Q -Q -Q /abs/y",
+   "command": "uniq -f v src/a.py",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "uniq -sv --nope --skip-chars=v ''",
    "writes": null,
    "placed": null
   },
   {
-   "command": "unlink --nope --",
+   "command": "uniq --skip-chars v /abs/y /abs/y ../x",
    "writes": null,
    "placed": null
+  },
+  {
+   "command": "uniq -i -c a --",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "uniq --skip-chars v -d --skip-fields v -- out/ .",
+   "writes": [
+    "."
+   ],
+   "placed": [
+    "/abs/proj"
+   ]
+  },
+  {
+   "command": "uniq -i -fv -u /abs/y out/ a",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "uniq -D",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "uniq -s v src/a.py /abs/y src/a.py",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "uniq src/a.py",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "uniq a src/a.py out/",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "uniq -sv -u",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "unlink -Q --nope -Q",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink --nope --nope 'b c' -- ../x",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink -Q -Q --nope ''",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink a --",
+   "writes": [
+    "a"
+   ],
+   "placed": [
+    "/abs/proj/a"
+   ]
+  },
+  {
+   "command": "unlink -Q --nope --nope '' ../x",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink out/ .",
+   "writes": [
+    "out",
+    "."
+   ],
+   "placed": [
+    "/abs/proj/out",
+    "/abs/proj"
+   ]
   },
   {
    "command": "unlink",
@@ -2408,79 +2502,87 @@
    "placed": []
   },
   {
-   "command": "unlink --nope",
+   "command": "unlink -Q - ''",
    "writes": null,
    "placed": null
   },
   {
-   "command": "unlink ../x out/ a",
+   "command": "unlink -Q",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink --nope -Q -Q ../x . .",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "unlink --nope --nope 'b c'",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "xxd -sv -c v --nope -- a out/",
+   "writes": null,
+   "placed": null
+  },
+  {
+   "command": "xxd -i -E -E",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "xxd -ov - /abs/y",
    "writes": [
-    "../x",
-    "out",
-    "a"
+    "/abs/y"
    ],
    "placed": [
-    "/abs/x",
-    "/abs/proj/out",
-    "/abs/proj/a"
+    "/abs/y"
    ]
   },
   {
-   "command": "unlink --nope --nope -Q .",
+   "command": "xxd -C -o v -lv src/a.py - a",
    "writes": null,
    "placed": null
   },
   {
-   "command": "unlink -Q -",
-   "writes": null,
-   "placed": null
-  },
-  {
-   "command": "unlink - src/a.py out/",
+   "command": "xxd -l v /abs/y ../x",
    "writes": [
-    "-",
-    "src/a.py",
-    "out"
+    "../x"
    ],
    "placed": [
-    "/abs/proj/-",
-    "/abs/proj/src/a.py",
-    "/abs/proj/out"
+    "/abs/x"
    ]
   },
   {
-   "command": "unlink --nope -Q --nope 'b c' /abs/y",
+   "command": "xxd src/a.py",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "xxd",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "xxd -l v -u",
+   "writes": [],
+   "placed": []
+  },
+  {
+   "command": "xxd --nope -l v",
    "writes": null,
    "placed": null
   },
   {
-   "command": "unlink -Q -Q --nope /abs/y",
-   "writes": null,
-   "placed": null
+   "command": "xxd -ov -p",
+   "writes": [],
+   "placed": []
   },
   {
-   "command": "unlink a a 'b c'",
-   "writes": [
-    "a",
-    "a",
-    "b c"
-   ],
-   "placed": [
-    "/abs/proj/a",
-    "/abs/proj/a",
-    "/abs/proj/b c"
-   ]
-  },
-  {
-   "command": "unlink /abs/y src/a.py",
-   "writes": [
-    "/abs/y",
-    "src/a.py"
-   ],
-   "placed": [
-    "/abs/y",
-    "/abs/proj/src/a.py"
-   ]
+   "command": "xxd -u -u . -- -",
+   "writes": [],
+   "placed": []
   }
  ]
 }

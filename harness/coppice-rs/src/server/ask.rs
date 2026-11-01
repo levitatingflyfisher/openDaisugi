@@ -1,4 +1,4 @@
-//! The gate's ask files. The gate writes asks/<id>.json and waits for
+//! The warden's ask files. The warden writes asks/<id>.json and waits for
 //! answers/<id>.json; agent.allow and agent.deny write the answer the same
 //! way the phone does.
 
@@ -110,10 +110,10 @@ pub fn answer(root: &Path, r: &Reply) -> Result<(), AnswerError> {
         return Err(AnswerError::BadScope);
     }
     let id = safe_id(&r.tool_use_id);
-    // GR-R-10: the ask is read as the gate reads it, through no link and
+    // GR-R-10: the ask is read as the warden reads it, through no link and
     // only from a file this user owns that group and other cannot write. A
     // linked or shared ask is as good as gone.
-    let raw = crate::server::gatefs::read(root, &["asks"], &format!("{id}.json"), None)
+    let raw = crate::server::wardenfs::read(root, &["asks"], &format!("{id}.json"), None)
         .map_err(|_| AnswerError::NoAsk)?;
     let text = String::from_utf8_lossy(&raw);
     let nonce =
@@ -155,7 +155,7 @@ pub fn answer(root: &Path, r: &Reply) -> Result<(), AnswerError> {
     // written, and the answer is made by openat and renamed inside that
     // directory, so a link planted at answers/ or at the answer's name never
     // carries the write elsewhere.
-    crate::server::gatefs::write(root, &["answers"], &format!("{id}.json"), body.as_bytes()).map_err(io_err)
+    crate::server::wardenfs::write(root, &["answers"], &format!("{id}.json"), body.as_bytes()).map_err(io_err)
 }
 
 #[cfg(test)]
@@ -163,7 +163,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_id_matches_the_gate() {
+    fn safe_id_matches_the_warden() {
         assert_eq!(safe_id("toolu_01/../x"), "toolu_01_.._x");
         assert_eq!(safe_id("..."), "none");
         assert_eq!(safe_id(".a."), "a");
@@ -184,7 +184,7 @@ mod tests {
     }
 
     // GR-R-10: the answer writer checks answers/ with no link followed before
-    // it writes, and reads the ask as the gate does. Each test plants one
+    // it writes, and reads the ask as the warden does. Each test plants one
     // link and needs the refusal; before this change each of them wrote
     // through it. Twins: the Go tests in internal/web/ask_test.go.
 

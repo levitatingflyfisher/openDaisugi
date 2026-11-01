@@ -7,9 +7,9 @@ Q — and then:
 
 1. **Prove ``F ⊆ envelope`` before any iteration.** Every item is resolved to its
    concrete write-set up front and checked with the *same* concrete matcher the
-   runtime gate uses (``verify._path_matches_any``) — not the envelope↔envelope Z3
+   runtime warden uses (``verify._path_matches_any``) — not the envelope↔envelope Z3
    glob encoding, which diverges from it (single ``*`` crosses ``/``; no
-   normalization) and would let the proof *admit* a write the gate would *reject*.
+   normalization) and would let the proof *admit* a write the warden would *reject*.
    One pre-flight pass covers all N; reject on any unprovable write. This is a
    *temporal* "one proof": no write happens until the whole footprint is
    authorized, so a mid-batch discovery never leaves the run half-done.
@@ -118,7 +118,7 @@ class FootprintProof:
     # True when there were no writes to prove (a read-only / network program): the
     # write-set proof is then *vacuously* ok and proved nothing about blast radius —
     # flagged so "the proof passed" is never read as a meaningful claim (the yellow
-    # paper's vacuity ethos). Per-read/URL admission is still gated by verify_step.
+    # paper's vacuity ethos). Per-read/URL admission is still checked by verify_step.
     vacuous: bool = False
 
 
@@ -180,8 +180,8 @@ def prove_footprint(decl: BatchDeclaration, envelope: Envelope) -> FootprintProo
     """Prove the resolved write-set lies inside both the envelope and the declared
     footprint F, before any iteration.
 
-    Uses the concrete ``_path_matches_any`` the executor gate uses — so the proof is
-    exactly as strict as the runtime, never admitting a write the gate would reject.
+    Uses the concrete ``_path_matches_any`` the executor warden uses — so the proof is
+    exactly as strict as the runtime, never admitting a write the warden would reject.
     Rejects on: any unbound/head-changing binding, any write outside the envelope
     (unprovable), any write outside the declared F (dishonest under-declaration).
     """

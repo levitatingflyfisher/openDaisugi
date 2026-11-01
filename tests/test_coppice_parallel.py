@@ -52,14 +52,14 @@ def test_cgroup_without_limit_is_ignored(tmp_path):
     assert cc.read_cgroup_memory(tmp_path / "nope") == (None, None)
 
 
-def test_gate_waits_while_memory_is_low_and_a_file_runs():
+def test_warden_waits_while_memory_is_low_and_a_file_runs():
     avail = [100]  # KiB, below the reserve
-    gate = cc.MemoryGate(lambda: avail[0], reserve_kib=1000, poll=0.01)
-    gate.acquire()  # first file always starts: nothing to wait for
+    warden = cc.MemoryWarden(lambda: avail[0], reserve_kib=1000, poll=0.01)
+    warden.acquire()  # first file always starts: nothing to wait for
     started = threading.Event()
 
     def second():
-        gate.acquire()
+        warden.acquire()
         started.set()
 
     t = threading.Thread(target=second)
@@ -71,20 +71,20 @@ def test_gate_waits_while_memory_is_low_and_a_file_runs():
     assert started.is_set()
 
 
-def test_gate_releases_a_waiter_when_a_file_finishes():
-    gate = cc.MemoryGate(lambda: 0, reserve_kib=1000, poll=0.01)
-    gate.acquire()
+def test_warden_releases_a_waiter_when_a_file_finishes():
+    warden = cc.MemoryWarden(lambda: 0, reserve_kib=1000, poll=0.01)
+    warden.acquire()
     started = threading.Event()
 
     def second():
-        gate.acquire()
+        warden.acquire()
         started.set()
 
     t = threading.Thread(target=second)
     t.start()
     time.sleep(0.1)
     assert not started.is_set()
-    gate.release()  # nothing runs now, so the waiter may start despite low memory
+    warden.release()  # nothing runs now, so the waiter may start despite low memory
     t.join(2)
     assert started.is_set()
 
@@ -125,7 +125,7 @@ def test_results_print_in_file_order_whatever_the_finish_order():
         time.sleep(delays[cf.name])
         return cc.FileResult(rows=[{"file": cf.name, "case": 1, "class": "agree"}], leaks=[])
 
-    order = [cf.name for cf, _ in cc.run_files(files, jobs=5, run=run, gate=None)]
+    order = [cf.name for cf, _ in cc.run_files(files, jobs=5, run=run, warden=None)]
     assert order == [f"f{i}" for i in range(5)]
 
 
@@ -147,7 +147,7 @@ def test_disagreeing_file_is_rerun_alone_and_kept_as_masked():
             return cc.FileResult([_row("b", "disagree", [".x: 1 vs 2"])], [])
         return cc.FileResult([_row(cf.name, "agree")], [])
 
-    out = list(cc.run_files(files, jobs=2, run=run, gate=None))
+    out = list(cc.run_files(files, jobs=2, run=run, warden=None))
     assert [r.rows[0]["class"] for _, r in out] == ["agree", "agree"]
     res = out[1][1]
     assert res.masked and not out[0][1].masked
@@ -163,7 +163,7 @@ def test_still_disagreeing_after_rerun_is_reported_not_masked():
     def run(cf):
         return cc.FileResult([_row(cf.name, "disagree" if cf.name == "b" else "agree")], [])
 
-    out = list(cc.run_files(files, jobs=2, run=run, gate=None))
+    out = list(cc.run_files(files, jobs=2, run=run, warden=None))
     assert out[1][1].rows[0]["class"] == "disagree"
     assert not out[1][1].masked and "disagrees alone too" in out[1][1].note
 
@@ -188,7 +188,7 @@ def test_crash_stops_servers_before_the_pool_is_waited_for():
         return cc.FileResult([], [])
 
     try:
-        list(cc.run_files(files, jobs=2, run=run, gate=None, abort=servers_stopped.set))
+        list(cc.run_files(files, jobs=2, run=run, warden=None, abort=servers_stopped.set))
         raise AssertionError("the crash must propagate")
     except RuntimeError:
         pass
@@ -203,7 +203,7 @@ def test_keyboard_interrupt_in_a_worker_aborts():
         raise KeyboardInterrupt
 
     try:
-        list(cc.run_files(files, jobs=2, run=run, gate=None, abort=lambda: aborted.append(1)))
+        list(cc.run_files(files, jobs=2, run=run, warden=None, abort=lambda: aborted.append(1)))
     except KeyboardInterrupt:
         pass
     assert aborted == [1]
@@ -284,7 +284,7 @@ def test_serial_files_run_after_the_batch_and_keep_their_place():
             running.remove(cf.name)
         return cc.FileResult(rows=[], leaks=[])
 
-    out = [cf.name for cf, _ in cc.run_files(files, jobs=3, run=run, gate=None)]
+    out = [cf.name for cf, _ in cc.run_files(files, jobs=3, run=run, warden=None)]
     assert out == ["cases/tui/windows.jsonl", "x", "y"]
     # x and y overlapped; the serial file was alone (peak 2, not 3).
     assert peak[0] == 2

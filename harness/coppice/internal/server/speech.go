@@ -18,7 +18,7 @@ import (
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
-// speech.status and speech.say: the foreman answers aloud. The page speaks
+// speech.status and speech.say: the steward answers aloud. The page speaks
 // with the browser's own voice unless [voice] speak_url names a speech
 // server with an OpenAI-style POST /v1/audio/speech. speech.say asks that
 // server for one sentence and answers the audio, base64 in the reply. The

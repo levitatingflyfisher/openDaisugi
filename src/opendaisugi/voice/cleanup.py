@@ -17,8 +17,8 @@ itself can be unwritable; none of these cases should turn a spoken word
 into a lost one.
 
 A successful call is recorded through the same `record_turn` path the
-gateway uses for a proxied turn. The transcript is the task and the ask, the
-same way the gateway journals any other turn's human text. Two different
+router uses for a proxied turn. The transcript is the task and the ask, the
+same way the router journals any other turn's human text. Two different
 transcripts get two different signatures, so the garden can still see a real
 repeat when the same phrase is cleaned up twice.
 
@@ -27,9 +27,9 @@ because a cleanup call has no requested model to route away from. It is
 always local, by design.
 
 Pricing is set explicitly to zero dollars for the configured model. Without
-that override, the gateway's fallback price table would book real dollars
+that override, the router's fallback price table would book real dollars
 against a local call and quietly pull down the blended multiplier reported
-for every other turn. `Gateway.__post_init__` in gateway_pipeline.py does the
+for every other turn. `Router.__post_init__` in router_pipeline.py does the
 same override for a configured local model.
 
 The transport is our own model client (`opendaisugi.llm_client`). This
@@ -39,13 +39,15 @@ tier1.py.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from opendaisugi.config import Config
-from opendaisugi.gateway import RouteDecision, measure_turn
-from opendaisugi.gateway_journal import GatewayJournal, record_turn
+from opendaisugi.router import RouteDecision, measure_turn
+from opendaisugi.router_journal import RouterJournal, record_turn
 from opendaisugi.routing import estimate_difficulty
 
 CLEANUP_PROMPT_V1 = (
@@ -56,6 +58,19 @@ CLEANUP_PROMPT_V1 = (
 _NO_TEXT_REASON = "The cleanup model returned no text. Check the model, then try again."
 _UNREACHABLE_REASON = (
     "The cleanup model failed to respond. Check that it is running, then try again."
+)
+_SHORT_REASON = "The cleanup model returned much less text than it was given. The raw text is kept."
+# A cleaned chunk must keep this share of its source. A small model context
+# drops the end of a long transcript, and a cut reply is not a cleanup.
+MIN_CLEANED_PERCENT = 80
+# All the cleanup calls of one clip share this much time. A model that hangs
+# would otherwise cost its own timeout on every window of a long clip. Past
+# the budget, or after the model failed to answer once, the windows left keep
+# their raw text.
+CLEANUP_BUDGET_S = 120.0
+_BUDGET_REASON = (
+    "The cleanup took too long, so the rest of the text is raw. "
+    "Check that the cleanup model is fast enough, then try again."
 )
 _JOURNAL_UNWRITABLE_REASON = (
     "The transcript could not be journaled. Check the data directory, then try again."
@@ -94,7 +109,7 @@ class HTTPCleanupTransport:
     """The real transport. One call through our own model client.
 
     A `base_url` means a local OpenAI-compatible endpoint such as Ollama,
-    llamafile, or a running gateway. A bare model name is prefixed with
+    llamafile, or a running router. A bare model name is prefixed with
     `openai/` in that case, the same auto-prefix `HTTPTier1Provider` uses,
     since the model client picks its wire by the name's prefix.
     """
@@ -124,12 +139,12 @@ class HTTPCleanupTransport:
         }
 
 
-def _default_journal(config: Config) -> GatewayJournal:
-    return GatewayJournal(path=Path(config.data_dir) / "gateway" / "turns.jsonl")
+def _default_journal(config: Config) -> RouterJournal:
+    return RouterJournal(path=Path(config.data_dir) / "router" / "turns.jsonl")
 
 
 def _journal_cleanup(
-    *, model: str, text: str, usage: dict[str, int], journal: GatewayJournal
+    *, model: str, text: str, usage: dict[str, int], journal: RouterJournal
 ) -> None:
     decision = RouteDecision(
         tier="tier1-local",
@@ -149,7 +164,7 @@ def clean_transcript(
     *,
     config: Config,
     transport: CleanupTransport | None = None,
-    journal: GatewayJournal | None = None,
+    journal: RouterJournal | None = None,
 ) -> CleanupResult:
     """Polish a transcript through one fixed-prompt local-model call.
 
@@ -176,6 +191,8 @@ def clean_transcript(
     cleaned = corrected.strip()
     if not cleaned:
         return CleanupResult(text=text, cleaned=False, reason=_NO_TEXT_REASON)
+    if len(cleaned) * 100 < len(text) * MIN_CLEANED_PERCENT:
+        return CleanupResult(text=text, cleaned=False, reason=_SHORT_REASON)
     try:
         _journal_cleanup(
             model=model, text=text, usage=usage, journal=journal or _default_journal(config)
@@ -183,3 +200,52 @@ def clean_transcript(
     except OSError:
         return CleanupResult(text=cleaned, cleaned=False, reason=_JOURNAL_UNWRITABLE_REASON)
     return CleanupResult(text=cleaned, cleaned=True, reason=None)
+
+
+def clean_parts(
+    transcript,
+    *,
+    config: Config,
+    transport: CleanupTransport | None = None,
+    journal: RouterJournal | None = None,
+    clean=None,
+    clock: Callable[[], float] = time.monotonic,
+    budget_s: float = CLEANUP_BUDGET_S,
+) -> CleanupResult:
+    """Clean a transcript window by window, so no one call is longer than a
+    small model can hold, and join the results. A window that fails to clean
+    keeps its raw text; the others keep their cleaned text. A clip of one
+    window is cleaned whole. cleaned is True when any window was cleaned; the
+    reason is the first reason any window gave. After the model fails to
+    answer once, or when the clip's cleanup budget runs out, the windows left
+    keep their raw text and the model is not called again."""
+    from opendaisugi.voice.engines import GAP_MARKER
+
+    clean = clean or clean_transcript
+    extra = {k: v for k, v in (("transport", transport), ("journal", journal)) if v is not None}
+    parts = list(transcript.parts)
+    if len(parts) <= 1:
+        return clean(transcript.text, config=config, **extra)
+    out: list[str] = []
+    cleaned = False
+    reason: str | None = None
+    started = clock()
+    stopped = False
+    for part in parts:
+        if not part.strip() or part == GAP_MARKER:
+            out.append(part)
+            continue
+        if not stopped and clock() - started > budget_s:
+            stopped = True
+            reason = reason or _BUDGET_REASON
+        if stopped:
+            out.append(part)
+            continue
+        res = clean(part, config=config, **extra)
+        out.append(res.text)
+        cleaned = cleaned or res.cleaned
+        reason = reason or res.reason
+        if res.reason == _UNREACHABLE_REASON:
+            stopped = True
+    text = " ".join(p.strip() for p in out if p.strip())
+    return CleanupResult(text=text, cleaned=cleaned, reason=reason)

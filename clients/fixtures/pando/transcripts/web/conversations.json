@@ -1,0 +1,27 @@
+[
+  {
+    "uuid": "c0000000-0000-4000-8000-000000000001",
+    "name": "Garden bed plan",
+    "created_at": "2026-03-01T10:00:00.000000Z",
+    "chat_messages": [
+      {"uuid": "m1", "sender": "human", "text": "How deep should a raised bed be for carrots?", "created_at": "2026-03-01T10:00:05.000000Z"},
+      {"uuid": "m2", "sender": "assistant", "text": "Twelve inches of loose soil is enough for most carrots.", "created_at": "2026-03-01T10:00:20.000000Z"},
+      {"uuid": "m3", "sender": "human", "text": "And for beans?", "created_at": "2026-03-01T10:01:00.000000Z"}
+    ]
+  },
+  {
+    "uuid": "c0000000-0000-4000-8000-000000000002",
+    "name": "Birthday list",
+    "created_at": "2026-03-02T09:00:00.000000Z",
+    "chat_messages": [
+      {"uuid": "m1", "sender": "human", "text": "Ideas for a seven year old who likes boats.", "created_at": "2026-03-02T09:00:05.000000Z"},
+      {"uuid": "m4", "sender": "assistant", "text": "A wooden sailboat kit, a pond net, a tide chart poster.", "created_at": "2026-03-02T09:00:30.000000Z"}
+    ]
+  },
+  {
+    "uuid": "c0000000-0000-4000-8000-000000000003",
+    "name": "Blank",
+    "created_at": "2026-03-03T09:00:00.000000Z",
+    "chat_messages": []
+  }
+]

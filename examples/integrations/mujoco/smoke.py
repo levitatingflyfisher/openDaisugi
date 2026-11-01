@@ -1,7 +1,7 @@
 """MuJoCo envelope smoke: load MJCF, roll out plan, verify bounds.
 
 Runs on any machine with ``pip install opendaisugi[robotics]``. The
-4080 box is overkill; a laptop with MuJoCo installed handles this in
+A laptop with MuJoCo installed handles this in
 under a second.
 
 Story:

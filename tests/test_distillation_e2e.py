@@ -31,7 +31,9 @@ def _success(journal, task: str):
     env = Envelope(
         generated_by="test",
         task=task,
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -85,7 +87,9 @@ async def test_full_loop_accumulate_tend_consume(tmp_path, mock_llm_client, monk
     env_tmpl = Envelope(
         generated_by="distilled",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan_tmpl = ActionPlan(
         source="template",

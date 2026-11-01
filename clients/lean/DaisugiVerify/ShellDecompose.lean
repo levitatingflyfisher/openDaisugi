@@ -32,7 +32,7 @@ C-style `for ((…))`, and a heredoc that is not the last token of a piped
 command (`cmd <<EOF 2>&1 | tail` — a tree-sitter parse error the oracle
 raises and `mvdan/sh` rejects too, so this fails closed to conform). See
 `docs/client-diversity.md` for the campaign that grew this subset from
-8,882 to 11,097 / 11,450 behind a fail-open-proof gate.
+8,882 to 11,097 / 11,450 behind a fail-open-proof check.
 -/
 import DaisugiVerify.Basic
 

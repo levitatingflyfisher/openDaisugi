@@ -52,16 +52,16 @@ func TestHarnessesAndVerbsAreTheAgreedLists(t *testing.T) {
 	if strings.Join(Harnesses, " ") != "claude codex pi sprig opencode" {
 		t.Fatalf("Harnesses = %v", Harnesses)
 	}
-	if strings.Join(Verbs, " ") != "list read close open swap rotate reset lock unlock layout tree zoom foreman" {
+	if strings.Join(Verbs, " ") != "list read close open swap rotate reset lock unlock layout tree zoom steward" {
 		t.Fatalf("Verbs = %v", Verbs)
 	}
 }
 
-func TestOpenPeekReadsTheAskAndTheGate(t *testing.T) {
+func TestOpenPeekReadsTheAskAndTheWarden(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "a", Label: "x", State: "blocked"}}}
 	m.OpenPeek("line1\nline2", map[string]any{
 		"summary": "push --force", "tool": "git",
-		"gate": map[string]any{"verdict": "deny", "rule": float64(3)},
+		"warden": map[string]any{"verdict": "deny", "rule": float64(3)},
 	})
 	p := m.Peek
 	if p == nil {
@@ -73,19 +73,19 @@ func TestOpenPeekReadsTheAskAndTheGate(t *testing.T) {
 	if p.Ask != "git: push --force" || p.Tool != "git" {
 		t.Fatalf("ask = %+v", p)
 	}
-	if !p.HasGate || p.Verdict != "deny" || p.Rule != 3 {
-		t.Fatalf("gate = %+v", p)
+	if !p.HasWarden || p.Verdict != "deny" || p.Rule != 3 {
+		t.Fatalf("warden = %+v", p)
 	}
 }
 
-func TestOpenPeekWithNoAskOrGate(t *testing.T) {
+func TestOpenPeekWithNoAskOrWarden(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "a", State: "working"}}}
 	m.OpenPeek("text", nil)
-	if m.Peek == nil || m.Peek.HasGate || m.Peek.Ask != "" {
+	if m.Peek == nil || m.Peek.HasWarden || m.Peek.Ask != "" {
 		t.Fatalf("peek = %+v", m.Peek)
 	}
 	m.OpenPeek("text", map[string]any{"summary": "ls"})
-	if m.Peek.HasGate || m.Peek.Ask != "ls" {
+	if m.Peek.HasWarden || m.Peek.Ask != "ls" {
 		t.Fatalf("peek = %+v", m.Peek)
 	}
 }

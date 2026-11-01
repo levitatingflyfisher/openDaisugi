@@ -15,7 +15,7 @@ plans authored by LLMs at runtime", and a plan is the thing being verified:
 2. **Policy (optional)** — when an ``envelope`` is supplied, ``verify`` proves the
    whole plan is admissible; an out-of-policy decomposition raises rather than
    flowing into execution. The Supervisor re-verifies each step at run time too;
-   this is the earlier, cheaper gate that also lets the caller retry.
+   this is the earlier, cheaper warden that also lets the caller retry.
 
 The model client is injectable (``client=``) so this is unit-testable
 without a live model, mirroring ``envelope.py``.
@@ -232,7 +232,7 @@ async def decompose(
 
     _log.info(
         "decompose.ok",
-        extra={"steps": len(plan.steps), "gated_by_envelope": envelope is not None},
+        extra={"steps": len(plan.steps), "checked_by_envelope": envelope is not None},
     )
     return plan
 

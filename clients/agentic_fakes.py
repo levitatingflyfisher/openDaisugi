@@ -27,12 +27,12 @@ import garden_cases  # noqa: E402 - sibling module, run as a script
 # The fake `claude` of the agentic suites. A call without --settings is the
 # garden suite's fake. A call with --settings is an agentic step's
 # sub-agent: its key leaves out the settings value (it names a fresh
-# gate root and the gate's own program, which differ run to run and side
+# warden root and the warden's own program, which differ run to run and side
 # to side), its log entry holds the settings with the program and the root
 # written as placeholders, the answer's tool calls are run through the
 # settings' PreToolUse command as the host runs a hook, and the log entry
-# holds each verdict and the envelopes registered in the gate root.
-# The key reads the prompt with the case's HOME and any agentic gate root
+# holds each verdict and the envelopes registered in the warden root.
+# The key reads the prompt with the case's HOME and any agentic warden root
 # masked: a real sprig puts tool results that can name them in its prompt.
 AGENTIC_CLAUDE = r"""#!{PYTHON}
 import hashlib, json, os, re, shlex, subprocess, sys, time
@@ -51,10 +51,10 @@ if "--settings" in argv:
     command = hook["command"]
     words = shlex.split(command[command.index(" --mode ") :])
     root = words[words.index("--root") + 1]
-    norm = lambda s: s.replace(root, "{GATEROOT}")
+    norm = lambda s: s.replace(root, "{WARDENROOT}")
     shown = json.loads(json.dumps(settings))
     h = shown["hooks"]["PreToolUse"][0]["hooks"][0]
-    h["command"] = "<GATE>" + norm(command[command.index(" --mode ") :])
+    h["command"] = "<WARDEN>" + norm(command[command.index(" --mode ") :])
     entry["settings"] = shown
     entry["root_mode"] = oct(os.stat(root).st_mode & 0o777)
     entry["cwd"] = os.getcwd()
@@ -105,11 +105,11 @@ sys.stderr.write(ans.get("stderr", ""))
 sys.exit(ans.get("exit", 0))
 """
 
-# The fake `sprig` (kind A). Its log entry holds the argv with the gate
-# program written <GATE> and the gate root {GATEROOT}, the cwd, the sprig
+# The fake `sprig` (kind A). Its log entry holds the argv with the warden
+# program written <WARDEN> and the warden root {WARDENROOT}, the cwd, the sprig
 # variables of its environment, the prompt on stdin, and the envelopes
-# registered in the gate root. Each scripted tool call is sent to the
-# --gate-cmd words as sprig sends it (sprig's tool name mapped to the
+# registered in the warden root. Each scripted tool call is sent to the
+# --warden-cmd words as sprig sends it (sprig's tool name mapped to the
 # host's, the input, the cwd, and the --session id unless the call names
 # another), and the log entry holds each verdict. Then it prints the
 # scripted --json reply and exits with the scripted code.
@@ -134,13 +134,13 @@ data = sys.stdin.buffer.read()
 entry = {"kind": "sprig"}
 words, root = [], None
 shown = list(argv)
-if "--gate-cmd" in argv:
-    i = argv.index("--gate-cmd")
+if "--warden-cmd" in argv:
+    i = argv.index("--warden-cmd")
     words = argv[i + 1].split()
     if "--root" in words:
         root = words[words.index("--root") + 1]
     m = words.index("--mode") if "--mode" in words else len(words)
-    shown[i + 1] = " ".join(["<GATE>"] + words[m:])
+    shown[i + 1] = " ".join(["<WARDEN>"] + words[m:])
 if "--tree-cmd" in argv:
     i = argv.index("--tree-cmd")
     tw = argv[i + 1].split()
@@ -149,8 +149,8 @@ if "--tree-cmd" in argv:
 data_dir = os.path.dirname(root) if root else None
 def norm(s):
     if root:
-        s = s.replace(root, "{GATEROOT}")
-    if data_dir and os.path.basename(root) == "gate":
+        s = s.replace(root, "{WARDENROOT}")
+    if data_dir and os.path.basename(root) == "warden":
         s = s.replace(data_dir, "{TREEDIR}")
     for k, p in json.loads(os.environ.get("FAKE_PORTS", "{}")).items():
         s = re.sub(r"(?<![0-9])" + p + r"(?![0-9])", k, s)
@@ -203,6 +203,10 @@ if ans is None:
     sys.exit(97)
 if ans.get("sleep"):
     time.sleep(ans["sleep"])
+# A branch edits the files of its own worktree (its cwd) before it answers.
+for rel, body in (ans.get("write") or {}).items():
+    with open(rel, "w", encoding="utf-8") as f:
+        f.write(body)
 sys.stdout.write(ans.get("stdout", ""))
 sys.stderr.write(ans.get("stderr", ""))
 sys.exit(ans.get("exit", 0))
@@ -230,7 +234,7 @@ def make_answer(spec: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
         out = spec["sprig_raw"] if "sprig_raw" in spec else json.dumps(spec["sprig"])
         ans = {"stdout": out, "calls": spec.get("calls", [])}
-        ans.update({k: spec[k] for k in ("stderr", "exit", "sleep") if k in spec})
+        ans.update({k: spec[k] for k in ("stderr", "exit", "sleep", "write") if k in spec})
         return "sprig", ans
     return _generic_make_answer(spec)
 

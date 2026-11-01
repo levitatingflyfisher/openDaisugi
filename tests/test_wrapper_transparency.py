@@ -106,12 +106,16 @@ def test_timeout_allowlisted_payload_passes():
     assert result.ok, result.violations
 
 
-def test_sudo_strict_rejected_surface_passes():
+def test_sudo_strict_rejected_and_surface_cannot_place_its_writes():
     strict = verify(_plan("sudo systemctl restart nginx"), _env(["sudo"], policy="strict"))
     assert not strict.ok
     assert any("opaque" in v.message for v in strict.violations)
+    # Review round 3: sudo is a runner, so its writes are unknown and an
+    # envelope with no file_write scope denies them (surface used to pass).
     surface = verify(_plan("sudo systemctl restart nginx"), _env(["sudo"], policy="surface"))
-    assert surface.ok, surface.violations
+    assert not surface.ok
+    assert all("opaque" not in v.message for v in surface.violations)
+    assert any("cannot be placed" in v.message for v in surface.violations)
 
 
 # --- decomposer: wrappers flow through instead of blanket-rejecting -------------

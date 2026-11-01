@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,6 +29,32 @@ func chatServer(t *testing.T, hits *atomic.Int32, handler func(w http.ResponseWr
 			return
 		}
 		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// tagsAndChatServer is chatServer plus GET /api/tags: it answers 200 with tags
+// when tags is not empty (404 otherwise), and records each chat body.
+func tagsAndChatServer(t *testing.T, hits *atomic.Int32, tags string, bodies *[]string, handler func(w http.ResponseWriter)) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			if tags == "" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(tags))
+		case "/v1/chat/completions":
+			hits.Add(1)
+			b, _ := io.ReadAll(r.Body)
+			*bodies = append(*bodies, string(b))
+			handler(w)
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -164,7 +191,76 @@ func TestQualifyDeclinedAndCutReasons(t *testing.T) {
 		chatReply(w, map[string]any{"role": "assistant", "content": "", "reasoning_content": "x"}, "length")
 	})
 	_, out, _ = setupEnv(t, nil, "--endpoint", srv2.URL+"/v1", "--model", "m")
-	if !strings.Contains(out, "token budget") {
+	if !strings.Contains(out, "First failure (truncated)") {
 		t.Fatalf("%s", out)
+	}
+}
+
+func TestOllamaEndpointGetsReasoningEffortNone(t *testing.T) {
+	var hits atomic.Int32
+	var bodies []string
+	srv := tagsAndChatServer(t, &hits, `{"models":[{"name":"gemma4:latest"}]}`, &bodies, func(w http.ResponseWriter) {
+		chatReply(w, map[string]any{"role": "assistant", "content": validEnvelopeReply}, "stop")
+	})
+	code, out, errb := setupEnv(t, nil, "--endpoint", srv.URL+"/v1", "--model", "gemma4", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb)
+	}
+	if len(bodies) != 3 {
+		t.Fatalf("bodies %d", len(bodies))
+	}
+	for _, b := range bodies {
+		if !strings.HasSuffix(b, `,"reasoning_effort":"none"}`) {
+			t.Fatalf("body %s", b)
+		}
+	}
+	if !strings.Contains(out, `"host_kind": "ollama"`) || !strings.Contains(out, `"runtime": "ollama"`) {
+		t.Fatalf("out %s", out)
+	}
+	if !strings.Contains(errb, "host: ollama, thinking off (reasoning_effort none)") {
+		t.Fatalf("stderr %s", errb)
+	}
+}
+
+func TestOpenAIEndpointSendsNoReasoningEffort(t *testing.T) {
+	var hits atomic.Int32
+	var bodies []string
+	srv := tagsAndChatServer(t, &hits, "", &bodies, func(w http.ResponseWriter) {
+		chatReply(w, map[string]any{"role": "assistant", "content": validEnvelopeReply}, "stop")
+	})
+	_, out, _ := setupEnv(t, nil, "--endpoint", srv.URL+"/v1", "--model", "m")
+	for _, b := range bodies {
+		if strings.Contains(b, "reasoning_effort") {
+			t.Fatalf("body %s", b)
+		}
+	}
+	if !strings.Contains(out, "via llamafile") || !strings.Contains(out, "Host kind: openai\n") {
+		t.Fatalf("out %s", out)
+	}
+}
+
+func TestTruncatedProbeIsNamed(t *testing.T) {
+	var hits atomic.Int32
+	var bodies []string
+	srv := tagsAndChatServer(t, &hits, "", &bodies, func(w http.ResponseWriter) {
+		chatReply(w, map[string]any{"role": "assistant", "content": ""}, "length")
+	})
+	_, out, _ := setupEnv(t, nil, "--endpoint", srv.URL+"/v1", "--model", "m")
+	for _, want := range []string{"First failure (truncated)", "Every failed probe was truncated"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in %s", want, out)
+		}
+	}
+	if strings.Contains(out, "Not promoted") {
+		t.Fatalf("out %s", out)
+	}
+}
+
+func TestKindAnthropicDoesNotApplyToEndpoint(t *testing.T) {
+	var hits atomic.Int32
+	srv := chatServer(t, &hits, func(w http.ResponseWriter) {})
+	code, _, errb := setupEnv(t, nil, "--endpoint", srv.URL+"/v1", "--model", "m", "--kind", "anthropic")
+	if code != 2 || hits.Load() != 0 || !strings.Contains(errb, "--kind 'anthropic' does not apply to --endpoint") {
+		t.Fatalf("exit %d hits %d: %s", code, hits.Load(), errb)
 	}
 }

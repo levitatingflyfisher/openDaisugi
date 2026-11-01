@@ -61,7 +61,9 @@ fn signal_name(sig: i32) -> String {
 /// carries git's stderr.
 fn git(dir: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(dir).args(args).stdin(Stdio::null());
+    // No hook and no fsmonitor command of a repo an agent may have written
+    // runs as the owner (review fix 3, H3).
+    cmd.args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]).arg("-C").arg(dir).args(args).stdin(Stdio::null());
     // Under test, git reads no system or user config and no inherited
     // GIT_* variable. This is set on the command, never on the process.
     #[cfg(test)]
@@ -340,4 +342,33 @@ mod tests {
         assert!(status(&repo).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
+}
+
+/// Whether p is a worktree git knows for repo.
+fn registered(repo: &str, p: &str) -> bool {
+    let Ok(out) = git(repo, &["worktree", "list", "--porcelain"]) else { return false };
+    let want = crate::sys::clean(p);
+    out.lines().filter_map(|l| l.strip_prefix("worktree ")).any(|l| crate::sys::clean(l) == want)
+}
+
+/// The worktree for name at path(repo, name), made when missing and used
+/// again when git knows it (the Go Ensure). A branch left from an earlier
+/// worktree is checked out again; a dir git does not know is an error.
+pub fn ensure(repo: &str, name: &str) -> Result<String, String> {
+    valid_name(name)?;
+    let p = path(repo, name);
+    if registered(repo, &p) {
+        if std::path::Path::new(&p).is_dir() {
+            return Ok(p);
+        }
+        git(repo, &["worktree", "prune"])?;
+    }
+    if std::fs::symlink_metadata(&p).is_ok() {
+        return Err(format!("{p} exists and is not a worktree of {repo}; move it aside"));
+    }
+    if git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{name}")]).is_ok() {
+        git(repo, &["worktree", "add", &p, name])?;
+        return Ok(p);
+    }
+    add(repo, name)
 }

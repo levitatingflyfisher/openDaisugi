@@ -16,7 +16,7 @@ from opendaisugi.cockpit import (
     is_destructive_action,
     load_alert_policy,
 )
-from opendaisugi.gateway_journal import GatewayJournal, GatewayTurnRecord
+from opendaisugi.router_journal import RouterJournal, RouterTurnRecord
 from opendaisugi.session_tree import SessionTree
 from tests.test_claude_transcript import ROWS
 
@@ -72,8 +72,8 @@ def _sprig_session(data_dir: Path, sid: str, *, last_ts: float) -> None:
     )
 
 
-def _gateway_record(**overrides) -> GatewayTurnRecord:
-    # ``estimated=False`` on purpose: GatewayTurnRecord.estimated is a *routing-saving*
+def _router_record(**overrides) -> RouterTurnRecord:
+    # ``estimated=False`` on purpose: RouterTurnRecord.estimated is a *routing-saving*
     # flag (whether the frontier-cost counterfactual was measured or guessed), not the
     # cockpit's honesty flag. cockpit.HeaderState.cache_is_estimate must come from WHICH
     # STORE the cache number was read from (a live transcript vs. this blended journal),
@@ -98,7 +98,7 @@ def _gateway_record(**overrides) -> GatewayTurnRecord:
         cache_creation_tokens=0,
     )
     base.update(overrides)
-    return GatewayTurnRecord(**base)
+    return RouterTurnRecord(**base)
 
 
 def _row(
@@ -132,7 +132,7 @@ def _row(
 def test_groups_and_order(tmp_path: Path):
     _claude_session(tmp_path, "needs", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="t1",
         question={"sessionId": "needs", "toolName": "Bash"},
         deadline=NOW + 60,
@@ -168,7 +168,7 @@ def test_row_fields_for_a_sprig_session_use_tree_usage(tmp_path: Path):
 def test_pending_ask_is_attached_to_its_row(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="t1",
         question={"sessionId": "s1", "toolName": "Bash"},
         deadline=NOW + 60,
@@ -185,7 +185,7 @@ def test_an_anonymous_ask_is_not_cross_attached_to_every_id_less_session(tmp_pat
     _sprig_session(tmp_path, "e1", last_ts=NOW - 1)
     _sprig_session(tmp_path, "e2", last_ts=NOW - 2)
     ask.post_ask(
-        tmp_path / "gate", tool_use_id="tX", question={"toolName": "Bash"}, deadline=NOW + 60
+        tmp_path / "warden", tool_use_id="tX", question={"toolName": "Bash"}, deadline=NOW + 60
     )
     roster = build_roster(tmp_path, now=NOW)
     assert {r.session_id for r in roster.rows} == {"e1", "e2"}
@@ -215,7 +215,7 @@ def _write_hook(settings_path: Path, mode: str) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": f"py -m opendaisugi.gate_client --mode {mode}",
+                                    "command": f"py -m opendaisugi.warden_client --mode {mode}",
                                 }
                             ]
                         }
@@ -231,19 +231,19 @@ def test_header_mode_sources(tmp_path: Path):
     proj = tmp_path / "proj"
     (home / ".claude").mkdir(parents=True)
     h = header_state(tmp_path, home=home, cwd=proj)
-    assert h.gate_mode == "AUDIT" and h.gate_mode_source == "config"
+    assert h.warden_mode == "AUDIT" and h.warden_mode_source == "config"
     _write_hook(home / ".claude" / "settings.json", "enforce")
     h = header_state(tmp_path, home=home, cwd=proj)
     # A machine-global-only hook reads as "global", not a bare "hook" — the
     # header must be able to say WHICH hook is governing, not just that one is.
-    assert h.gate_mode == "ENFORCE" and h.gate_mode_source == "global"
-    (tmp_path / "gate").mkdir(exist_ok=True)
-    (tmp_path / "gate" / "DISARMED").write_text("")
+    assert h.warden_mode == "ENFORCE" and h.warden_mode_source == "global"
+    (tmp_path / "warden").mkdir(exist_ok=True)
+    (tmp_path / "warden" / "DISARMED").write_text("")
     disarmed = header_state(tmp_path, home=home, cwd=proj)
-    assert disarmed.gate_mode == "DISARMED"
+    assert disarmed.warden_mode == "DISARMED"
     # The DISARMED marker overrides hook/config, so the source must say so too —
     # otherwise the header would render "DISARMED (hook)", which is a lie about why.
-    assert disarmed.gate_mode_source == "marker"
+    assert disarmed.warden_mode_source == "marker"
 
 
 def test_header_shows_a_cwd_enforce_hook_with_no_global_hook(tmp_path: Path):
@@ -254,8 +254,8 @@ def test_header_shows_a_cwd_enforce_hook_with_no_global_hook(tmp_path: Path):
     proj = tmp_path / "proj"
     _write_hook(proj / ".claude" / "settings.json", "enforce")
     h = header_state(tmp_path, home=home, cwd=proj)
-    assert h.gate_mode == "ENFORCE"
-    assert h.gate_mode_source == "project"
+    assert h.warden_mode == "ENFORCE"
+    assert h.warden_mode_source == "project"
 
 
 def test_header_reports_project_plus_global_and_the_stricter_mode(tmp_path: Path):
@@ -264,8 +264,8 @@ def test_header_reports_project_plus_global_and_the_stricter_mode(tmp_path: Path
     _write_hook(home / ".claude" / "settings.json", "audit")
     _write_hook(proj / ".claude" / "settings.json", "enforce")
     h = header_state(tmp_path, home=home, cwd=proj)
-    assert h.gate_mode == "ENFORCE"
-    assert h.gate_mode_source == "project+global"
+    assert h.warden_mode == "ENFORCE"
+    assert h.warden_mode_source == "project+global"
 
 
 def test_header_survives_a_deleted_cwd(tmp_path: Path, monkeypatch):
@@ -277,10 +277,10 @@ def test_header_survives_a_deleted_cwd(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("pathlib.Path.cwd", _raise)
     h = header_state(tmp_path, home=tmp_path)
-    assert h.gate_mode == "AUDIT" and h.gate_mode_source == "config"
+    assert h.warden_mode == "AUDIT" and h.warden_mode_source == "config"
 
 
-def test_header_cache_from_live_transcripts_else_gateway(tmp_path: Path):
+def test_header_cache_from_live_transcripts_else_router(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="allow")
     h = header_state(tmp_path, home=tmp_path, roster=build_roster(tmp_path, now=NOW))
     assert h.cache_source == "transcripts" and round(h.cache_hit_rate, 2) == round(
@@ -293,15 +293,15 @@ def test_header_cache_from_live_transcripts_else_gateway(tmp_path: Path):
     assert empty.cache_is_estimate is False  # nothing to estimate
 
 
-def test_header_marks_a_gateway_derived_cache_rate_as_an_estimate(tmp_path: Path):
+def test_header_marks_a_router_derived_cache_rate_as_an_estimate(tmp_path: Path):
     # S5 (honesty correction): estimated cache numbers must carry a `?` flag in
     # HeaderState — the header must distinguish a live cache-hit-rate (measured
-    # from this run's own transcripts) from a gateway-derived estimate (blended
+    # from this run's own transcripts) from a router-derived estimate (blended
     # across whatever the journal happened to record).
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
-    journal.append(_gateway_record())
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
+    journal.append(_router_record())
     h = header_state(tmp_path, home=tmp_path)
-    assert h.cache_source == "gateway"
+    assert h.cache_source == "router"
     assert h.cache_hit_rate is not None
     assert h.cache_is_estimate is True
 
@@ -317,7 +317,7 @@ def test_alerts_count_by_class(tmp_path: Path):
     _claude_session(tmp_path, "s1", last_ts=NOW - 5, tool_use_id="t1", decision="deny")
     _claude_session(tmp_path, "s2", last_ts=NOW - 6, tool_use_id="t2", decision="deny")
     ask.post_ask(
-        tmp_path / "gate", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60
+        tmp_path / "warden", tool_use_id="t2", question={"sessionId": "s2"}, deadline=NOW + 60
     )
     alerts = alerts_for(build_roster(tmp_path, now=NOW))
     by_class = {a.klass: a for a in alerts}

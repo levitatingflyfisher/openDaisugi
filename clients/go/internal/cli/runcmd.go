@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
@@ -19,6 +18,7 @@ import (
 	"daisugi-verify/internal/pyyaml"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // clickPath is click.Path(exists=True, readable=True): the usage error
@@ -162,7 +162,7 @@ func (e *Env) runCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	env, perr, refusal := loadModelYAML(envPath, "Envelope", pmodel.Envelope)
 	if refusal != "" {
 		return e.refuse(cmd, fmt.Errorf("%s", refusal))

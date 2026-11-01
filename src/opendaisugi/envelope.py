@@ -41,7 +41,7 @@ from opendaisugi.z3_checks import check_envelope_self_consistency
 
 _log = logging.getLogger("opendaisugi.envelope")
 
-ENVELOPE_PROMPT_VERSION = "2026-04-18"  # bump: predicate-algebra DSL exposed in prompt
+ENVELOPE_PROMPT_VERSION = "2026-11-01"  # bump: mcp_rules named in the calibration guidance
 
 # Pydantic-generated schema, embedded verbatim so the model sees the exact
 # structure it must produce. Built at import time — cheap.
@@ -104,6 +104,9 @@ Produce a single JSON object matching this schema exactly:
 - Default to network=False and shell=False unless the task clearly needs them.
 - Reference only paths the task actually mentions — never invent directories.
 - Shell allowlists should contain the smallest set of commands that suffice.
+- To allow an MCP tool only with certain arguments, add permissions.mcp_rules:
+  {{"tool": "server/tool", "args": [predicates over the arguments]}}. The op
+  path_in places a path argument inside file_read or file_write.
 
 # Few-Shot Examples
 
@@ -212,8 +215,44 @@ Do NOT produce envelopes that:
     checkable AND useful — empty permissions for a task that needs I/O is a bug);
 (c) reference paths or commands the task did not mention;
 (d) include aspirational invariants without enforcement hooks (e.g. "no bugs",
-    "code is correct") — invariants must be checkable at runtime.
+    "code is correct") — invariants must be checkable at runtime. An invariant
+    with no `expr` whose type is not a known word or a recognized type cannot
+    be checked: it is demoted to documentation (enforce=false) and named in a
+    warning.
 """
+
+
+def demote_unchecked(envelope: Envelope) -> tuple[Envelope, list[str]]:
+    """Turn each enforced item nothing can check into documentation (SG-10).
+
+    A model-written envelope must never carry protection that is not there.
+    Returns the envelope with ``enforce=False`` on each such item, and one
+    warning per item."""
+    from opendaisugi.models import unchecked_items
+
+    items = unchecked_items(envelope)
+    if not items:
+        return envelope, []
+    invariants = list(envelope.invariants)
+    postconditions = list(envelope.postconditions)
+    warnings: list[str] = []
+    for kind, index, type_name in items:
+        if kind == "invariant":
+            invariants[index] = invariants[index].model_copy(update={"enforce": False})
+        else:
+            postconditions[index] = postconditions[index].model_copy(update={"enforce": False})
+        warnings.append(f"{kind} '{type_name}' is documentation only: nothing can check it")
+    demoted = envelope.model_copy(
+        update={"invariants": invariants, "postconditions": postconditions}
+    )
+    return demoted, warnings
+
+
+def _demote_and_warn(envelope: Envelope) -> Envelope:
+    demoted, warnings = demote_unchecked(envelope)
+    for w in warnings:
+        _log.warning("generated envelope: %s", w)
+    return demoted
 
 
 def _validate_task_length(
@@ -418,7 +457,7 @@ async def generate_envelope(
 
     # v0.4.0: Tier-1 local-model slot. Runs between the pathway check and the
     # Tier-2 ladder. Returning None or raising means "decline, fall through."
-    # The returned envelope goes through the same Z3 self-consistency gate as
+    # The returned envelope goes through the same Z3 self-consistency warden as
     # Tier-2 output; inconsistent envelopes are treated as a decline.
     if tier1 is not None and stakes != "high":
         first_rung = model if isinstance(model, str) else (model[0] if model else "")
@@ -468,6 +507,7 @@ async def generate_envelope(
                     t1_violations[0].message,
                 )
             else:
+                tier1_env = _demote_and_warn(tier1_env)
                 tier1_env.generated_by = f"tier1:{tier1.name}"
                 if parent is not None:
                     tier1_env.parent_envelope = parent.id
@@ -563,6 +603,8 @@ async def generate_envelope(
                 f"Model {rung!r} produced self-inconsistent envelope: {violations[0].message}"
             )
             continue
+
+        env = _demote_and_warn(env)
 
         # Rung succeeded — run inheritance check (not rung-specific; always).
         if parent is not None:

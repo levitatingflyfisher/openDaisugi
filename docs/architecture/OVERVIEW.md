@@ -20,11 +20,11 @@ envelope says what is allowed; a proof checks each action against the envelope.
 
 | Part | What it is | Language today | Rule |
 |---|---|---|---|
-| **daisugi** | The gate (allow, deny or ask for one call), the verifier, the journal and the garden. Also the gateway and the router, which save tokens. | Python (the oracle), Go, Rust | daisugi stays importable alone. It never imports the floor or a loop (`tests/test_layer_boundary.py`). |
-| **coppice** | The floor: panes, the agents in them and their state, in a terminal, a browser or a phone. | Go | The floor supervises; it does not decide. State comes from the gate first, the screen second. |
+| **daisugi** | The warden (allow, deny or ask for one call), the verifier, the journal and the garden. Also the router and the router, which save tokens. | Python (the oracle), Go, Rust | daisugi stays importable alone. It never imports the floor or a loop (`tests/test_layer_boundary.py`). |
+| **coppice** | The floor: panes, the agents in them and their state, in a terminal, a browser or a phone. | Go | The floor supervises; it does not decide. State comes from the warden first, the screen second. |
 | **the loop** | Whatever harness runs in a pane: Claude Code, Codex, pi, OpenCode, or sprig, our own. | sprig is Go | sprig and weave are on hold with the owner. grove is retired: coppice replaced it. |
 
-"The gate" means only the allow-and-deny part. daisugi has three modes, shown on screen in
+"The warden" means only the allow-and-deny part. daisugi has three modes, shown on screen in
 words: **enforcing** (checks, blocks, journals), **watching** (checks and journals, never
 blocks; the config value is `audit`) and **off**.
 
@@ -56,15 +56,15 @@ boundary where an unknown or failed answer means **deny**.
       │ each     │ (base_url)                  │
       │ tool     v                             │
       │ call  ┌────────────────────────────┐   │
-      │       │ daisugi gateway            │   │
+      │       │ daisugi router serve       │   │
       │       │ 127.0.0.1:8787 by default  │──────> model provider
-      │       │ rules router, meter,       │   │
+      │       │ rules routing mode, meter, │   │
       │       │ journal; Switchyard child  │   │
       │       └────────────────────────────┘   │
       v                                        │
    ┌───────────────────────────────────────┐   │
-   │ the gate hook, one process per call:  │   │
-   │ `daisugi gate check --format F ...`   │   │
+   │ the warden hook, one process per call │   │
+   │ `daisugi warden check --format F ...` │   │
    │ stdin: the call as JSON               │───┘ state report
    │ out: exit code and stdout in F's      │     (verdict, clause, tokens)
    │ contract; exit 2 = deny               │
@@ -75,12 +75,12 @@ boundary where an unknown or failed answer means **deny**.
                   v
    ┌───────────────────────────────────────┐
    │ files on disk (~/.opendaisugi)        │
-   │ gate root: envelopes/<id>.json,       │
+   │ warden root: envelopes/<id>.json,     │
    │ DISARMED, config.yaml, audit log,     │
    │ asks; journal; pathways.db; captures  │
    └───────────────────────────────────────┘
 
-   pi and OpenCode extensions ── unix socket gate.sock ──> resident gate
+   pi and OpenCode extensions ── unix socket warden.sock ──> resident warden
                                                            (Python only today)
    any MCP harness ── stdio ──> daisugi MCP server (Python only today)
 ```
@@ -89,24 +89,24 @@ boundary where an unknown or failed answer means **deny**.
 
 | Boundary | Who is on each side | The contract | How it fails |
 |---|---|---|---|
-| **The gate hook** | A harness, and a `daisugi gate check` process it starts for each tool call | The call as JSON on stdin. The answer is the format's own contract: for `claude`, exit 2 denies and stdout JSON carries `updatedInput` for an operator edit; `hermes` and `openclaw` get a block body. Formats: `claude` (also used for Codex), `hermes`, `openclaw`, and exit-code formats for pi and OpenCode. | Every failure path denies: unknown tool, bad input, internal error, a slow verifier. The gate owns a deadline inside the host's hook timeout, because a host timeout fails open. In Go and Rust a child decides; the parent takes a verdict only from a complete frame on fd 3 with its nonce, and a crash, a signal or a hang becomes the deny contract. stdin is read up to 16 MiB. |
-| **The resident gate** | The pi and OpenCode extensions, and `daisugi gate serve` | A unix socket `gate.sock` owned by this uid, mode 0600. A reply is `{"v":1,"stdout":...,"stderr":...,"exit_code":...}`. The caller's pane comes from `SO_PEERCRED`, never from the request body. | The extension denies when the socket is missing or slow (5 s). Python, Go and Rust each serve it (`daisugi gate serve`, G2-1 in clients/ADJUDICATIONS.md); with no server running, pi and OpenCode deny every call. |
-| **The gateway** | A harness's model client (through `ANTHROPIC_BASE_URL`, Codex's provider, OpenClaw's provider), `daisugi gateway`, and the upstream model | Anthropic Messages and OpenAI Chat Completions, buffered and streamed, on loopback. It routes whole turns. Routing changes only the body's `model` field (`gateway_pipeline.py`); the gateway never adds, drops or compresses content. Switchyard runs as a managed child on 127.0.0.1. `POST /_reload` works from loopback only. | A body whose shape the router cannot read is forwarded untouched and not journaled, as the oracle does. The upstream goes through the proxy the environment names. |
-| **The coppice socket** | The operator's client, panes, plugins, and the gate hook reporting state | One unix socket, mode 0600 in a 0700 directory; the peer uid must be the server's. Native framing or JSON-RPC 2.0. Roles: operator, pane, plugin. Only the operator may allow an ask. The protocol is proved by the corpus in `harness/coppice/testdata/protocol`. | A foreign uid gets one `unauthorized` line and the connection closes. There is no token and no TLS on the socket: the uid check is the whole of the auth. Linux only. |
-| **coppice web** | A browser or phone, and the coppice server | `coppice web` serves on loopback and opens the browser signed in. `coppice web serve` serves the phone with TLS from `tailscale cert`, a local CA, or files, and a bearer token. ntfy push on the change to blocked. | The web token, the CA keys and the voice token live in the coppice data directory, which the gate guards from agents even under a custom `--data-dir`. |
+| **The warden hook** | A harness, and a `daisugi warden check` process it starts for each tool call | The call as JSON on stdin. The answer is the format's own contract: for `claude`, exit 2 denies and stdout JSON carries `updatedInput` for an operator edit; `hermes` and `openclaw` get a block body. Formats: `claude` (also used for Codex), `hermes`, `openclaw`, and exit-code formats for pi and OpenCode. | Every failure path denies: unknown tool, bad input, internal error, a slow verifier. The warden owns a deadline inside the host's hook timeout, because a host timeout fails open. In Go and Rust a child decides; the parent takes a verdict only from a complete frame on fd 3 with its nonce, and a crash, a signal or a hang becomes the deny contract. stdin is read up to 16 MiB. |
+| **The resident warden** | The pi and OpenCode extensions, and `daisugi warden serve` | A unix socket `warden.sock` owned by this uid, mode 0600. A reply is `{"v":1,"stdout":...,"stderr":...,"exit_code":...}`. The caller's pane comes from `SO_PEERCRED`, never from the request body. | The extension denies when the socket is missing or slow (5 s). Python, Go and Rust each serve it (`daisugi warden serve`, G2-1 in clients/ADJUDICATIONS.md); with no server running, pi and OpenCode deny every call. |
+| **The router** | A harness's model client (through `ANTHROPIC_BASE_URL`, Codex's provider, OpenClaw's provider), `daisugi router serve`, and the upstream model | Anthropic Messages and OpenAI Chat Completions, buffered and streamed, on loopback. It routes whole turns. Routing changes only the body's `model` field (`router_pipeline.py`); the router never adds, drops or compresses content. Switchyard runs as a managed child on 127.0.0.1. `POST /_reload` works from loopback only. | A body whose shape the router cannot read is forwarded untouched and not journaled, as the oracle does. The upstream goes through the proxy the environment names. |
+| **The coppice socket** | The operator's client, panes, plugins, and the warden hook reporting state | One unix socket, mode 0600 in a 0700 directory; the peer uid must be the server's. Native framing or JSON-RPC 2.0. Roles: operator, pane, plugin. Only the operator may allow an ask. The protocol is proved by the corpus in `harness/coppice/testdata/protocol`. | A foreign uid gets one `unauthorized` line and the connection closes. There is no token and no TLS on the socket: the uid check is the whole of the auth. Linux only. |
+| **coppice web** | A browser or phone, and the coppice server | `coppice web` serves on loopback and opens the browser signed in. `coppice web serve` serves the phone with TLS from `tailscale cert`, a local CA, or files, and a bearer token. ntfy push on the change to blocked. | The web token, the CA keys and the voice token live in the coppice data directory, which the warden guards from agents even under a custom `--data-dir`. |
 | **Voice** | coppice and `daisugi voice serve` | A loopback port coppice picks, and a token in `<data dir>/voice/token`. Transcribed text lands in the input line without Enter. | Needs Python's voice extra. When voice cannot run, the floor says why and offers the fix. |
 
 ## The binaries and what each holds
 
 | Binary | Language | What it holds |
 |---|---|---|
-| `daisugi` (Python CLI, package `opendaisugi`) | Python | Everything: the oracle. Also the parts no port has yet: model-written envelopes, the orchestrator, the MCP server, the dashboard, the resident gate, voice, deeds, batch, strata, signing. |
-| `daisugi` | Go | The gate commands and `install --gate`, `pathways`, the garden (`gardener`, `tend`, `hook auto-tend`, `distill-repeats`), the gateway and router commands, `status`, `config`, `start --no-ui`, `journal`. No Python at run time. Links only glibc. |
+| `daisugi` (Python CLI, package `opendaisugi`) | Python | Everything: the oracle. Also the parts no port has yet: model-written envelopes, the orchestrator, the MCP server, the dashboard, the resident warden, voice, deeds, batch, strata, signing. |
+| `daisugi` | Go | The warden commands and `install`, `pathways`, the garden (`gardener`, `tend`, `hook auto-tend`, `distill-repeats`), the router commands, `status`, `config`, `start --no-ui`, `journal`. No Python at run time. Links only glibc. |
 | `daisugi` | Rust | The same as the Go binary except `status`, `config`, `start` and `journal`. Links libc, libm and libgcc_s. |
-| `daisugi-gate` | Go, Rust | The gate hook alone. About 32 MB in each language. |
+| `daisugi-warden` | Go, Rust | The warden hook alone. About 32 MB in each language. |
 | `conform` | Go, Rust | The verifier conformance client ([conformance.md](../spec/conformance.md)). TypeScript and Lean 4 clients also exist (`clients/ts`, `clients/lean`). |
 | `coppice` | Go | The floor: client and server in one binary, the TUI, the web and phone client. Links libghostty-vt through cgo. |
-| `sprig`, `sprig-hook`, `sprig-mcp`, `weave` | Go | The loop and its early relatives. On hold. The gate is off unless `--gate` is given. |
+| `sprig`, `sprig-hook`, `sprig-mcp`, `weave` | Go | The loop and its early relatives. On hold. The warden is off unless `--warden` is given. |
 
 The Go and Rust `daisugi` link Z3 5.1.0, tree-sitter and tree-sitter-bash statically, from
 pinned sources. Go builds them with `clients/go/scripts/native.sh`. Rust builds Z3 through the
@@ -124,16 +124,16 @@ boundaries.
 1. **Golden cases, synthetic and committed.** For each part there is a generator
    (`clients/<kind>_cases.py`) that runs the Python oracle and writes cases to
    `clients/fixtures/<kind>/`: a hook call and every stream, log and file after it; a CLI
-   command and the tree after it; a gateway turn against a fake upstream and the bytes the
-   upstream got. Cases use fake paths, so they can be published. At HEAD: 1,310 gate, 472
-   CLI, 158 pathway CLI plus 24 find and 577 verify-message, 215 garden, 223 gateway.
+   command and the tree after it; a router turn against a fake upstream and the bytes the
+   upstream got. Cases use fake paths, so they can be published. At HEAD: 1,310 warden, 472
+   CLI, 158 pathway CLI plus 24 find and 577 verify-message, 215 garden, 223 router.
    These counts come from compares run before the Python security fixes of 2026-09-26 (f9e202e7, 92f87edf, 31871c4d, 6a0ad499, 1fad0036). Until the Go and Rust mirrors land, a live `--oracle` compare will show the ports behind on those rules.
 2. **Compare structurally.** `clients/<kind>_compare.py --binary B` runs a port over every
    case. Verdicts and files must match; wording may differ only where a ruling says so.
    `--oracle` reruns the oracle live to show the fixture is current. A guard checks that
    Python can read every journal and store the port wrote.
 3. **Seeded fuzz.** Shell commands under three envelopes, heredocs, multi-line and non-ASCII
-   text, envelopes with predicates and robotics bounds, pathway stores, gateway turn
+   text, envelopes with predicates and robotics bounds, pathway stores, router turn
    sequences. Each seed is replayable.
 4. **The frozen local corpus.** About 11,450 verifier cases from the owner's real
    transcripts. It holds real local paths, so it is never published. It checks the verifier
@@ -143,8 +143,8 @@ boundaries.
    denies. Every disagreement is a finding in the port or in the oracle, and gets a ruling in
    [`clients/ADJUDICATIONS.md`](../../clients/ADJUDICATIONS.md). Many oracle fail-opens were
    found this way and fixed in Python first.
-6. **Speed budgets.** A gate check under 10 ms at p50 (Go 8.8 ms, Rust 6.1 ms; Python about
-   430 ms), `--help` under 20 ms, under 5 ms added per gateway turn.
+6. **Speed budgets.** A warden check under 10 ms at p50 (Go 8.8 ms, Rust 6.1 ms; Python about
+   430 ms), `--help` under 20 ms, under 5 ms added per router turn.
 
 What this method proves: the ports **match** the oracle. What it does not prove: that the
 oracle's answers are **useful** on real work. That needs real traffic.
@@ -177,7 +177,7 @@ Two facts to hold onto:
    `envelope_subsumes(outer, inner)`, the proof that a delegation is safe. See
    [ADR-0003](../adr/0003-envelope-as-contract.md).
 
-The live gate is the same check on a one-step record: the hook turns a tool call into a
+The live warden is the same check on a one-step record: the hook turns a tool call into a
 record (`hook.py`), and `verify` checks it against the registered envelope: the `default`
 envelope, or the envelope of the session the hook is pinned to. A session id in the payload
 never selects an envelope (Python today; Go and Rust in progress).
@@ -334,12 +334,12 @@ flowchart TB
 |---|---|
 | **Data model** | `models.py`, `permissions.py`, `_invariant_types.py`, `predicate.py`, `aliases.py`, `system_aliases.py`, `step_vocabulary.py` |
 | **Verification core** | `verify.py`, `subsumption.py`, `z3_checks.py`, `predicate_z3.py`, `regex_to_z3.py`, `dag.py`, `vacuity.py`, `inheritance.py`, `stage2.py`, `contracts.py`, `interpreter_parse.py` |
-| **The gate** | `gate.py`, `hook.py`, `gate_server.py`, `gate_client.py`, `effects.py`, `floor_config.py`, `shell_decompose.py`, `ask.py`, `rank_rule.py` |
+| **The warden** | `warden.py`, `hook.py`, `warden_server.py`, `warden_client.py`, `effects.py`, `floor_config.py`, `shell_decompose.py`, `ask.py`, `rank_rule.py` |
 | **Execution** | `supervisor.py`, `executor.py`, `delegating_executor.py`, `orchestration_executors.py`, `executor_mujoco.py`, `vla_executor.py`, `approval.py`, `fallback.py`, `run_session.py`, `refinement.py`, `deeds.py`, `batch.py` |
 | **Envelope generation** | `envelope.py`, `envelope_cache.py`, `tier1.py`, `thinking.py`, `defaults.py` |
 | **Journal and distillation** | `journal.py`, `ingest.py`, `parsers/`, `distiller.py`, `gardener/`, `pathway*.py`, `git_pathway_store.py`, `portability.py`, `signing.py`, `accounting.py`, `strata.py` |
 | **Orchestration (forward)** | `orchestrator.py`, `decomposer.py`, `synthesizer.py`, `model_sizer.py`, `budget.py`, `routing.py` |
-| **Token saving** | `gateway.py`, `gateway_asgi.py`, `gateway_pipeline.py`, `gateway_journal.py`, `gateway_answers.py`, `gateway_recall.py`, `router_switchyard.py` |
+| **Token saving** | `router.py`, `router_asgi.py`, `router_pipeline.py`, `router_journal.py`, `router_answers.py`, `router_recall.py`, `routing_switchyard.py` |
 | **Swarm and robots** | `swarm.py` |
 | **Model backends** | `llm.py`, `claude_code_llm.py`, `llm_check.py` |
 | **Local models and hardware** | `hardware.py`, `local_setup.py`, `model_registry.py`, `onboarding.py` |

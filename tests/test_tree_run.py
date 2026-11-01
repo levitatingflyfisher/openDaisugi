@@ -30,7 +30,7 @@ def _env(id_: str = "env_00000001", **perm) -> Envelope:
 
 
 def _root(tmp_path, tokens=None, turns=None) -> tuple[Path, Path]:
-    d, g = tmp_path / "d", tmp_path / "d" / "gate"
+    d, g = tmp_path / "d", tmp_path / "d" / "warden"
     tree.make_root(d, g, _env("env_root"), "top", tokens=tokens, turns=turns)
     return d, g
 
@@ -273,12 +273,12 @@ def test_executor_runs_in_tree_mode(tmp_path, fake):
     ex = AgenticExecutor(envelope=_env(), runtime="sprig", sprig_binary=os.environ["DAISUGI_SPRIG"])
     res = ex.run(_step(ws), timeout_s=30, max_output_bytes=10_000)
     assert res.rc == 0, res.stdout
-    gate_root = ex.last_gate_root
-    assert gate_root.name == "gate" and gate_root.parent.name.startswith("daisugi-agentic-")
+    warden_root = ex.last_warden_root
+    assert warden_root.name == "warden" and warden_root.parent.name.startswith("daisugi-agentic-")
     argv = calls()[0]["argv"]
     assert _flag(argv, "--session") == "agentic-a1"
-    assert f"--root {gate_root} " in _flag(argv, "--gate-cmd")
-    t = tree.read_tree(gate_root.parent)
+    assert f"--root {warden_root} " in _flag(argv, "--warden-cmd")
+    t = tree.read_tree(warden_root.parent)
     assert t.roots == ["root"] and t.nodes["agentic-a1"].state == "ended"
     assert t.nodes["agentic-a1"].tokens_used == 7
 
@@ -302,23 +302,23 @@ def test_a_failed_child_is_ended_with_no_report(tmp_path, fake):
     ex = AgenticExecutor(envelope=_env(), runtime="sprig", sprig_binary=os.environ["DAISUGI_SPRIG"])
     res = ex.run(_step(ws), timeout_s=30, max_output_bytes=10_000)
     assert res.rc == 1 and "sprig exited with code 1" in res.stdout
-    t = tree.read_tree(ex.last_gate_root.parent)
+    t = tree.read_tree(ex.last_warden_root.parent)
     node = t.nodes["agentic-a1"]
     assert node.state == "ended" and node.tokens_used is None
 
 
-def test_the_gate_denies_an_agent_write_to_the_tree_ledger(tmp_path):
-    from opendaisugi.gate_state_rule import gate_state_hit
+def test_the_warden_denies_an_agent_write_to_the_tree_ledger(tmp_path):
+    from opendaisugi.warden_state_rule import warden_state_hit
 
     d = tmp_path / "daisugi-agentic-x"
-    g = d / "gate"
+    g = d / "warden"
     tree.make_root(d, g, _env("env_root"), "root", tokens=None, turns=None)
     payload = {"cwd": str(tmp_path)}
     ledger = str(d / "tree" / "ledger.jsonl")
-    assert gate_state_hit(payload, {"step_type": "file_write", "path": ledger}, g)
+    assert warden_state_hit(payload, {"step_type": "file_write", "path": ledger}, g)
     shell = {"step_type": "shell", "command": f"echo x >> {ledger}"}
-    assert gate_state_hit(payload, shell, g)
-    assert gate_state_hit(payload, {"step_type": "file_write", "path": str(g / "x")}, g)
+    assert warden_state_hit(payload, shell, g)
+    assert warden_state_hit(payload, {"step_type": "file_write", "path": str(g / "x")}, g)
 
 
 # --- the sprig fence (FN-R-25, FN-R-28) -------------------------------------
@@ -341,7 +341,14 @@ def fence(tmp_path, monkeypatch):
     bin_.chmod(bin_.stat().st_mode | stat.S_IEXEC)
     log = tmp_path / "fence.jsonl"
     monkeypatch.setenv("FAKE_FENCE_LOG", str(log))
-    words = [str(bin_), "fence", "--harness", "sprig", "--gate-root", str(tmp_path / "d" / "gate")]
+    words = [
+        str(bin_),
+        "fence",
+        "--harness",
+        "sprig",
+        "--warden-root",
+        str(tmp_path / "d" / "warden"),
+    ]
 
     def calls():
         return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []

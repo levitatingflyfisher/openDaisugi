@@ -60,7 +60,7 @@ jobs:
       # It runs only on a cache miss: a hit already has the library this
       # pin would build sitting at COPPICE_GHOSTTY_PREFIX.
       #
-      # Preflight is not a CI step. It also gates on zig and cmake being on
+      # Preflight is not a CI step. It also checks on zig and cmake being on
       # PATH, which a cache hit never installs, so it would fail a run that
       # has nothing wrong with it. The one fact that actually matters, that
       # the linker can find libghostty-vt, is what the Test steps below
@@ -92,7 +92,7 @@ jobs:
       # forces CGO_ENABLED=1. The adapter Stop paths, the pane tree and the
       # server's live map are all concurrent by design. A panic in an
       # adapter goroutine takes the daemon down with every other pane's
-      # process orphaned alongside it, so the race detector is a merge gate
+      # process orphaned alongside it, so the race detector is a merge check
       # here, not a nicety.
       - name: Test with the race detector
         env:

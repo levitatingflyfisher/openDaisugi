@@ -13,7 +13,7 @@ const COLORS = {
 };
 
 const PANES = [
-  { id: 'f', label: 'foreman', state: 'working' },
+  { id: 'f', label: 'steward', state: 'working' },
   { id: 'a', label: 'auth', state: 'working', parent_pane: 'f' },
   { id: 'b', label: 'docs', state: 'idle', parent_pane: 'f' },
   { id: 'a1', label: 'auth tests', state: 'blocked', parent_pane: 'a' },
@@ -37,12 +37,12 @@ function recorder(without = []) {
 const texts = (ctx) => ctx.calls.filter((c) => c[0] === 'fillText' || c[0] === 'strokeText').map((c) => c[1]);
 const opts = (extra) => ({ w: 600, h: 400, t: null, colors: COLORS, hideWords: false, mark: true, ...extra });
 
-test('the trunk is the foreman, and shoots rise from its limbs, nested ones from their parent', () => {
+test('the trunk is the steward, and shoots rise from its limbs, nested ones from their parent', () => {
   const m = gardenLayout(PANES, 800, 500, 'f');
   const at = Object.fromEntries(m.nodes.map((n) => [n.id, n]));
   assert.equal(m.trunk.id, 'f');
-  assert.equal(m.trunk.pill.text, 'foreman');
-  assert.equal(at.f, undefined, 'the foreman is the trunk, not a shoot');
+  assert.equal(m.trunk.pill.text, 'steward');
+  assert.equal(at.f, undefined, 'the steward is the trunk, not a shoot');
   assert.ok(m.trunk.w >= 800 * 0.58, 'the trunk spans most of the width');
   assert.equal(at.a.parent, '');
   assert.equal(at.a.depth, 0);
@@ -58,7 +58,7 @@ test('the trunk is the foreman, and shoots rise from its limbs, nested ones from
   for (const n of m.nodes) assert.ok(n.x > 0 && n.x < 800 && n.y - 1.4 * n.r >= 0 && n.y < 500, n.id + ' is on the canvas');
 });
 
-test('with no foreman the trunk stands bare, and every parentless pane rises from a limb', () => {
+test('with no steward the trunk stands bare, and every parentless pane rises from a limb', () => {
   const flat = [{ id: 'p1', label: 'one', state: 'idle' }, { id: 'p2', label: 'two', state: 'idle' }, { id: 'p3', label: 'three', state: 'idle' }];
   const m = gardenLayout(flat, 600, 400, '');
   assert.equal(m.trunk.id, '');
@@ -69,7 +69,7 @@ test('with no foreman the trunk stands bare, and every parentless pane rises fro
 });
 
 test('no label box covers a stem, a crown, a lantern or another label, in a crowded garden', () => {
-  const many = [{ id: 'f', label: 'foreman', state: 'working' }];
+  const many = [{ id: 'f', label: 'steward', state: 'working' }];
   const states = ['working', 'blocked', 'idle', 'done', 'working', 'idle', 'blocked'];
   for (let i = 0; i < 9; i++) many.push({ id: 'k' + i, label: 'worker number ' + i, state: states[i % states.length], parent_pane: i < 6 ? 'f' : 'k' + (i - 6) });
   for (const [w, h] of [[1100, 700], [600, 450], [390, 420]]) {
@@ -113,10 +113,10 @@ test('each state has its own look, and a lantern is the only loud one', () => {
   assert.equal(lookOf({ state: 'blocked', held: { by: 'f' } }).kind, 'grow', 'a held ask reads as working');
   assert.deepEqual([lookOf({ state: 'idle' }).kind, lookOf({ state: 'idle' }).sway], ['still', false]);
   assert.equal(lookOf({ state: 'done' }).kind, 'bud');
-  assert.equal(lookOf({ state: 'idle', gate: { decision: 'deny' } }).kind, 'notch');
-  assert.equal(lookOf({ state: 'working', gate: { decision: 'deny' } }).kind, 'grow');
-  assert.equal(lookOf({ state: 'blocked', gate: { decision: 'deny' } }).kind, 'lantern');
-  assert.equal(lookOf({ state: 'idle', gate: { decision: 'allow' } }).kind, 'still');
+  assert.equal(lookOf({ state: 'idle', warden: { decision: 'deny' } }).kind, 'notch');
+  assert.equal(lookOf({ state: 'working', warden: { decision: 'deny' } }).kind, 'grow');
+  assert.equal(lookOf({ state: 'blocked', warden: { decision: 'deny' } }).kind, 'lantern');
+  assert.equal(lookOf({ state: 'idle', warden: { decision: 'allow' } }).kind, 'still');
   assert.equal(lookOf(null).kind, 'still');
   const loud = ['working', 'idle', 'done', 'unknown'].filter((s) => lookOf({ state: s }).loud);
   assert.deepEqual(loud, []);
@@ -132,7 +132,7 @@ test('the drawing differs by state: a lantern makes a glow, a notch a closed wed
   assert.ok(!draw([{ id: 'a', label: 'a', state: 'idle' }]).calls.some((c) => c[0] === 'createRadialGradient'));
   const red = (panes) => draw(panes).calls.some((c) => c[0] === 'set:fillStyle' && c[1] === COLORS.bad);
   assert.ok(!red([{ id: 'a', label: 'a', state: 'idle' }]));
-  assert.ok(red([{ id: 'a', label: 'a', state: 'idle', gate: { decision: 'deny' } }]), 'a denied stem carries a red notch');
+  assert.ok(red([{ id: 'a', label: 'a', state: 'idle', warden: { decision: 'deny' } }]), 'a denied stem carries a red notch');
   const crowns = (panes) => draw(panes).calls.filter((c) => c[0] === 'set:fillStyle' && /^rgb/.test(String(c[1]))).length;
   assert.notEqual(crowns([{ id: 'a', label: 'a', state: 'working' }]), crowns([{ id: 'a', label: 'a', state: 'idle' }]), 'a working shoot draws sparks');
 });
@@ -157,7 +157,7 @@ test('a click maps to the shoot under it, and to none on bare ground', () => {
   assert.equal(hitNode(m.nodes, n.x + 3, n.y - 4, 18), 'a1');
   assert.equal(hitNode(m.nodes, 2, 2, 18), '');
   assert.equal(hitNode([], 5, 5, 18), '');
-  assert.equal(hitPane(m, m.trunk.x, m.trunk.y - 4, 18), 'f', 'a press on the trunk means the foreman');
+  assert.equal(hitPane(m, m.trunk.x, m.trunk.y - 4, 18), 'f', 'a press on the trunk means the steward');
   assert.equal(hitPane(m, n.x, n.y, 18), 'a1');
   assert.equal(hitPane(gardenLayout(PANES, 800, 500, ''), 400, 440, 18), '', 'a bare trunk is nobody');
 });
@@ -187,7 +187,7 @@ function mounted(panes, extra = {}) {
   let cur = panes;
   const g = mountGarden(root, {
     panes: () => cur,
-    foreman: () => 'f',
+    steward: () => 'f',
     open: (p) => opened.push(p),
     colors: () => COLORS,
     size: () => ({ w: 600, h: 400, dpr: 1 }),
@@ -373,4 +373,23 @@ test('the garden follows the reduced-motion setting while it is shown', () => {
   } finally {
     delete globalThis.matchMedia;
   }
+});
+
+test('the garden shows an N to review badge at the trunk, and a tap opens the cards view', () => {
+  let count = 0;
+  let opened = 0;
+  let refreshed = 0;
+  const { g } = mounted(PANES, {
+    cards: () => count, openCards: () => { opened += 1; }, refreshCards: () => { refreshed += 1; }, every: () => 7, cancel() {},
+  });
+  g.show();
+  assert.equal(g.badge.hidden, true, 'no card, no badge');
+  assert.equal(refreshed, 1, 'showing the garden reads the count');
+  count = 3;
+  g.changed();
+  assert.equal(g.badge.hidden, false);
+  assert.equal(g.badge.textContent, '3 to review');
+  g.badge.dispatchEvent({ type: 'click' });
+  assert.equal(opened, 1);
+  g.hide();
 });

@@ -30,7 +30,7 @@ pub struct VoiceConfig {
     pub url: String,
     pub token_file: String,
     pub args: Vec<String>,
-    /// A speech server for the foreman's replies, the model and voice it
+    /// A speech server for the steward's replies, the model and voice it
     /// is asked for, and the operator profile whose key it gets.
     pub speak_url: String,
     pub speak_model: String,

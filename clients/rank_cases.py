@@ -27,6 +27,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import garden_cases  # noqa: E402 - sibling module, run as a script
+import gitfix  # noqa: E402
 from garden_cases import PY_CLI, body_id, run_case, write_jsonl  # noqa: E402
 from pathway_cases import REPO  # noqa: E402
 
@@ -75,6 +76,57 @@ def lay_out(tree: dict[str, Any], home: Path, t0: float) -> None:
 
 
 garden_cases.lay_out = lay_out
+
+
+def _git(cwd: Path, *args: str) -> None:
+    gitfix.run(cwd, *args)
+
+
+def _lay_out_git(tree: dict[str, Any], home: Path, t0: float) -> None:
+    """Each ``git`` entry: a repository at the entry's path holding ``files``
+    in one commit, and a detached worktree beside it for each name in
+    ``worktrees``, with that name's files written (uncommitted) on top."""
+    for rel, spec in sorted(tree.items()):
+        repo = home / rel
+        repo.mkdir(parents=True, exist_ok=True)
+        _git(repo, "init", "-q", "-b", "main")
+        for name, body in spec["git"]["files"].items():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text(body, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "base")
+        for wt, files in spec["git"].get("worktrees", {}).items():
+            _git(repo, "worktree", "add", "-q", "--detach", str(home / wt), "HEAD")
+            for name, body in files.items():
+                (home / wt / name).parent.mkdir(parents=True, exist_ok=True)
+                (home / wt / name).write_text(body, encoding="utf-8")
+            if wt in spec["git"].get("committed", []):
+                _git(home / wt, "add", "-A")
+                _git(home / wt, "commit", "-qm", "the child committed")
+
+
+_receipts_lay_out = garden_cases.lay_out
+
+
+def lay_out_all(tree: dict[str, Any], home: Path, t0: float) -> None:
+    git = {k: v for k, v in tree.items() if "git" in v}
+    _receipts_lay_out({k: v for k, v in tree.items() if k not in git}, home, t0)
+    _lay_out_git(git, home, t0)
+
+
+garden_cases.lay_out = lay_out_all
+
+_generic_read_tree = garden_cases.read_tree
+
+
+def read_tree(home: Path) -> dict[str, Any]:
+    """garden_cases.read_tree without git's own files: their bytes carry
+    object ids and times that differ on every run."""
+    out = _generic_read_tree(home)
+    return {k: v for k, v in out.items() if ".git" not in Path(k).parts and not k.endswith("/.git")}
+
+
+garden_cases.read_tree = read_tree
 
 
 def cmd_for(case: dict[str, Any], binary: str | None) -> list[str]:
@@ -247,7 +299,7 @@ def fit_cases(add: Any) -> None:
                         ran_plan=True,
                         verify={"ok": True, "violations": 0},
                     ),
-                    att("b", gate={"denies": 4, "override_allows": 2}),
+                    att("b", warden={"denies": 4, "override_allows": 2}),
                     att(
                         "c",
                         tests=[{"name": "t", "required": False, "result": "fail"}],
@@ -390,7 +442,7 @@ def fit_cases(add: Any) -> None:
             "verify bad count",
             {"ranking_id": "r", "attempts": [att("a", verify={"ok": True, "violations": 1.5})]},
         ),
-        ("gate not object", {"ranking_id": "r", "attempts": [att("a", gate=[])]}),
+        ("warden not object", {"ranking_id": "r", "attempts": [att("a", warden=[])]}),
         ("tests not a list", {"ranking_id": "r", "attempts": [att("a", tests={})]}),
         (
             "test bad result",
@@ -507,7 +559,23 @@ def fit_cases(add: Any) -> None:
         + ["not json", "[1]", {"ranking_id": "r-0001", "shown": "zz"}]
     )
     add(fit_case("fit comparisons from the journal", no_comps, extra={COMPARISONS: jsonl(jrows)}))
-    add(fit_case("fit inline comparisons win", doc(two, []), extra={COMPARISONS: jsonl(jrows)}))
+    # An empty inline list means the journal supplies the votes, as no key does.
+    add(
+        fit_case(
+            "fit empty comparisons use the journal", doc(two, []), extra={COMPARISONS: jsonl(jrows)}
+        )
+    )
+    add(
+        fit_case(
+            "fit empty comparisons use the journal text",
+            doc(two, []),
+            json_out=False,
+            extra={COMPARISONS: jsonl(jrows)},
+        )
+    )
+    # A file that holds votes inline keeps them, and the journal stays out.
+    other = cmp2("j", "p", "a", "b", "b", "b")
+    add(fit_case("fit inline comparisons win", doc(two, other), extra={COMPARISONS: jsonl(jrows)}))
     answers = choices(
         opened("ch_000000000001", chosen="a"),
         closing("ch_000000000001", "overridden", "answer", pick="b"),
@@ -572,7 +640,7 @@ def choose_cases(add: Any) -> None:
             ["rank", "choose", "a.json", "--json"],
             {
                 "a.json": text(doc(two, rid="r-new")),
-                **choices(opened("ch_000000000009", age_days=8)),
+                **choices(opened("ch_000000000009", age_days=15)),
             },
         )
     )
@@ -652,12 +720,14 @@ def queue_cases(add: Any) -> None:
         case(
             "queue decayed by time",
             ["rank", "queue", "--json"],
-            choices(opened("ch_000000000001", age_days=8)),
+            choices(opened("ch_000000000001", age_days=15)),
         )
     )
     add(
         case(
-            "queue six days old", ["rank", "queue"], choices(opened("ch_000000000001", age_days=6))
+            "queue thirteen days old",
+            ["rank", "queue"],
+            choices(opened("ch_000000000001", age_days=13)),
         )
     )
     gone = {
@@ -768,7 +838,7 @@ def record_cases(add: Any) -> None:
             choices(opened("ch_000000000001"), closing("ch_000000000001", "confirmed", "drop")),
         )
     )
-    old = choices(opened("ch_000000000001", age_days=8))
+    old = choices(opened("ch_000000000001", age_days=15))
     add(case("record pick decayed", ["rank", "record", "pick", "ch_000000000001", "b"], old))
     add(case("record drop decayed", ["rank", "record", "drop", "ch_000000000001"], old))
     facts = {
@@ -808,12 +878,345 @@ def record_cases(add: Any) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# show, judge, judges, pivot
+# ---------------------------------------------------------------------------
+
+PROFILE = (
+    "agent_profiles:\n"
+    "  local:\n    wire: openai\n    base_url: http://127.0.0.1:{PORT}/v1\n    model: judge-9b\n"
+)
+CONFIG = ".opendaisugi/config.yaml"
+
+
+def out_att(aid: str, author: str, **kw: Any) -> dict[str, Any]:
+    return att(aid, author=author, where={"kind": "output", "text": f"answer {aid}"}, **kw)
+
+
+def judge_doc(
+    a_author: str = "claude-x", b_author: str = "claude-y", **policy: Any
+) -> dict[str, Any]:
+    return doc(
+        [out_att("a", a_author), out_att("b", b_author)], judges=["local/judge-9b"], **policy
+    )
+
+
+def judge_case(
+    name: str,
+    d: dict[str, Any],
+    replies: list[dict[str, Any]],
+    *,
+    extra: dict[str, Any] | None = None,
+    flags: tuple[str, ...] = ("--json",),
+) -> dict[str, Any]:
+    tree = {"a.json": text(d), CONFIG: {"text": PROFILE}}
+    tree.update(extra or {})
+    c = case(name, ["rank", "judge", "a.json", *flags], tree)
+    c["replies"] = replies
+    return c
+
+
+def judge_cases(add: Any) -> None:
+    d = judge_doc()
+    add(judge_case("judge records a pair", d, [{"chat": "A"}, {"chat": "B"}]))
+    add(judge_case("judge records a pair text", d, [{"chat": "tie."}, {"chat": "Tie"}], flags=()))
+    add(
+        judge_case(
+            "judge second call errors", d, [{"chat": "A"}, {"http_status": 500, "body": "boom"}]
+        )
+    )
+    add(judge_case("judge unparsable", d, [{"chat": "A"}, {"chat": "A or B"}]))
+    add(judge_case("judge same family", judge_doc("judge-9b"), []))
+    claude_judge = PROFILE.replace("judge-9b", "claude-judge-9")
+    add(
+        judge_case(
+            "judge bare alias is claude",
+            {
+                **judge_doc("haiku", "sonnet"),
+                "policy": {"bootstrap": 200, "judges": ["local/claude-judge-9"]},
+            },
+            [],
+            extra={CONFIG: {"text": claude_judge}},
+        )
+    )
+    add(judge_case("judge no author", judge_doc(""), []))
+    add(
+        judge_case(
+            "judge loop exhausts", d, [{"chat": "A"}, {"chat": "B"}], flags=("--loop", "--json")
+        )
+    )
+    add(
+        case(
+            "judge no judges",
+            ["rank", "judge", "a.json", "--json"],
+            {"a.json": text(doc([out_att("a", "claude-x"), out_att("b", "claude-y")]))},
+        )
+    )
+    add(
+        judge_case(
+            "judge named judge",
+            doc([out_att("a", "claude-x"), out_att("b", "claude-y")]),
+            [{"chat": "B"}, {"chat": "A"}],
+            flags=("--judge", "local/judge-9b", "--json"),
+        )
+    )
+    add(
+        case(
+            "judge profile missing",
+            ["rank", "judge", "a.json", "--json"],
+            {"a.json": text(d)},
+        )
+    )
+    # Five answered cards against j-bad: it is dropped and not asked.
+    rows: list[Any] = []
+    cards: list[str] = []
+    for n in range(1, 6):
+        rid = f"r-000{n}"
+        rows += [
+            {"ranking_id": rid, **c} for c in cmp2("local/judge-9b", f"p{n}", "a", "b", "a", "a")
+        ]
+        cid = f"ch_00000000000{n}"
+        cards += [
+            opened(cid, rid=rid),
+            closing(cid, "overridden", "answer", pick="b", rid=rid),
+        ]
+    add(
+        judge_case(
+            "judge dropped judge",
+            {**d, "ranking_id": "r-9999"},
+            [],
+            extra={COMPARISONS: jsonl(rows), **choices(*cards)},
+        )
+    )
+    add(case("judges empty", ["rank", "judges", "--json"]))
+    add(case("judges empty text", ["rank", "judges"]))
+    add(
+        case(
+            "judges five cards",
+            ["rank", "judges", "--json"],
+            {COMPARISONS: jsonl(rows), **choices(*cards)},
+        )
+    )
+    add(
+        case(
+            "judges five cards text",
+            ["rank", "judges"],
+            {COMPARISONS: jsonl(rows), **choices(*cards)},
+        )
+    )
+    # The weights are a function of the journal and the ranking's seed.
+    two = [att("a", cost={"tokens": 100}), att("b", cost={"tokens": 100})]
+    jr = [{"ranking_id": "r-0001", **c} for c in cmp2("j-good", "p", "a", "b", "a", "a")]
+    for rid in ("r-0001", "r-0002"):
+        add(
+            case(
+                f"judges weights {rid}",
+                ["rank", "fit", "a.json", "--json"],
+                {
+                    "a.json": text(doc(two, rid=rid, judges=["j-good"])),
+                    COMPARISONS: jsonl([{**r, "ranking_id": rid} for r in jr]),
+                },
+            )
+        )
+    add(
+        case(
+            "judges weights replay",
+            ["rank", "choose", "a.json", "--json"],
+            {
+                "a.json": text(doc(two, rid="r-0001", judges=["j-good"])),
+                COMPARISONS: jsonl(jr),
+            },
+        )
+    )
+
+
+def show_cases(add: Any) -> None:
+    rows = [{"ranking_id": "r-0001", **c} for c in cmp2("j1", "p1", "a", "b", "a", "a")]
+    both = {
+        **choices(
+            opened("ch_000000000001"),
+            closing("ch_000000000001", "overridden", "answer", pick="b"),
+        ),
+        COMPARISONS: jsonl(rows + ["not json"]),
+    }
+    add(case("show by ranking", ["rank", "show", "--ranking", "r-0001", "--json"], both))
+    add(case("show by choice", ["rank", "show", "--choice", "ch_000000000001", "--json"], both))
+    add(case("show by ranking text", ["rank", "show", "--ranking", "r-0001"], both))
+    add(case("show two selectors", ["rank", "show", "--ranking", "r-0001", "--choice", "c"], both))
+    add(case("show no selector", ["rank", "show"], both))
+    add(case("show missing ranking", ["rank", "show", "--ranking", "nope"], both))
+    add(case("show missing choice", ["rank", "show", "--choice", "ch_00000000000f"], both))
+    add(case("show nothing laid out", ["rank", "show", "--ranking", "r-0001"]))
+
+
+GIT = {
+    "files": {"a.txt": "one\n", "b.txt": "base\n"},
+    "worktrees": {
+        "wt-a": {"a.txt": "two\n"},
+        "wt-b": {"a.txt": "three\n", "new.txt": "fresh\n"},
+    },
+}
+
+
+BASE = gitfix.commit_id(GIT["files"])
+
+
+def wt(name: str) -> dict[str, Any]:
+    """A worktree attempt as a branch card records it: the path, the base
+    commit and the repository, all written by the parent."""
+    return {"kind": "worktree", "path": "{HOME}/" + name, "base": BASE, "repo": "{HOME}/repo/.git"}
+
+
+def pivot_facts(**kw: Any) -> dict[str, Any]:
+    f = {
+        "order": ["a", "b"],
+        "decided_by": ["cost"],
+        "quality_tiers": [["a", "b"]],
+        "confidence": 0.5,
+        "cost": {},
+        "summary": {},
+        "where": {
+            "a": wt("wt-a"),
+            "b": wt("wt-b"),
+        },
+        "run": None,
+    }
+    f.update(kw)
+    return f
+
+
+def pivot_cases(add: Any) -> None:
+    tree = {"repo": {"git": GIT}, **choices(opened("ch_000000000001", facts=pivot_facts()))}
+    base = ["rank", "pivot", "--choice", "ch_000000000001"]
+    # Children that committed in their worktrees: HEAD moved off the base,
+    # and the pivot still reads both edits against the recorded base.
+    moved = {
+        "repo": {"git": {**GIT, "committed": ["wt-a", "wt-b"]}},
+        **choices(opened("ch_000000000001", facts=pivot_facts())),
+    }
+    add(case("pivot apply patch after commits", [*base, "--to", "b", "--apply", "--json"], moved))
+    add(case("pivot plan worktrees", [*base, "--to", "b", "--json"], tree))
+    add(case("pivot plan worktrees text", [*base, "--to", "b"], tree))
+    add(case("pivot apply patch", [*base, "--to", "b", "--apply"], tree))
+    add(case("pivot apply patch json", [*base, "--to", "b", "--apply", "--json"], tree))
+    add(case("pick apply", ["rank", "record", "pick", "ch_000000000001", "b", "--apply"], tree))
+    add(
+        case(
+            "pick apply json",
+            ["rank", "record", "pick", "ch_000000000001", "b", "--apply", "--json"],
+            tree,
+        )
+    )
+    add(case("pivot to the chosen", [*base, "--to", "a"], tree))
+    add(case("pivot to a stranger", [*base, "--to", "z"], tree))
+    add(
+        case("pivot no choice", ["rank", "pivot", "--choice", "ch_00000000000f", "--to", "b"], tree)
+    )
+    add(case("pivot missing option", ["rank", "pivot", "--to", "b"], tree))
+    run = {"run_id": "run_00000001", "step": "t", "downstream": ["w", "x", "y"]}
+    receipts = {
+        f"{INDEX}/index.db": {
+            "receipts": [
+                {"run": "run_00000001", "step": "w", "at": -90, "reversibility": "reversible"},
+                {"run": "run_00000001", "step": "x", "at": -60, "reversibility": "reversible"},
+                {"run": "run_00000001", "step": "y", "at": -30, "reversibility": "none"},
+            ]
+        }
+    }
+    costly = {
+        "repo": {"git": GIT},
+        **choices(opened("ch_000000000001", facts=pivot_facts(run=run))),
+        **receipts,
+    }
+    add(case("pivot plan costly", [*base, "--to", "b", "--json"], costly))
+    add(case("pivot plan costly text", [*base, "--to", "b"], costly))
+    hard = {
+        **costly,
+        f"{INDEX}/index.db": {
+            "receipts": [
+                {"run": "run_00000001", "step": "w", "at": -90, "reversibility": "reversible"},
+                {"run": "run_00000001", "step": "x", "at": -60, "reversibility": "irreversible"},
+            ]
+        },
+    }
+    add(case("pivot follow up only", [*base, "--to", "b", "--apply"], hard))
+    add(case("pivot follow up only json", [*base, "--to", "b", "--apply", "--json"], hard))
+    gone = {
+        "repo": {"git": GIT},
+        **choices(
+            opened(
+                "ch_000000000001",
+                facts=pivot_facts(
+                    where={
+                        "a": wt("wt-a"),
+                        "b": wt("wt-gone"),
+                    }
+                ),
+            )
+        ),
+    }
+    add(case("pivot place gone", [*base, "--to", "b", "--apply"], gone))
+    out = pivot_facts(
+        where={
+            "a": wt("wt-a"),
+            "b": {"kind": "output", "text": "the other answer"},
+        }
+    )
+    add(
+        case(
+            "pivot output kind",
+            [*base, "--to", "b", "--apply", "--json"],
+            {"repo": {"git": GIT}, **choices(opened("ch_000000000001", facts=out))},
+        )
+    )
+    nobase = pivot_facts(
+        where={
+            "a": {"kind": "worktree", "path": "{HOME}/wt-a"},
+            "b": {"kind": "worktree", "path": "{HOME}/wt-b"},
+        }
+    )
+    add(
+        case(
+            "pivot worktrees with no recorded base",
+            [*base, "--to", "b", "--json"],
+            {"repo": {"git": GIT}, **choices(opened("ch_000000000001", facts=nobase))},
+        )
+    )
+    nowhere = pivot_facts(where={})
+    add(
+        case(
+            "pivot nowhere to patch",
+            [*base, "--to", "b"],
+            choices(opened("ch_000000000001", facts=nowhere)),
+        )
+    )
+    # A branch card names the command that takes the kept edits.
+    adopt = pivot_facts(adopt="daisugi tree adopt tabc")
+    add(
+        case(
+            "queue adopt line",
+            ["rank", "queue"],
+            choices(opened("ch_000000000001", facts=adopt)),
+        )
+    )
+    add(
+        case(
+            "queue adopt line json",
+            ["rank", "queue", "--json"],
+            choices(opened("ch_000000000001", facts=adopt)),
+        )
+    )
+
+
 def build_cases() -> list[dict[str, Any]]:
     C: list[dict[str, Any]] = []
     fit_cases(C.append)
     choose_cases(C.append)
     queue_cases(C.append)
     record_cases(C.append)
+    show_cases(C.append)
+    judge_cases(C.append)
+    pivot_cases(C.append)
     return C
 
 
@@ -862,6 +1265,8 @@ def main() -> int:
         if prev is not None and not args.only:
             c["expect"] = prev["expect"]
             continue
+        if "replies" in c:
+            garden_cases.record_replies(c, SCRATCH / "gen" / f"{i:04d}r")
         c["expect"] = run_case(c, cmd_for(c, None), SCRATCH / "gen" / f"{i:04d}")
         if args.only:
             print(

@@ -2,7 +2,7 @@
 // package calls Isolate from its TestMain, before any test runs: HOME and
 // every XDG directory then point into one scratch directory, so a test
 // server never reads, writes or dials anything of the operator's (their
-// config, their gate hooks, their running server's socket).
+// config, their warden hooks, their running server's socket).
 package testhome
 
 import (

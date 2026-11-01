@@ -12,15 +12,15 @@ use num_bigint::BigInt;
 use regex::Regex;
 use rusqlite::{Connection, OpenFlags};
 
-use crate::gate::py::text::{decode_utf8_replace, strip};
-use crate::gate::pyjson::{canonical_json_ascii, dumps, float_repr, loads_py, round, Object, Value};
-use crate::gate::sha256::hexdigest;
+use crate::warden::py::text::{decode_utf8_replace, strip};
+use crate::warden::pyjson::{canonical_json_ascii, dumps, float_repr, loads_py, round, Object, Value};
+use crate::warden::sha256::hexdigest;
 
 pub const MAX_ATTEMPTS: usize = 8;
 pub const MAX_BOOTSTRAP: i64 = 10000;
 const MAX_ITER: usize = 500;
 const TOL: f64 = 1e-10;
-pub const DECAY_SECONDS: f64 = 7.0 * 86400.0;
+pub const DECAY_SECONDS: f64 = 14.0 * 86400.0;
 const COST_KEYS: [&str; 3] = ["tokens", "wall_ms", "diff_lines"];
 
 type R<T> = Result<T, String>;
@@ -43,16 +43,37 @@ pub struct Attempt {
     pub started_by_parent: bool,
     pub ran_plan: bool,
     verify: Option<(bool, i64)>,
-    gate_override: Option<i64>,
+    warden_override: Option<i64>,
     tests: Vec<(String, bool, String)>,
     features: Vec<(String, bool, bool)>,
     cost: BTreeMap<&'static str, i64>,
     estimated: Vec<&'static str>,
     pub where_: Option<Value>,
     pub summary: String,
+    pub author: String,
 }
 
 impl Attempt {
+    /// An attempt known only by id and hash (the trust fold reads no more).
+    pub(crate) fn bare(id: &str, hash: &str) -> Attempt {
+        Attempt {
+            id: id.to_string(),
+            content_hash: hash.to_string(),
+            edge_proof: None,
+            started_by_parent: false,
+            ran_plan: false,
+            verify: None,
+            warden_override: None,
+            tests: vec![],
+            features: vec![],
+            cost: BTreeMap::new(),
+            estimated: vec![],
+            where_: None,
+            summary: String::new(),
+            author: String::new(),
+        }
+    }
+
     /// The cost as the oracle keeps it: tokens, wall_ms, diff_lines when
     /// known, then estimated.
     pub fn cost_obj(&self) -> Object {
@@ -205,17 +226,18 @@ fn parse_attempt(raw: &Value, i: usize) -> R<Attempt> {
         started_by_parent: false,
         ran_plan: false,
         verify: None,
-        gate_override: None,
+        warden_override: None,
         tests: vec![],
         features: vec![],
         cost: BTreeMap::new(),
         estimated: vec![],
         where_: None,
         summary: String::new(),
+        author: String::new(),
     };
     let null = Value::Null;
     if !o.value("author").is_null() {
-        text(o.value("author"), &format!("{w}: author"))?;
+        a.author = text(o.value("author"), &format!("{w}: author"))?;
     }
     let ep = o.value("edge_proof");
     if !ep.is_null() {
@@ -234,10 +256,10 @@ fn parse_attempt(raw: &Value, i: usize) -> R<Attempt> {
         let n = count(get_def(v, "violations", &zero), &format!("{w}: verify.violations"))?;
         a.verify = Some((ok, n));
     }
-    if !o.value("gate").is_null() {
-        let g = obj(o.value("gate"), &format!("{w}: gate"))?;
-        count(get_def(g, "denies", &zero), &format!("{w}: gate.denies"))?;
-        a.gate_override = Some(count(get_def(g, "override_allows", &zero), &format!("{w}: gate.override_allows"))?);
+    if !o.value("warden").is_null() {
+        let g = obj(o.value("warden"), &format!("{w}: warden"))?;
+        count(get_def(g, "denies", &zero), &format!("{w}: warden.denies"))?;
+        a.warden_override = Some(count(get_def(g, "override_allows", &zero), &format!("{w}: warden.override_allows"))?);
     }
     let empty = Value::List(vec![]);
     let fals = Value::Bool(false);
@@ -454,6 +476,8 @@ pub struct Vote {
     pub j: String,
     pub win: f64,
     pub judge: String,
+    /// The vote's weight: 1 unless a fit gives its judge one.
+    pub w: f64,
 }
 
 fn verdict(c: &Comparison) -> Option<String> {
@@ -527,7 +551,7 @@ pub fn votes_from(comps: &[Comparison], by_id: &HashMap<String, &Attempt>, warni
                 continue;
             }
         }
-        keep.insert(vk, (k.1.clone(), Vote { i: pi, j: pj, win, judge: k.0.clone() }));
+        keep.insert(vk, (k.1.clone(), Vote { i: pi, j: pj, win, judge: k.0.clone(), w: 1.0 }));
     }
     let mut keys: Vec<_> = keep.keys().cloned().collect();
     keys.sort_by(|x, y| (&x.1, &x.2, &x.0).cmp(&(&y.1, &y.2, &y.0)));
@@ -542,10 +566,10 @@ pub fn bt_fit(members: &[String], votes: &[Vote], prior: f64) -> HashMap<String,
     let mut games = vec![vec![0.0f64; n]; n];
     for v in votes {
         let (a, b) = (idx[v.i.as_str()], idx[v.j.as_str()]);
-        wins[a] += v.win;
-        wins[b] += 1.0 - v.win;
-        games[a][b] += 1.0;
-        games[b][a] += 1.0;
+        wins[a] += v.w * v.win;
+        wins[b] += v.w * (1.0 - v.win);
+        games[a][b] += v.w;
+        games[b][a] += v.w;
     }
     let mut s = vec![1.0f64; n];
     for _ in 0..MAX_ITER {
@@ -596,8 +620,14 @@ fn strs(v: &[String]) -> Value {
     Value::List(v.iter().map(Value::from).collect())
 }
 
-/// `rank.seed_of`.
+/// `rank.seed_of` without judge weights.
 pub fn seed_of(r: &Ranking, comps: &[Comparison], owner: &[Pair]) -> String {
+    seed_of_w(r, comps, owner, None)
+}
+
+/// `rank.seed_of`: the judge weights are part of the hash only when the fit
+/// uses them.
+pub fn seed_of_w(r: &Ranking, comps: &[Comparison], owner: &[Pair], weights: Option<&BTreeMap<String, f64>>) -> String {
     let mut atts = vec![];
     for a in &r.attempts {
         let mut o = Object::new();
@@ -640,6 +670,9 @@ pub fn seed_of(r: &Ranking, comps: &[Comparison], owner: &[Pair]) -> String {
     let mut doc = Object::new();
     doc.set("attempts", Value::List(atts)).set("comparisons", Value::List(cs)).set("owner_constraints", Value::List(ow));
     doc.set("policy", pol).set("ranking_id", r.id.as_str());
+    if let Some(w) = weights {
+        doc.set("judge_weights", weights_obj(w));
+    }
     hexdigest(canonical_json_ascii(&Value::Obj(doc)).as_bytes())[..16].to_string()
 }
 
@@ -719,8 +752,23 @@ fn cmpf(a: f64, b: f64) -> std::cmp::Ordering {
 
 /// `rank.fit`. comps and owner stand in for the file's own when it has none.
 pub fn fit(r: &Ranking, comps: Vec<Comparison>, owner: Vec<Pair>, warnings: Vec<String>) -> Object {
+    fit_w(r, comps, owner, warnings, None)
+}
+
+/// `rank.fit` with judge weights: they scale each vote, and a judge with no
+/// entry has no vote (RK-5, W3K-2).
+pub fn fit_w(
+    r: &Ranking,
+    comps: Vec<Comparison>,
+    owner: Vec<Pair>,
+    warnings: Vec<String>,
+    weights: Option<&BTreeMap<String, f64>>,
+) -> Object {
     let mut warnings = warnings;
-    let comps = r.comparisons.clone().unwrap_or(comps);
+    let comps = match &r.comparisons {
+        Some(c) if !c.is_empty() => c.clone(),
+        _ => comps,
+    };
     let owner = r.owner.clone().unwrap_or(owner);
     let by_id: HashMap<String, &Attempt> = r.attempts.iter().map(|a| (a.id.clone(), a)).collect();
     let mut eliminated = vec![];
@@ -734,13 +782,13 @@ pub fn fit(r: &Ranking, comps: Vec<Comparison>, owner: Vec<Pair>, warnings: Vec<
             continue;
         }
         survivors.push(a);
-        if let Some(n) = a.gate_override {
+        if let Some(n) = a.warden_override {
             if n > 0 {
                 warnings.push(format!("{} was let out of its envelope {n} times by an operator allow; it is kept", a.id));
             }
         }
     }
-    let seed = seed_of(r, &comps, &owner);
+    let seed = seed_of_w(r, &comps, &owner, weights);
     let mut out = Object::new();
     out.set("ranking_id", r.id.as_str()).set("status", "none_survived").set("eliminated", Value::List(eliminated));
     out.set("quality_tiers", Value::List(vec![])).set("order", Value::List(vec![])).set("decided_by", Value::List(vec![]));
@@ -749,6 +797,9 @@ pub fn fit(r: &Ranking, comps: Vec<Comparison>, owner: Vec<Pair>, warnings: Vec<
     out.set("owner_constraints", Value::List(vec![]));
     let finish = |mut out: Object, warnings: &[String]| -> Object {
         out.set("warnings", strs(warnings)).set("seed", seed.as_str());
+        if let Some(w) = weights {
+            out.set("judge_weights", weights_obj(w));
+        }
         out
     };
     if survivors.is_empty() {
@@ -781,6 +832,17 @@ pub fn fit(r: &Ranking, comps: Vec<Comparison>, owner: Vec<Pair>, warnings: Vec<
         .into_iter()
         .filter(|v| surv.contains(&v.i) && surv.contains(&v.j) && tier_of[&v.i] == tier_of[&v.j])
         .collect();
+    let votes: Vec<Vote> = match weights {
+        None => votes,
+        Some(w) => votes
+            .into_iter()
+            .filter_map(|mut v| {
+                let x = *w.get(&v.judge)?;
+                v.w = r9(v.w * x);
+                Some(v)
+            })
+            .collect(),
+    };
     let edges = owner_edges(&owner, &surv, &mut warnings);
     let clo = closure(&edges);
     let prior = r.policy.prior;
@@ -917,6 +979,9 @@ pub fn fit(r: &Ranking, comps: Vec<Comparison>, owner: Vec<Pair>, warnings: Vec<
     for m in &cands {
         let (i, j) = sorted2(&leader, m);
         for judge in &r.policy.judges {
+            if weights.is_some_and(|w| !w.contains_key(judge)) {
+                continue;
+            }
             if !voted.contains(&(judge.clone(), i.clone(), j.clone())) {
                 let p = r9(point[&leader] / (point[&leader] + point[m]));
                 let mut nx = Object::new();
@@ -1381,7 +1446,7 @@ pub fn sweep(data_dir: &str, now: f64) -> Vec<Object> {
 }
 
 /// `rank.opened_row`.
-pub fn opened_row(r: &Ranking, res: &Object, now: f64, run: Option<Object>) -> Object {
+pub fn opened_row(r: &Ranking, res: &Object, now: f64, run: Option<Object>, adopt: Option<&str>) -> Object {
     let by_id: HashMap<&str, &Attempt> = r.attempts.iter().map(|a| (a.id.as_str(), a)).collect();
     let order: Vec<String> = match res.value("order") {
         Value::List(l) => l.iter().map(s_of).collect(),
@@ -1410,6 +1475,9 @@ pub fn opened_row(r: &Ranking, res: &Object, now: f64, run: Option<Object>) -> O
     facts.set("order", res.value("order").clone()).set("decided_by", res.value("decided_by").clone());
     facts.set("quality_tiers", res.value("quality_tiers").clone()).set("confidence", res.value("confidence").clone());
     facts.set("cost", cost).set("summary", summary).set("where", where_).set("run", run);
+    if let Some(a) = adopt {
+        facts.set("adopt", a);
+    }
     let mut o = Object::new();
     o.set("choice_id", choice_id(&r.id, &surv)).set("ranking_id", r.id.as_str()).set("project", r.project.as_str());
     o.set("task", r.task.as_str()).set("event", "opened").set("options", opts);
@@ -1508,6 +1576,9 @@ pub fn card_view(card: &Card, data_dir: &str, now: f64) -> View {
     v.set("status", o.value("status").as_str().map(String::from));
     v.set("confidence", conf).set("opened_at", opened_at).set("decays_in_days", days);
     v.set("headline", head).set("why", why).set("switch", sw).set("impact_lines", impact);
+    if let Some(a) = facts.value("adopt").as_str().filter(|a| !a.is_empty()) {
+        v.set("adopt", a);
+    }
     View { obj: v, cost: sc.cost, opened_at, confidence: conf, impact, project, id: card.id() }
 }
 
@@ -1589,6 +1660,9 @@ pub fn queue_text(views: &[View], decayed: i64) -> String {
         }
         let sw = o.value("switch").as_obj().cloned().unwrap_or_default();
         b.push_str(&format!("  Switching ({}): {}\n", s_of(sw.value("cost")), s_of(sw.value("text"))));
+        if let Some(a) = o.value("adopt").as_str().filter(|a| !a.is_empty()) {
+            b.push_str(&format!("  To take the kept edits into your tree: {a}\n"));
+        }
         b.push_str(&format!("  Decays in {} days unless switching gets expensive first.\n", fstr(o.value("decays_in_days"))));
     }
     if decayed > 0 {
@@ -1615,7 +1689,7 @@ mod tests {
 
     #[test]
     fn a_duplicate_id_is_refused() {
-        let v = crate::gate::pyjson::loads(r#"{"ranking_id": "r", "attempts": [{"id": "a", "content_hash": "x"}, {"id": "a", "content_hash": "y"}]}"#).unwrap();
+        let v = crate::warden::pyjson::loads(r#"{"ranking_id": "r", "attempts": [{"id": "a", "content_hash": "x"}, {"id": "a", "content_hash": "y"}]}"#).unwrap();
         assert_eq!(parse(&v).err().as_deref(), Some("attempt id a is used twice"));
     }
 
@@ -1651,5 +1725,567 @@ mod tests {
         let sc = switch_cost(&c, &dd, None);
         assert_eq!((sc.cost, sc.fired_at), (FOLLOW_UP, Some(20.0)));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Judge trust (RK-5) and judge weights (W3K-2, owner ruling A3)
+// ---------------------------------------------------------------------------
+
+pub const TRUST_FLOOR: f64 = 0.5;
+pub const TRUST_MIN_CARDS: i64 = 5;
+
+/// `rank.family_of` (W3K-1).
+pub fn family_of(model: &str) -> String {
+    let mut lower = strip(model).to_lowercase();
+    // One leading provider/ is dropped when something follows it.
+    if let Some(i) = lower.find('/') {
+        if i > 0 && i + 1 < lower.len() && lower[..i].bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_') {
+            lower = lower[i + 1..].to_string();
+        }
+    }
+    let word = lower.split(['-', '.', '/', ':']).next().unwrap_or("");
+    let merge = |w: &str| -> Option<&'static str> {
+        match w {
+            "o1" | "o3" | "o4" | "chatgpt" => Some("gpt"),
+            "gemma" => Some("gemini"),
+            "haiku" | "sonnet" | "opus" | "fable" => Some("claude"),
+            _ => None,
+        }
+    };
+    if let Some(f) = merge(word) {
+        return f.to_string();
+    }
+    let letters: String = word.chars().take_while(|c| c.is_ascii_lowercase()).collect();
+    merge(&letters).map(str::to_string).unwrap_or(letters)
+}
+
+fn group_pos(order: &[Vec<String>]) -> HashMap<&str, usize> {
+    let mut pos = HashMap::new();
+    for (k, g) in order.iter().enumerate() {
+        for x in g {
+            pos.insert(x.as_str(), k);
+        }
+    }
+    pos
+}
+
+fn sign(x: i64) -> i64 {
+    x.signum()
+}
+
+/// `rank.kendall_tau_b`; each element is a tie group.
+pub fn kendall_tau_b(a: &[Vec<String>], b: &[Vec<String>]) -> Option<f64> {
+    let (pa, pb) = (group_pos(a), group_pos(b));
+    let mut items: Vec<&str> = pa.keys().filter(|x| pb.contains_key(*x)).copied().collect();
+    items.sort();
+    let n = items.len() as i64;
+    if n < 2 {
+        return None;
+    }
+    let (mut conc, mut disc, mut ta, mut tb) = (0i64, 0i64, 0i64, 0i64);
+    for x in 0..items.len() {
+        for y in x + 1..items.len() {
+            let sa = sign(pa[items[x]] as i64 - pa[items[y]] as i64);
+            let sb = sign(pb[items[x]] as i64 - pb[items[y]] as i64);
+            if sa == 0 {
+                ta += 1;
+            }
+            if sb == 0 {
+                tb += 1;
+            }
+            if sa != 0 && sb != 0 {
+                if sa == sb {
+                    conc += 1;
+                } else {
+                    disc += 1;
+                }
+            }
+        }
+    }
+    let n0 = n * (n - 1) / 2;
+    let denom = (n0 - ta) * (n0 - tb);
+    if denom == 0 {
+        return None;
+    }
+    Some(r9((conc - disc) as f64 / (denom as f64).sqrt()))
+}
+
+/// `rank.cyclic_magnitude`.
+pub fn cyclic_magnitude(votes: &[Vote]) -> Option<f64> {
+    let mut flow: BTreeMap<(String, String), f64> = BTreeMap::new();
+    for v in votes {
+        let f = 2.0 * v.win - 1.0;
+        if v.i < v.j {
+            *flow.entry((v.i.clone(), v.j.clone())).or_insert(0.0) += f;
+        } else {
+            *flow.entry((v.j.clone(), v.i.clone())).or_insert(0.0) += -f;
+        }
+    }
+    let nodes: Vec<String> = flow.keys().flat_map(|(a, b)| [a.clone(), b.clone()]).collect::<BTreeSet<_>>().into_iter().collect();
+    if nodes.len() < 3 {
+        return None;
+    }
+    let idx: HashMap<&str, usize> = nodes.iter().enumerate().map(|(k, x)| (x.as_str(), k)).collect();
+    let n = nodes.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(p: &[usize], mut x: usize) -> usize {
+        while p[x] != x {
+            x = p[x];
+        }
+        x
+    }
+    for (lo, hi) in flow.keys() {
+        let (a, b) = (find(&parent, idx[lo.as_str()]), find(&parent, idx[hi.as_str()]));
+        parent[a] = b;
+    }
+    let comps = (0..n).map(|x| find(&parent, x)).collect::<BTreeSet<_>>().len() as i64;
+    if flow.len() as i64 - n as i64 + comps <= 0 {
+        return None;
+    }
+    let mut reach = vec![vec![false; n]; n];
+    let mut arcs = vec![];
+    for ((lo, hi), f) in &flow {
+        if *f > 0.0 {
+            arcs.push((idx[lo.as_str()], idx[hi.as_str()]));
+        } else if *f < 0.0 {
+            arcs.push((idx[hi.as_str()], idx[lo.as_str()]));
+        }
+    }
+    for &(u, v) in &arcs {
+        reach[u][v] = true;
+    }
+    for k in 0..n {
+        for i in 0..n {
+            if reach[i][k] {
+                for j in 0..n {
+                    if reach[k][j] {
+                        reach[i][j] = true;
+                    }
+                }
+            }
+        }
+    }
+    let on = arcs.iter().filter(|&&(u, v)| reach[v][u]).count();
+    Some(r9(on as f64 / flow.len() as f64))
+}
+
+/// `rank.beta_sample`: the alpha-th smallest of alpha+beta-1 uniforms.
+pub fn beta_sample(alpha: i64, beta: i64, rng: &mut SplitMix64) -> f64 {
+    let mut us: Vec<f64> = (0..alpha + beta - 1).map(|_| (rng.next() >> 11) as f64 / 9007199254740992.0).collect();
+    us.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    r9(us[(alpha - 1) as usize])
+}
+
+/// One judge's record (`rank.judge_trust`).
+#[derive(Clone, Debug, Default)]
+pub struct Trust {
+    pub cards: i64,
+    pub agree: Option<f64>,
+    pub agreed: i64,
+    pub disagreed: i64,
+    pub tau: Option<f64>,
+    /// Ranking id to magnitude (None: not measurable), sorted by id.
+    pub cyclic: BTreeMap<String, Option<f64>>,
+    pub dropped: bool,
+    pub why: String,
+}
+
+/// `rank.judge_weights`: a dropped judge has no entry.
+pub fn judge_weights(trust: &BTreeMap<String, Trust>, seed_hex: &str) -> BTreeMap<String, f64> {
+    let mut out = BTreeMap::new();
+    for (j, t) in trust {
+        if t.dropped {
+            continue;
+        }
+        let h = hexdigest(format!("{seed_hex}{j}").as_bytes());
+        let seed = u64::from_str_radix(&h[..16], 16).unwrap_or(0);
+        out.insert(j.clone(), r9(2.0 * beta_sample(1 + t.agreed, 1 + t.disagreed, &mut SplitMix64(seed))));
+    }
+    out
+}
+
+pub fn weights_obj(w: &BTreeMap<String, f64>) -> Object {
+    let mut o = Object::new();
+    for (j, x) in w {
+        o.set(j, *x);
+    }
+    o
+}
+
+fn pair_key(a: &str, b: &str) -> (String, String) {
+    if b < a {
+        (b.to_string(), a.to_string())
+    } else {
+        (a.to_string(), b.to_string())
+    }
+}
+
+/// `rank._answer_pairs`.
+fn answer_pairs(card: &Card) -> Vec<Pair> {
+    let Some(ans) = &card.answer else { return vec![] };
+    let surv: Vec<String> = card.survivors().into_iter().map(|(i, _)| i).collect();
+    let chosen = card.chosen();
+    if s_of(ans.value("event")) == "confirmed" {
+        return surv.iter().filter(|x| **x != chosen).map(|x| (chosen.clone(), x.clone())).collect();
+    }
+    let pick = s_of(ans.value("pick"));
+    if !surv.contains(&pick) || pick == chosen {
+        return vec![];
+    }
+    vec![(pick, chosen)]
+}
+
+fn group_scores(score: &BTreeMap<String, f64>) -> Vec<Vec<String>> {
+    let mut vals: Vec<f64> = vec![];
+    for v in score.values() {
+        if !vals.contains(v) {
+            vals.push(*v);
+        }
+    }
+    vals.sort_by(|a, b| b.partial_cmp(a).unwrap());
+    vals.iter().map(|sc| score.iter().filter(|(_, v)| *v == sc).map(|(k, _)| k.clone()).collect()).collect()
+}
+
+/// `rank.judge_trust`. Reads only.
+pub fn judge_trust(data_dir: &str, floor: f64, min_cards: i64) -> BTreeMap<String, Trust> {
+    #[derive(Default)]
+    struct Stat {
+        cards: i64,
+        good: i64,
+        agreed: i64,
+        disagreed: i64,
+        taus: Vec<f64>,
+        cyclic: BTreeMap<String, Option<f64>>,
+    }
+    let (rows, _) = read_rows(&format!("{}/comparisons.jsonl", rankings_dir(data_dir)));
+    let mut by_rank: BTreeMap<String, Vec<Comparison>> = BTreeMap::new();
+    for row in &rows {
+        let Value::Str(rid) = row.value("ranking_id") else { continue };
+        if let Ok(c) = parse_comparison(&Value::Obj(row.clone()), 0) {
+            by_rank.entry(rid.clone()).or_default().push(c);
+        }
+    }
+    let mut answered: HashMap<String, Card> = HashMap::new();
+    for card in read_cards(data_dir) {
+        if card.answer.is_some() {
+            answered.entry(s_of(card.opened.value("ranking_id"))).or_insert(card);
+        }
+    }
+    let mut stats: BTreeMap<String, Stat> = BTreeMap::new();
+    for (rid, comps) in &by_rank {
+        let card = answered.get(rid);
+        let mut atts: Vec<Attempt> = vec![];
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        if let Some(c) = card {
+            for (id, h) in c.survivors() {
+                if seen.insert(id.clone()) {
+                    atts.push(Attempt::bare(&id, &h));
+                }
+            }
+        } else {
+            for c in comps {
+                if seen.insert(c.a.clone()) {
+                    atts.push(Attempt::bare(&c.a, &c.a_hash));
+                }
+                if seen.insert(c.b.clone()) {
+                    atts.push(Attempt::bare(&c.b, &c.b_hash));
+                }
+            }
+        }
+        let by_id: HashMap<String, &Attempt> = atts.iter().map(|a| (a.id.clone(), a)).collect();
+        let votes = votes_from(comps, &by_id, &mut vec![]);
+        let judges: BTreeSet<String> = votes.iter().map(|v| v.judge.clone()).collect();
+        for j in &judges {
+            let mine: Vec<Vote> = votes.iter().filter(|v| &v.judge == j).cloned().collect();
+            stats.entry(j.clone()).or_default().cyclic.insert(rid.clone(), cyclic_magnitude(&mine));
+        }
+        if let Some(card) = card {
+            let fixed: HashMap<(String, String), Pair> =
+                answer_pairs(card).into_iter().map(|p| (pair_key(&p.0, &p.1), p)).collect();
+            let surv_ids: Vec<String> = card.survivors().into_iter().map(|(i, _)| i).collect();
+            let mut owner_order: Vec<String> = match card.facts().value("order") {
+                Value::List(l) => l.iter().filter_map(|x| if let Value::Str(s) = x { Some(s.clone()) } else { None }).collect(),
+                _ => vec![],
+            };
+            if owner_order.is_empty() {
+                owner_order = surv_ids.clone();
+            }
+            let ans = card.answer.as_ref().unwrap();
+            if s_of(ans.value("event")) == "overridden" {
+                let pick = s_of(ans.value("pick"));
+                let mut next = vec![pick.clone()];
+                next.extend(owner_order.iter().filter(|x| **x != pick).cloned());
+                owner_order = next;
+            }
+            let owner_groups: Vec<Vec<String>> = owner_order.iter().map(|x| vec![x.clone()]).collect();
+            for j in &judges {
+                let mine: Vec<&Vote> = votes.iter().filter(|v| &v.judge == j).collect();
+                let (mut ag, mut dis) = (0i64, 0i64);
+                for v in &mine {
+                    let Some(p) = fixed.get(&pair_key(&v.i, &v.j)) else { continue };
+                    if v.win == 0.5 {
+                        continue;
+                    }
+                    let winner = if v.win == 1.0 { &v.i } else { &v.j };
+                    if *winner == p.0 {
+                        ag += 1;
+                    } else {
+                        dis += 1;
+                    }
+                }
+                let t = stats.entry(j.clone()).or_default();
+                if ag + dis > 0 {
+                    t.cards += 1;
+                    if ag > dis {
+                        t.good += 1;
+                    }
+                    t.agreed += ag;
+                    t.disagreed += dis;
+                }
+                let mut score: BTreeMap<String, f64> = surv_ids.iter().map(|x| (x.clone(), 0.0)).collect();
+                for v in &mine {
+                    if score.contains_key(&v.i) && score.contains_key(&v.j) {
+                        *score.get_mut(&v.i).unwrap() += v.win;
+                        *score.get_mut(&v.j).unwrap() += 1.0 - v.win;
+                    }
+                }
+                if let Some(tau) = kendall_tau_b(&group_scores(&score), &owner_groups) {
+                    if !mine.is_empty() {
+                        t.taus.push(tau);
+                    }
+                }
+            }
+        } else {
+            let mut pair_votes: BTreeMap<(String, String), Vec<&Vote>> = BTreeMap::new();
+            for v in &votes {
+                if v.win != 0.5 {
+                    pair_votes.entry((v.i.clone(), v.j.clone())).or_default().push(v);
+                }
+            }
+            for pv in pair_votes.values() {
+                for v in pv {
+                    let others: Vec<&&Vote> = pv.iter().filter(|o| o.judge != v.judge).collect();
+                    let first = others.iter().filter(|o| o.win == 1.0).count();
+                    let second = others.len() - first;
+                    if others.is_empty() || first == second {
+                        continue;
+                    }
+                    let t = stats.entry(v.judge.clone()).or_default();
+                    if (v.win == 1.0) == (first > second) {
+                        t.agreed += 1;
+                    } else {
+                        t.disagreed += 1;
+                    }
+                }
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    for (j, t) in stats {
+        let agree = if t.cards > 0 { Some(r9(t.good as f64 / t.cards as f64)) } else { None };
+        let dropped = t.cards >= min_cards && agree.is_some_and(|a| a < floor);
+        let why = if dropped {
+            format!("agreement {} over {} answered cards", float_repr(agree.unwrap()), t.cards)
+        } else {
+            String::new()
+        };
+        let tau = if t.taus.is_empty() {
+            None
+        } else {
+            let mut sum = 0.0;
+            for x in &t.taus {
+                sum += x;
+            }
+            Some(r9(sum / t.taus.len() as f64))
+        };
+        out.insert(
+            j,
+            Trust { cards: t.cards, agree, agreed: t.agreed, disagreed: t.disagreed, tau, cyclic: t.cyclic, dropped, why },
+        );
+    }
+    out
+}
+
+/// `rank.weights_for`: the weights a fit uses for `judges`, and the trust
+/// behind them. A judge with no history gets the prior.
+pub fn weights_for(data_dir: &str, judges: &[String], seed_hex: &str) -> (BTreeMap<String, f64>, BTreeMap<String, Trust>) {
+    let trust = judge_trust(data_dir, TRUST_FLOOR, TRUST_MIN_CARDS);
+    let need: BTreeMap<String, Trust> =
+        judges.iter().map(|j| (j.clone(), trust.get(j).cloned().unwrap_or_default())).collect();
+    (judge_weights(&need, seed_hex), trust)
+}
+
+/// The `rank judges --json` document's judges part.
+pub fn trust_doc(trust: &BTreeMap<String, Trust>) -> Object {
+    let mut judges = Object::new();
+    for (j, t) in trust {
+        let mut cyc = Object::new();
+        for (rid, m) in &t.cyclic {
+            cyc.set(rid, *m);
+        }
+        let mut o = Object::new();
+        o.set("cards", t.cards).set("agree", t.agree).set("agreed", t.agreed).set("disagreed", t.disagreed);
+        o.set("tau", t.tau).set("cyclic", cyc).set("dropped", t.dropped).set("why", t.why.as_str());
+        judges.set(j, o);
+    }
+    judges
+}
+
+/// `rank.judges_text`.
+pub fn trust_text(trust: &BTreeMap<String, Trust>, weights: &BTreeMap<String, f64>) -> String {
+    if trust.is_empty() {
+        return "No judge has voted yet.\n".into();
+    }
+    let mut b = String::new();
+    for (j, t) in trust {
+        let agree = t.agree.map(float_repr).unwrap_or_else(|| "none yet".into());
+        let w = weights.get(j).map(|x| float_repr(*x)).unwrap_or_else(|| "none (dropped)".into());
+        b.push_str(&format!(
+            "{j}: agreement {agree} over {} answered cards; agreed {}, disagreed {}; weight {w}\n",
+            t.cards, t.agreed, t.disagreed
+        ));
+        if t.dropped {
+            b.push_str(&format!("  dropped: {}\n", t.why));
+        }
+        if let Some(x) = t.tau {
+            b.push_str(&format!("  tau-b with the owner's orders: {}\n", float_repr(x)));
+        }
+    }
+    b
+}
+
+/// `rank.show_doc`: one ranking as the journal holds it. Reads only. The
+/// error is the oracle's RankError text.
+pub fn show_doc(data_dir: &str, ranking_id: Option<&str>, choice_id_: Option<&str>, now: f64) -> Result<Object, String> {
+    if ranking_id.is_some() == choice_id_.is_some() {
+        return Err("Give --ranking or --choice, not both.".into());
+    }
+    let cards = read_cards(data_dir);
+    let (card, rid): (Option<&Card>, String) = if let Some(c) = choice_id_ {
+        let Some(card) = cards.iter().find(|x| x.id() == c) else { return Err(format!("No choice {c}.")) };
+        (Some(card), s_of(card.opened.value("ranking_id")))
+    } else {
+        let r = ranking_id.unwrap_or("").to_string();
+        (cards.iter().find(|x| x.opened.value("ranking_id").as_str() == Some(r.as_str())), r)
+    };
+    let (comp_rows, bad) = read_rows(&format!("{}/comparisons.jsonl", rankings_dir(data_dir)));
+    let comps: Vec<Value> =
+        comp_rows.into_iter().filter(|r| r.value("ranking_id").as_str() == Some(rid.as_str())).map(Value::Obj).collect();
+    let (choice_rows, _) = read_rows(&format!("{}/choices.jsonl", rankings_dir(data_dir)));
+    let choices: Vec<Value> =
+        choice_rows.into_iter().filter(|r| r.value("ranking_id").as_str() == Some(rid.as_str())).map(Value::Obj).collect();
+    if comps.is_empty() && choices.is_empty() {
+        return Err(format!("No ranking {rid}."));
+    }
+    let mut warnings: Vec<String> = vec![];
+    if bad > 0 {
+        warnings.push(format!("{bad} comparison rows did not read"));
+    }
+    let mut answers: Vec<Value> = vec![];
+    let mut card_v: Option<Object> = None;
+    if let Some(card) = card {
+        let bare: Vec<Attempt> = card.survivors().iter().map(|(id, h)| Attempt::bare(id, h)).collect();
+        let by_id: HashMap<String, &Attempt> = bare.iter().map(|a| (a.id.clone(), a)).collect();
+        for p in owner_answers(data_dir, &rid, &by_id, &mut warnings) {
+            answers.push(Value::List(vec![p.0.clone().into(), p.1.clone().into()]));
+        }
+        card_v = Some(card_view(card, data_dir, now).obj);
+    }
+    let mut o = Object::new();
+    o.set("ranking_id", rid.as_str()).set("comparisons", Value::List(comps)).set("choices", Value::List(choices));
+    o.set("card", card_v.map(Value::Obj).unwrap_or(Value::Null)).set("owner_answers", Value::List(answers)).set("warnings", strs(&warnings));
+    Ok(o)
+}
+
+fn any_str(v: &Value) -> String {
+    match v {
+        Value::Null => "None".into(),
+        Value::Str(s) => s.clone(),
+        Value::Bool(b) => if *b { "True".into() } else { "False".into() },
+        other => dumps(other, true),
+    }
+}
+
+/// `rank.show_text`.
+pub fn show_text(doc: &Object) -> String {
+    let mut b = format!("Ranking {}\n", s_of(doc.value("ranking_id")));
+    let comps = match doc.value("comparisons") {
+        Value::List(l) => l.clone(),
+        _ => vec![],
+    };
+    b.push_str(&format!("Votes: {} comparison rows.\n", comps.len()));
+    for c in &comps {
+        if let Some(o) = c.as_obj() {
+            b.push_str(&format!(
+                "  {} {} shown {}: {} vs {} -> {}\n",
+                any_str(o.value("judge")),
+                any_str(o.value("pair_id")),
+                any_str(o.value("shown")),
+                any_str(o.value("a")),
+                any_str(o.value("b")),
+                any_str(o.value("outcome"))
+            ));
+        }
+    }
+    let choices = match doc.value("choices") {
+        Value::List(l) => l.clone(),
+        _ => vec![],
+    };
+    b.push_str(&format!("Choices: {} rows.\n", choices.len()));
+    for c in &choices {
+        if let Some(o) = c.as_obj() {
+            b.push_str(&format!("  {} {}\n", any_str(o.value("choice_id")), any_str(o.value("event"))));
+        }
+    }
+    if let Some(card) = doc.value("card").as_obj() {
+        b.push_str(&format!("Card {}: {}\n", s_of(card.value("choice_id")), s_of(card.value("headline"))));
+    }
+    if let Value::List(l) = doc.value("owner_answers") {
+        for p in l {
+            if let Value::List(pp) = p {
+                b.push_str(&format!("Owner: {} before {}\n", s_of(&pp[0]), s_of(&pp[1])));
+            }
+        }
+    }
+    if let Value::List(l) = doc.value("warnings") {
+        for w in l {
+            b.push_str(&format!("Warning: {}\n", s_of(w)));
+        }
+    }
+    b
+}
+
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+
+    // The values are the oracle's (tests/test_rank.py).
+    #[test]
+    fn beta_and_weights_match_the_oracle() {
+        assert_eq!(beta_sample(3, 2, &mut SplitMix64(7)), 0.582930293);
+        assert_eq!(beta_sample(1, 1, &mut SplitMix64(7)), 0.389829748);
+        let mut t = BTreeMap::new();
+        t.insert("good".to_string(), Trust { agreed: 40, disagreed: 2, ..Default::default() });
+        t.insert("poor".to_string(), Trust { agreed: 6, disagreed: 6, ..Default::default() });
+        t.insert("cut".to_string(), Trust { disagreed: 5, dropped: true, ..Default::default() });
+        let w = judge_weights(&t, "ab12");
+        assert_eq!(w.len(), 2);
+        assert_eq!(w["good"], 1.921783876);
+        assert_eq!(w["poor"], 0.589813668);
+    }
+
+    #[test]
+    fn family_tau_and_cycle() {
+        assert_eq!(family_of("o4-mini"), "gpt");
+        assert_eq!(family_of("gemma3:4b"), "gemini");
+        assert_eq!(family_of("haiku"), "claude");
+        assert_eq!(family_of("9b"), "");
+        let g = |xs: &[&[&str]]| -> Vec<Vec<String>> { xs.iter().map(|g| g.iter().map(|s| s.to_string()).collect()).collect() };
+        assert_eq!(kendall_tau_b(&g(&[&["a", "b"], &["c"]]), &g(&[&["a"], &["b"], &["c"]])), Some(0.816496581));
+        let v = |w: &str, l: &str| Vote { i: w.into(), j: l.into(), win: 1.0, judge: "j".into(), w: 1.0 };
+        assert_eq!(cyclic_magnitude(&[v("a", "b"), v("b", "c")]), None);
+        assert_eq!(cyclic_magnitude(&[v("a", "b"), v("b", "c"), v("c", "a")]), Some(1.0));
+        assert_eq!(cyclic_magnitude(&[v("a", "b"), v("b", "c"), v("a", "c")]), Some(0.0));
     }
 }

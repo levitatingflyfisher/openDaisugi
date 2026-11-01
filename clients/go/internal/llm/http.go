@@ -374,7 +374,12 @@ func (c *Client) CompleteTimeout(model string, msgs []Message, o BodyOpts, timeo
 
 // CompleteAt is complete with a base_url ("" for none) and a timeout.
 func (c *Client) CompleteAt(model, baseURL string, msgs []Message, o BodyOpts, timeout float64) (*Reply, error) {
-	w, e := ResolveWire(model, baseURL, "", c.env.Getenv)
+	return c.CompleteWith(model, baseURL, "", msgs, o, timeout)
+}
+
+// CompleteWith is complete with a base_url and an api_key ("" for none).
+func (c *Client) CompleteWith(model, baseURL, apiKey string, msgs []Message, o BodyOpts, timeout float64) (*Reply, error) {
+	w, e := ResolveWire(model, baseURL, apiKey, c.env.Getenv)
 	if e != nil {
 		return nil, e
 	}

@@ -113,30 +113,30 @@ test('the window count comes from the size, and a phone gets none', () => {
 });
 
 test('an ask shows as an amber bar on the tile, never a dialog', () => {
-  const { doc, state } = stub({ panes: [p('a', 'blocked', { summary: 'git push --force', gate: { verdict: 'deny', rule: 3 } })], width: 1500 });
+  const { doc, state } = stub({ panes: [p('a', 'blocked', { summary: 'git push --force', warden: { verdict: 'deny', rule: 3 } })], width: 1500 });
   mountFloor(doc.body, state);
   assert.ok(doc.querySelector('[data-tile="a"] .askbar').textContent.includes('rule 3'));
   assert.equal(doc.querySelector('dialog'), null);
   const bar = doc.querySelector('[data-tile="a"] .askbar');
   assert.ok(bar.textContent.includes('git push --force'));
-  assert.ok(bar.textContent.includes('The gate says no, rule 3'));
+  assert.ok(bar.textContent.includes('The warden says no, rule 3'));
   assert.equal(doc.querySelector('[data-tile="a"] .dot').className, 'dot dot-blocked');
 });
 
 test('an allow verdict and a plain ask each read as their own line', () => {
   const { doc, state } = stub({
     panes: [
-      p('a', 'blocked', { id: 't1', summary: 'ls', gate: { verdict: 'allow' } }),
+      p('a', 'blocked', { id: 't1', summary: 'ls', warden: { verdict: 'allow' } }),
       p('b', 'blocked', { id: 't2', summary: 'rm -rf build/' }),
       p('c', 'working'),
     ],
     width: 1500,
   });
   mountFloor(doc.body, state);
-  assert.ok(doc.querySelector('[data-tile="a"] .askbar').textContent.includes('The gate says yes'));
+  assert.ok(doc.querySelector('[data-tile="a"] .askbar').textContent.includes('The warden says yes'));
   const plain = doc.querySelector('[data-tile="b"] .askbar').textContent;
   assert.ok(plain.includes('rm -rf build/'));
-  assert.ok(!plain.includes('The gate says'));
+  assert.ok(!plain.includes('The warden says'));
   assert.equal(doc.querySelector('[data-tile="c"] .askbar'), null);
 });
 
@@ -225,12 +225,12 @@ test('a state event refreshes that tile header and ask bar', () => {
   const floor = mountFloor(doc.body, state);
   assert.equal(doc.querySelector('[data-tile="a"] .askbar'), null);
   floor.onEvent({
-    event: 'state', pane: 'a', state: 'blocked', source: 'gate', harness: 'claude', ts: 2,
+    event: 'state', pane: 'a', state: 'blocked', source: 'warden', harness: 'claude', ts: 2,
     ask: { id: 'toolu_9', tool: 'Bash', summary: 'rm -rf /' },
   });
   assert.equal(doc.querySelector('[data-tile="a"] .dot').className, 'dot dot-blocked');
   assert.ok(doc.querySelector('[data-tile="a"] .askbar').textContent.includes('rm -rf /'));
-  floor.onEvent({ event: 'state', pane: 'a', state: 'idle', source: 'gate', harness: 'claude', ts: 3 });
+  floor.onEvent({ event: 'state', pane: 'a', state: 'idle', source: 'warden', harness: 'claude', ts: 3 });
   assert.equal(doc.querySelector('[data-tile="a"] .askbar'), null);
   assert.equal(doc.querySelector('[data-tile="a"] .dot').className, 'dot dot-idle');
 });
@@ -691,7 +691,7 @@ test('a paste into a typing tile goes to its pane as one text', async () => {
   assert.equal(texts(calls, 'a').length, 1);
 });
 
-test('a note from the foreman draws dim under its tile header, the last three only', () => {
+test('a note from the steward draws dim under its tile header, the last three only', () => {
   const { doc, state } = stub({ panes: [p('floor', 'working'), p('b', 'working')], width: 1000 });
   const floor = mountFloor(doc.body, state);
   for (const text of ['floor › one', 'floor › two', 'floor › pane.create  docs  pi', 'floor › four']) {
@@ -803,7 +803,7 @@ test('a harness-held ask bar answers over the operator connection, never in a sh
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
   assert.deepEqual(calls.filter((c) => c.cmd && c.cmd.startsWith('agent.')),
     [{ cmd: 'agent.deny', pane: 'a', ask: 'per_1', reason: 'denied from the phone' }]);
-  assert.equal(calls.filter((c) => c.path).length, 0, 'a held ask went to the gate channel');
+  assert.equal(calls.filter((c) => c.path).length, 0, 'a held ask went to the warden channel');
 });
 
 // endedStub is a floor whose server answers pane.list with ended: true from
@@ -1225,11 +1225,11 @@ test('a window keeps its scroll when the windows are drawn again', async () => {
   assert.equal(body.scrollLeft, left);
 });
 
-test('a window header shows the stack bar and the gate mark, and a segment opens its details in place', async () => {
+test('a window header shows the stack bar and the warden mark, and a segment opens its details in place', async () => {
   const row = {
     ...p('a', 'working'),
-    stack: { loop: 'claude', model: 'claude-fake-2', router: 'direct', daisugi: { mode: 'enforcing', armed: true } },
-    gate: { decision: 'deny', tool: 'Bash', clause: 'shell: curl', at: Date.now() / 1000 },
+    stack: { loop: 'claude', model: 'claude-fake-2', route: 'direct', daisugi: { mode: 'enforcing', armed: true } },
+    warden: { decision: 'deny', tool: 'Bash', clause: 'shell: curl', at: Date.now() / 1000 },
     tokens: { fresh: 13, cache_read: 300, cache_write: 20, out: 12 },
   };
   const { doc, state } = stub({ panes: [row], width: 800 });
@@ -1238,13 +1238,13 @@ test('a window header shows the stack bar and the gate mark, and a segment opens
   mountFloor(doc.body, state);
   const segs = doc.body.querySelectorAll('[data-tile="a"] .stackbar .seg');
   assert.deepEqual(segs.map((b) => b.textContent), ['claude', 'enforcing', 'direct', 'claude-fake-2']);
-  assert.ok(segs[1].className.includes('h-ok'), 'a deny coloured the gate: ' + segs[1].className);
+  assert.ok(segs[1].className.includes('h-ok'), 'a deny coloured the warden: ' + segs[1].className);
   assert.ok(doc.querySelector('[data-tile="a"] .head2 .stackbar'), 'the bar is not on the second line');
   assert.ok(segs[0].className.includes('lit'), 'the light is not on the loop while working');
-  const mark = doc.querySelector('[data-tile="a"] .gate');
+  const mark = doc.querySelector('[data-tile="a"] .warden');
   assert.equal(mark.textContent, '✕');
-  assert.equal(mark.title, 'Last gate verdict: deny Bash. Clause: shell: curl');
-  assert.equal(doc.querySelector('[data-tile="a"] .gate-tip').textContent, 'Last gate verdict: deny Bash. Clause: shell: curl');
+  assert.equal(mark.title, 'Last warden verdict: deny Bash. Clause: shell: curl');
+  assert.equal(doc.querySelector('[data-tile="a"] .warden-tip').textContent, 'Last warden verdict: deny Bash. Clause: shell: curl');
   assert.equal(doc.querySelector('[data-tile="a"] .stack-details'), null);
   segs[3].dispatchEvent({ type: 'click' });
   const box = doc.querySelector('[data-tile="a"] .stack-details');
@@ -1252,7 +1252,7 @@ test('a window header shows the stack bar and the gate mark, and a segment opens
   assert.ok(box.textContent.includes('cache read'));
   assert.ok(box.textContent.includes('The change goes in at the next idle prompt.'));
   assert.ok(doc.querySelector('[data-tile="a"] .seg-model').className.includes('open'));
-  doc.querySelector('[data-tile="a"] .gate').dispatchEvent({ type: 'click' });
+  doc.querySelector('[data-tile="a"] .warden').dispatchEvent({ type: 'click' });
   const daisugi = doc.querySelector('[data-tile="a"] .stack-details');
   assert.equal(daisugi.dataset.details, 'daisugi');
   assert.ok(daisugi.textContent.includes('shell: curl'));
@@ -1268,19 +1268,19 @@ test('the daisugi details lower one agent to watching after one question, and th
   const buttons = () => doc.querySelector('[data-tile="a"] .stack-details').querySelectorAll('button');
   buttons().find((b) => b.textContent === 'Watch only').dispatchEvent({ type: 'click' });
   assert.deepEqual(calls.filter((c) => c.cmd === 'agent.set_mode'), [], 'it set the mode before it asked');
-  assert.ok(doc.querySelector('[data-tile="a"] .stack-details').textContent.includes('Watch only? The gate will log the calls of auth fix and stop none. While it watches, it can also change the gate for other agents.'));
+  assert.ok(doc.querySelector('[data-tile="a"] .stack-details').textContent.includes('Watch only? The warden will log the calls of auth fix and stop none. While it watches, it can also change the warden for other agents.'));
   assert.ok(!buttons().some((b) => /\boff\b/i.test(b.textContent)), 'off is offered');
   buttons().find((b) => b.textContent === 'Watch only').dispatchEvent({ type: 'click' });
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
   assert.deepEqual(calls.filter((c) => c.cmd === 'agent.set_mode'), [{ cmd: 'agent.set_mode', pane: 'a', mode: 'watching' }]);
-  assert.equal(element('status').textContent, 'auth fix watches from its next tool call. The gate logs its calls and stops none.');
+  assert.equal(element('status').textContent, 'auth fix watches from its next tool call. The warden logs its calls and stops none.');
 });
 
 test('a window whose agent has no stack shows its harness word and no bar', async () => {
   const { doc, state } = stub({ panes: [p('a', 'idle')], width: 800 });
   mountFloor(doc.body, state);
   assert.equal(doc.querySelector('[data-tile="a"] .stackbar'), null);
-  assert.equal(doc.querySelector('[data-tile="a"] .gate'), null);
+  assert.equal(doc.querySelector('[data-tile="a"] .warden'), null);
   assert.ok(doc.querySelector('[data-tile="a"] .head2').textContent.includes('claude'));
 });
 
@@ -1306,11 +1306,11 @@ test('a window with a headless agent sends no keys, and its own line sends whole
   assert.equal(doc.querySelector('[data-tile="a"] .prompt-input'), null, 'a pty window grew a message line');
 });
 
-// foremanStub starts a floor whose facts name pane f as the foreman and
+// stewardStub starts a floor whose facts name pane f as the steward and
 // whose floor.chat answers with msgs.
-function foremanStub(panes, msgs, width = 1500) {
+function stewardStub(panes, msgs, width = 1500) {
   const s = stub({ panes, width });
-  s.state.facts = () => ({ foreman: { pane: 'f', label: 'foreman' } });
+  s.state.facts = () => ({ steward: { pane: 'f', label: 'steward' } });
   s.state.rpc = async (cmd, fields) => {
     s.calls.push({ cmd, ...fields });
     if (cmd === 'floor.chat') return { messages: msgs, source: 'transcript', more: false };
@@ -1325,9 +1325,9 @@ const REPLY = [
   { id: 'c2', at: 20, role: 'agent', text: 'Started the import.', pane: 'f' },
 ];
 
-test('the foreman window draws the chat with its own line, and Enter there sends floor.talk', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
-  const { doc, state, calls } = foremanStub([fm, p('a', 'working')], REPLY);
+test('the steward window draws the chat with its own line, and Enter there sends floor.talk', async () => {
+  const fm = { ...p('f', 'idle'), label: 'steward' };
+  const { doc, state, calls } = stewardStub([fm, p('a', 'working')], REPLY);
   mountFloor(doc.body, state);
   for (let i = 0; i < 5; i++) await settle();
   const tile = doc.querySelector('[data-tile="f"]');
@@ -1336,7 +1336,7 @@ test('the foreman window draws the chat with its own line, and Enter there sends
   assert.match(tile.textContent, /Started the import\./);
   const input = tile.querySelector('.prompt-input');
   assert.ok(input, 'the chat window has no line of its own');
-  assert.equal(input.placeholder, 'Tell the foreman. Enter sends.');
+  assert.equal(input.placeholder, 'Tell the steward. Enter sends.');
   assert.equal(tile.querySelector('.headless-note'), null);
   input.value = 'check trellis';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', target: input, preventDefault() {}, stopPropagation() {} });
@@ -1344,12 +1344,12 @@ test('the foreman window draws the chat with its own line, and Enter there sends
   assert.deepEqual(calls.filter((c) => c.cmd === 'floor.talk').map((c) => c.text), ['check trellis']);
   assert.equal(calls.filter((c) => c.cmd === 'agent.prompt').length, 0, 'the line went to the terminal');
   assert.equal(input.value, '');
-  assert.equal(texts(calls, 'f').length, 0, 'a raw key reached the foreman terminal');
+  assert.equal(texts(calls, 'f').length, 0, 'a raw key reached the steward terminal');
 });
 
-test('Screen in the foreman header shows its terminal, and Chat brings the chat back', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
-  const { doc, state } = foremanStub([fm, p('a', 'working')], REPLY);
+test('Screen in the steward header shows its terminal, and Chat brings the chat back', async () => {
+  const fm = { ...p('f', 'idle'), label: 'steward' };
+  const { doc, state } = stewardStub([fm, p('a', 'working')], REPLY);
   mountFloor(doc.body, state);
   for (let i = 0; i < 5; i++) await settle();
   const btn = () => doc.querySelector('[data-tile="f"] .screen-toggle');
@@ -1365,28 +1365,28 @@ test('Screen in the foreman header shows its terminal, and Chat brings the chat 
   assert.ok(doc.querySelector('[data-tile="f"] .chat-list'), 'Chat did not bring the chat back');
 });
 
-test('a foreman reply with no free window marks its row and moves nothing', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
+test('a steward reply with no free window marks its row and moves nothing', async () => {
+  const fm = { ...p('f', 'idle'), label: 'steward' };
   // Two windows, held by an agent that needs you and a working one.
   const ps = [p('a', 'blocked', { id: 't1', summary: 'ls' }), p('b', 'working'), fm];
-  const { doc, state } = foremanStub(ps, REPLY, 1000);
+  const { doc, state } = stewardStub(ps, REPLY, 1000);
   const floor = mountFloor(doc.body, state);
   for (let i = 0; i < 8; i++) await settle();
   assert.deepEqual(floor.tiles.slots, ['a', 'b'], 'the chat took a filled window');
-  assert.equal(floor.replyWaiting('f'), true, 'the foreman row does not show the reply');
+  assert.equal(floor.replyWaiting('f'), true, 'the steward row does not show the reply');
   floor.chatEvent({ event: 'messages', chat: true });
   for (let i = 0; i < 5; i++) await settle();
   assert.deepEqual(floor.tiles.slots, ['a', 'b'], 'a reply moved the windows');
 });
 
 test('a locked layout and a single window keep their agents when a reply comes', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
-  const one = foremanStub([p('a', 'blocked', { id: 't1', summary: 'ls' }), fm], REPLY, 800);
+  const fm = { ...p('f', 'idle'), label: 'steward' };
+  const one = stewardStub([p('a', 'blocked', { id: 't1', summary: 'ls' }), fm], REPLY, 800);
   const f1 = mountFloor(one.doc.body, one.state);
   for (let i = 0; i < 8; i++) await settle();
   assert.deepEqual(f1.tiles.slots, ['a']);
   assert.equal(f1.replyWaiting('f'), true);
-  const two = foremanStub([p('a', 'working'), p('b', 'working'), fm], REPLY, 1000);
+  const two = stewardStub([p('a', 'working'), p('b', 'working'), fm], REPLY, 1000);
   const f2 = mountFloor(two.doc.body, two.state);
   for (let i = 0; i < 8; i++) await settle();
   f2.tiles.locked = true;
@@ -1397,8 +1397,8 @@ test('a locked layout and a single window keep their agents when a reply comes',
 });
 
 test('a free window shows the chat, and a window that shows it has seen the reply', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
-  const { doc, state } = foremanStub([p('a', 'working'), fm], REPLY, 1500);
+  const fm = { ...p('f', 'idle'), label: 'steward' };
+  const { doc, state } = stewardStub([p('a', 'working'), fm], REPLY, 1500);
   const floor = mountFloor(doc.body, state);
   for (let i = 0; i < 8; i++) await settle();
   assert.ok(floor.tiles.slots.includes('f'));
@@ -1407,8 +1407,8 @@ test('a free window shows the chat, and a window that shows it has seen the repl
 });
 
 test('a probe asked while one runs runs once more', async () => {
-  const fm = { ...p('f', 'idle'), label: 'foreman' };
-  const { doc, state, calls } = foremanStub([fm], REPLY, 1500);
+  const fm = { ...p('f', 'idle'), label: 'steward' };
+  const { doc, state, calls } = stewardStub([fm], REPLY, 1500);
   const floor = mountFloor(doc.body, state);
   for (let i = 0; i < 8; i++) await settle();
   const before = calls.filter((c) => c.cmd === 'floor.chat').length;

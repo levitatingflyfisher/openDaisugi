@@ -1,0 +1,20 @@
+# pane.list gives an idle agent's last ask: the last line of its final
+# message when that line ends in a question mark. An agent whose last message
+# is a statement has none. The fixtures are invented.
+#!config [harness.claude]
+#!config command = "/usr/bin/python3"
+#!config args = ["{FIXTURES}/transcripts/report.py"]
+{"id":"1","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","label":"asker","args":["{WORK}/claude/projects/ask/{pane}.jsonl","--copy","{FIXTURES}/transcripts/claude-ask.jsonl","--when","{WORK}/go-asker"],"env":{"CLAUDE_CONFIG_DIR":"{WORK}/claude"}}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"2","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","label":"asker"}]}}
+{"id":"3","write":"{WORK}/go-asker","text":"go\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"4","cmd":"pane.wait_output","pane":"$c","contains":"REPORT ok","timeout_ms":10000}
+{"id":"$id","ok":true,"result":{"matched":"text"}}
+{"id":"5","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","label":"asker","state":"idle","last_ask":"Should I push it?"}]}}
+{"id":"6","cmd":"pane.report_state","pane":"$c","event":{"v":1,"ts":4102444800,"session_id":"s","harness":"claude-code","pane":"$c","state":"working","source":"warden","detail":"UserPromptSubmit"}}
+{"id":"$id","ok":true}
+{"id":"7","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$c","state":"working"}]}}

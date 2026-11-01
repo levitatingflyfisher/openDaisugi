@@ -4,7 +4,7 @@
 //! resolved agent profiles go on a fresh pipe as the command's
 //! descriptor 3; a child's branch use counts toward --max-tokens.
 
-use crate::gate::Tool;
+use crate::warden::Tool;
 use crate::json::{jmap, Any, Map, J};
 use std::cell::Cell;
 use std::ffi::OsStr;
@@ -77,6 +77,11 @@ struct Reply {
     tokens_used: Option<i64>,
     reasons: Vec<String>,
     ask_id: String,
+    /// Each branch's reported tokens (None for a branch that reported
+    /// none), and the card a branched run opened. Empty for one child.
+    branches: Vec<Option<i64>>,
+    choice_id: String,
+    branched: bool,
 }
 
 fn read_reply(data: &[u8]) -> Option<Reply> {
@@ -107,6 +112,21 @@ fn read_reply(data: &[u8]) -> Option<Reply> {
             if let Any::Str(s) = x {
                 r.reasons.push(s.clone());
             }
+        }
+    }
+    if let Some(Any::Arr(xs)) = o.get("branches") {
+        r.branched = true;
+        r.choice_id = s("choice_id");
+        for x in xs {
+            let mut tokens = None;
+            if let Any::Map(b) = x {
+                if let Some(Any::Num(f)) = b.get("tokens_used") {
+                    if *f == f.trunc() && *f >= 0.0 && *f <= MAX_COUNT {
+                        tokens = Some(*f as i64);
+                    }
+                }
+            }
+            r.branches.push(tokens);
         }
     }
     if r.status.is_empty() {
@@ -347,6 +367,18 @@ impl SpawnTool {
         let tokens = count(&input, "tokens")?;
         let turns = count(&input, "turns")?;
         let max_turns = count(&input, "max_turns")?;
+        let attempts = count(&input, "attempts")?;
+        let why = text(&input, "why")?;
+        let branching = attempts.is_some_and(|n| n != 1);
+        if branching {
+            let n = attempts.unwrap_or(0);
+            if !(2..=8).contains(&n) {
+                return Err(b"spawn: attempts must be a whole number from 2 to 8".to_vec());
+            }
+            if !matches!(why.as_str(), "failed_verify" | "failed_tests" | "low_confidence" | "operator") {
+                return Err(b"spawn: why must be one of failed_verify, failed_tests, low_confidence, operator".to_vec());
+            }
+        }
 
         let mut argv = self.command.clone();
         let mut push = |a: &[u8]| argv.push(a.to_vec());
@@ -385,13 +417,17 @@ impl SpawnTool {
         if let Some(n) = max_turns {
             req.push(("max_turns", J::Int(n)));
         }
+        if branching {
+            req.push(("attempts", J::Int(attempts.unwrap_or(0))));
+            req.push(("why", J::s(&why)));
+        }
         let stdin = crate::json::encode(&jmap(req));
         let (out, errb, run_err) = run_tree(&argv, stdin, self.keys.as_deref());
         if run_err.as_deref() == Some(TOO_MUCH) {
             return Err(b"spawn: the tree command wrote more than 16 MiB".to_vec());
         }
         let Some(reply) = read_reply(crate::gostr::trim_space(&out)) else {
-            let mut reason = crate::gate::gate_reason(&errb, b"");
+            let mut reason = crate::warden::warden_reason(&errb, b"");
             if reason.is_empty() {
                 if let Some(e) = run_err {
                     reason = e.into_bytes();
@@ -399,6 +435,17 @@ impl SpawnTool {
             }
             return Err([b"spawn: the tree command failed: ".as_slice(), &reason].concat());
         };
+        if reply.branched {
+            // Every branch counts toward sprig's cap: its report, else its
+            // whole reservation.
+            for b in &reply.branches {
+                match (b, tokens) {
+                    (Some(n), _) => self.branch.set(crate::agent::sat_add(self.branch.get(), *n)),
+                    (None, Some(n)) => self.branch.set(crate::agent::sat_add(self.branch.get(), n)),
+                    (None, None) => {}
+                }
+            }
+        } else {
         match reply.tokens_used {
             Some(n) => self.branch.set(crate::agent::sat_add(self.branch.get(), n)),
             None if reply.status == "ran" || reply.status == "failed" => {
@@ -409,7 +456,12 @@ impl SpawnTool {
             }
             None => {}
         }
+        }
         Ok(match reply.status.as_str() {
+            "ran" if reply.branched => {
+                let card = if reply.choice_id.is_empty() { "no card".to_string() } else { format!("card {}", reply.choice_id) };
+                format!("{}\n{} branches; {card}", reply.answer, reply.branches.len()).into_bytes()
+            }
             "ran" => reply.answer.into_bytes(),
             "asked" => format!("sent to the operator as ask {}", reply.ask_id).into_bytes(),
             "refused" => format!("refused: {}", reply.reasons.join("; ")).into_bytes(),

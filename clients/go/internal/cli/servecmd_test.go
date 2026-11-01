@@ -14,8 +14,8 @@ import (
 	"daisugi-verify/internal/fenceruns"
 )
 
-// startServer runs `daisugi gate serve --root <dir>/gate` in this process
-// (no GateExe: calls are decided in process) and waits for its socket.
+// startServer runs `daisugi warden serve --root <dir>/warden` in this process
+// (no WardenExe: calls are decided in process) and waits for its socket.
 func startServer(t *testing.T) string {
 	t.Helper()
 	// A short directory: a socket path is limited to 107 bytes, and
@@ -25,9 +25,9 @@ func startServer(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "gate", "gate.sock")
+	sock := filepath.Join(dir, "warden", "warden.sock")
 	var errb bytes.Buffer
-	go Main(&Env{Args: []string{"gate", "serve", "--root", filepath.Join(dir, "gate")},
+	go Main(&Env{Args: []string{"warden", "serve", "--root", filepath.Join(dir, "warden")},
 		Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: &errb,
 		Environ: []string{"HOME=" + dir, "COPPICE_PANE=w1:p1", "COPPICE_SOCK=/x"}})
 	for i := 0; i < 500; i++ {
@@ -58,7 +58,7 @@ func ask(t *testing.T, sock, line string, halfClose bool) string {
 	return string(b)
 }
 
-func TestGateServeAnswersOneLinePerConnection(t *testing.T) {
+func TestWardenServeAnswersOneLinePerConnection(t *testing.T) {
 	sock := startServer(t)
 	root := filepath.Dir(sock)
 	if st, _ := os.Stat(root); st.Mode().Perm() != 0o700 {
@@ -68,7 +68,7 @@ func TestGateServeAnswersOneLinePerConnection(t *testing.T) {
 	if got := ask(t, sock, allow, false); got != `{"v": 1, "stdout": "{\"continue\": true}", "stderr": "", "exit_code": 0}`+"\n" {
 		t.Errorf("allow: %q", got)
 	}
-	bad := `{"v": 1, "stdout": "", "stderr": "openDaisugi gate: DENIED ` + "\\u2014" + ` bad request", "exit_code": 2}` + "\n"
+	bad := `{"v": 1, "stdout": "", "stderr": "openDaisugi warden: DENIED ` + "\\u2014" + ` bad request", "exit_code": 2}` + "\n"
 	for _, line := range []string{"hello\n", "[1]\n", `{"argv": 5}` + "\n"} {
 		if got := ask(t, sock, line, false); got != bad {
 			t.Errorf("%q: %q", line, got)
@@ -88,12 +88,12 @@ func TestGateServeAnswersOneLinePerConnection(t *testing.T) {
 	}
 }
 
-func TestGateServeHookReportNeverReadsItsOwnPane(t *testing.T) {
+func TestWardenServeHookReportNeverReadsItsOwnPane(t *testing.T) {
 	sock := startServer(t)
 	root := filepath.Dir(sock)
-	// {"v":1,"ts":1,"session_id":"s","harness":"pi","state":"idle","source":"gate"}
+	// {"v":1,"ts":1,"session_id":"s","harness":"pi","state":"idle","source":"warden"}
 	line := `{"argv": ["hook", "report"], "stdin_b64": ` +
-		`"eyJ2IjoxLCJ0cyI6MSwic2Vzc2lvbl9pZCI6InMiLCJoYXJuZXNzIjoicGkiLCJzdGF0ZSI6ImlkbGUiLCJzb3VyY2UiOiJnYXRlIn0="}` + "\n"
+		`"eyJ2IjoxLCJ0cyI6MSwic2Vzc2lvbl9pZCI6InMiLCJoYXJuZXNzIjoicGkiLCJzdGF0ZSI6ImlkbGUiLCJzb3VyY2UiOiJ3YXJkZW4ifQ=="}` + "\n"
 	if got := ask(t, sock, line, false); got != `{"v": 1, "stdout": "", "stderr": "", "exit_code": 0}`+"\n" {
 		t.Fatalf("report: %q", got)
 	}
@@ -101,28 +101,28 @@ func TestGateServeHookReportNeverReadsItsOwnPane(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The gate source is downgraded, and the server's own COPPICE_PANE
+	// The warden source is downgraded, and the server's own COPPICE_PANE
 	// is nowhere in what it wrote.
 	if !strings.Contains(string(tree), `"source": "headless"`) || strings.Contains(string(tree), "w1:p1") {
 		t.Errorf("tree %s", tree)
 	}
 }
 
-func TestGateServeReplacesAStaleSocketFile(t *testing.T) {
+func TestWardenServeReplacesAStaleSocketFile(t *testing.T) {
 	dir := t.TempDir()
-	root := filepath.Join(dir, "gate")
+	root := filepath.Join(dir, "warden")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "gate.sock"), []byte("stale"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "warden.sock"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := listenGate(root, filepath.Join(root, "gate.sock"))
+	ln, err := listenWarden(root, filepath.Join(root, "warden.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ln.Close()
-	st, err := os.Lstat(filepath.Join(root, "gate.sock"))
+	st, err := os.Lstat(filepath.Join(root, "warden.sock"))
 	if err != nil || st.Mode()&os.ModeSocket == 0 || st.Mode().Perm() != 0o600 {
 		t.Fatalf("after close: %v %v", st, err)
 	}
@@ -131,14 +131,14 @@ func TestGateServeReplacesAStaleSocketFile(t *testing.T) {
 	}
 }
 
-func TestProbeGateTellsNothingStaleAndLiveApart(t *testing.T) {
+func TestProbeWardenTellsNothingStaleAndLiveApart(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pg")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
 	p := filepath.Join(dir, "g.sock")
-	if got := probeGate(p); got != gateNone {
+	if got := probeWarden(p); got != wardenNone {
 		t.Errorf("nothing: %s", got)
 	}
 	dead, err := net.ListenUnix("unix", &net.UnixAddr{Name: p, Net: "unix"})
@@ -147,14 +147,14 @@ func TestProbeGateTellsNothingStaleAndLiveApart(t *testing.T) {
 	}
 	dead.SetUnlinkOnClose(false)
 	dead.Close()
-	if got := probeGate(p); got != gateStale {
+	if got := probeWarden(p); got != wardenStale {
 		t.Errorf("dead socket: %s", got)
 	}
 	os.Remove(p)
 	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := probeGate(p); got != gateStale {
+	if got := probeWarden(p); got != wardenStale {
 		t.Errorf("regular file: %s", got)
 	}
 	os.Remove(p)
@@ -163,22 +163,22 @@ func TestProbeGateTellsNothingStaleAndLiveApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer live.Close()
-	if got := probeGate(p); got != gateLive {
+	if got := probeWarden(p); got != wardenLive {
 		t.Errorf("listening: %s", got)
 	}
 }
 
-func TestGateServeRefusesARootALiveGateServes(t *testing.T) {
+func TestWardenServeRefusesARootALiveWardenServes(t *testing.T) {
 	sock := startServer(t)
 	st, _ := os.Lstat(sock)
 	var errb bytes.Buffer
-	code := Main(&Env{Args: []string{"gate", "serve", "--root", filepath.Dir(sock)},
+	code := Main(&Env{Args: []string{"warden", "serve", "--root", filepath.Dir(sock)},
 		Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: &errb,
 		Environ: []string{"HOME=" + filepath.Dir(filepath.Dir(sock))}})
 	if code != 1 {
 		t.Errorf("exit %d", code)
 	}
-	want := "gate: a resident gate already answers on " + sock + "; stop it first\n"
+	want := "warden: a resident warden already answers on " + sock + "; stop it first\n"
 	if errb.String() != want {
 		t.Errorf("stderr %q", errb.String())
 	}
@@ -187,8 +187,8 @@ func TestGateServeRefusesARootALiveGateServes(t *testing.T) {
 	}
 }
 
-// FN-R-21: the resident gate takes no path from a request.
-func TestGateServeTakesNoPathFromARequest(t *testing.T) {
+// FN-R-21: the resident warden takes no path from a request.
+func TestWardenServeTakesNoPathFromARequest(t *testing.T) {
 	sock := startServer(t)
 	x := filepath.Join(filepath.Dir(filepath.Dir(sock)), "elsewhere")
 	for _, words := range [][]string{{"--root", x}, {"--root=" + x}, {"--ro", x}, {"--captures-root", x}, {"--cap=" + x}} {
@@ -210,7 +210,7 @@ func TestGateServeTakesNoPathFromARequest(t *testing.T) {
 	}
 }
 
-func TestGateServeDeniesABadSessionID(t *testing.T) {
+func TestWardenServeDeniesABadSessionID(t *testing.T) {
 	sock := startServer(t)
 	for _, sid := range []string{`"../x"`, `"."`, `".."`, `"a/b"`, `""`, `7`, `"` + strings.Repeat("a", 129) + `"`} {
 		pl := `{"session_id": ` + sid + `, "tool_name": "Read", "tool_input": {"file_path": "/x"}}`
@@ -225,7 +225,7 @@ func TestGateServeDeniesABadSessionID(t *testing.T) {
 	}
 }
 
-func TestGateServeTakesACheckpointOnlyInTheBoundWorkspace(t *testing.T) {
+func TestWardenServeTakesACheckpointOnlyInTheBoundWorkspace(t *testing.T) {
 	sock := startServer(t)
 	root := filepath.Dir(sock)
 	ws := filepath.Join(filepath.Dir(root), "ws")
@@ -255,13 +255,13 @@ func TestGateServeTakesACheckpointOnlyInTheBoundWorkspace(t *testing.T) {
 	}
 }
 
-func TestGateServeFixesTheCapturesRootAtStart(t *testing.T) {
+func TestWardenServeFixesTheCapturesRootAtStart(t *testing.T) {
 	dir, err := os.MkdirTemp("", "gs")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	root := filepath.Join(dir, "gate")
+	root := filepath.Join(dir, "warden")
 	caps := filepath.Join(dir, "caps")
 	if err := os.MkdirAll(filepath.Join(root, "envelopes"), 0o700); err != nil {
 		t.Fatal(err)
@@ -271,9 +271,9 @@ func TestGateServeFixesTheCapturesRootAtStart(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "envelopes", "default.json"), []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	go Main(&Env{Args: []string{"gate", "serve", "--root", root, "--captures-root", caps},
+	go Main(&Env{Args: []string{"warden", "serve", "--root", root, "--captures-root", caps},
 		Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard, Environ: []string{"HOME=" + dir}})
-	sock := filepath.Join(root, "gate.sock")
+	sock := filepath.Join(root, "warden.sock")
 	for i := 0; i < 500 && !exists(sock); i++ {
 		time.Sleep(10 * time.Millisecond)
 	}

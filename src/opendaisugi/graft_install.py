@@ -1,16 +1,16 @@
 """Install, show and remove a graft rule file (GR-3, GR-5).
 
-A graft rule is data in ``<gate root>/grafts/<id>.json`` (RP-1). This module
+A graft rule is data in ``<warden root>/grafts/<id>.json`` (RP-1). This module
 writes the one shape built, ``deny_redirect`` for large reads, and removes it.
 
 Before it writes, it reads the PreToolUse hooks of every harness settings
 file it knows: Claude Code's ``~/.claude/settings.json``, the project's
 ``.claude/settings.json`` and ``.claude/settings.local.json``, and Codex's
-``~/.codex/hooks.json``. A hook that is not the gate and not the capture hook
-may rewrite a tool's input after the gate saw it, so the gate could not vouch
+``~/.codex/hooks.json``. A hook that is not the warden and not the capture hook
+may rewrite a tool's input after the warden saw it, so the warden could not vouch
 for the input that runs. The installer then refuses and names the hook in one
 line (GR-3). A settings file that is not readable JSON also refuses, since its
-hooks cannot be checked. The refusal never touches the gate itself.
+hooks cannot be checked. The refusal never touches the warden itself.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from opendaisugi import delegate
+from opendaisugi import spawn
 from opendaisugi._state_files import unlink_state_file, verify_written, write_state_file
-from opendaisugi.config import gate_hook_kind, is_record_hook
+from opendaisugi.config import is_record_hook, warden_hook_kind
 
 DEFAULT_RULE_ID = "big-read"
 STATES = ("audit", "trial", "active")
@@ -44,11 +44,11 @@ def settings_files(home: Path, cwd: Path) -> list[Path]:
 
 
 def _known(h: Any) -> bool:
-    """A hook known not to rewrite input: the gate, or the capture hook."""
+    """A hook known not to rewrite input: the warden, or the capture hook."""
     if not isinstance(h, dict):
         return False
     command = h.get("command")
-    return gate_hook_kind(command) == "gate" or is_record_hook(command)
+    return warden_hook_kind(command) == "warden" or is_record_hook(command)
 
 
 def rival_hooks(home: Path, cwd: Path) -> list[tuple[str, str]]:
@@ -89,11 +89,11 @@ def refusal_line(file: str, what: str) -> str:
     if what == "not readable JSON":
         return (
             f"Refused: {file} is not readable JSON, so its PreToolUse hooks cannot be "
-            "checked. No graft was installed; the gate is not changed."
+            "checked. No graft was installed; the warden is not changed."
         )
     return (
         f"Refused: {file} has a PreToolUse hook that may rewrite a tool's input: {what}. "
-        "No graft was installed; the gate is not changed."
+        "No graft was installed; the warden is not changed."
     )
 
 
@@ -113,11 +113,11 @@ class Refused:
 
 
 def rule_path(root: Path, rule_id: str) -> Path:
-    return delegate.grafts_dir(root) / f"{rule_id}.json"
+    return spawn.grafts_dir(root) / f"{rule_id}.json"
 
 
 def valid_id(rule_id: str) -> bool:
-    return bool(delegate._RULE_ID.fullmatch(rule_id))
+    return bool(spawn._RULE_ID.fullmatch(rule_id))
 
 
 def _prior_version(path: Path, rule_id: str) -> int:
@@ -126,7 +126,7 @@ def _prior_version(path: Path, rule_id: str) -> int:
         obj = json.loads(path.read_bytes().decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError, RecursionError):
         return 0
-    got = delegate.parse_rule(obj, path.name)
+    got = spawn.parse_rule(obj, path.name)
     if isinstance(got, str) or got.id != rule_id:
         return 0
     return got.version
@@ -139,14 +139,14 @@ def install(
     cwd: Path,
     rule_id: str = DEFAULT_RULE_ID,
     state: str = "audit",
-    lines: int = delegate.DEFAULT_MIN_LINES,
+    lines: int = spawn.DEFAULT_MIN_LINES,
     allow_remote: bool = False,
     seed: int | None = None,
 ) -> Installed | Refused:
     """Write the rule file, or refuse beside a rival hook (nothing written).
 
     A trial rule gets ``"trial": {"seed": SEED}``, the seed 0 when none is
-    given; the gate assigns each session an arm from it."""
+    given; the warden assigns each session an arm from it."""
     rivals = rival_hooks(home, cwd)
     if rivals:
         return Refused(refusal_line(*rivals[0]))
@@ -158,7 +158,7 @@ def install(
         "shape": "deny_redirect",
         "state": state,
         "match": {"tool": "Read", "file_lines_over": lines},
-        "redirect": {"tool": delegate.DELEGATE_NAME},
+        "redirect": {"tool": spawn.SPAWN_NAME},
         "worker": {"choose": "router", "allow_remote": allow_remote},
     }
     if state == "trial":
@@ -166,10 +166,10 @@ def install(
         rule["trial"] = {"seed": seed}
     else:
         seed = None
-    # The gate reads a rule only from a directory and a file no group or
+    # The warden reads a rule only from a directory and a file no group or
     # other user can write (GR-R-1), whatever the umask, and the rule is
     # written through the directory fd (GR-R-9): a link at its name is
-    # refused, and the file is read back with the gate's reader.
+    # refused, and the file is read back with the warden's reader.
     write_state_file(
         root,
         ("grafts",),
@@ -183,13 +183,13 @@ def install(
 
 def status(root: Path, *, home: Path, cwd: Path) -> dict[str, Any]:
     """The rule files, which one is in force, and the rival hooks."""
-    rules, bad = delegate.load_rules(root)
-    acting = next((r for r in rules if r.state in delegate.RULE_STATES_ACTING), None)
+    rules, bad = spawn.load_rules(root)
+    acting = next((r for r in rules if r.state in spawn.RULE_STATES_ACTING), None)
     out_rules = []
     for r in rules:
         if r is acting:
             why = None
-        elif r.state not in delegate.RULE_STATES_ACTING:
+        elif r.state not in spawn.RULE_STATES_ACTING:
             why = f"state {r.state} does not act"
         else:
             why = f"{acting.file} acts first"
@@ -207,7 +207,7 @@ def status(root: Path, *, home: Path, cwd: Path) -> dict[str, Any]:
             }
         )
     return {
-        "dir": str(delegate.grafts_dir(root)),
+        "dir": str(spawn.grafts_dir(root)),
         "rules": out_rules,
         "unused": [{"file": f, "why": w} for f, w in bad],
         "rival_hooks": [{"file": f, "hook": w} for f, w in rival_hooks(home, cwd)],

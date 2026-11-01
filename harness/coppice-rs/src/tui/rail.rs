@@ -10,13 +10,13 @@ use crate::tiles::Tiles;
 
 use super::keys::{bind, hit_row, hit_tile, on_tiles, Action, Click, Key};
 use super::model::{
-    answerable, boolean, clamp, dir_base, gate_watches, hook_root_line, last_rune_len, loop_done,
-    mode_done, mode_no_gate, model_done, move_line, obj, restart_line, router_done, s,
+    answerable, boolean, clamp, dir_base, warden_watches, hook_root_line, last_rune_len, loop_done,
+    mode_done, mode_no_warden, model_done, move_line, obj, restart_line, route_done, s,
     started_line, swap_none, swaps, Item, ItemKind, Picker, Project, Row, CHILD_MESSAGE, SWAP_HINT,
 };
 use super::prompt::{
     classify_with, parse_layout, task_promotion_line, tiles_message, write_floor_state, Kind,
-    FLOOR_FILE, FOREMAN_LABEL, HARNESSES, LAYOUT_NEEDS_MESSAGE, LOCKED_MESSAGE, NO_FOREMAN_ANSWER,
+    FLOOR_FILE, STEWARD_LABEL, HARNESSES, LAYOUT_NEEDS_MESSAGE, LOCKED_MESSAGE, NO_STEWARD_ANSWER,
     SWAP_NEEDS_MESSAGE, VERBS,
 };
 use super::render::window_count;
@@ -84,7 +84,7 @@ impl Batch {
     }
 }
 
-/// How long promote waits for the new foreman pane to go idle.
+/// How long promote waits for the new steward pane to go idle.
 pub const PROMOTE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Waits for pane id's first idle state after it drew something, then
@@ -146,14 +146,14 @@ pub fn promoted_message(label: &str, task: &str) -> String {
     if task.is_empty() {
         return format!("{label} has its page. Type a sentence and it goes there.");
     }
-    format!("{label} is the foreman of {task}. The task's undoable asks go to it first.")
+    format!("{label} is the steward of {task}. The task's undoable asks go to it first.")
 }
 
 /// The one line the floor shows for a floor.talk reply.
 pub fn talk_message(res: &super::model::Obj) -> String {
     let mut label = s(res, "label");
     if label.is_empty() {
-        label = "the foreman".into();
+        label = "the steward".into();
     }
     let note = s(res, "note");
     if !note.is_empty() {
@@ -313,7 +313,7 @@ impl Floor<'_> {
     }
 
     /// s: opens the prompt line to swap the selected agent's model or
-    /// router, for an agent that has one to swap.
+    /// route, for an agent that has one to swap.
     fn start_swap(&mut self) {
         let Some(r) = self.m.selected() else { return };
         if !r.parent.is_empty() {
@@ -330,7 +330,7 @@ impl Floor<'_> {
     }
 
     /// Applies one key while the prompt line swaps. Enter reads the line:
-    /// a model is sent at once, and a router asks first.
+    /// a model is sent at once, and a route asks first.
     fn swap_type_key(&mut self, k: &Key) -> Result<(), FloorErr> {
         match k {
             Key::Esc => {
@@ -342,7 +342,7 @@ impl Floor<'_> {
                 let line = self.m.prompt_text();
                 self.m.prompt.clear();
                 let words: Vec<&str> = line.split_whitespace().collect();
-                if words.len() != 2 || !matches!(words[0], "model" | "router" | "loop") {
+                if words.len() != 2 || !matches!(words[0], "model" | "route" | "loop") {
                     self.m.message = SWAP_HINT.into();
                     return Ok(());
                 }
@@ -366,13 +366,13 @@ impl Floor<'_> {
                     self.m.confirm = id;
                     return Ok(());
                 }
-                if words[0] == "router" {
-                    if words[1] != "direct" && words[1] != "gateway" {
+                if words[0] == "route" {
+                    if words[1] != "direct" && words[1] != "router" {
                         self.m.message = SWAP_HINT.into();
                         return Ok(());
                     }
                     self.m.confirm = id;
-                    self.m.confirm_router = words[1].to_string();
+                    self.m.confirm_route = words[1].to_string();
                     return Ok(());
                 }
                 let res = match call(
@@ -458,7 +458,7 @@ impl Floor<'_> {
         let id = std::mem::take(&mut self.m.confirm);
         let all = self.m.clear_all;
         let mode = self.m.confirm_mode;
-        let router = std::mem::take(&mut self.m.confirm_router);
+        let route = std::mem::take(&mut self.m.confirm_route);
         let to = std::mem::take(&mut self.m.confirm_loop);
         self.m.confirm_line.clear();
         self.m.clear_all = false;
@@ -480,16 +480,16 @@ impl Floor<'_> {
             self.m.message = loop_done(&label, &to, when);
             return self.refresh();
         }
-        if !router.is_empty() {
+        if !route.is_empty() {
             let label = self.m.label_of(&id);
             if let Err(e) = call(
                 &self.o.socket,
-                "agent.set_router",
-                params(vec![("pane", json!(id)), ("router", json!(router))]),
+                "agent.set_route",
+                params(vec![("pane", json!(id)), ("route", json!(route))]),
             ) {
                 return self.fail(e);
             }
-            self.m.message = router_done(&label, &router);
+            self.m.message = route_done(&label, &route);
             return self.refresh();
         }
         if all {
@@ -512,7 +512,7 @@ impl Floor<'_> {
     /// m: the selected agent's daisugi mode. An agent the owner set to
     /// watching goes back to enforcing at once. An enforcing agent asks
     /// once first, and answer_confirm takes the next key. Off is never
-    /// offered: turning the gate off stays the command daisugi gate disarm.
+    /// offered: turning the warden off stays the command daisugi warden disarm.
     fn mode_key(&mut self) -> Result<(), FloorErr> {
         let Some(r) = self.m.selected() else {
             return Ok(());
@@ -522,7 +522,7 @@ impl Floor<'_> {
             return Ok(());
         }
         if r.mode.is_empty() || r.mode == "off" {
-            self.m.message = mode_no_gate(&self.m.label_of(&r.id));
+            self.m.message = mode_no_warden(&self.m.label_of(&r.id));
             return Ok(());
         }
         if let Some(root) = self
@@ -539,7 +539,7 @@ impl Floor<'_> {
             return self.set_mode(&r.id, "enforcing");
         }
         if r.mode == "watching" {
-            self.m.message = gate_watches(&self.m.label_of(&r.id));
+            self.m.message = warden_watches(&self.m.label_of(&r.id));
             return Ok(());
         }
         self.m.confirm = r.id;
@@ -1097,7 +1097,7 @@ impl Floor<'_> {
         self.send_answer(
             "agent.allow",
             Some(extra),
-            "Allowed for this task. The gate records it as a proposal.",
+            "Allowed for this task. The warden records it as a proposal.",
         )
     }
 
@@ -1295,7 +1295,7 @@ impl Floor<'_> {
         Ok(res)
     }
 
-    /// Sends one sentence to the floor's foreman.
+    /// Sends one sentence to the floor's steward.
     fn talk(&mut self, line: &str) -> Result<(), FloorErr> {
         let act = self.act_for(line);
         let res = match call(
@@ -1311,9 +1311,9 @@ impl Floor<'_> {
         self.m.message = talk_message(&res);
         self.refresh()?;
         self.fill_shown(&id);
-        // The pane floor.talk names is the foreman: its window draws the chat.
-        if !id.is_empty() && id != self.m.foreman_id {
-            self.set_foreman(&id);
+        // The pane floor.talk names is the steward: its window draws the chat.
+        if !id.is_empty() && id != self.m.steward_id {
+            self.set_steward(&id);
         }
         self.read_chat();
         Ok(())
@@ -1435,7 +1435,7 @@ impl Floor<'_> {
                 }
                 return self.attach_to(&id);
             }
-            "foreman" => return self.foreman_word(&words[1..]),
+            "steward" => return self.steward_word(&words[1..]),
             "tree" => {
                 self.refresh()?;
                 let cols = self.cols();
@@ -1476,20 +1476,20 @@ impl Floor<'_> {
         false
     }
 
-    fn foreman_word(&mut self, args: &[String]) -> Result<(), FloorErr> {
+    fn steward_word(&mut self, args: &[String]) -> Result<(), FloorErr> {
         if !self.m.path.is_empty() {
-            return self.task_foreman_word(args);
+            return self.task_steward_word(args);
         }
         if args.is_empty() {
-            return self.name_foreman();
+            return self.name_steward();
         }
         if args.len() > 1 {
-            self.m.message = "foreman takes one harness name, as in foreman claude".into();
+            self.m.message = "steward takes one harness name, as in steward claude".into();
             return Ok(());
         }
         let res = match call(
             &self.o.socket,
-            "floor.foreman",
+            "floor.steward",
             params(vec![("harness", json!(args[0]))]),
         ) {
             Ok(r) => r,
@@ -1497,30 +1497,30 @@ impl Floor<'_> {
         };
         let id = s(&res, "pane");
         self.m.message = format!(
-            "{FOREMAN_LABEL} opens. It gets the page once it is idle, and then your sentences."
+            "{STEWARD_LABEL} opens. It gets the page once it is idle, and then your sentences."
         );
         self.refresh()?;
         self.fill_shown(&id);
         Ok(())
     }
 
-    fn name_foreman(&mut self) -> Result<(), FloorErr> {
+    fn name_steward(&mut self) -> Result<(), FloorErr> {
         let res = match call(&self.o.socket, "floor.facts", None) {
             Ok(r) => r,
             Err(e) => return self.fail(e),
         };
-        if let Some(fm) = obj(&res, "foreman") {
+        if let Some(fm) = obj(&res, "steward") {
             let id = s(fm, "pane");
             if !id.is_empty() {
-                self.m.message = format!("foreman: {} ({id})", s(fm, "label"));
+                self.m.message = format!("steward: {} ({id})", s(fm, "label"));
                 return Ok(());
             }
         }
-        self.m.message = NO_FOREMAN_ANSWER.into();
+        self.m.message = NO_STEWARD_ANSWER.into();
         Ok(())
     }
 
-    fn task_foreman_word(&mut self, args: &[String]) -> Result<(), FloorErr> {
+    fn task_steward_word(&mut self, args: &[String]) -> Result<(), FloorErr> {
         let sc = self.m.scope();
         let Some(tk) = self.m.task(&sc) else {
             self.m.message = format!("task {sc} is gone");
@@ -1532,21 +1532,21 @@ impl Floor<'_> {
             tk.label.clone()
         };
         if args.is_empty() {
-            if tk.foreman.is_empty() {
+            if tk.steward.is_empty() {
                 self.m.message = format!(
-                    "no foreman for {label}. Type: foreman {}",
+                    "no steward for {label}. Type: steward {}",
                     self.m.default_harness()
                 );
                 return Ok(());
             }
-            self.m.message = format!("foreman of {label}: {}", self.m.label_of(&tk.foreman));
+            self.m.message = format!("steward of {label}: {}", self.m.label_of(&tk.steward));
             return Ok(());
         }
         if args.len() > 1 {
-            self.m.message = "foreman takes one harness name, as in foreman claude".into();
+            self.m.message = "steward takes one harness name, as in steward claude".into();
             return Ok(());
         }
-        let name = format!("{label}-foreman");
+        let name = format!("{label}-steward");
         self.refresh()?;
         for r in &self.m.rows {
             if r.label == name && r.parent.is_empty() {
@@ -1570,7 +1570,7 @@ impl Floor<'_> {
         };
         if let Err(e) = call(
             &self.o.socket,
-            "task.set_foreman",
+            "task.set_steward",
             params(vec![("task", json!(sc)), ("pane", json!(id))]),
         ) {
             self.fail(e)?;

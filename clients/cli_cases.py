@@ -1,4 +1,4 @@
-"""Synthetic CLI cases: the gate commands and `install --gate`, run through
+"""Synthetic CLI cases: the warden commands and `install --warden`, run through
 the Python CLI, the oracle.
 
     uv run --no-sync python clients/cli_cases.py [--out clients/fixtures/cli]
@@ -22,7 +22,7 @@ A case marked ``go_refuses`` holds a flag the Go binary does not handle.
 There the check is only that Go exits non-zero, prints one line naming the
 Python command, and leaves the tree as it was.
 
-The file is content-addressed like the gate cases: each ``id`` is the first
+The file is content-addressed like the warden cases: each ``id`` is the first
 16 hex digits of the SHA-256 of the case's canonical JSON without the id,
 lines are sorted by id, and a manifest pins the file's bytes.
 """
@@ -47,6 +47,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import base_install  # noqa: E402 - sibling module, run as a script
+import garden_cases  # noqa: E402 - sibling module, run as a script
+from fixture_paths import fixed_root  # noqa: E402 - sibling module, run as a script
+
+# Cases that stamp "about now" (the journal ones): up to 90 s after the case
+# starts reads as +0, so a loaded box cannot move a minute bucket.
+garden_cases.NOW_SNAP_S = 90.0
 
 REPO = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO / "clients" / "fixtures" / "cli"
@@ -54,6 +60,19 @@ SCRATCH = Path(
     os.environ.get("DAISUGI_CLI_SCRATCH") or Path.home() / "opendaisugi-scratch" / "2c" / "runs"
 )
 CASE_VERSION = 1
+
+# Cases whose answer depends on the box that writes them (whether the
+# search extra is installed). The writer keeps the fixture's answer for each
+# and the manifest names them, so a regeneration cannot flip one silently.
+# See clients/ADJUDICATIONS.md, CL-R-1.
+BOX_DEPENDENT = (
+    "status pathways minilm",
+    "journal search minilm",
+    "status gpu fails",
+    "status gpu no comma",
+    "status gpu bad number",
+    "journal search int8",
+)
 
 
 def as_daisugi(binary: str | Path, scratch: Path = SCRATCH, name: str = "daisugi") -> str:
@@ -73,9 +92,9 @@ def as_daisugi(binary: str | Path, scratch: Path = SCRATCH, name: str = "daisugi
     return str(link)
 
 
-GATE_SOCK = ".opendaisugi/gate/gate.sock"
+WARDEN_SOCK = ".opendaisugi/warden/warden.sock"
 
-# `daisugi start` detaches `python -m opendaisugi.cli gate serve` and then
+# `daisugi start` detaches `python -m opendaisugi.cli warden serve` and then
 # opens the view. The oracle runs with the spawn replaced by a fake that
 # logs the argv it was given and makes the socket the server would make,
 # so no case leaves a process running. It runs as the binaries are built
@@ -89,7 +108,7 @@ import opendaisugi.start as st
 def _fake_detach(argv):
     with open(os.environ["FAKE_SPAWN_LOG"], "a", encoding="utf-8") as f:
         f.write(json.dumps(argv) + "\\n")
-    Path(argv[argv.index("--root") + 1], "gate.sock").touch()
+    Path(argv[argv.index("--root") + 1], "warden.sock").touch()
 st._detach = _fake_detach
 """
 )
@@ -149,10 +168,10 @@ _ENV_ID = re.compile(r"^env_[0-9a-f]{8}$")
 
 
 def norm_command(cmd: str) -> str:
-    """A gate hook command with its entry point replaced by {GATE}, so the
-    Python form (python -m opendaisugi.gate_client ...) and the Go form
-    (NAME=... daisugi gate check ...) compare on the flags they pass."""
-    if "opendaisugi.gate" not in cmd and " gate check" not in cmd:
+    """A warden hook command with its entry point replaced by {WARDEN}, so the
+    Python form (python -m opendaisugi.warden_client ...) and the Go form
+    (NAME=... daisugi warden check ...) compare on the flags they pass."""
+    if "opendaisugi.warden" not in cmd and " warden check" not in cmd:
         return cmd
     try:
         toks = shlex.split(cmd)
@@ -160,17 +179,22 @@ def norm_command(cmd: str) -> str:
         return cmd
     while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
         toks = toks[1:]
-    if len(toks) >= 4 and toks[1:3] == ["-I", "-m"] and toks[3].startswith("opendaisugi.gate"):
-        toks = ["{GATE}"] + toks[4:]  # the hook's isolated form (SX-R-9)
-    elif len(toks) >= 3 and toks[1] == "-m" and toks[2].startswith("opendaisugi.gate"):
-        toks = ["{GATE}"] + toks[3:]
-    elif len(toks) >= 3 and toks[1:3] == ["gate", "check"]:
-        toks = ["{GATE}"] + toks[3:]
+    if len(toks) >= 4 and toks[1:3] == ["-I", "-m"] and toks[3].startswith("opendaisugi.warden"):
+        toks = ["{WARDEN}"] + toks[4:]  # the hook's isolated form (SX-R-9)
+    elif len(toks) >= 3 and toks[1] == "-m" and toks[2].startswith("opendaisugi.warden"):
+        toks = ["{WARDEN}"] + toks[3:]
+    elif len(toks) >= 3 and toks[1:3] == ["warden", "check"]:
+        toks = ["{WARDEN}"] + toks[3:]
     return " ".join(toks)
+
+
+_STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 
 
 def norm_json(v: Any, home: str) -> Any:
     if isinstance(v, str):
+        for path, mark in exe_marks(home):
+            v = v.replace(path, mark)
         v = v.replace(home, "{HOME}").replace(sys.executable, "{PYTHON}")
         if _ENV_ID.match(v):
             return "<env>"
@@ -182,6 +206,8 @@ def norm_json(v: Any, home: str) -> Any:
         for k, x in v.items():
             if k == "command" and isinstance(x, str):
                 x = norm_command(x)
+            if k == "applied_at" and isinstance(x, str) and _STAMP.fullmatch(x):
+                x = "<time>"  # a recipe receipt's time: its shape is checked, not its value
             out[k] = norm_json(x, home)
         return out
     return v
@@ -207,7 +233,36 @@ _MACHINE_PATHS = sorted(
 )
 
 
+def entry_dir() -> Path:
+    """Where `daisugi` is for a case: one directory of a fixed length, on the
+    PATH of every run. The oracle finds a fake executable there. A port is run
+    by the link there, so it writes that path. The length is fixed because
+    YAML folds a long line at a word, so a hook line in a Hermes config reads
+    differently for a longer path (ruling INST-1)."""
+    return fixed_root(SCRATCH, "x")
+
+
+def exe_marks(home: str) -> list[tuple[str, str]]:
+    """The paths `daisugi install` writes for itself, read as {DAISUGI}: the
+    entry point of every run, and the renamed copy two cases install from."""
+    return [
+        (str(entry_dir() / "daisugi"), "{DAISUGI}"),
+        (str(SCRATCH / "prog" / "daisugi-copy"), "{DAISUGI}"),
+    ]
+
+
+def entry_cmd(case: dict[str, Any], cmd: list[str]) -> list[str]:
+    """The command to run: a port is run by the link in entry_dir, so the
+    path it writes for itself is the oracle's. A case that sets `prog` runs
+    the binary under that name instead."""
+    if cmd and cmd[0] != sys.executable and not case.get("prog"):
+        return [str(entry_dir() / "daisugi")] + cmd[1:]
+    return cmd
+
+
 def norm_text(s: str, home: str) -> str:
+    for path, mark in exe_marks(home):
+        s = s.replace(path, mark)
     s = s.replace(home, "{HOME}").replace(sys.executable, "{PYTHON}")
     for path, mark in _MACHINE_PATHS:
         s = s.replace(path, mark)
@@ -269,14 +324,20 @@ def _zero_elapsed(v: Any) -> Any:
 
 def norm_stdout(s: str, home: str, argv: list[str]) -> Any:
     s = norm_text(s, home)
-    # gate replay --json carries each call's time; compare it as 0.
-    if argv[:2] == ["gate", "replay"] and "--json" in argv:
+    # warden replay --json carries each call's time; compare it as 0.
+    if argv[:2] == ["warden", "replay"] and "--json" in argv:
         try:
             return {"json": _zero_elapsed(norm_json(json.loads(s), home))}
         except ValueError:
             return s
-    # gate settings prints one JSON document; compare it parsed.
-    if argv[:2] == ["gate", "settings"]:
+    # recipe apply --yes --json prints the receipt, which carries its time.
+    if argv[:2] == ["recipe", "apply"] and "--json" in argv and "--yes" in argv:
+        try:
+            return {"json": norm_json(json.loads(s), home)}
+        except ValueError:
+            return s
+    # warden settings prints one JSON document; compare it parsed.
+    if argv[:2] == ["warden", "settings"]:
         try:
             return {"json": norm_json(json.loads(s), home)}
         except ValueError:
@@ -285,11 +346,13 @@ def norm_stdout(s: str, home: str, argv: list[str]) -> Any:
 
 
 _WARN = re.compile(r"^.*?:\d+: (\w*Warning): (.*)$")
+_WARN_BARE = re.compile(r"^\w*Warning: (.*)$")
 
 
 def norm_stderr(s: str, home: str) -> list[str]:
     """Python's warnings print as `file:line: UserWarning: text` plus the
-    source line; keep only `UserWarning: text`. A traceback keeps only its
+    source line; keep only `warning: text`, the binary's line, for every
+    warning class, so one fixture reads the same on any box. A traceback keeps only its
     last line, the exception: its frames name files on this machine."""
     out: list[str] = []
     lines = norm_text(s, home).splitlines()
@@ -307,8 +370,14 @@ def norm_stderr(s: str, home: str) -> list[str]:
                 continue
         m = _WARN.match(line)
         if m:
-            out.append(f"{m.group(1)}: {m.group(2)}")
+            out.append(f"warning: {m.group(2)}")
             skip = True
+            continue
+        # Python cuts the file and the source line when a warning is
+        # already compiled in; the text is the same either way.
+        m = _WARN_BARE.match(line)
+        if m:
+            out.append(f"warning: {m.group(1)}")
             continue
         out.append(line)
     return out
@@ -319,13 +388,28 @@ def norm_stderr(s: str, home: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def prepare(case: dict[str, Any], work: Path) -> tuple[Path, list[str], dict[str, str], Path]:
+def prepare(
+    case: dict[str, Any], work: Path, cmd: list[str] | None = None
+) -> tuple[Path, list[str], dict[str, str], Path]:
     if work.exists():
         shutil.rmtree(work)
     home = work / "home"
     lay_out(case.get("before") or {}, home)
     bindir = work / "bin"
     bindir.mkdir(parents=True)
+    # The installed entry point: install writes its absolute path into every
+    # hook and MCP entry, and checks that it can run. The oracle finds a fake
+    # one; a port is run through a link to the binary at the same path.
+    exe_dir = entry_dir()
+    if exe_dir.exists():
+        shutil.rmtree(exe_dir)
+    exe_dir.mkdir(parents=True)
+    entry = exe_dir / "daisugi"
+    if cmd and cmd[0] != sys.executable and not case.get("prog"):
+        entry.symlink_to(Path(cmd[0]).resolve())
+    else:
+        entry.write_text("#!/bin/sh\nexit 0\n")
+        os.chmod(entry, 0o755)
     for name in case.get("path_bins") or []:
         b = bindir / name
         b.write_text("#!/bin/sh\nexit 0\n")
@@ -333,7 +417,7 @@ def prepare(case: dict[str, Any], work: Path) -> tuple[Path, list[str], dict[str
     h = str(home)
     env = {
         "HOME": h,
-        "PATH": f"{bindir}:/usr/bin:/bin",
+        "PATH": f"{bindir}:{exe_dir}:/usr/bin:/bin",
         "PYTHONPATH": str(REPO / "src"),
         "CUDA_VISIBLE_DEVICES": "",
         "LANG": "C.UTF-8",
@@ -352,7 +436,8 @@ def prepare(case: dict[str, Any], work: Path) -> tuple[Path, list[str], dict[str
 def run_case(
     case: dict[str, Any], cmd: list[str], work: Path, extra_env: dict[str, str] | None = None
 ) -> tuple[dict[str, Any], float]:
-    home, argv, env, cwd = prepare(case, work)
+    home, argv, env, cwd = prepare(case, work, cmd)
+    cmd = entry_cmd(case, cmd)
     if extra_env:
         env.update(extra_env)
     old = os.umask(0o022)
@@ -435,7 +520,7 @@ def mk(
     return c
 
 
-GROOT = ".opendaisugi/gate"
+GROOT = ".opendaisugi/warden"
 ENVD = f"{GROOT}/envelopes"
 CLAUDE = ".claude/settings.json"
 
@@ -449,8 +534,8 @@ def hook_settings(cmd: str, extra: dict[str, Any] | None = None) -> str:
     return json.dumps(s, indent=2)
 
 
-PY_ENFORCE = "/usr/bin/python3 -m opendaisugi.gate_client --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
-PY_AUDIT = "/usr/bin/python3 -m opendaisugi.gate_client --mode audit --root /x --format claude --verify-timeout 10.0"
+PY_ENFORCE = "/usr/bin/python3 -m opendaisugi.warden_client --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
+PY_AUDIT = "/usr/bin/python3 -m opendaisugi.warden_client --mode audit --root /x --format claude --verify-timeout 10.0"
 
 
 def build_cases() -> list[dict[str, Any]]:
@@ -458,36 +543,46 @@ def build_cases() -> list[dict[str, Any]]:
     add = C.append
 
     # -- arm / disarm -------------------------------------------------------
-    add(mk("disarm fresh", ["gate", "disarm"]))
+    add(mk("disarm fresh", ["warden", "disarm"]))
     add(
         mk(
             "disarm loose root",
-            ["gate", "disarm"],
+            ["warden", "disarm"],
             before={GROOT: d(0o755), ".opendaisugi": d(0o755)},
         )
     )
     add(
         mk(
             "disarm twice",
-            ["gate", "disarm"],
+            ["warden", "disarm"],
             before={GROOT: d(0o700), f"{GROOT}/DISARMED": f("old\n")},
         )
     )
-    add(mk("disarm custom root", ["gate", "disarm", "--root", "{HOME}/r/g"]))
-    add(mk("disarm root equals", ["gate", "disarm", "--root={HOME}/r2"]))
+    add(mk("disarm custom root", ["warden", "disarm", "--root", "{HOME}/r/g"]))
+    add(mk("disarm root equals", ["warden", "disarm", "--root={HOME}/r2"]))
     add(
-        mk("arm disarmed", ["gate", "arm"], before={GROOT: d(0o700), f"{GROOT}/DISARMED": f("x\n")})
+        mk(
+            "arm disarmed",
+            ["warden", "arm"],
+            before={GROOT: d(0o700), f"{GROOT}/DISARMED": f("x\n")},
+        )
     )
-    add(mk("arm not disarmed", ["gate", "arm"]))
-    add(mk("arm custom root", ["gate", "arm", "--root", "{HOME}/g"], before={"g/DISARMED": f("x")}))
-    add(mk("arm extra arg", ["gate", "arm", "extra"]))
+    add(mk("arm not disarmed", ["warden", "arm"]))
+    add(
+        mk(
+            "arm custom root",
+            ["warden", "arm", "--root", "{HOME}/g"],
+            before={"g/DISARMED": f("x")},
+        )
+    )
+    add(mk("arm extra arg", ["warden", "arm", "extra"]))
     # GR r1: the marker goes through the root's directory fd. A root that is
     # a symlink is refused, nothing behind it is removed, and the command
-    # says so (it never reports an armed gate it did not arm).
+    # says so (it never reports an armed warden it did not arm).
     add(
         mk(
             "arm root symlink",
-            ["gate", "arm"],
+            ["warden", "arm"],
             before={
                 ".opendaisugi": d(0o755),
                 "real": d(0o700),
@@ -497,7 +592,7 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
     # An operator command repairs a root that group can write, and says so.
-    add(mk("disarm group writable root", ["gate", "disarm"], before={GROOT: d(0o775)}))
+    add(mk("disarm group writable root", ["warden", "disarm"], before={GROOT: d(0o775)}))
 
     # -- status -------------------------------------------------------------
     envs = {
@@ -505,10 +600,10 @@ def build_cases() -> list[dict[str, Any]]:
         f"{ENVD}/default.json": f(envelope_json(), 0o600),
         f"{ENVD}/s-1.json": f(envelope_json(), 0o600),
     }
-    add(mk("status empty", ["gate", "status"]))
-    add(mk("status empty json", ["gate", "status", "--json"]))
-    add(mk("status envelopes", ["gate", "status"], before=envs))
-    add(mk("status envelopes json", ["gate", "status", "--json"], before=envs))
+    add(mk("status empty", ["warden", "status"]))
+    add(mk("status empty json", ["warden", "status", "--json"]))
+    add(mk("status envelopes", ["warden", "status"], before=envs))
+    add(mk("status envelopes json", ["warden", "status", "--json"], before=envs))
     odd = dict(envs)
     odd.update(
         {
@@ -520,37 +615,52 @@ def build_cases() -> list[dict[str, Any]]:
             f"{ENVD}/a.json.json": f("{}"),
         }
     )
-    add(mk("status odd names", ["gate", "status", "--json"], before=odd))
+    add(mk("status odd names", ["warden", "status", "--json"], before=odd))
     add(
         mk(
             "status disarmed",
-            ["gate", "status"],
+            ["warden", "status"],
             before={GROOT: d(0o700), f"{GROOT}/DISARMED": f("x")},
+        )
+    )
+    # The fence notice (plan task 4): the warden is on and coppice.toml
+    # turns the fence off.
+    coppice_off = {".config/coppice/coppice.toml": f('fence = "off"\n')}
+    coppice_auto = {".config/coppice/coppice.toml": f('fence = "auto"\n')}
+    add(mk("status fence off", ["warden", "status"], before={**envs, **coppice_off}))
+    add(mk("status fence off json", ["warden", "status", "--json"], before={**envs, **coppice_off}))
+    add(mk("status fence auto", ["warden", "status"], before={**envs, **coppice_auto}))
+    add(mk("status fence off no envelopes", ["warden", "status"], before=coppice_off))
+    add(
+        mk(
+            "status fence off disarmed",
+            ["warden", "status"],
+            before={**envs, **coppice_off, f"{GROOT}/DISARMED": f("x")},
         )
     )
     # A hook whose program is gone fails on every call; status warns.
     go_hook = (
-        "DAISUGI_GATE_HOOK=opendaisugi.gate {HOME}/%s gate check --mode %s --root /x "
+        "DAISUGI_WARDEN_HOOK=opendaisugi.warden {HOME}/%s warden check --mode %s --root /x "
         "--format claude --verify-timeout 10.0"
     )
     add(
         mk(
             "status hook program gone enforce",
-            ["gate", "status"],
+            ["warden", "status"],
             before={CLAUDE: f(hook_settings(go_hook % ("gone/daisugi", "enforce") + " || exit 2"))},
         )
     )
     add(
         mk(
             "status hook program gone audit json",
-            ["gate", "status", "--json"],
+            ["warden", "status", "--json"],
             before={CLAUDE: f(hook_settings(go_hook % ("gone/daisugi", "audit")))},
         )
     )
     add(
         mk(
             "status hook program present",
-            ["gate", "status"],
+            ["warden", "status"],
             before={
                 "bin/daisugi": f("#!/bin/sh\n", 0o755),
                 CLAUDE: f(hook_settings(go_hook % ("bin/daisugi", "enforce") + " || exit 2")),
@@ -560,52 +670,55 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "status custom root",
-            ["gate", "status", "--root", "{HOME}/g"],
-            before={"g/envelopes/default.json": f("{}"), "config.yaml": f("gate_mode: enforce\n")},
+            ["warden", "status", "--root", "{HOME}/g"],
+            before={
+                "g/envelopes/default.json": f("{}"),
+                "config.yaml": f("warden_mode: enforce\n"),
+            },
         )
     )
     configs = {
-        "cfg enforce": "gate_mode: enforce\n",
-        "cfg audit": "gate_mode: audit\n",
+        "cfg enforce": "warden_mode: enforce\n",
+        "cfg audit": "warden_mode: audit\n",
         # The old name of audit mode: an unknown value, so audit.
-        "cfg old shadow": "gate_mode: shadow\n",
-        "cfg quoted": "gate_mode: 'enforce'\n",
-        "cfg dquoted": 'gate_mode: "enforce"  # on\n',
-        "cfg comment": "# my config\n\ngate_mode: enforce # yes\nmodel: x\n",
-        "cfg bogus mode": "gate_mode: strict\n",
-        "cfg bool mode": "gate_mode: yes\n",
-        "cfg int mode": "gate_mode: 5\n",
+        "cfg old shadow": "warden_mode: shadow\n",
+        "cfg quoted": "warden_mode: 'enforce'\n",
+        "cfg dquoted": 'warden_mode: "enforce"  # on\n',
+        "cfg comment": "# my config\n\nwarden_mode: enforce # yes\nmodel: x\n",
+        "cfg bogus mode": "warden_mode: strict\n",
+        "cfg bool mode": "warden_mode: yes\n",
+        "cfg int mode": "warden_mode: 5\n",
         "cfg empty": "",
         "cfg list": "- a\n- b\n",
         "cfg scalar": "hello\n",
-        "cfg bad yaml": "gate_mode: [enforce\n",
-        "cfg bad other field": "gate_mode: enforce\nz3_timeout_ms: lots\n",
-        "cfg int other field": "gate_mode: enforce\nz3_timeout_ms: 800\nmax_task_chars: '12'\n",
-        "cfg bool other field": "gate_mode: enforce\nauto_tend: maybe\n",
-        "cfg yes bool": "gate_mode: enforce\nauto_tend: yes\nshell_allow_decomposition: off\n",
-        "cfg null opt": "gate_mode: enforce\nllm_backend: null\ngateway_local_model: ~\n",
-        "cfg unknown keys": "gate_mode: enforce\nnot_a_key: [1, 2]\nfoo:\n  bar: 1\n",
-        "cfg floor": "gate_mode: enforce\nfloor:\n  backend: coppice\n  notify_cmd: null\n",
-        "cfg floor bad": "gate_mode: enforce\nfloor:\n  backend: [x]\n",
-        "cfg floor null": "gate_mode: enforce\nfloor: null\n",
-        "cfg dup key": "gate_mode: enforce\ngate_mode: audit\n",
-        "cfg anchor": "gate_mode: &m enforce\nmodel: *m\n",
-        "cfg tab": "gate_mode:\tenforce\n",
-        "cfg str for int": "gate_mode: enforce\nz3_timeout_ms: 1.5\n",
+        "cfg bad yaml": "warden_mode: [enforce\n",
+        "cfg bad other field": "warden_mode: enforce\nz3_timeout_ms: lots\n",
+        "cfg int other field": "warden_mode: enforce\nz3_timeout_ms: 800\nmax_task_chars: '12'\n",
+        "cfg bool other field": "warden_mode: enforce\nauto_tend: maybe\n",
+        "cfg yes bool": "warden_mode: enforce\nauto_tend: yes\nshell_allow_decomposition: off\n",
+        "cfg null opt": "warden_mode: enforce\nllm_backend: null\nrouter_local_model: ~\n",
+        "cfg unknown keys": "warden_mode: enforce\nnot_a_key: [1, 2]\nfoo:\n  bar: 1\n",
+        "cfg floor": "warden_mode: enforce\nfloor:\n  backend: coppice\n  notify_cmd: null\n",
+        "cfg floor bad": "warden_mode: enforce\nfloor:\n  backend: [x]\n",
+        "cfg floor null": "warden_mode: enforce\nfloor: null\n",
+        "cfg dup key": "warden_mode: enforce\nwarden_mode: audit\n",
+        "cfg anchor": "warden_mode: &m enforce\nmodel: *m\n",
+        "cfg tab": "warden_mode:\tenforce\n",
+        "cfg str for int": "warden_mode: enforce\nz3_timeout_ms: 1.5\n",
         # YAML's .nan and .inf are floats: invalid in an int or bool field,
         # and a top-level one is truthy, so not an empty config.
-        "cfg inf for int": "gate_mode: enforce\nz3_timeout_ms: .inf\n",
-        "cfg nan for bool": "gate_mode: enforce\nauto_tend: .nan\n",
+        "cfg inf for int": "warden_mode: enforce\nz3_timeout_ms: .inf\n",
+        "cfg nan for bool": "warden_mode: enforce\nauto_tend: .nan\n",
         "cfg top nan": ".nan\n",
         "cfg top minus inf": "-.inf\n",
-        "cfg data dir": "gate_mode: enforce\ndata_dir: /somewhere/else\n",
-        "cfg saved": "auto_tend: false\ndata_dir: /home/user/.opendaisugi\nfloor:\n  backend: auto\n  coppice_socket: null\n  notify_cmd: null\n  tmux_socket: null\nfloor_report: null\ngate_ask: false\ngate_mode: enforce\nllm_context_window: null\nmax_task_chars: 4000\nmodel: anthropic/claude-sonnet-4-20250514\nvoice_server_url: http://127.0.0.1:7477\nz3_timeout_ms: 500\n",
+        "cfg data dir": "warden_mode: enforce\ndata_dir: /somewhere/else\n",
+        "cfg saved": "auto_tend: false\ndata_dir: /home/user/.opendaisugi\nfloor:\n  backend: auto\n  coppice_socket: null\n  notify_cmd: null\n  tmux_socket: null\nfloor_report: null\nwarden_ask: false\nwarden_mode: enforce\nllm_context_window: null\nmax_task_chars: 4000\nmodel: anthropic/claude-sonnet-4-20250514\nvoice_server_url: http://127.0.0.1:7477\nz3_timeout_ms: 500\n",
     }
     for name, text in configs.items():
         add(
             mk(
                 f"status {name}",
-                ["gate", "status", "--json"],
+                ["warden", "status", "--json"],
                 before={".opendaisugi/config.yaml": f(text)},
             )
         )
@@ -613,7 +726,7 @@ def build_cases() -> list[dict[str, Any]]:
         "hook global enforce": {CLAUDE: f(hook_settings(PY_ENFORCE))},
         "hook global audit": {
             CLAUDE: f(hook_settings(PY_AUDIT)),
-            ".opendaisugi/config.yaml": f("gate_mode: enforce\n"),
+            ".opendaisugi/config.yaml": f("warden_mode: enforce\n"),
         },
         "hook project": {"proj/.claude/settings.json": f(hook_settings(PY_ENFORCE))},
         "hook both": {
@@ -626,19 +739,19 @@ def build_cases() -> list[dict[str, Any]]:
         },
         "hook bad json": {
             CLAUDE: f("{nope"),
-            ".opendaisugi/config.yaml": f("gate_mode: enforce\n"),
+            ".opendaisugi/config.yaml": f("warden_mode: enforce\n"),
         },
-        "hook no mode": {CLAUDE: f(hook_settings("python3 -m opendaisugi.gate --root /x"))},
+        "hook no mode": {CLAUDE: f(hook_settings("python3 -m opendaisugi.warden --root /x"))},
         "hook capture only": {
             CLAUDE: f(hook_settings("daisugi hook record --format claude --mode enforce"))
         },
         "hook mode suffix": {
-            CLAUDE: f(hook_settings("python3 -m opendaisugi.gate --mode enforced"))
+            CLAUDE: f(hook_settings("python3 -m opendaisugi.warden --mode enforced"))
         },
         "hook go form": {
             CLAUDE: f(
                 hook_settings(
-                    "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
+                    "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
                 )
             )
         },
@@ -652,12 +765,12 @@ def build_cases() -> list[dict[str, Any]]:
                             "PreToolUse": [
                                 {
                                     "hooks": [
-                                        {"command": "python3 -m opendaisugi.gate --mode audit"}
+                                        {"command": "python3 -m opendaisugi.warden --mode audit"}
                                     ]
                                 },
                                 {
                                     "hooks": [
-                                        {"command": "python3 -m opendaisugi.gate --mode enforce"}
+                                        {"command": "python3 -m opendaisugi.warden --mode enforce"}
                                     ]
                                 },
                             ]
@@ -667,13 +780,13 @@ def build_cases() -> list[dict[str, Any]]:
             )
         },
         "hook bom": {CLAUDE: f("﻿" + hook_settings(PY_ENFORCE))},
-        # A hook installed before the rename: the gate refuses --mode
+        # A hook installed before the rename: the warden refuses --mode
         # shadow, so the hook denies every call. Status says so.
         "hook old shadow": {CLAUDE: f(hook_settings(PY_AUDIT.replace("audit", "shadow")))},
         "hook old shadow project": {
             "proj/.claude/settings.json": f(
                 hook_settings(
-                    "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check --mode=shadow --root /x"
+                    "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check --mode=shadow --root /x"
                 )
             )
         },
@@ -683,8 +796,26 @@ def build_cases() -> list[dict[str, Any]]:
         },
     }
     for name, tree in hooks.items():
-        add(mk(f"status {name}", ["gate", "status", "--json"], before=tree, cwd="proj"))
-        add(mk(f"status {name} text", ["gate", "status"], before=tree, cwd="proj"))
+        add(mk(f"status {name}", ["warden", "status", "--json"], before=tree, cwd="proj"))
+        add(mk(f"status {name} text", ["warden", "status"], before=tree, cwd="proj"))
+    # State from before the rename: status names the old data dir and each
+    # old config key, in text on stdout and in JSON on stderr.
+    stale = {
+        "stale dir": {".opendaisugi/gate/envelopes/default.json": f("{}")},  # names-ok: old dir
+        "stale dir and new dir": {
+            ".opendaisugi/gate/x": f("1"),  # names-ok: old dir
+            f"{ENVD}/default.json": f("{}"),
+        },
+        "stale key": {".opendaisugi/config.yaml": f("gate_mode: enforce\n")},  # names-ok: old key
+        "stale keys": {
+            ".opendaisugi/config.yaml": f(
+                "gateway_router: knn\ngate_ask: true\nwarden_mode: audit\n"  # names-ok: old keys
+            )  # names-ok: old keys
+        },
+    }
+    for name, tree in stale.items():
+        add(mk(f"status {name}", ["warden", "status", "--json"], before=tree))
+        add(mk(f"status {name} text", ["warden", "status"], before=tree))
 
     # -- report -------------------------------------------------------------
     def rec(tool: str, would_deny: bool, reason: str | None, detail: str = "x", **kw: Any) -> str:
@@ -722,10 +853,10 @@ def build_cases() -> list[dict[str, Any]]:
         f"{GROOT}/audit/s1.jsonl": f(log1, 0o600),
         f"{GROOT}/audit/s2.jsonl": f(log2, 0o600),
     }
-    add(mk("report none", ["gate", "report"]))
-    add(mk("report none json", ["gate", "report", "--json"]))
+    add(mk("report none", ["warden", "report"]))
+    add(mk("report none json", ["warden", "report", "--json"]))
     # The dialect audit: a word's would-deny rides in word_audit. The
-    # report counts and lists them; gate status shows the count, the
+    # report counts and lists them; warden status shows the count, the
     # dialect hash and the pin config.yaml names.
     words_log = (
         "\n".join(
@@ -746,10 +877,10 @@ def build_cases() -> list[dict[str, Any]]:
         + "\n"
     )
     words = {f"{GROOT}/audit/w.jsonl": f(words_log, 0o600)}
-    add(mk("report words", ["gate", "report"], before=words))
-    add(mk("report words json", ["gate", "report", "--json"], before=words))
-    add(mk("status words", ["gate", "status"], before=words))
-    add(mk("status words json", ["gate", "status", "--json"], before=words))
+    add(mk("report words", ["warden", "report"], before=words))
+    add(mk("report words json", ["warden", "report", "--json"], before=words))
+    add(mk("status words", ["warden", "status"], before=words))
+    add(mk("status words json", ["warden", "status", "--json"], before=words))
     from opendaisugi.dialect import DIALECT_HASH
 
     for pname, cfg in (
@@ -759,8 +890,24 @@ def build_cases() -> list[dict[str, Any]]:
         ("int", "dialect_enforce: 12\n"),
     ):
         pinned = {**words, ".opendaisugi/config.yaml": f(cfg)}
-        add(mk(f"status dialect pin {pname}", ["gate", "status"], before=pinned))
-        add(mk(f"status dialect pin {pname} json", ["gate", "status", "--json"], before=pinned))
+        add(mk(f"status dialect pin {pname}", ["warden", "status"], before=pinned))
+        add(mk(f"status dialect pin {pname} json", ["warden", "status", "--json"], before=pinned))
+    enforcing = {**words, CLAUDE: f(hook_settings(PY_ENFORCE))}
+    add(mk("status dialect hook enforce", ["warden", "status"], before=enforcing))
+    add(mk("status dialect hook enforce json", ["warden", "status", "--json"], before=enforcing))
+    for pname, cfg in (
+        ("pin", f"dialect_enforce: {DIALECT_HASH}\n"),
+        ("mismatch", 'dialect_enforce: "0000000000000000"\n'),
+    ):
+        both = {**enforcing, ".opendaisugi/config.yaml": f(cfg)}
+        add(mk(f"status dialect hook enforce {pname}", ["warden", "status"], before=both))
+        add(
+            mk(
+                f"status dialect hook enforce {pname} json",
+                ["warden", "status", "--json"],
+                before=both,
+            )
+        )
     bad_logs = {
         **words,
         f"{GROOT}/audit/x.jsonl": f('not json\n[1]\n{"would_deny": true, "reason": 5}\n'),
@@ -768,12 +915,12 @@ def build_cases() -> list[dict[str, Any]]:
             rec("Write", True, None, "/w", word_audit=["dialect audit: old"]) + "\n"
         ),
     }
-    add(mk("status words bad logs", ["gate", "status"], before=bad_logs))
-    add(mk("report all", ["gate", "report"], before=audit))
-    add(mk("report all json", ["gate", "report", "--json"], before=audit))
-    add(mk("report session", ["gate", "report", "--session", "s2"], before=audit))
-    add(mk("report missing session", ["gate", "report", "--session", "nope"], before=audit))
-    add(mk("report unsafe session", ["gate", "report", "--session", "../s1"], before=audit))
+    add(mk("status words bad logs", ["warden", "status"], before=bad_logs))
+    add(mk("report all", ["warden", "report"], before=audit))
+    add(mk("report all json", ["warden", "report", "--json"], before=audit))
+    add(mk("report session", ["warden", "report", "--session", "s2"], before=audit))
+    add(mk("report missing session", ["warden", "report", "--session", "nope"], before=audit))
+    add(mk("report unsafe session", ["warden", "report", "--session", "../s1"], before=audit))
     # The log written while audit mode was called shadow mode is read
     # first, then the audit log.
     legacy = {
@@ -781,26 +928,26 @@ def build_cases() -> list[dict[str, Any]]:
         f"{GROOT}/shadow/s3.jsonl": f(rec("Read", False, None, "/a") + "\n", 0o600),
         **audit,
     }
-    add(mk("report legacy dir", ["gate", "report"], before=legacy))
-    add(mk("report legacy dir json", ["gate", "report", "--json"], before=legacy))
+    add(mk("report legacy dir", ["warden", "report"], before=legacy))
+    add(mk("report legacy dir json", ["warden", "report", "--json"], before=legacy))
     add(
         mk(
             "report legacy dir session",
-            ["gate", "report", "--session", "s1", "--json"],
+            ["warden", "report", "--session", "s1", "--json"],
             before=legacy,
         )
     )
     add(
         mk(
             "report legacy dir only",
-            ["gate", "report", "--json"],
+            ["warden", "report", "--json"],
             before={f"{GROOT}/shadow/s1.jsonl": f(log1, 0o600)},
         )
     )
     add(
         mk(
             "report reason null",
-            ["gate", "report"],
+            ["warden", "report"],
             before={
                 f"{GROOT}/audit/a.jsonl": f(
                     json.dumps({"would_deny": True, "reason": None})
@@ -814,7 +961,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "report list line",
-            ["gate", "report"],
+            ["warden", "report"],
             before={
                 f"{GROOT}/audit/a.jsonl": f(
                     json.dumps({"would_deny": True, "reason": "x"}) + "\n[1, 2]\n"
@@ -825,7 +972,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "report no detail",
-            ["gate", "report", "--json"],
+            ["warden", "report", "--json"],
             before={
                 f"{GROOT}/audit/a.jsonl": f(
                     json.dumps({"would_deny": True, "reason": "metacharacters here"}) + "\n"
@@ -835,59 +982,59 @@ def build_cases() -> list[dict[str, Any]]:
     )
 
     # -- settings -----------------------------------------------------------
-    add(mk("settings default", ["gate", "settings"]))
-    add(mk("settings enforce", ["gate", "settings", "--enforce"]))
-    add(mk("settings session", ["gate", "settings", "--enforce", "--session", "s 1"]))
-    add(mk("settings root", ["gate", "settings", "--root", "{HOME}/my root"]))
-    add(mk("settings format pi", ["gate", "settings", "--enforce", "--format", "pi"]))
+    add(mk("settings default", ["warden", "settings"]))
+    add(mk("settings enforce", ["warden", "settings", "--enforce"]))
+    add(mk("settings session", ["warden", "settings", "--enforce", "--session", "s 1"]))
+    add(mk("settings root", ["warden", "settings", "--root", "{HOME}/my root"]))
+    add(mk("settings format pi", ["warden", "settings", "--enforce", "--format", "pi"]))
 
     # -- init ---------------------------------------------------------------
-    add(mk("init fresh", ["gate", "init"], cwd="work"))
-    add(mk("init workspace", ["gate", "init", "--workspace", "{HOME}/w"]))
-    add(mk("init session", ["gate", "init", "--session", "s1", "--workspace", "/work"]))
-    add(mk("init unsafe session", ["gate", "init", "--session", "a/b", "--workspace", "/work"]))
-    add(mk("init quoted session", ["gate", "init", "--session", "a b'c", "--workspace", "/work"]))
+    add(mk("init fresh", ["warden", "init"], cwd="work"))
+    add(mk("init workspace", ["warden", "init", "--workspace", "{HOME}/w"]))
+    add(mk("init session", ["warden", "init", "--session", "s1", "--workspace", "/work"]))
+    add(mk("init unsafe session", ["warden", "init", "--session", "a/b", "--workspace", "/work"]))
+    add(mk("init quoted session", ["warden", "init", "--session", "a b'c", "--workspace", "/work"]))
     add(
         mk(
             "init exists",
-            ["gate", "init", "--workspace", "/work"],
+            ["warden", "init", "--workspace", "/work"],
             before={f"{ENVD}/default.json": f("{}", 0o600)},
         )
     )
     add(
         mk(
             "init force",
-            ["gate", "init", "--workspace", "/work", "--force"],
+            ["warden", "init", "--workspace", "/work", "--force"],
             before={f"{ENVD}/default.json": f("{}", 0o644), ENVD: d(0o755)},
         )
     )
     add(
         mk(
             "init decomposition",
-            ["gate", "init", "--workspace", "/work", "--allow-shell-decomposition"],
+            ["warden", "init", "--workspace", "/work", "--allow-shell-decomposition"],
         )
     )
-    add(mk("init root", ["gate", "init", "--workspace", "/work", "--root", "{HOME}/g"]))
+    add(mk("init root", ["warden", "init", "--workspace", "/work", "--root", "{HOME}/g"]))
 
     # -- register -----------------------------------------------------------
     add(
         mk(
             "register default",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(id="env_fixed01"))},
         )
     )
     add(
         mk(
             "register session",
-            ["gate", "register", "{HOME}/e.json", "--session", "s1"],
+            ["warden", "register", "{HOME}/e.json", "--session", "s1"],
             before={"e.json": f(envelope_json(stakes="high", summary="short"))},
         )
     )
     add(
         mk(
             "register yaml",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "generated_by: me\ntask: t\npermissions:\n  shell: true\n  shell_allowlist: [ls]\n"
@@ -895,25 +1042,246 @@ def build_cases() -> list[dict[str, Any]]:
             },
         )
     )
-    add(mk("register missing", ["gate", "register", "{HOME}/nope.json"]))
+    add(mk("register missing", ["warden", "register", "{HOME}/nope.json"]))
+    opaque = [{"type": "no_side_effects", "description": "d"}]
+    for rname, invs in (
+        ("opaque refused", opaque),
+        (
+            "opaque two refused",
+            [*opaque, {"type": "code_is_correct", "description": "d"}, opaque[0]],
+        ),
+        (
+            "opaque word kept",
+            [{"type": "keep_unchanged", "description": "d", "target": "/work/**"}],
+        ),
+        ("opaque off kept", [{**opaque[0], "enforce": False}]),
+        ("opaque robotics kept", [{"type": "joint_limits_respected", "description": "d"}]),
+    ):
+        add(
+            mk(
+                f"register {rname}",
+                ["warden", "register", "{HOME}/e.json"],
+                before={"e.json": f(envelope_json(invariants=invs))},
+            )
+        )
+
+    # -- argument rules: the schema store and the registration lint ----------
+    gh_tools = json.dumps(
+        {
+            "tools": [
+                {
+                    "name": "get_issue",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "repo": {"type": "string"},
+                            "number": {"type": "integer"},
+                            "state": {"enum": ["open", "closed"]},
+                        },
+                    },
+                }
+            ]
+        }
+    )
+
+    def rules_env(*rules: dict[str, Any]) -> str:
+        return envelope_json(mcp_rules=list(rules))
+
+    add(
+        mk(
+            "schemas import",
+            ["warden", "schemas", "import", "github", "{HOME}/gh.json", "--root", "{HOME}/g"],
+            before={"gh.json": f(gh_tools)},
+        )
+    )
+    add(
+        mk(
+            "schemas import not a tools list",
+            ["warden", "schemas", "import", "github", "{HOME}/gh.json", "--root", "{HOME}/g"],
+            before={"gh.json": f('{"tools": 3}')},
+        )
+    )
+    add(
+        mk(
+            "schemas import bad server name",
+            ["warden", "schemas", "import", "../x", "{HOME}/gh.json", "--root", "{HOME}/g"],
+            before={"gh.json": f(gh_tools)},
+        )
+    )
+    add(mk("schemas list empty", ["warden", "schemas", "list", "--root", "{HOME}/g"]))
+    add(
+        mk(
+            "schemas list one",
+            ["warden", "schemas", "list", "--root", "{HOME}/g"],
+            before={
+                "g": d(0o700),
+                "g/schemas": d(0o700),
+                "g/schemas/github.json": f(gh_tools, 0o600),
+            },
+        )
+    )
+    in_repo = {"op": "in_set", "path": "repo", "values": ["acme/app"]}
+    add(
+        mk(
+            "register mcp_rules no schema note",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={"e.json": f(rules_env({"tool": "github/get_issue", "args": [in_repo]}))},
+        )
+    )
+    path_rule = {
+        "tool": "fs/read",
+        "args": [{"op": "path_in", "path": "path", "scope": "file_read"}],
+    }
+    add(
+        mk(
+            "register mcp_rules path_in relative glob",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={
+                "e.json": f(envelope_json(file_read=["src/**", "/work/**"], mcp_rules=[path_rule]))
+            },
+        )
+    )
+    add(
+        mk(
+            "register mcp_rules path_in absolute globs",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={"e.json": f(envelope_json(file_read=["/work/**"], mcp_rules=[path_rule]))},
+        )
+    )
+    add(
+        mk(
+            "register mcp_rules unanchored regex",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={
+                "e.json": f(
+                    rules_env(
+                        {
+                            "tool": "github/get_issue",
+                            "args": [{"op": "matches", "path": "repo", "regex": "acme/.*"}],
+                        }
+                    )
+                )
+            },
+        )
+    )
+    for label, rx in (
+        ("alternation", "^a|.*$"),
+        ("grouped alternation", "^(?:a|b)$"),
+        ("unbalanced", "^a)|(b$"),
+        ("unclosed", "^(a$"),
+        ("lookahead", "^(?=a)a$"),
+        ("lookbehind", "^(?<=a)b$"),
+        ("backreference", "^(a)\\1$"),
+        ("repeat over 1000", "^a{1001}$"),
+        ("backtracking shape", "^(a+)+$"),
+        ("flag group", "(?x)a|.*"),
+        ("big u escape", "\\" + "U00000061"),
+        ("set difference", "[!--/]"),
+        ("double dash", "[a--b]"),
+        ("p name", "\\p{Ascii}"),
+        ("p letter", "\\p{Letter}"),
+        ("p category", "\\p{Cn}"),
+        ("benign class", "^[a-z0-9_-]{1,64}$"),
+        ("benign words", "^(foo|bar)+$"),
+        ("benign prefix", "^acme/.+$"),
+        ("benign caseless", "(?i)^readme\\.md$"),
+        ("benign verbs", "^(get|list)_[a-z_]+$"),
+        ("caseless unanchored", "(?i)readme"),
+        ("caseless alternation", "(?i)a|b"),
+    ):
+        add(
+            mk(
+                f"register mcp_rules regex {label}",
+                ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+                before={
+                    "e.json": f(
+                        rules_env(
+                            {
+                                "tool": "github/get_issue",
+                                "args": [{"op": "matches", "path": "repo", "regex": rx}],
+                            }
+                        )
+                    )
+                },
+            )
+        )
+    add(
+        mk(
+            "register mcp_rules schema unknown argument",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={
+                "e.json": f(
+                    rules_env(
+                        {
+                            "tool": "github/get_issue",
+                            "args": [{"op": "equals", "path": "repo_name", "value": "x"}],
+                        }
+                    )
+                ),
+                "g": d(0o700),
+                "g/schemas": d(0o700),
+                "g/schemas/github.json": f(gh_tools, 0o600),
+            },
+        )
+    )
+    add(
+        mk(
+            "register mcp_rules schema enum miss",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={
+                "e.json": f(
+                    rules_env(
+                        {
+                            "tool": "github/get_issue",
+                            "args": [
+                                {"op": "in_set", "path": "state", "values": ["open", "merged"]}
+                            ],
+                        }
+                    )
+                ),
+                "g": d(0o700),
+                "g/schemas": d(0o700),
+                "g/schemas/github.json": f(gh_tools, 0o600),
+            },
+        )
+    )
+    add(
+        mk(
+            "register mcp_rules schema ok",
+            ["warden", "register", "{HOME}/e.json", "--root", "{HOME}/g"],
+            before={
+                "e.json": f(
+                    rules_env(
+                        {
+                            "tool": "github/get_issue",
+                            "args": [in_repo, {"op": "exists", "path": "number"}],
+                        }
+                    )
+                ),
+                "g": d(0o700),
+                "g/schemas": d(0o700),
+                "g/schemas/github.json": f(gh_tools, 0o600),
+            },
+        )
+    )
     add(
         mk(
             "register invalid",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f('{"task": "t"}')},
         )
     )
     add(
         mk(
             "register coerced",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(max_execution_time_s="60"))},
         )
     )
     add(
         mk(
             "register unknown keys",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={
                 "e.json": f(
                     json.dumps(
@@ -929,95 +1297,599 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
 
-    # -- install --gate -----------------------------------------------------
+    # -- install --warden -----------------------------------------------------
     claude_dir = {".claude": d()}
     gi: dict[str, Any] = {}
     # Enforce installs only with a registered envelope; with none it refuses.
-    policy = {".opendaisugi/gate/envelopes/default.json": f(envelope_json(id="env_fixed01"))}
-    add(mk("install gate claude", ["install", "--gate", "--yes"], before=claude_dir, **gi))
+    policy = {".opendaisugi/warden/envelopes/default.json": f(envelope_json(id="env_fixed01"))}
+    add(mk("install warden claude", ["install", "--yes"], before=claude_dir, **gi))
+    # A relative HOME gives a relative warden root: one line, exit 2, nothing written.
+    add(
+        mk(
+            "install warden relative home",
+            ["install", "--yes"],
+            before={"rel/.claude": d()},
+            env={"HOME": "rel"},
+        )
+    )
     # The message names the captures dir under the data home in use.
     add(
         mk(
-            "install gate data home",
-            ["install", "--gate", "--yes"],
+            "install warden data home",
+            ["install", "--yes"],
             before=claude_dir,
             env={"OPENDAISUGI_HOME": "{HOME}/od"},
         )
     )
     add(
         mk(
-            "install gate enforce",
-            ["install", "--gate", "--enforce", "-y"],
+            "install warden enforce",
+            ["install", "--enforce", "-y"],
             before={**claude_dir, **policy},
             **gi,
         )
     )
     add(
         mk(
-            "install gate enforce no policy",
-            ["install", "--gate", "--enforce", "-y"],
+            "install warden enforce no policy",
+            ["install", "--enforce", "-y"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install gate enforce no policy dry run",
-            ["install", "--gate", "--enforce", "--dry-run"],
+            "install warden enforce no policy dry run",
+            ["install", "--enforce", "--dry-run"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install gate enforce empty envelopes dir",
-            ["install", "--gate", "--enforce", "-y"],
+            "install warden enforce empty envelopes dir",
+            ["install", "--enforce", "-y"],
             before={
                 **claude_dir,
-                ".opendaisugi/gate/envelopes": d(),
-                ".opendaisugi/gate/envelopes/notes.txt": f("x"),
+                ".opendaisugi/warden/envelopes": d(),
+                ".opendaisugi/warden/envelopes/notes.txt": f("x"),
             },
             **gi,
         )
     )
     add(
         mk(
-            "install gate enforce session policy",
-            ["install", "--gate", "--enforce", "-y"],
+            "install warden enforce session policy",
+            ["install", "--enforce", "-y"],
             before={
                 **claude_dir,
-                ".opendaisugi/gate/envelopes/s1.json": f(envelope_json(id="env_fixed02")),
+                ".opendaisugi/warden/envelopes/s1.json": f(envelope_json(id="env_fixed02")),
             },
             **gi,
         )
     )
     add(
         mk(
-            "install gate ask",
-            ["install", "--gate", "--enforce", "--ask", "--yes"],
+            "install warden ask",
+            ["install", "--enforce", "--ask", "--yes"],
             before=claude_dir,
         )
     )
     add(
         mk(
-            "install gate ask audit",
-            ["install", "--gate", "--ask", "--yes"],
+            "install warden ask audit",
+            ["install", "--ask", "--yes"],
             before=claude_dir,
         )
     )
     add(
         mk(
-            "install gate old shadow flag",
-            ["install", "--gate", "--shadow", "--yes"],
+            "install warden old shadow flag",
+            ["install", "--shadow", "--yes"],
             before=claude_dir,
         )
     )
     add(mk("install old shadow flag alone", ["install", "--shadow"], before=claude_dir))
+    add(mk("install old warden flag", ["install", "--warden", "--yes"], before=claude_dir))
+    add(mk("install no warden flag", ["install", "--no-warden"], before=claude_dir))
+    add(mk("install ask without enforce", ["install", "--ask", "--yes"], before=claude_dir))
     add(
         mk(
-            "install enforce no gate",
-            ["install", "--enforce", "--yes"],
+            "install report without enforce",
+            ["install", "--report", "coppice", "--yes"],
             before=claude_dir,
+        )
+    )
+    add(
+        mk(
+            "install plain then warden status",
+            ["warden", "status"],
+            before=claude_dir,
+            pre=[["install", "--yes"]],
+        )
+    )
+    add(
+        mk(
+            "install plain then enforce",
+            ["install", "--enforce", "--yes"],
+            before={**claude_dir, **policy},
+            pre=[["install", "--yes"]],
+        )
+    )
+    add(
+        mk(
+            "install plain then enforce ask",
+            ["install", "--enforce", "--ask", "--yes"],
+            before={**claude_dir, **policy},
+            pre=[["install", "--yes"]],
+        )
+    )
+    add(
+        mk(
+            "install enforce then plain keeps enforce",
+            ["install", "--yes"],
+            before={**claude_dir, **policy},
+            pre=[["install", "--enforce", "--yes"]],
+        )
+    )
+    add(
+        mk(
+            "install codex plain then enforce",
+            ["install", "--enforce", "--yes", "--runtime", "codex"],
+            before=policy,
+            pre=[["install", "--yes", "--runtime", "codex"]],
+        )
+    )
+    add(
+        mk(
+            "install codex enforce then plain keeps enforce",
+            ["install", "--yes", "--runtime", "codex"],
+            before=policy,
+            pre=[["install", "--enforce", "--yes", "--runtime", "codex"]],
+        )
+    )
+    # -- the entry point is written as an absolute path (ruling INST-1) ------
+    bare_hooks = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "daisugi hook record --format claude"}
+                        ],
+                    }
+                ],
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "daisugi hook record --format claude --event stop",
+                            }
+                        ]
+                    }
+                ],
+            }
+        },
+        indent=2,
+    )
+    bare_mcp = json.dumps(
+        {
+            "mcpServers": {
+                "opendaisugi": {"type": "stdio", "command": "daisugi", "args": ["mcp", "serve"]}
+            }
+        },
+        indent=2,
+    )
+    add(
+        mk(
+            "install rebinds bare claude entries",
+            ["install", "--yes", "--runtime", "claude"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(bare_hooks, 0o600),
+                ".claude.json": f(bare_mcp, 0o600),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds bare claude entries with report",
+            ["install", "--yes", "--runtime", "claude", "--report", "herdr"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(bare_hooks, 0o600),
+                ".claude.json": f(bare_mcp, 0o600),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install keeps a custom mcp command",
+            ["install", "--yes", "--runtime", "claude"],
+            before={
+                ".claude": d(),
+                ".claude.json": f(
+                    json.dumps(
+                        {
+                            "mcpServers": {
+                                "opendaisugi": {"command": "/my/wrapper", "args": ["mcp", "serve"]}
+                            }
+                        }
+                    )
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds bare hermes entries",
+            ["install", "--yes", "--runtime", "hermes"],
+            before={
+                ".hermes": d(),
+                ".hermes/config.yaml": f(
+                    "mcp_servers:\n  opendaisugi:\n    command: daisugi\n    args:\n    - mcp\n    - serve\n"
+                    "hooks:\n  pre_tool_call:\n  - matcher: .*\n    command: daisugi hook record --format hermes\n"
+                    "    timeout: 10\n"
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds bare codex entries",
+            ["install", "--yes", "--runtime", "codex"],
+            before={
+                ".codex": d(),
+                ".codex/config.toml": f(
+                    'model = "x"\n\n[mcp_servers.opendaisugi]\ncommand = "daisugi"\nargs = ["mcp", "serve"]\n\n[other]\nk = 1\n'
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds bare openclaw entries",
+            ["install", "--yes", "--runtime", "openclaw"],
+            before={
+                ".openclaw/workspace": d(),
+                ".openclaw/openclaw.json": f(
+                    json.dumps(
+                        {
+                            "mcp": {
+                                "servers": {
+                                    "opendaisugi": {"command": "daisugi", "args": ["mcp", "serve"]}
+                                }
+                            }
+                        }
+                    )
+                ),
+            },
+            **gi,
+        )
+    )
+
+    # -- a hook that is more than one plain command is left as it is --------
+    def pre_hooks(*cmds: str) -> str:
+        return json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"hooks": [{"type": "command", "command": c}]} for c in cmds]
+                }
+            },
+            indent=2,
+        )
+
+    compound = (
+        "daisugi hook record --format claude || true",
+        "daisugi hook record --format claude 2>/dev/null",
+        "daisugi hook record --format claude; exit 0",
+        "env X=1 daisugi hook record --format claude",
+    )
+    add(
+        mk(
+            "install leaves compound claude hooks",
+            ["install", "--yes", "--runtime", "claude"],
+            before={".claude": d(), CLAUDE: f(pre_hooks(*compound), 0o600)},
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install leaves compound claude hooks capture only",
+            ["install", "--yes", "--runtime", "claude", "--only", "capture"],
+            before={".claude": d(), CLAUDE: f(pre_hooks(*compound), 0o600)},
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds a plain claude hook with two spaces",
+            ["install", "--yes", "--runtime", "claude", "--only", "capture"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(pre_hooks("daisugi  hook record  --format   claude  "), 0o600),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install rebinds a quoted old claude path",
+            ["install", "--yes", "--runtime", "claude", "--only", "capture"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(pre_hooks("'/old path/daisugi' hook record --format claude"), 0o600),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install leaves a compound hermes hook",
+            ["install", "--yes", "--runtime", "hermes", "--only", "capture"],
+            before={
+                ".hermes": d(),
+                ".hermes/config.yaml": f(
+                    "hooks:\n  pre_tool_call:\n  - matcher: .*\n"
+                    "    command: daisugi hook record --format hermes || true\n    timeout: 10\n"
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install exits 1 when a left hook cannot run",
+            ["install", "--yes", "--runtime", "claude", "--only", "capture"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(
+                    pre_hooks(
+                        "/nonexistent-daisugi-dir/daisugi hook record --format claude || true"
+                    ),
+                    0o600,
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install keeps a user wrapper named daisugi-local",
+            ["install", "--yes", "--runtime", "claude"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(pre_hooks("/opt/x/daisugi-local hook record --format claude"), 0o600),
+                ".claude.json": f(
+                    json.dumps(
+                        {
+                            "mcpServers": {
+                                "opendaisugi": {
+                                    "command": "/opt/x/daisugi-local",
+                                    "args": ["mcp", "serve"],
+                                }
+                            }
+                        }
+                    ),
+                    0o600,
+                ),
+            },
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "uninstall keeps a user wrapper hook",
+            ["install", "--uninstall", "--runtime", "claude"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(pre_hooks("/opt/x/daisugi-local hook record --format claude"), 0o600),
+            },
+        )
+    )
+    add(
+        mk(
+            "install twice writes nothing the second time",
+            ["install", "--yes"],
+            before={".claude": d(), ".codex": d(), ".hermes": d()},
+            pre=[["install", "--yes"]],
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "uninstall removes the bare and the absolute record hook",
+            ["install", "--uninstall", "--runtime", "claude"],
+            before={
+                ".claude": d(),
+                CLAUDE: f(
+                    json.dumps(
+                        {
+                            "hooks": {
+                                "PreToolUse": [
+                                    {
+                                        "hooks": [
+                                            {
+                                                "type": "command",
+                                                "command": "daisugi hook record --format claude",
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "hooks": [
+                                            {
+                                                "type": "command",
+                                                "command": "/opt/x/daisugi hook record --format claude",
+                                            }
+                                        ]
+                                    },
+                                ]
+                            }
+                        },
+                        indent=2,
+                    ),
+                    0o600,
+                ),
+            },
+        )
+    )
+    add(
+        mk(
+            "uninstall removes the bare and the absolute codex block",
+            ["install", "--uninstall", "--runtime", "codex"],
+            before={
+                ".codex/config.toml": f(
+                    'model = "x"\n\n[mcp_servers.opendaisugi]\ncommand = "/opt/x/daisugi"\nargs = ["mcp", "serve"]\n'
+                )
+            },
+        )
+    )
+    add(mk("install plain hermes only", ["install", "--yes"], before={".hermes": d()}))
+    # SOUL.md is the file Hermes always loads. A missing one is not made: the
+    # file would hold only the note and replace Hermes's built-in identity.
+    add(
+        mk(
+            "install hermes soul exists",
+            ["install", "--yes", "--runtime", "hermes"],
+            before={".hermes/SOUL.md": f("You are Hermes.\n")},
+        )
+    )
+    add(
+        mk(
+            "install hermes soul twice",
+            ["install", "--yes", "--runtime", "hermes"],
+            before={".hermes/SOUL.md": f("You are Hermes.\n")},
+            pre=[["install", "--yes", "--runtime", "hermes"]],
+        )
+    )
+    add(
+        mk(
+            "install hermes soul missing",
+            ["install", "--yes", "--runtime", "hermes"],
+            before={".hermes": d()},
+        )
+    )
+    add(
+        mk(
+            "install hermes soul only",
+            ["install", "--yes", "--runtime", "hermes", "--only", "instructions"],
+            before={".hermes/SOUL.md": f("You are Hermes.\n")},
+        )
+    )
+    # An install made before the pathway text changed: the block is replaced
+    # in place, the bytes around it stay, and the plan line says Update.
+    old_block = "<!-- opendaisugi-managed -->\n## openDaisugi old text, journaled automatically\n<!-- opendaisugi-managed -->"
+    add(
+        mk(
+            "install claude md old block refreshed",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={
+                ".claude/CLAUDE.md": f(
+                    "# mine\n\nkeep  this \t exactly\n\n" + old_block + "\n\nafter, no newline"
+                )
+            },
+        )
+    )
+    add(
+        mk(
+            "install codex agents old block refreshed",
+            ["install", "--yes", "--runtime", "codex", "--only", "instructions"],
+            before={".codex/AGENTS.md": f(old_block + "\n")},
+        )
+    )
+    add(
+        mk(
+            "install hermes soul old block refreshed",
+            ["install", "--yes", "--runtime", "hermes", "--only", "instructions"],
+            before={".hermes/SOUL.md": f("You are Hermes.\n\n" + old_block + "\n")},
+        )
+    )
+    add(
+        mk(
+            "install claude md current block is a no-op",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("# mine\n")},
+            pre=[["install", "--yes", "--runtime", "claude", "--only", "instructions"]],
+        )
+    )
+    add(
+        mk(
+            "install claude md a lone marker line is left alone",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("prose\n<!-- opendaisugi-managed -->\nprose\n")},
+        )
+    )
+    # A marker inside a line of prose is not a marker: the block goes on the
+    # end, and a real block after it is refreshed without touching the prose.
+    add(
+        mk(
+            "install claude md a prose marker is not a marker",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("say <!-- opendaisugi-managed --> in a line\n")},
+        )
+    )
+    add(
+        mk(
+            "install claude md prose marker then an old block",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={
+                ".claude/CLAUDE.md": f(
+                    "I wrote <!-- opendaisugi-managed --> here.\nkeep this\n\n" + old_block + "\n"
+                )
+            },
+        )
+    )
+    add(
+        mk(
+            "uninstall claude md prose marker then a block",
+            ["install", "--uninstall", "--runtime", "claude", "--only", "instructions"],
+            before={
+                ".claude/CLAUDE.md": f(
+                    "I wrote <!-- opendaisugi-managed --> here.\nkeep this\n\n" + old_block + "\n"
+                )
+            },
+        )
+    )
+    # CRLF files keep their line ends outside the block; the block takes the
+    # line ends of the one it replaces.
+    crlf_block = old_block.replace("\n", "\r\n")
+    add(
+        mk(
+            "install claude md old block in a CRLF file",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("# mine\r\n\r\n" + crlf_block + "\r\n\r\nafter\r\n")},
+        )
+    )
+    add(
+        mk(
+            "install claude md appends to a CRLF file",
+            ["install", "--yes", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("one\r\ntwo\r\n")},
+        )
+    )
+    add(
+        mk(
+            "uninstall claude md block in a CRLF file",
+            ["install", "--uninstall", "--runtime", "claude", "--only", "instructions"],
+            before={".claude/CLAUDE.md": f("# mine\r\n\r\n" + crlf_block + "\r\n")},
+        )
+    )
+    add(
+        mk(
+            "uninstall hermes soul",
+            ["install", "--uninstall", "--runtime", "hermes", "--only", "instructions"],
+            before={
+                ".hermes/SOUL.md": f(
+                    "You are Hermes.\n\n<!-- opendaisugi-managed -->\nold\n<!-- opendaisugi-managed -->\n"
+                )
+            },
         )
     )
     other = json.dumps(
@@ -1039,68 +1911,68 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate existing settings",
-            ["install", "--gate", "--yes"],
+            "install warden existing settings",
+            ["install", "--yes"],
             before={".claude": d(), CLAUDE: f(other, 0o600)},
             **gi,
         )
     )
     add(
         mk(
-            "install gate invalid settings",
-            ["install", "--gate", "--yes"],
+            "install warden invalid settings",
+            ["install", "--yes"],
             before={".claude": d(), CLAUDE: f("{oops")},
             **gi,
         )
     )
     add(
         mk(
-            "install gate settings list",
-            ["install", "--gate", "--yes"],
+            "install warden settings list",
+            ["install", "--yes"],
             before={".claude": d(), CLAUDE: f('{"hooks": []}')},
             **gi,
         )
     )
     add(
         mk(
-            "install gate other mode",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden other mode",
+            ["install", "--enforce", "--yes"],
             before={".claude": d(), CLAUDE: f(hook_settings(PY_AUDIT)), **policy},
             **gi,
         )
     )
     add(
         mk(
-            "install gate old module",
-            ["install", "--gate", "--yes"],
+            "install warden old module",
+            ["install", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
                     hook_settings(
-                        "python3 -m opendaisugi.gate --mode audit --root {HOME}/.opendaisugi/gate --format claude --verify-timeout 10.0"
+                        "python3 -m opendaisugi.warden --mode audit --root {HOME}/.opendaisugi/warden --format claude --verify-timeout 10.0"
                     )
                 ),
             },
             **gi,
         )
     )
-    add(mk("install gate dry run", ["install", "--gate", "--dry-run"], before=claude_dir, **gi))
+    add(mk("install warden dry run", ["install", "--dry-run"], before=claude_dir, **gi))
     add(
         mk(
-            "install gate confirm yes",
-            ["install", "--gate"],
+            "install warden confirm yes",
+            ["install"],
             stdin="y\n",
             before={".claude": d(), ".opendaisugi/config.yaml": f("auto_tend: false\n")},
             **gi,
         )
     )
-    add(mk("install gate confirm no", ["install", "--gate"], stdin="n\n", before=claude_dir, **gi))
-    add(mk("install gate none detected", ["install", "--gate", "--yes"], **gi))
-    add(mk("install gate codex", ["install", "--gate", "--yes", "--runtime", "codex"], **gi))
+    add(mk("install warden confirm no", ["install"], stdin="n\n", before=claude_dir, **gi))
+    add(mk("install warden none detected", ["install", "--yes"], **gi))
+    add(mk("install warden codex", ["install", "--yes", "--runtime", "codex"], **gi))
     add(
         mk(
-            "install gate codex path",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden codex path",
+            ["install", "--enforce", "--yes"],
             path_bins=["codex"],
             before=policy,
             **gi,
@@ -1108,8 +1980,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate codex existing",
-            ["install", "--gate", "--yes", "--runtime", "codex"],
+            "install warden codex existing",
+            ["install", "--yes", "--runtime", "codex"],
             before={
                 ".codex/hooks.json": f(
                     json.dumps(
@@ -1121,7 +1993,7 @@ def build_cases() -> list[dict[str, Any]]:
                                         "hooks": [
                                             {
                                                 "type": "command",
-                                                "command": "python3 -m opendaisugi.gate_client --mode enforce",
+                                                "command": "python3 -m opendaisugi.warden_client --mode enforce",
                                             }
                                         ],
                                     }
@@ -1136,29 +2008,25 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate all runtimes",
-            ["install", "--gate", "--yes"],
+            "install warden all runtimes",
+            ["install", "--yes"],
             before={".claude": d(), ".codex": d(), ".hermes": d(), ".openclaw": d()},
             **gi,
         )
     )
     add(
         mk(
-            "install gate runtime prefix",
-            ["install", "--gate", "--yes", "--runtime", "cl", "--runtime", "hermes"],
+            "install warden runtime prefix",
+            ["install", "--yes", "--runtime", "cl", "--runtime", "hermes"],
             **gi,
         )
     )
-    add(
-        mk("install gate runtime ambiguous", ["install", "--gate", "--yes", "--runtime", "c"], **gi)
-    )
-    add(
-        mk("install gate runtime unknown", ["install", "--gate", "--yes", "--runtime", "vim"], **gi)
-    )
+    add(mk("install warden runtime ambiguous", ["install", "--yes", "--runtime", "c"], **gi))
+    add(mk("install warden runtime unknown", ["install", "--yes", "--runtime", "vim"], **gi))
     add(
         mk(
-            "install gate idempotent",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden idempotent",
+            ["install", "--enforce", "--yes"],
             before={".claude": d(), **policy},
             twice=True,
             **gi,
@@ -1166,44 +2034,44 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate idempotent renamed",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden idempotent renamed",
+            ["install", "--enforce", "--yes"],
             before={".claude": d(), **policy},
             twice=True,
             prog="daisugi-copy",
             **gi,
         )
     )
-    # -- install --gateway (the BASE_URL layer) and --router ----------------
+    # -- install --router (the BASE_URL layer) and --routing-mode ----------------
     add(
         mk(
-            "install gateway claude",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router claude",
+            ["install", "--router", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
-    add(mk("install gateway only", ["install", "--gateway", "--yes"], before=claude_dir, **gi))
+    add(mk("install router only", ["install", "--router", "--yes"], before=claude_dir, **gi))
     add(
         mk(
-            "install gateway base url",
-            ["install", "--gateway", "--base-url", "http://127.0.0.1:9999", "--yes"],
-            before=claude_dir,
-            **gi,
-        )
-    )
-    add(
-        mk(
-            "install gateway empty base url",
-            ["install", "--gateway", "--base-url", "", "--yes"],
+            "install router base url",
+            ["install", "--router", "--base-url", "http://127.0.0.1:9999", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install gateway existing env",
-            ["install", "--gateway", "--yes"],
+            "install router empty base url",
+            ["install", "--router", "--base-url", "", "--yes"],
+            before=claude_dir,
+            **gi,
+        )
+    )
+    add(
+        mk(
+            "install router existing env",
+            ["install", "--router", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -1222,8 +2090,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gateway already set",
-            ["install", "--gateway", "--yes"],
+            "install router already set",
+            ["install", "--router", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}})),
@@ -1233,109 +2101,109 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gateway invalid settings",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router invalid settings",
+            ["install", "--router", "--yes"],
             before={".claude": d(), CLAUDE: f("{nope")},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway env not a dict",
-            ["install", "--gateway", "--yes"],
+            "install router env not a dict",
+            ["install", "--router", "--yes"],
             before={".claude": d(), CLAUDE: f(json.dumps({"env": ["x"]}))},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway gate then env fails",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router warden then env fails",
+            ["install", "--router", "--yes"],
             before={".claude": d(), CLAUDE: f(json.dumps({"env": "x"}))},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway settings list",
-            ["install", "--gateway", "--yes"],
+            "install router settings list",
+            ["install", "--router", "--yes"],
             before={".claude": d(), CLAUDE: f("[1]")},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway no claude dir",
-            ["install", "--gateway", "--yes", "--runtime", "claude"],
+            "install router no claude dir",
+            ["install", "--router", "--yes", "--runtime", "claude"],
             **gi,
         )
     )
     add(
         mk(
-            "install gateway dry run",
-            ["install", "--gate", "--gateway", "--dry-run"],
+            "install router dry run",
+            ["install", "--router", "--dry-run"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install gateway enforce no gate",
-            ["install", "--gateway", "--enforce", "--yes"],
+            "install router enforce no warden",
+            ["install", "--router", "--enforce", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install gateway codex",
-            ["install", "--gate", "--gateway", "--yes", "--runtime", "codex"],
+            "install router codex",
+            ["install", "--router", "--yes", "--runtime", "codex"],
             **gi,
         )
     )
     add(
         mk(
-            "install gateway codex existing",
-            ["install", "--gateway", "--yes", "--runtime", "codex"],
+            "install router codex existing",
+            ["install", "--router", "--yes", "--runtime", "codex"],
             before={".codex/config.toml": f('model = "gpt-5"\n\n[profiles.x]\nmodel = "o3"\n\n\n')},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway codex selected",
-            ["install", "--gateway", "--yes", "--runtime", "codex"],
+            "install router codex selected",
+            ["install", "--router", "--yes", "--runtime", "codex"],
             before={".codex/config.toml": f('model_provider = "opendaisugi"\nmodel = "x"\n')},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway codex present",
-            ["install", "--gateway", "--yes", "--runtime", "codex"],
+            "install router codex present",
+            ["install", "--router", "--yes", "--runtime", "codex"],
             before={".codex/config.toml": f('[model_providers.opendaisugi]\nbase_url = "x"\n')},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway all runtimes",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router all runtimes",
+            ["install", "--router", "--yes"],
             before={".claude": d(), ".codex": d(), ".hermes": d(), ".openclaw": d()},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway openclaw",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             **gi,
         )
     )
     add(
         mk(
-            "install gateway openclaw existing",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw existing",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             before={
                 ".openclaw/openclaw.json": f(
                     json.dumps(
@@ -1348,8 +2216,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gateway openclaw json5",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw json5",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             before={
                 ".openclaw/openclaw.json": f(
                     '{\n  // mine\n  "a": "http://x/y", /* b */ "b": [1, 2,],\n}\n'
@@ -1360,8 +2228,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gateway openclaw present",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw present",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             before={
                 ".openclaw/openclaw.json": f(
                     json.dumps({"models": {"providers": {"opendaisugi": {}}}})
@@ -1372,38 +2240,36 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gateway openclaw invalid",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw invalid",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             before={".openclaw/openclaw.json": f("{nope")},
             **gi,
         )
     )
     add(
         mk(
-            "install gateway openclaw models list",
-            ["install", "--gateway", "--yes", "--runtime", "openclaw"],
+            "install router openclaw models list",
+            ["install", "--router", "--yes", "--runtime", "openclaw"],
             before={".openclaw/openclaw.json": f(json.dumps({"models": []}))},
             **gi,
         )
     )
-    add(
-        mk("install gateway hermes", ["install", "--gateway", "--yes", "--runtime", "hermes"], **gi)
-    )
+    add(mk("install router hermes", ["install", "--router", "--yes", "--runtime", "hermes"], **gi))
     add(
         mk(
-            "install gateway idempotent",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router idempotent",
+            ["install", "--router", "--yes"],
             before={".claude": d(), ".codex": d(), ".openclaw": d()},
             twice=True,
             **gi,
         )
     )
-    # The binary under another file name: the second install finds its own
-    # hooks by their shape (ruling INS-1).
+    # The binary under a name that is not ours writes the PATH daisugi, so a
+    # second install finds its hooks (ruling INS-2).
     add(
         mk(
-            "install gateway idempotent renamed",
-            ["install", "--gate", "--gateway", "--yes"],
+            "install router idempotent renamed",
+            ["install", "--router", "--yes"],
             before={".claude": d(), ".codex": d(), ".openclaw": d()},
             twice=True,
             prog="daisugi-copy",
@@ -1412,36 +2278,36 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router rules",
-            ["install", "--gateway", "--router", "rules", "--yes"],
+            "install routing mode rules",
+            ["install", "--router", "--routing-mode", "rules", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router knn",
-            ["install", "--gateway", "--router", "knn", "--yes"],
+            "install routing mode knn",
+            ["install", "--router", "--routing-mode", "knn", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router knn dry run",
-            ["install", "--gateway", "--router", "knn", "--dry-run"],
+            "install routing mode knn dry run",
+            ["install", "--router", "--routing-mode", "knn", "--dry-run"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router off keeps config",
-            ["install", "--gateway", "--router", "off", "--yes"],
+            "install routing mode off keeps config",
+            ["install", "--router", "--routing-mode", "off", "--yes"],
             before={
                 ".claude": d(),
                 ".opendaisugi/config.yaml": f(
-                    "gate_mode: enforce\nmax_task_chars: '12'\nauto_tend: yes\nzzz: 1\n"
+                    "warden_mode: enforce\nmax_task_chars: '12'\nauto_tend: yes\nzzz: 1\n"
                 ),
             },
             **gi,
@@ -1449,11 +2315,11 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard",
+            "install routing mode switchyard",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "llama3",
@@ -1465,11 +2331,11 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard claude key",
+            "install routing mode switchyard claude key",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "claude-haiku-4-5",
@@ -1483,11 +2349,11 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard key set",
+            "install routing mode switchyard key set",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "claude-haiku-4-5",
@@ -1502,8 +2368,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard clear key",
-            ["install", "--gateway", "--router", "switchyard", "--api-key-env", "", "--yes"],
+            "install routing mode switchyard clear key",
+            ["install", "--router", "--routing-mode", "switchyard", "--api-key-env", "", "--yes"],
             before={
                 ".claude": d(),
                 ".opendaisugi/config.yaml": f(
@@ -1515,19 +2381,19 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard no efficient",
-            ["install", "--gateway", "--router", "switchyard", "--yes"],
+            "install routing mode switchyard no efficient",
+            ["install", "--router", "--routing-mode", "switchyard", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router switchyard same model",
+            "install routing mode switchyard same model",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "claude-sonnet-5",
@@ -1539,11 +2405,11 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router switchyard capable",
+            "install routing mode switchyard capable",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "qwen3",
@@ -1562,35 +2428,35 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router unknown",
-            ["install", "--gateway", "--router", "magic", "--yes"],
+            "install routing mode unknown",
+            ["install", "--router", "--routing-mode", "magic", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router without gateway",
-            ["install", "--gate", "--router", "rules", "--yes"],
+            "install routing mode without router",
+            ["install", "--routing-mode", "rules", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router flags without router",
-            ["install", "--gateway", "--efficient-model", "m", "--yes"],
+            "install routing mode flags without routing mode",
+            ["install", "--router", "--efficient-model", "m", "--yes"],
             before=claude_dir,
             **gi,
         )
     )
     add(
         mk(
-            "install router dry run",
+            "install routing mode dry run",
             [
                 "install",
-                "--gateway",
                 "--router",
+                "--routing-mode",
                 "switchyard",
                 "--efficient-model",
                 "m",
@@ -1602,16 +2468,24 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install router invalid config",
-            ["install", "--gateway", "--router", "switchyard", "--efficient-model", "m", "--yes"],
-            before={".claude": d(), ".opendaisugi/config.yaml": f("gateway_router: [1]\n")},
+            "install routing mode invalid config",
+            [
+                "install",
+                "--router",
+                "--routing-mode",
+                "switchyard",
+                "--efficient-model",
+                "m",
+                "--yes",
+            ],
+            before={".claude": d(), ".opendaisugi/config.yaml": f("routing_mode: [1]\n")},
             **gi,
         )
     )
     add(
         mk(
             "install report herdr",
-            ["install", "--gate", "--report", "herdr", "--yes"],
+            ["install", "--report", "herdr", "--yes"],
             before=claude_dir,
         )
     )
@@ -1619,7 +2493,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "install decomposition",
-            ["install", "--gate", "--allow-shell-decomposition", "--yes"],
+            ["install", "--allow-shell-decomposition", "--yes"],
             before=claude_dir,
         )
     )
@@ -1665,37 +2539,37 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gate claude",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden claude",
+            ["install", "--uninstall"],
             before={".claude": d(), CLAUDE: f(installed, 0o600)},
             **gu,
         )
     )
     add(
         mk(
-            "uninstall gate only hook",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden only hook",
+            ["install", "--uninstall"],
             before={".claude": d(), CLAUDE: f(hook_settings(PY_AUDIT))},
             **gu,
         )
     )
-    add(mk("uninstall gate nothing", ["install", "--gate", "--uninstall"], before=claude_dir, **gu))
+    add(mk("uninstall warden nothing", ["install", "--uninstall"], before=claude_dir, **gu))
     add(
         mk(
-            "uninstall gate codex",
-            ["install", "--gate", "--uninstall", "--runtime", "codex"],
+            "uninstall warden codex",
+            ["install", "--uninstall", "--runtime", "codex"],
             before={".codex/hooks.json": f(hook_settings(PY_ENFORCE))},
             **gu,
         )
     )
     add(
         mk(
-            "uninstall gate codex renamed",
-            ["install", "--gate", "--uninstall", "--runtime", "codex"],
+            "uninstall warden codex renamed",
+            ["install", "--uninstall", "--runtime", "codex"],
             before={
                 ".codex/hooks.json": f(
                     hook_settings(
-                        "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/bin/daisugi-copy gate check "
+                        "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/bin/daisugi-copy warden check "
                         "--mode audit --root /x --format codex --verify-timeout 10.0"
                     )
                 )
@@ -1705,21 +2579,21 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gate go form",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden go form",
+            ["install", "--uninstall"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
                     hook_settings(
-                        "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
+                        "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2"
                     )
                 ),
             },
             **gu,
         )
     )
-    add(mk("uninstall gate none detected", ["install", "--gate", "--uninstall"], **gu))
-    gateway_settings = json.dumps(
+    add(mk("uninstall warden none detected", ["install", "--uninstall"], **gu))
+    router_settings = json.dumps(
         {
             "env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "B": "2"},
             "hooks": {
@@ -1732,28 +2606,28 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gateway claude",
-            ["install", "--gateway", "--uninstall"],
-            before={".claude": d(), CLAUDE: f(gateway_settings)},
+            "uninstall router claude",
+            ["install", "--router", "--uninstall"],
+            before={".claude": d(), CLAUDE: f(router_settings)},
             **gu,
         )
     )
     add(
         mk(
-            "uninstall gate and gateway env only key",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden and router env only key",
+            ["install", "--uninstall"],
             before={".claude": d(), CLAUDE: f(json.dumps({"env": {"ANTHROPIC_BASE_URL": "x"}}))},
             **gu,
         )
     )
     add(
         mk(
-            "uninstall gateway codex",
-            ["install", "--gateway", "--uninstall", "--runtime", "codex"],
+            "uninstall router codex",
+            ["install", "--router", "--uninstall", "--runtime", "codex"],
             before={
                 ".codex/config.toml": f(
                     'model_provider = "opendaisugi"\nmodel = "m"\n\n[model_providers.opendaisugi]\n'
-                    'name = "openDaisugi gateway"\nbase_url = "http://127.0.0.1:8787/v1"\n'
+                    'name = "openDaisugi router"\nbase_url = "http://127.0.0.1:8787/v1"\n'
                     'wire_api = "chat"\n\n[profiles.p]\nx = 1\n'
                 )
             },
@@ -1762,8 +2636,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gateway codex only block",
-            ["install", "--gateway", "--uninstall", "--runtime", "codex"],
+            "uninstall router codex only block",
+            ["install", "--router", "--uninstall", "--runtime", "codex"],
             before={
                 ".codex/config.toml": f(
                     'model_provider = "opendaisugi"\n\n[model_providers.opendaisugi]\nname = "x"\n'
@@ -1774,8 +2648,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gateway openclaw",
-            ["install", "--gateway", "--uninstall", "--runtime", "openclaw"],
+            "uninstall router openclaw",
+            ["install", "--router", "--uninstall", "--runtime", "openclaw"],
             before={
                 ".openclaw/openclaw.json": f(
                     json.dumps(
@@ -1788,8 +2662,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gateway openclaw keeps others",
-            ["install", "--gateway", "--uninstall", "--runtime", "openclaw"],
+            "uninstall router openclaw keeps others",
+            ["install", "--router", "--uninstall", "--runtime", "openclaw"],
             before={
                 ".openclaw/openclaw.json": f(
                     '{"models": {"providers": {"opendaisugi": {}, "x": {}}, "k": 1}, // c\n}'
@@ -1831,7 +2705,7 @@ def build_cases() -> list[dict[str, Any]]:
             "harness planted file link",
             ["install", "--harness", "pi"],
             before={
-                ".pi/agent/extensions/daisugi-gate/index.ts": {"link": "{HOME}/target"},
+                ".pi/agent/extensions/daisugi-warden/index.ts": {"link": "{HOME}/target"},
                 "target": f("mine"),
             },
         )
@@ -1842,8 +2716,8 @@ def build_cases() -> list[dict[str, Any]]:
             "harness uninstall",
             ["install", "--harness", "pi", "--harness", "opencode", "--uninstall"],
             before={
-                ".pi/agent/extensions/daisugi-gate/index.ts": f("x"),
-                ".config/opencode/plugins/daisugi-gate.ts": f("x"),
+                ".pi/agent/extensions/daisugi-warden/index.ts": f("x"),
+                ".config/opencode/plugins/daisugi-warden.ts": f("x"),
                 ".config/opencode/plugins/mine.ts": f("y"),
             },
         )
@@ -1863,57 +2737,57 @@ def build_cases() -> list[dict[str, Any]]:
 
     # -- more config shapes (status reads the whole file as pydantic does) --
     more_cfg = {
-        "cfg multi plain": "gate_mode: enforce\nnotify: aaa\n  bbb\nmodel: x\n",
-        "cfg floor seq": "gate_mode: enforce\nfloor:\n- a\n",
-        "cfg seq same indent": "gate_mode: enforce\nextra:\n- a\n- b: 1\n  c: 2\n",
-        "cfg float int ok": "gate_mode: enforce\nz3_timeout_ms: 800.0\n",
-        "cfg str int ok": "gate_mode: enforce\nz3_timeout_ms: ' 1_000 '\n",
-        "cfg str bool ok": "gate_mode: enforce\ngate_ask: 'T'\n",
-        "cfg str bool bad": "gate_mode: enforce\ngate_ask: 'nope'\n",
-        "cfg dquote esc": 'gate_mode: "enf\\x6frce"\n',
+        "cfg multi plain": "warden_mode: enforce\nnotify: aaa\n  bbb\nmodel: x\n",
+        "cfg floor seq": "warden_mode: enforce\nfloor:\n- a\n",
+        "cfg seq same indent": "warden_mode: enforce\nextra:\n- a\n- b: 1\n  c: 2\n",
+        "cfg float int ok": "warden_mode: enforce\nz3_timeout_ms: 800.0\n",
+        "cfg str int ok": "warden_mode: enforce\nz3_timeout_ms: ' 1_000 '\n",
+        "cfg str bool ok": "warden_mode: enforce\nwarden_ask: 'T'\n",
+        "cfg str bool bad": "warden_mode: enforce\nwarden_ask: 'nope'\n",
+        "cfg dquote esc": 'warden_mode: "enf\\x6frce"\n',
         "cfg falsy top": "0\n",
-        "cfg flow map": "gate_mode: enforce\nfloor: {backend: tmux, notify_cmd: null}\n",
-        "cfg flow map bad": "gate_mode: enforce\nfloor: {backend: [1]}\n",
-        "cfg doc marker": "---\ngate_mode: enforce\n",
-        "cfg key on": "on: 1\ngate_mode: enforce\n",
-        "cfg nested unknown": "gate_mode: enforce\nx:\n  y:\n    z: [1, {a: b}]\n",
-        "cfg bool int": "gate_mode: enforce\nmax_task_chars: true\n",
-        "cfg path int": "gate_mode: enforce\ndata_dir: 5\n",
+        "cfg flow map": "warden_mode: enforce\nfloor: {backend: tmux, notify_cmd: null}\n",
+        "cfg flow map bad": "warden_mode: enforce\nfloor: {backend: [1]}\n",
+        "cfg doc marker": "---\nwarden_mode: enforce\n",
+        "cfg key on": "on: 1\nwarden_mode: enforce\n",
+        "cfg nested unknown": "warden_mode: enforce\nx:\n  y:\n    z: [1, {a: b}]\n",
+        "cfg bool int": "warden_mode: enforce\nmax_task_chars: true\n",
+        "cfg path int": "warden_mode: enforce\ndata_dir: 5\n",
     }
     for name, text in more_cfg.items():
         add(
             mk(
                 f"status {name}",
-                ["gate", "status", "--json"],
+                ["warden", "status", "--json"],
                 before={".opendaisugi/config.yaml": f(text)},
             )
         )
     add(
         mk(
             "init cfg decomposition",
-            ["gate", "init", "--workspace", "/work"],
+            ["warden", "init", "--workspace", "/work"],
             before={".opendaisugi/config.yaml": f("shell_allow_decomposition: yes\n")},
         )
     )
     add(
         mk(
             "init cfg invalid",
-            ["gate", "init", "--workspace", "/work"],
+            ["warden", "init", "--workspace", "/work"],
             before={".opendaisugi/config.yaml": f("shell_allow_decomposition: maybe\n")},
         )
     )
     add(
         mk(
             "init no decomposition flag",
-            ["gate", "init", "--workspace", "/work", "--no-allow-shell-decomposition"],
+            ["warden", "init", "--workspace", "/work", "--no-allow-shell-decomposition"],
             before={".opendaisugi/config.yaml": f("shell_allow_decomposition: true\n")},
         )
     )
-    add(mk("init relative workspace", ["gate", "init", "--workspace", "sub/../w"], cwd="proj"))
+    add(mk("init relative workspace", ["warden", "init", "--workspace", "sub/../w"], cwd="proj"))
     add(
         mk(
             "init symlink workspace",
-            ["gate", "init", "--workspace", "{HOME}/link/x"],
+            ["warden", "init", "--workspace", "{HOME}/link/x"],
             before={"real": d(), "link": {"link": "{HOME}/real"}},
         )
     )
@@ -1922,7 +2796,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register yaml block",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "# my envelope\ngenerated_by: me\ntask: 'a task'\nstakes: high\npermissions:\n  file_read:\n  - /work/**\n"
@@ -1935,7 +2809,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register yaml seq of maps",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "generated_by: me\ntask: t\npermissions: {}\ninvariants:\n- type: file_unchanged\n  description: keep it\n"
@@ -1947,28 +2821,28 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register coerced bool",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(shell="yes", network=0))},
         )
     )
     add(
         mk(
             "register bad bool",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(shell="maybe"))},
         )
     )
     add(
         mk(
             "register float int",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(max_execution_time_s=60.0))},
         )
     )
     add(
         mk(
             "register robotics",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={
                 "e.json": f(
                     envelope_json(
@@ -1985,7 +2859,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register float notation",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "generated_by: g\ntask: t\npermissions:\n  velocity_limit: 0.000025\n  torque_limit: 9999999999999998.0\n"
@@ -1999,14 +2873,14 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register bad bounds",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(workspace_bounds=[[0, 0], [1, 1]]))},
         )
     )
     add(
         mk(
             "register predicates",
-            ["gate", "register", "{HOME}/e.json", "--session", "p"],
+            ["warden", "register", "{HOME}/e.json", "--session", "p"],
             before={
                 "e.json": f(
                     json.dumps(
@@ -2039,21 +2913,21 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register summary long",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(summary="x" * 81))},
         )
     )
     add(
         mk(
             "register bad stakes",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={"e.json": f(envelope_json(stakes="extreme"))},
         )
     )
     add(
         mk(
             "register unicode",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={
                 "e.json": f(
                     json.dumps(
@@ -2070,7 +2944,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register top list",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={"e.yaml": f("- a\n")},
         )
     )
@@ -2089,7 +2963,7 @@ def build_cases() -> list[dict[str, Any]]:
         add(
             mk(
                 f"register {name} velocity",
-                ["gate", "register", "{HOME}/e.json"],
+                ["warden", "register", "{HOME}/e.json"],
                 before={"e.json": f(envelope_json(velocity_limit=1.5).replace("1.5", value))},
             )
         )
@@ -2097,7 +2971,7 @@ def build_cases() -> list[dict[str, Any]]:
         add(
             mk(
                 f"register yaml {value}",
-                ["gate", "register", "{HOME}/e.yaml"],
+                ["warden", "register", "{HOME}/e.yaml"],
                 before={
                     "e.yaml": f(
                         f"generated_by: g\ntask: t\npermissions:\n  workspace_bounds: [[0, 0, 0], [1, {value}, 1]]\n"
@@ -2108,7 +2982,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register nan in expr",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "generated_by: g\ntask: t\npermissions: {}\ninvariants:\n- type: t\n  description: d\n"
@@ -2120,7 +2994,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register nan joint limit",
-            ["gate", "register", "{HOME}/e.yaml"],
+            ["warden", "register", "{HOME}/e.yaml"],
             before={
                 "e.yaml": f(
                     "generated_by: g\ntask: t\npermissions:\n  joint_limits:\n    j: [-.inf, 1]\n"
@@ -2131,7 +3005,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register nan keeps the old envelope",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={
                 "e.json": f(envelope_json(velocity_limit=1.5).replace("1.5", "NaN")),
                 f"{GROOT}/envelopes/default.json": f(envelope_json(id="env_old00001")),
@@ -2141,7 +3015,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "register nan and a bad field",
-            ["gate", "register", "{HOME}/e.json"],
+            ["warden", "register", "{HOME}/e.json"],
             before={
                 "e.json": f(envelope_json(velocity_limit=1.5, shell="maybe").replace("1.5", "NaN"))
             },
@@ -2152,7 +3026,7 @@ def build_cases() -> list[dict[str, Any]]:
     add(
         mk(
             "report floats unicode",
-            ["gate", "report"],
+            ["warden", "report"],
             before={
                 f"{GROOT}/audit/a.jsonl": f(
                     "\n".join(
@@ -2193,16 +3067,17 @@ def build_cases() -> list[dict[str, Any]]:
         f"{GROOT}/proposals/c.json": f("[1]"),
         f"{GROOT}/proposals/d.json": f("{bad"),
     }
-    add(mk("proposals none", ["gate", "proposals"]))
-    add(mk("proposals none json", ["gate", "proposals", "--json"]))
-    add(mk("proposals some", ["gate", "proposals"], before=props))
-    add(mk("proposals some json", ["gate", "proposals", "--json"], before=props))
+    add(mk("proposals none", ["warden", "proposals"]))
+    add(mk("proposals none json", ["warden", "proposals", "--json"]))
+    add(mk("proposals some", ["warden", "proposals"], before=props))
+    add(mk("proposals some json", ["warden", "proposals", "--json"], before=props))
 
     # -- the root and the commands this binary does not carry -------------
     add(mk("version", ["--version"]))
     replay_cases(add)
     help_cases(add)
     layer_cases(add)
+    recipe_cases(add)
     add(
         mk(
             "uninstall all",
@@ -2210,13 +3085,13 @@ def build_cases() -> list[dict[str, Any]]:
             before=claude_dir,
         )
     )
-    add(mk("status unknown option", ["gate", "status", "--bogus"]))
-    add(mk("register no argument", ["gate", "register"]))
-    add(mk("install gate confirm eof", ["install", "--gate"], stdin="", before=claude_dir, **gi))
+    add(mk("status unknown option", ["warden", "status", "--bogus"]))
+    add(mk("register no argument", ["warden", "register"]))
+    add(mk("install warden confirm eof", ["install"], stdin="", before=claude_dir, **gi))
     add(
         mk(
-            "install gate confirm again",
-            ["install", "--gate"],
+            "install warden confirm again",
+            ["install"],
             stdin="maybe\ny\n",
             before={".claude": d(), ".opendaisugi/config.yaml": f("auto_tend: false\n")},
             **gi,
@@ -2224,15 +3099,15 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate claude forced missing",
-            ["install", "--gate", "--yes", "--runtime", "claude"],
+            "install warden claude forced missing",
+            ["install", "--yes", "--runtime", "claude"],
             **gi,
         )
     )
     add(
         mk(
-            "install gate int command",
-            ["install", "--gate", "--yes"],
+            "install warden int command",
+            ["install", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -2246,8 +3121,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate no command key",
-            ["install", "--gate", "--yes"],
+            "install warden no command key",
+            ["install", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -2259,16 +3134,16 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate pre dict",
-            ["install", "--gate", "--yes"],
+            "install warden pre dict",
+            ["install", "--yes"],
             before={".claude": d(), CLAUDE: f(json.dumps({"hooks": {"PreToolUse": {}}}))},
             **gi,
         )
     )
     add(
         mk(
-            "install gate other keys kept",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden other keys kept",
+            ["install", "--enforce", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -2291,12 +3166,12 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate codex go form",
-            ["install", "--gate", "--yes", "--runtime", "codex"],
+            "install warden codex go form",
+            ["install", "--yes", "--runtime", "codex"],
             before={
                 ".codex/hooks.json": f(
                     hook_settings(
-                        "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check --mode audit --root /x "
+                        "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check --mode audit --root /x "
                         "--format claude --verify-timeout 10.0"
                     )
                 )
@@ -2306,13 +3181,13 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate claude go form",
-            ["install", "--gate", "--yes"],
+            "install warden claude go form",
+            ["install", "--yes"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
                     hook_settings(
-                        "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check --mode enforce --root /x "
+                        "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check --mode enforce --root /x "
                         "--format claude --verify-timeout 10.0 || exit 2"
                     )
                 ),
@@ -2322,8 +3197,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gate report hooks",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden report hooks",
+            ["install", "--uninstall"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -2361,8 +3236,8 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "uninstall gate bad json",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden bad json",
+            ["install", "--uninstall"],
             before={".claude": d(), CLAUDE: f("{x")},
             **gu,
         )
@@ -2370,42 +3245,42 @@ def build_cases() -> list[dict[str, Any]]:
     add(mk("bare", []))
 
     # -- hooks are found by their words, not a substring ---------------------
-    foreign = "/opt/opendaisugi.gateway-watch --mode enforce"
-    quoted = "'/opt/x --mode enforce/python' -m opendaisugi.gate --root /r"
+    foreign = "/opt/opendaisugi.router-watch --mode enforce"
+    quoted = "'/opt/x --mode enforce/python' -m opendaisugi.warden --root /r"
     add(
         mk(
             "status foreign hook",
-            ["gate", "status", "--json"],
+            ["warden", "status", "--json"],
             before={CLAUDE: f(hook_settings(foreign))},
         )
     )
     add(
         mk(
             "status quoted mode",
-            ["gate", "status", "--json"],
+            ["warden", "status", "--json"],
             before={CLAUDE: f(hook_settings(quoted))},
         )
     )
     add(
         mk(
-            "install gate foreign hook",
-            ["install", "--gate", "--enforce", "--yes"],
+            "install warden foreign hook",
+            ["install", "--enforce", "--yes"],
             before={".claude": d(), CLAUDE: f(hook_settings(foreign))},
             **gi,
         )
     )
     add(
         mk(
-            "install gate codex foreign hook",
-            ["install", "--gate", "--yes", "--runtime", "codex"],
+            "install warden codex foreign hook",
+            ["install", "--yes", "--runtime", "codex"],
             before={".codex/hooks.json": f(hook_settings(foreign))},
             **gi,
         )
     )
     add(
         mk(
-            "uninstall gate foreign hooks",
-            ["install", "--gate", "--uninstall"],
+            "uninstall warden foreign hooks",
+            ["install", "--uninstall"],
             before={
                 ".claude": d(),
                 CLAUDE: f(
@@ -2443,48 +3318,46 @@ def build_cases() -> list[dict[str, Any]]:
             **gu,
         )
     )
-    # -- hand-written gate hooks, and ones in a form not read (round 2) -----
+    # -- hand-written warden hooks, and ones in a form not read (round 2) -----
     written = {
-        "uv run": "uv run --project /p python -m opendaisugi.gate --mode enforce --root /x || exit 2",
-        "env prefix": "FOO=1 python3 -m opendaisugi.gate --mode enforce",
-        "env command": "env FOO=1 python3 -m opendaisugi.gate --mode enforce",
-        "python flag": "python3 -I -m opendaisugi.gate --mode enforce",
-        "joined m": "python3 -mopendaisugi.gate --mode enforce",
-        "no space op": "python3 -m opendaisugi.gate --mode enforce||exit 2",
-        "sh c": "sh -c 'python3 -m opendaisugi.gate --mode enforce'",
-        "bare daisugi": "daisugi gate check --mode enforce --root /x || exit 2",
-        "echo": "echo -m opendaisugi.gate --mode enforce",
-        "true marker": "DAISUGI_GATE_HOOK=opendaisugi.gate /bin/true gate check --mode enforce",
-        "renamed": "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/bin/daisugi-copy gate check "
+        "uv run": "uv run --project /p python -m opendaisugi.warden --mode enforce --root /x || exit 2",
+        "env prefix": "FOO=1 python3 -m opendaisugi.warden --mode enforce",
+        "env command": "env FOO=1 python3 -m opendaisugi.warden --mode enforce",
+        "python flag": "python3 -I -m opendaisugi.warden --mode enforce",
+        "joined m": "python3 -mopendaisugi.warden --mode enforce",
+        "no space op": "python3 -m opendaisugi.warden --mode enforce||exit 2",
+        "sh c": "sh -c 'python3 -m opendaisugi.warden --mode enforce'",
+        "bare daisugi": "daisugi warden check --mode enforce --root /x || exit 2",
+        "echo": "echo -m opendaisugi.warden --mode enforce",
+        "true marker": "DAISUGI_WARDEN_HOOK=opendaisugi.warden /bin/true warden check --mode enforce",
+        "renamed": "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/bin/daisugi-copy warden check "
         "--mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2",
-        "renamed no marker": "/opt/bin/daisugi-copy gate check --mode enforce --root /x "
+        "renamed no marker": "/opt/bin/daisugi-copy warden check --mode enforce --root /x "
         "--format claude --verify-timeout 10.0 || exit 2",
-        "renamed few flags": "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/bin/daisugi-copy "
-        "gate check --mode enforce || exit 2",
-        "unknown": "nice python3 -m opendaisugi.gate --mode enforce",
+        "renamed few flags": "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/bin/daisugi-copy "
+        "warden check --mode enforce || exit 2",
+        "unknown": "nice python3 -m opendaisugi.warden --mode enforce",
         # Hooks from before audit mode was renamed: the warning's fix,
-        # install --gate --uninstall, removes them.
-        "old shadow python": "python3 -m opendaisugi.gate --mode shadow --root /x",
-        "old shadow daisugi": "DAISUGI_GATE_HOOK=opendaisugi.gate /opt/daisugi gate check "
+        # install --warden --uninstall, removes them.
+        "old shadow python": "python3 -m opendaisugi.warden --mode shadow --root /x",
+        "old shadow daisugi": "DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/daisugi warden check "
         "--mode shadow --root /x --format claude",
     }
     for name, command in written.items():
         tree = {".claude": d(), CLAUDE: f(hook_settings(command))}
-        add(mk(f"status written {name}", ["gate", "status", "--json"], before=tree))
-        add(
-            mk(f"uninstall written {name}", ["install", "--gate", "--uninstall"], before=tree, **gu)
-        )
+        add(mk(f"status written {name}", ["warden", "status", "--json"], before=tree))
+        add(mk(f"uninstall written {name}", ["install", "--uninstall"], before=tree, **gu))
     add(
         mk(
             "status written unknown text",
-            ["gate", "status"],
+            ["warden", "status"],
             before={CLAUDE: f(hook_settings(written["unknown"]))},
         )
     )
     add(
         mk(
             "status unknown beside audit",
-            ["gate", "status", "--json"],
+            ["warden", "status", "--json"],
             before={
                 CLAUDE: f(hook_settings(PY_AUDIT)),
                 "proj/.claude/settings.json": f(hook_settings(written["unknown"])),
@@ -2494,16 +3367,16 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         mk(
-            "install gate beside unknown",
-            ["install", "--gate", "--yes"],
+            "install warden beside unknown",
+            ["install", "--yes"],
             before={".claude": d(), CLAUDE: f(hook_settings(written["unknown"]))},
             **gi,
         )
     )
     add(
         mk(
-            "install gate settings symlink",
-            ["install", "--gate", "--yes"],
+            "install warden settings symlink",
+            ["install", "--yes"],
             before={
                 ".claude": d(),
                 "dot/settings.json": f("{}"),
@@ -2523,7 +3396,7 @@ HELP_NOT_PORTED = (
     "bench",
     "conformance",
     "coppice",
-    "gate audit",
+    "warden audit",
 )
 
 
@@ -2564,7 +3437,7 @@ def layer_cases(add: Any) -> None:
     add(mk("layers openclaw", y, before=openclaw))
     add(mk("layers every harness", y, before=every))
     add(mk("layers every harness dry run", ["install", "--dry-run"], before=every))
-    add(mk("layers every harness gate gateway", [*y, "--gate", "--gateway"], before=every))
+    add(mk("layers every harness router", [*y, "--router"], before=every))
     add(mk("layers twice", y, before=every, pre=[y]))
     add(mk("layers claude skills dir", y, before={**claude, ".claude/skills": d()}))
     add(mk("layers agents dir", y, before={**claude, ".agents/skills": d()}))
@@ -2671,7 +3544,7 @@ def layer_cases(add: Any) -> None:
         )
     )
     add(mk("layers decomposition off", [*y, "--no-allow-shell-decomposition"], before=claude))
-    add(mk("layers report coppice", [*y, "--gate", "--report", "coppice"], before=claude))
+    add(mk("layers report coppice", [*y, "--report", "coppice"], before=claude))
     # A save keeps the operator's agent profiles as they are.
     profiles = {
         ".opendaisugi/config.yaml": f(
@@ -2682,12 +3555,12 @@ def layer_cases(add: Any) -> None:
     add(
         mk(
             "layers report coppice keeps agent profiles",
-            [*y, "--gate", "--report", "coppice"],
+            [*y, "--report", "coppice"],
             before={**claude, **profiles},
         )
     )
-    add(mk("layers report without gate", [*y, "--report", "coppice"], before=claude))
-    add(mk("layers report bad", [*y, "--gate", "--report", "tmux"], before=claude))
+    add(mk("layers report without warden", [*y, "--report", "coppice"], before=claude))
+    add(mk("layers report bad", [*y, "--report", "tmux"], before=claude))
     for name, before in [
         ("claude", claude),
         ("codex", codex),
@@ -2700,7 +3573,7 @@ def layer_cases(add: Any) -> None:
                 f"uninstall layers {name}",
                 ["install", "--uninstall"],
                 before=before,
-                pre=[[*y, "--gate", "--gateway"]],
+                pre=[[*y, "--router"]],
             )
         )
     add(mk("uninstall nothing installed", ["install", "--uninstall"], before=every))
@@ -2717,9 +3590,286 @@ def layer_cases(add: Any) -> None:
         )
     )
 
+    # install --only and --list: write (and remove) only the named components.
+    add(mk("install list", ["install", "--list"]))
+    add(mk("install list ignores runtimes", ["install", "--list"], before=every))
+    add(mk("only warden claude", [*y, "--only", "warden"], before=claude))
+    add(mk("only warden codex", [*y, "--only", "warden"], before=codex))
+    add(mk("only skill mcp every harness", [*y, "--only", "skill,mcp"], before=every))
+    add(mk("only repeated flags", [*y, "--only", "skill", "--only", "mcp"], before=claude))
+    add(mk("only capture hermes", [*y, "--only", "capture"], before=hermes))
+    add(mk("only instructions openclaw", [*y, "--only", "instructions"], before=openclaw))
+    add(mk("only router claude", [*y, "--only", "router"], before=claude))
+    add(mk("only router flag and name", [*y, "--only", "router", "--router"], before=claude))
+    add(mk("only router flag without name", [*y, "--only", "skill", "--router"], before=claude))
+    add(mk("only enforce without warden", [*y, "--only", "skill", "--enforce"], before=claude))
+    add(
+        mk(
+            "only enforce with warden and policy",
+            [*y, "--only", "warden", "--enforce"],
+            before={**claude, f"{ENVD}/default.json": f(envelope_json(shell_allowlist=["ls"]))},
+        )
+    )
+    add(mk("only unknown", [*y, "--only", "warden,journal"], before=claude))
+    add(mk("only empty", [*y, "--only", ""], before=claude))
+    add(mk("only dry run", ["install", "--dry-run", "--only", "warden,capture"], before=every))
+    add(mk("only twice", [*y, "--only", "warden"], before=claude, pre=[[*y, "--only", "warden"]]))
+    add(
+        mk(
+            "only then uninstall only",
+            ["install", "--uninstall", "--only", "capture,instructions"],
+            before=claude,
+            pre=[y],
+        )
+    )
+    add(
+        mk(
+            "uninstall only unknown",
+            ["install", "--uninstall", "--only", "x"],
+            before=claude,
+            pre=[y],
+        )
+    )
+    add(
+        mk(
+            "uninstall only every harness",
+            ["install", "--uninstall", "--only", "skill"],
+            before=every,
+            pre=[y],
+        )
+    )
+    add(
+        mk(
+            "only with harness note",
+            ["install", "--only", "skill", "--harness", "pi", "--dry-run"],
+        )
+    )
+
+
+def recipe_cases(add: Any) -> None:
+    """`daisugi recipe`: list, show, apply (dry by default) and revert."""
+    claude = {".claude": d()}
+    with_ws = {**claude, "w": d()}
+    ws = "{HOME}/w"
+    add(mk("recipe list", ["recipe", "list"]))
+    add(mk("recipe list json", ["recipe", "list", "--json"]))
+    for name in (
+        "bring-your-own",
+        "coppice-claude-warden",
+        "router-and-routing-mode",
+        "warden-only",
+    ):
+        add(mk(f"recipe show {name}", ["recipe", "show", name]))
+    add(mk("recipe show json", ["recipe", "show", "warden-only", "--json"]))
+    add(mk("recipe show unknown", ["recipe", "show", "nope"]))
+    apply_ws = ["recipe", "apply", "warden-only", "--set", f"workspace={ws}"]
+    add(mk("recipe apply dry", apply_ws, before=with_ws))
+    add(mk("recipe apply dry json", [*apply_ws, "--json"], before=with_ws))
+    add(mk("recipe apply yes", [*apply_ws, "--yes"], before=with_ws))
+    add(mk("recipe apply yes json", [*apply_ws, "--yes", "--json"], before=with_ws))
+    add(mk("recipe apply twice", [*apply_ws, "--yes"], before=with_ws, pre=[[*apply_ws, "--yes"]]))
+    add(
+        mk(
+            "recipe apply no param skips",
+            ["recipe", "apply", "warden-only", "--yes"],
+            before=claude,
+        )
+    )
+    add(
+        mk(
+            "recipe apply missing required",
+            ["recipe", "apply", "bring-your-own", "--yes"],
+            before=claude,
+        )
+    )
+    add(
+        mk(
+            "recipe apply unknown set",
+            ["recipe", "apply", "warden-only", "--set", "zzz=1"],
+            before=claude,
+        )
+    )
+    add(
+        mk(
+            "recipe apply set without equals",
+            ["recipe", "apply", "warden-only", "--set", "zzz"],
+            before=claude,
+        )
+    )
+    add(
+        mk(
+            "recipe apply bad routing mode",
+            ["recipe", "apply", "router-and-routing-mode", "--set", "routing_mode=zzz", "--yes"],
+            before=claude,
+        )
+    )
+    router = ["recipe", "apply", "router-and-routing-mode", "--yes"]
+    knn = {**claude, ".opendaisugi/config.yaml": f("routing_mode: knn\n")}
+    add(mk("recipe apply router", router, before=knn))
+    add(
+        mk(
+            "recipe revert dry",
+            ["recipe", "revert", "router-and-routing-mode"],
+            before=knn,
+            pre=[router],
+        )
+    )
+    add(
+        mk(
+            "recipe revert yes",
+            ["recipe", "revert", "router-and-routing-mode", "--yes"],
+            before=knn,
+            pre=[router],
+        )
+    )
+    add(
+        mk(
+            "recipe revert warden-only yes",
+            ["recipe", "revert", "warden-only", "--yes"],
+            before=with_ws,
+            pre=[[*apply_ws, "--yes"]],
+        )
+    )
+    # A revert undoes only what the recipe added (the receipt records that).
+    old_enforce = (
+        "python3 -m opendaisugi.warden --mode enforce --root {HOME}/.opendaisugi/warden "
+        "--format claude --verify-timeout 10.0 || exit 2"
+    )
+    kept_hook = {**with_ws, CLAUDE: f(hook_settings(old_enforce))}
+    add(
+        mk(
+            "recipe revert keeps the earlier enforce hook",
+            ["recipe", "revert", "warden-only", "--yes"],
+            before=kept_hook,
+            pre=[[*apply_ws, "--yes"]],
+        )
+    )
+    preset = {
+        **claude,
+        ".codex": d(),
+        CLAUDE: f(json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}, indent=2)),
+    }
+    add(mk("recipe apply router beside a set base_url", router, before=preset))
+    add(
+        mk(
+            "recipe revert router beside a set base_url",
+            ["recipe", "revert", "router-and-routing-mode", "--yes"],
+            before=preset,
+            pre=[router],
+        )
+    )
+    add(
+        mk(
+            "recipe revert router beside a set base_url dry",
+            ["recipe", "revert", "router-and-routing-mode"],
+            before=preset,
+            pre=[router],
+        )
+    )
+    receipt = json.dumps(
+        {
+            "recipe": "warden-only",
+            "applied_at": "2026-10-31T00:00:00Z",
+            "params": {"workspace": "{HOME}/w"},
+            "completed": 3,
+            "steps": [
+                {"index": 1, "kind": "warden-init", "undo": {"remove_envelope": "default"}},
+                {
+                    "index": 2,
+                    "kind": "install",
+                    "undo": {"uninstall": {"claude": ["warden"]}},
+                },
+                {"index": 3, "kind": "note", "undo": None},
+            ],
+        },
+        indent=2,
+    )
+    unread = hook_settings(
+        old_enforce.replace("--mode enforce", "--mode enforce") + " && echo 'unterminated"
+    )
+    held = {
+        **with_ws,
+        ".opendaisugi/recipes/warden-only.json": f(receipt + "\n"),
+        ".opendaisugi/warden/envelopes/default.json": f(envelope_json(id="env_fixed01")),
+        CLAUDE: f(unread),
+    }
+    add(
+        mk(
+            "recipe revert refused keeps the receipt",
+            ["recipe", "revert", "warden-only", "--yes"],
+            before=held,
+        )
+    )
+    # A skipped step keeps the undo an earlier run recorded.
+    add(
+        mk(
+            "recipe apply again without the param keeps the earlier undo",
+            ["recipe", "apply", "warden-only", "--yes"],
+            before=with_ws,
+            pre=[[*apply_ws, "--yes"]],
+        )
+    )
+    # A failing re-run does not cut the receipt short.
+    stuck = {
+        "w": d(),
+        ".claude": d(0o555),
+        ".opendaisugi/recipes/warden-only.json": f(receipt + "\n"),
+    }
+    add(mk("recipe apply fails and keeps the later undo", [*apply_ws, "--yes"], before=stuck))
+    add(
+        mk(
+            "recipe apply after install",
+            [*apply_ws, "--yes"],
+            before=with_ws,
+            pre=[["install", "--yes"]],
+        )
+    )
+    old_receipt = json.dumps(
+        {
+            "recipe": "warden-only",
+            "applied_at": "2026-10-31T00:00:00Z",
+            "params": {},
+            "completed": 3,
+            "steps": [
+                {
+                    "index": 2,
+                    "kind": "install",
+                    "undo": {"uninstall_only": ["warden"], "runtime": ["claude"]},
+                }
+            ],
+        },
+        indent=2,
+    )
+    old_held = {**claude, ".opendaisugi/recipes/warden-only.json": f(old_receipt + "\n")}
+    for flag in ([], ["--yes"]):
+        add(
+            mk(
+                "recipe revert old format receipt" + (" yes" if flag else " dry"),
+                ["recipe", "revert", "warden-only", *flag],
+                before=old_held,
+            )
+        )
+    mode = ["recipe", "apply", "router-and-routing-mode", "--yes", "--set"]
+    add(
+        mk(
+            "recipe revert after two modes restores the first",
+            ["recipe", "revert", "router-and-routing-mode", "--yes"],
+            before={**claude, ".opendaisugi/config.yaml": f("routing_mode: rules\n")},
+            pre=[[*mode, "routing_mode=knn"], [*mode, "routing_mode=off"]],
+        )
+    )
+    add(mk("recipe revert no receipt", ["recipe", "revert", "warden-only", "--yes"], before=claude))
+    add(mk("recipe apply no runtime", ["recipe", "apply", "warden-only", "--yes"]))
+    add(
+        mk(
+            "recipe apply router no runtime",
+            ["recipe", "apply", "router-and-routing-mode", "--yes"],
+        )
+    )
+
 
 def replay_cases(add: Any) -> None:
-    """`gate replay`: a captured session through the gate, offline."""
+    """`warden replay`: a captured session through the warden, offline."""
 
     def cap(**kw: Any) -> str:
         r: dict[str, Any] = {"captured_at": 1.5, "session_id": "s1"}
@@ -2757,7 +3907,100 @@ def replay_cases(add: Any) -> None:
     # takes; a JSON envelope is a row-12 input (see "replay json envelope").
     env = yaml.safe_dump(json.loads(envelope_json()), sort_keys=False)
     base = {"caps.jsonl": f(mixed), "env.json": f(env)}
-    argv = ["gate", "replay", "caps.jsonl", "--envelope", "env.json"]
+    argv = ["warden", "replay", "caps.jsonl", "--envelope", "env.json"]
+    # A rule regex is one small subset; a value that is not valid UTF-8 text
+    # (a lone surrogate) denies before matching.
+    sur = chr(0xD800)
+    rx_rules = [
+        {"tool": "t/flag", "args": [{"op": "matches", "path": "a", "regex": "(?x)a|.*"}]},
+        {"tool": "t/pname", "args": [{"op": "matches", "path": "a", "regex": "\\p{Letter}"}]},
+        {"tool": "t/diff", "args": [{"op": "not_matches", "path": "a", "regex": "[!--/]"}]},
+        {"tool": "t/evil", "args": [{"op": "not_matches", "path": "a", "regex": "^evil$"}]},
+        {"tool": "t/any", "args": [{"op": "matches", "path": "a", "regex": ".*"}]},
+        {"tool": "t/ok", "args": [{"op": "matches", "path": "a", "regex": "^[a-z]+$"}]},
+    ]
+    rx_env = envelope_json(mcp_rules=rx_rules)
+    rx_caps = "\n".join(
+        [
+            cap(
+                tool_name="mcp__t__flag",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="flag",
+                arguments={"a": "evil"},
+            ),
+            cap(
+                tool_name="mcp__t__pname",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="pname",
+                arguments={"a": "a"},
+            ),
+            cap(
+                tool_name="mcp__t__diff",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="diff",
+                arguments={"a": "#"},
+            ),
+            cap(
+                tool_name="mcp__t__evil",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="evil",
+                arguments={"a": sur},
+            ),
+            cap(
+                tool_name="mcp__t__any",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="any",
+                arguments={"a": sur},
+            ),
+            cap(
+                tool_name="mcp__t__evil",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="evil",
+                arguments={"a": "good" + chr(0xFFFD)},
+            ),
+            cap(
+                tool_name="mcp__t__evil",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="evil",
+                arguments={"a": "evil"},
+            ),
+            cap(
+                tool_name="mcp__t__ok",
+                step_type="mcp",
+                mcp_server="t",
+                mcp_tool="ok",
+                arguments={"a": "fine"},
+            ),
+        ]
+    )
+    rx_argv = ["warden", "replay", "caps.jsonl", "--envelope", "env.json"]
+    rx_before = {"caps.jsonl": f(rx_caps + "\n"), "env.json": f(rx_env)}
+    # A capture whose arguments are no object stays as the host sent it, so an
+    # argument rule reads it (hook._synthesize_steps keeps the raw value).
+    na_env = envelope_json(
+        mcp_allowlist=["t/*"],
+        mcp_rules=[{"tool": "t/r", "args": [{"op": "exists", "path": "a"}]}],
+    )
+    na_caps = "\n".join(
+        cap(tool_name="mcp__t__r", step_type="mcp", mcp_server="t", mcp_tool="r", arguments=a)
+        for a in ([1, 2], "no", None, {}, {"a": 1})
+    )
+    add(
+        mk(
+            "replay mcp arguments not an object",
+            rx_argv,
+            before={"caps.jsonl": f(na_caps + "\n"), "env.json": f(na_env)},
+        )
+    )
+    add(mk("replay mcp regex subset", rx_argv, before=rx_before))
+    add(mk("replay mcp regex subset json", [*rx_argv, "--json"], before=rx_before))
     add(mk("replay mixed", argv, before=base))
     add(mk("replay mixed json", [*argv, "--json"], before=base))
     yaml_env = (
@@ -2829,11 +4072,11 @@ def replay_cases(add: Any) -> None:
     add(
         mk(
             "replay no envelope option",
-            ["gate", "replay", "caps.jsonl"],
+            ["warden", "replay", "caps.jsonl"],
             before={"caps.jsonl": f(mixed)},
         )
     )
-    add(mk("replay no argument", ["gate", "replay"]))
+    add(mk("replay no argument", ["warden", "replay"]))
     add(
         mk(
             "replay many denies",
@@ -2852,10 +4095,10 @@ def replay_cases(add: Any) -> None:
 
 
 def graft_cases(add: Any) -> None:
-    """`daisugi graft install|status|remove`: the rule file in the gate
+    """`daisugi graft install|status|remove`: the rule file in the warden
     root, and the refusal beside a PreToolUse hook that may rewrite input
     (GR-3). Every settings file is in the scratch HOME."""
-    gate_cmd = "/usr/bin/python3 -m opendaisugi.gate --mode audit --format claude"
+    warden_cmd = "/usr/bin/python3 -m opendaisugi.warden --mode audit --format claude"
     record = "daisugi hook record --event pre"
     grafts = f"{GROOT}/grafts"
     rule = {
@@ -2893,9 +4136,12 @@ def graft_cases(add: Any) -> None:
         before={f"{grafts}/big-read.json": f("{")},
     )
     g(
-        "install beside gate and capture",
+        "install beside warden and capture",
         ["install"],
-        before={CLAUDE: f(hook_settings(gate_cmd)), ".codex/hooks.json": f(hook_settings(record))},
+        before={
+            CLAUDE: f(hook_settings(warden_cmd)),
+            ".codex/hooks.json": f(hook_settings(record)),
+        },
     )
     g("install beside rival", ["install"], before={CLAUDE: f(hook_settings("rtk rewrite"))})
     g(
@@ -2913,7 +4159,7 @@ def graft_cases(add: Any) -> None:
         "install beside project settings",
         ["install"],
         cwd="proj",
-        before={"proj/.claude/settings.json": f(hook_settings(gate_cmd))},
+        before={"proj/.claude/settings.json": f(hook_settings(warden_cmd))},
     )
     g("install bad settings", ["install"], before={CLAUDE: f("{")})
     g("install bom settings", ["install"], before={CLAUDE: f("\ufeff{}")})
@@ -2932,9 +4178,9 @@ def graft_cases(add: Any) -> None:
         before={CLAUDE: f(json.dumps({"hooks": {"PreToolUse": [1, {"hooks": "x"}]}}))},
     )
     g(
-        "install gate hook unread form",
+        "install warden hook unread form",
         ["install"],
-        before={CLAUDE: f(hook_settings("eval python -m opendaisugi.gate"))},
+        before={CLAUDE: f(hook_settings("eval python -m opendaisugi.warden"))},
     )
     g("install trial", ["install", "--state", "trial"])
     g("install trial seed", ["install", "--state", "trial", "--seed", "42"])
@@ -2988,7 +4234,7 @@ def graft_cases(add: Any) -> None:
 # top of that, the path of the fake `claude` is written {BIN}, the digest
 # `start` takes of the working directory {CWD8}, the interpreter
 # {PYTHON}, Python's warnings as the binary prints them, JSON files
-# parsed (a gate hook command compared by its flags), and a backup's
+# parsed (a warden hook command compared by its flags), and a backup's
 # time stamp dropped.
 #
 # A case may carry `go_expect`: fields where the binary's answer differs
@@ -2999,6 +4245,7 @@ def graft_cases(add: Any) -> None:
 
 RICH_CONFIG = ".opendaisugi/config.yaml"
 _WARN_LINE = re.compile(r"^.*?:\d+: \w*Warning: (.*)$")
+_WARN_DONE = re.compile(r"^\w*Warning: (.*)$")
 _MS_JSON = re.compile(r'("duration_ms": )-?[0-9][0-9.e+-]*')
 # `daisugi verify` prints how long the check took.
 _MS_LINE = re.compile(r"(?m)^(  duration: )[0-9.]+ms$")
@@ -3029,6 +4276,12 @@ def rich_normalize(res: dict[str, Any], work: Path, case: dict[str, Any]) -> dic
         if m:
             out.append("warning: " + m.group(1))
             skip = True
+            continue
+        # garden_cases.norm_stderr has already cut the file and the source
+        # line: `UserWarning: text` is the binary's `warning: text`.
+        m = _WARN_DONE.match(line)
+        if m:
+            out.append("warning: " + m.group(1))
             continue
         out.append(line)
     res["stderr"] = out
@@ -3130,9 +4383,9 @@ def run_rich(
         fake.write_text(g.FAKE_CLAUDE.replace("{PYTHON}", sys.executable), encoding="utf-8")
         fake.chmod(0o755)
     live = None
-    if case.get("live_gate"):
-        # A gate that answers: a socket that listens while the command runs.
-        live_path = home / case["live_gate"]
+    if case.get("live_warden"):
+        # A warden that answers: a socket that listens while the command runs.
+        live_path = home / case["live_warden"]
         live_path.parent.mkdir(parents=True, exist_ok=True)
         live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         live.bind(str(live_path))
@@ -3148,7 +4401,7 @@ def run_rich(
             live.close()
             # The tree reader reads files; the socket was never the
             # command's to write.
-            (home / case["live_gate"]).unlink(missing_ok=True)
+            (home / case["live_warden"]).unlink(missing_ok=True)
     h = str(home)
     res: dict[str, Any] = {
         "exit": proc.returncode,
@@ -3268,7 +4521,7 @@ _START_VIEW = "the multi-session view (daisugi dashboard) is not in this binary 
 
 
 def _start_go_expect(case: dict[str, Any]) -> dict[str, Any] | None:
-    """G2-4: the binary starts its own `gate serve` where the oracle
+    """G2-4: the binary starts its own `warden serve` where the oracle
     starts Python's; the compare runs it behind a wrapper that logs that
     spawn as the oracle's fake spawn logs its own."""
     exp = case["expect"]
@@ -3276,8 +4529,8 @@ def _start_go_expect(case: dict[str, Any]) -> dict[str, Any] | None:
         return None
     spawned = []
     for argv in exp.get("spawned") or []:
-        # {PYTHON} -c <shim> gate serve --root R
-        spawned.append(["{DAISUGI}", *argv[argv.index("gate") :]])
+        # {PYTHON} -c <shim> warden serve --root R
+        spawned.append(["{DAISUGI}", *argv[argv.index("warden") :]])
     return {"spawned": spawned}
 
 
@@ -3323,7 +4576,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
     # directory the rule picks, and models use writes there.
     od_env = {"OPENDAISUGI_HOME": "{HOME}/od", "XDG_DATA_HOME": "{HOME}/xdg"}
     xdg_env = {"XDG_DATA_HOME": "{HOME}/xdg"}
-    enforce = {"text": "gate_mode: enforce\n"}
+    enforce = {"text": "warden_mode: enforce\n"}
     add(rich("data home neither", ["config", "--json"]))
     add(rich("data home od", ["config", "--json"], env=od_env, before={"od/config.yaml": enforce}))
     add(
@@ -3340,7 +4593,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
             ["config", "--json"],
             env=xdg_env,
             before={
-                RICH_CONFIG: {"text": "gate_mode: audit\n"},
+                RICH_CONFIG: {"text": "warden_mode: audit\n"},
                 "xdg/opendaisugi/config.yaml": enforce,
             },
         )
@@ -3375,7 +4628,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
     )
     values = (
         "model: m\nmax_task_chars: '1_000'\nz3_timeout_ms: 800.0\ndata_dir: ~/x//y/./\nauto_tend: yes\n"
-        "gateway_local_model: null\nshell_allow_decomposition: 'on'\ngate_mode: enforce\nmatcher_model: potion\n"
+        "router_local_model: null\nshell_allow_decomposition: 'on'\nwarden_mode: enforce\nmatcher_model: potion\n"
         "llm_backend: '  claude-code  '\nllm_context_window: -0\nvoice_cleanup: 1\nfloor:\n  backend: tmux\n"
         "  notify_cmd: notify-send hi\n  bogus: 1\nmystery: 2\nabc: [1]\n"
     )
@@ -3388,7 +4641,9 @@ def build_rich_cases() -> list[dict[str, Any]]:
         )
     )
     add(
-        rich("config invalid bool", ["config"], before={RICH_CONFIG: {"text": "gate_ask: maybe\n"}})
+        rich(
+            "config invalid bool", ["config"], before={RICH_CONFIG: {"text": "warden_ask: maybe\n"}}
+        )
     )
     add(
         rich(
@@ -3464,11 +4719,13 @@ def build_rich_cases() -> list[dict[str, Any]]:
         rich(
             "config hook and file mode",
             ["config"],
-            before={CLAUDE: audit, RICH_CONFIG: {"text": "gate_mode: enforce\n"}},
+            before={CLAUDE: audit, RICH_CONFIG: {"text": "warden_mode: enforce\n"}},
         )
     )
     add(
-        rich("config file mode", ["config"], before={RICH_CONFIG: {"text": "gate_mode: enforce\n"}})
+        rich(
+            "config file mode", ["config"], before={RICH_CONFIG: {"text": "warden_mode: enforce\n"}}
+        )
     )
 
     # -- status --------------------------------------------------------------
@@ -3476,6 +4733,26 @@ def build_rich_cases() -> list[dict[str, Any]]:
     add(rich("status fresh", ["status"], before=st, env=FAKE_PATH))
     add(rich("status fresh json", ["status", "--json"], before=st, env=FAKE_PATH))
     add(rich("status lexical", ["status"], before={**st, **lexical}, env=FAKE_PATH))
+    fence_off = {
+        ".opendaisugi/warden/envelopes/default.json": {"text": envelope_json()},
+        ".config/coppice/coppice.toml": {"text": 'fence = "off"\n'},
+    }
+    add(
+        rich(
+            "status fence off notice",
+            ["status"],
+            before={**st, **lexical, **fence_off},
+            env=FAKE_PATH,
+        )
+    )
+    add(
+        rich(
+            "status fence off notice json",
+            ["status", "--json"],
+            before={**st, **lexical, **fence_off},
+            env=FAKE_PATH,
+        )
+    )
     add(
         rich(
             "status potion json",
@@ -3523,7 +4800,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
         rich(
             "status home config invalid",
             ["status"],
-            before={**st, RICH_CONFIG: {"text": "gate_ask: maybe\n"}},
+            before={**st, RICH_CONFIG: {"text": "warden_ask: maybe\n"}},
             env=FAKE_PATH,
         )
     )
@@ -3566,7 +4843,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
     add(rich("status journal", ["status"], before={**st, **lexical, **jr}, env=FAKE_PATH))
     add(rich("status journal json", ["status", "--json"], before={**st, **jr}, env=FAKE_PATH))
     # What the dialect's words would deny: plans in the journal (a trace
-    # whose result holds a dialect audit warning) and calls in the gate log.
+    # whose result holds a dialect audit warning) and calls in the warden log.
     audit_line = (
         "dialect audit: invariant 'read_only' is keep_unchanged('**'); "
         "step 's1' writes '/work/out.txt'; enforcing would deny"
@@ -3865,7 +5142,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
         rich(
             "journal search config invalid",
             ["journal", "search", "build"],
-            before={**sj, RICH_CONFIG: {"text": "gate_ask: maybe\n"}},
+            before={**sj, RICH_CONFIG: {"text": "warden_ask: maybe\n"}},
         )
     )
     add(
@@ -4001,16 +5278,16 @@ def build_rich_cases() -> list[dict[str, Any]]:
     )
     add(
         rich(
-            "journal parse disarmed gate",
+            "journal parse disarmed warden",
             ["journal", "parse", "t.jsonl", "-o", "eps.yaml"],
-            before={**tfile, ".opendaisugi/gate/DISARMED": {"text": "x"}},
+            before={**tfile, ".opendaisugi/warden/DISARMED": {"text": "x"}},
         )
     )
     add(
         rich(
             "journal parse enforce config",
             ["journal", "parse", "t.jsonl", "-o", "eps.yaml"],
-            before={**tfile, RICH_CONFIG: {"text": "gate_mode: enforce\nllm_backend: api\n"}},
+            before={**tfile, RICH_CONFIG: {"text": "warden_mode: enforce\nllm_backend: api\n"}},
         )
     )
     add(
@@ -4614,7 +5891,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
         "source": "script",
         "task": "list the files",
         "steps": [
-            {"id": "s1", "type": "shell", "command": "ls -la", "depends_on": []},
+            {"id": "s1", "type": "shell", "command": "ls -la /work/a.txt", "depends_on": []},
             {"id": "s2", "type": "file_read", "path": "/work/a.txt", "depends_on": ["s1"]},
         ],
     }
@@ -4649,28 +5926,32 @@ def build_rich_cases() -> list[dict[str, Any]]:
     v_str = {
         **v_plan,
         "steps": [
-            '{"id": "s1", "type": "shell", "command": "ls -la", "depends_on": []}',
+            '{"id": "s1", "type": "shell", "command": "ls -la /work/a.txt", "depends_on": []}',
             r"""{'id': 's2', 'type': 'file_read', 'path': '/work/' "a.txt", 'depends_on': ('s1',),"""
             r""" 'metadata': {'n': 0x1F, 'big': 123456789012345678901234567890, 'ok': True}}""",
         ],
     }
-    v_str_bad = {**v_plan, "steps": ["ls -la"]}
+    v_str_bad = {**v_plan, "steps": ["ls -la /work/a.txt"]}
     # B1: an int of more than 4300 decimal digits does not decode (Python's
     # int limit), so the step stays a str.
     many = "1" * 5000
     v_str_long = {
         **v_plan,
         "steps": [
-            "{'id': 's1', 'type': 'shell', 'command': 'ls -la', 'metadata': {'n': " + many + "}}"
+            "{'id': 's1', 'type': 'shell', 'command': 'ls -la /work/a.txt', 'metadata': {'n': "
+            + many
+            + "}}"
         ],
     }
     v_json_long = {
         **v_plan,
         "steps": [
-            '{"id": "s1", "type": "shell", "command": "ls -la", "metadata": {"n": ' + many + "}}"
+            '{"id": "s1", "type": "shell", "command": "ls -la /work/a.txt", "metadata": {"n": '
+            + many
+            + "}}"
         ],
     }
-    v_str_warn = {**v_plan, "steps": [r"{'id': 's1', 'type': 'shell', 'command': 'ls \d'}"]}
+    v_str_warn = {**v_plan, "steps": [r"{'id': 's1', 'type': 'shell', 'command': 'ls /work/\d'}"]}
     # PW-6: numbers past 64 bits in a plan and an envelope.
     big = 123456789012345678901234567890
     v_big_plan = {
@@ -4716,6 +5997,53 @@ def build_rich_cases() -> list[dict[str, Any]]:
             )
         )
     add(rich("verify no envelope option", ["verify", "p.yaml"], before=both))
+    # A rule regex is one small subset; a value that is not valid UTF-8 text
+    # denies before matching (the standalone verifier reads the same rules).
+    vrx = [
+        ("flag", "matches", "(?x)a|.*", "evil"),
+        ("pname", "matches", chr(92) + "p{Letter}", "a"),
+        ("diff", "not_matches", "[!--/]", "#"),
+        ("diffok", "not_matches", "[!-/]", "#"),
+        ("dashes", "matches", "[a--b]", "a"),
+        ("range", "matches", "[a-b]", "a"),
+        ("word", "matches", chr(92) + "w+", "a"),
+        ("caseless", "matches", "(?i)a", "A"),
+        ("evil", "not_matches", "^evil$", chr(0xD800)),
+        ("evilok", "not_matches", "^evil$", "fine"),
+        ("any", "matches", ".*", "x" + chr(0xDFFF)),
+    ]
+    vrx_env = {
+        **v_env,
+        "permissions": {
+            **v_perm,
+            "mcp_allowlist": ["t/*"],
+            "mcp_rules": [
+                {"tool": f"t/{n}", "args": [{"op": op, "path": "a", "regex": rx}]}
+                for n, op, rx, _ in vrx
+            ],
+        },
+    }
+    for n, _op, _rx, val in vrx:
+        vrx_plan = {
+            **v_plan,
+            "steps": [
+                {
+                    "id": "s1",
+                    "type": "mcp",
+                    "server": "t",
+                    "tool": n,
+                    "arguments": {"a": val},
+                    "depends_on": [],
+                }
+            ],
+        }
+        add(
+            rich(
+                f"verify mcp regex {n}",
+                ["verify", "p.yaml", "--envelope", "e.yaml"],
+                before={**vdoc("p.yaml", vrx_plan), **vdoc("e.yaml", vrx_env)},
+            )
+        )
     # B2: PyYAML's int() reads at most 4300 decimal digits; past that the
     # plan or envelope does not parse (a plan file in JSON is read as YAML).
     many = "1" * 5000
@@ -4916,11 +6244,11 @@ def build_rich_cases() -> list[dict[str, Any]]:
         )
     )
 
-    # `daisugi hook report`: one pane state event on stdin. The gate root's
+    # `daisugi hook report`: one pane state event on stdin. The warden root's
     # parent is a file here, so the session tree is not written (it is
-    # best effort); the gate_server suite cases the tree through gate.sock.
+    # best effort); the warden_server suite cases the tree through warden.sock.
     blocked = {"blocked": {"text": "not a directory\n"}}
-    root = ["--root", "{HOME}/blocked/gate"]
+    root = ["--root", "{HOME}/blocked/warden"]
     ev = {
         "session_id": "s1",
         "harness": "claude",
@@ -4931,7 +6259,7 @@ def build_rich_cases() -> list[dict[str, Any]]:
     for name, stdin, extra in [
         ("event", json.dumps(ev), []),
         ("event with pane", json.dumps(ev), ["--pane", "w1:p2"]),
-        ("gate source", json.dumps({**ev, "source": "gate"}), []),
+        ("warden source", json.dumps({**ev, "source": "warden"}), []),
         ("done from operator", json.dumps({**ev, "state": "done", "source": "operator"}), []),
         ("done from manifest", json.dumps({**ev, "state": "done", "source": "manifest"}), []),
         ("missing field", json.dumps({k: v for k, v in ev.items() if k != "ts"}), []),
@@ -4988,9 +6316,40 @@ def build_rich_cases() -> list[dict[str, Any]]:
     add(rich("start no claude dry run", ["start", "--dry-run"], no_claude=True, **so))
     add(rich("start data dir", ["start", "--no-ui", "--data-dir", "{HOME}/dd"], **so))
     add(rich("start relative data dir", ["start", "--no-ui", "--data-dir", "../dd"], **so))
+    # The refusal is the same in a dry run: a plan must not promise a hook it cannot write.
+    add(
+        rich("start relative data dir dry run", ["start", "--dry-run", "--data-dir", "../dd"], **so)
+    )
     pdir = "proj/.claude/settings.json"
     add(rich("start again", ["start", "--no-ui"], twice=True, **so))
     add(rich("start again enforce", ["start", "--no-ui", "--enforce"], twice=True, **so))
+    add(
+        rich(
+            "start audit then enforce",
+            ["start", "--no-ui"],
+            argv2=["start", "--no-ui", "--enforce"],
+            twice=True,
+            **so,
+        )
+    )
+    add(
+        rich(
+            "start audit then enforce dry run",
+            ["start", "--no-ui"],
+            argv2=["start", "--dry-run", "--enforce"],
+            twice=True,
+            **so,
+        )
+    )
+    add(
+        rich(
+            "start enforce then plain keeps enforce",
+            ["start", "--no-ui", "--enforce"],
+            argv2=["start", "--no-ui"],
+            twice=True,
+            **so,
+        )
+    )
     add(rich("start hook already", ["start", "--no-ui"], before={pdir: audit}, **so))
     add(
         rich("start hook other mode", ["start", "--no-ui", "--enforce"], before={pdir: audit}, **so)
@@ -5022,23 +6381,23 @@ def build_rich_cases() -> list[dict[str, Any]]:
         rich(
             "start envelope already",
             ["start", "--no-ui"],
-            before={".opendaisugi/gate/envelopes/proj-{CWD8}.json": {"text": "{}"}},
+            before={".opendaisugi/warden/envelopes/proj-{CWD8}.json": {"text": "{}"}},
             **so,
         )
     )
-    # G2-9: a gate is running when its socket answers, not when a file is
-    # there. The runner holds a listening socket at `live_gate` while the
+    # G2-9: a warden is running when its socket answers, not when a file is
+    # there. The runner holds a listening socket at `live_warden` while the
     # command runs. Its directory is in `before`, so a binary that refuses
     # `start` is seen to leave the tree as it was.
-    live = {"before": {".opendaisugi/gate": {"dir": True}}, "live_gate": GATE_SOCK}
+    live = {"before": {".opendaisugi/warden": {"dir": True}}, "live_warden": WARDEN_SOCK}
     add(rich("start server running", ["start", "--no-ui"], **live, **so))
     add(rich("start server running dry run", ["start", "--dry-run"], **live, **so))
-    add(rich("start stale socket", ["start", "--no-ui"], before={GATE_SOCK: {"text": ""}}, **so))
+    add(rich("start stale socket", ["start", "--no-ui"], before={WARDEN_SOCK: {"text": ""}}, **so))
     add(
         rich(
             "start stale socket dry run",
             ["start", "--dry-run"],
-            before={GATE_SOCK: {"text": ""}},
+            before={WARDEN_SOCK: {"text": ""}},
             **so,
         )
     )
@@ -5077,7 +6436,8 @@ def run_twice_aware(
     again.pop("twice")
     again["before"] = {}
     # Re-run on the first run's tree: lay out nothing, keep the home.
-    _, argv, env, cwd = prepare(again, work)
+    _, argv, env, cwd = prepare(again, work, cmd)
+    cmd = entry_cmd(case, cmd)
     shutil.rmtree(home)
     shutil.copytree(snap, home, symlinks=True)
     shutil.rmtree(snap)
@@ -5159,7 +6519,9 @@ def main() -> int:
         help="reuse the fixture's answer for a case whose body is unchanged; run only new cases",
     )
     ap.add_argument(
-        "--rerun", help="with --keep, run again the cases whose name contains this text"
+        "--rerun",
+        help="with --keep, run again the cases whose name contains this text "
+        "(or any of several, separated by commas)",
     )
     ap.add_argument(
         "--resume",
@@ -5174,6 +6536,11 @@ def main() -> int:
         raise SystemExit(f"duplicate case names: {sorted(dup)}")
     SCRATCH.mkdir(parents=True, exist_ok=True)
     old: dict[str, dict[str, Any]] = {}
+    kept_by_name: dict[str, dict[str, Any]] = {}
+    if (args.out / "cases.jsonl").exists():
+        for ln in (args.out / "cases.jsonl").read_text(encoding="utf-8").splitlines():
+            if ln.strip() and json.loads(ln).get("name") in BOX_DEPENDENT:
+                kept_by_name[json.loads(ln)["name"]] = json.loads(ln)
     if args.keep and (args.out / "cases.jsonl").exists():
         for ln in (args.out / "cases.jsonl").read_text(encoding="utf-8").splitlines():
             if ln.strip():
@@ -5198,8 +6565,10 @@ def main() -> int:
             continue
         work = SCRATCH / "gen" / f"{i:04d}"
         prev = old.get(case_id({k: v for k, v in c.items() if k != "replies"}))
-        if args.rerun and args.rerun in c["name"]:
+        if args.rerun and any(t in c["name"] for t in args.rerun.split(",")):
             prev = None
+        if c["name"] in kept_by_name and not args.only:
+            prev = kept_by_name[c["name"]]
         if prev is not None:
             obs = prev["expect"]
             if "model" in prev:
@@ -5240,6 +6609,7 @@ def main() -> int:
         "v": CASE_VERSION,
         "count": len(out_lines),
         "sha256": hashlib.sha256(data).hexdigest(),
+        "kept": sorted(n for n in BOX_DEPENDENT if n in kept_by_name),
     }
     (args.out / "cases.manifest.json").write_text(
         json.dumps(manifest, indent=1) + "\n", encoding="utf-8"

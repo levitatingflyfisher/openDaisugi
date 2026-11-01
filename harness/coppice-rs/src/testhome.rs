@@ -1,8 +1,8 @@
 //! Keeps the tests out of the operator's home. Before main runs, the test
 //! binary points HOME and every XDG directory into one scratch directory,
 //! as Go's internal/testhome does from TestMain, so no test reads, writes
-//! or dials anything of the operator's: their coppice.toml, their gate
-//! hooks, their running server's socket, their foreman directory.
+//! or dials anything of the operator's: their coppice.toml, their warden
+//! hooks, their running server's socket, their steward directory.
 //!
 //! It runs from .init_array, so it is in place before the test harness
 //! starts any thread, and every test sees it whatever its name or module.
@@ -126,7 +126,7 @@ extern "C" fn isolate() {
     // a failing run too (a panic is caught by the harness; an abort or a kill
     // is not). A test should still clean up after itself, with `guard` or a
     // `TempDir`: the sweep at exit is the last net, not the plan. The path
-    // stays short on purpose: a foreman socket
+    // stays short on purpose: a steward socket
     // path may not reach 100 bytes. scripts/check-test-tmp.sh checks that
     // nothing is left in the TMPDIR the run started with.
     if std::env::var_os("COPPICE_TEST_KEEP_TMPDIR").is_none() {
@@ -174,8 +174,8 @@ mod tests {
             ("socket", crate::cli::socket_path()),
             ("data", crate::cli::data_dir()),
             (
-                "foreman",
-                PathBuf::from(crate::server::foreman_dir_for_tests()),
+                "steward",
+                PathBuf::from(crate::server::steward_dir_for_tests()),
             ),
         ];
         for (name, p) in paths {

@@ -1,12 +1,12 @@
-//! The gate parts of `opendaisugi.install`: the PreToolUse hook in Claude
+//! The warden parts of `opendaisugi.install`: the PreToolUse hook in Claude
 //! Code's settings.json and Codex's hooks.json, and the pi and OpenCode
-//! gate extensions. Every file written is the file Python writes, apart
+//! warden extensions. Every file written is the file Python writes, apart
 //! from the hook command, which runs this binary instead of Python. The Go
 //! client's `install` package is the reference.
 
-use super::gateroot::{self, join, mkdir_all, parent, path_str};
-use super::words::{gate_hook_kind, GATE_HOOK_MARKER, KIND_NONE, KIND_UNKNOWN};
-use crate::gate::pyjson::{dumps, dumps_indent, float_repr, loads, LoadError, Object, Value};
+use super::wardenroot::{self, join, mkdir_all, parent, path_str};
+use super::words::{warden_hook_kind, WARDEN_HOOK_MARKER, KIND_NONE, KIND_UNKNOWN};
+use crate::warden::pyjson::{dumps, dumps_indent, float_repr, loads, LoadError, Object, Value};
 use crate::interpreter_parse::shlex_quote;
 use std::collections::HashMap;
 use std::fs;
@@ -21,9 +21,9 @@ pub enum InstErr {
     /// A file this binary does not edit: the whole command is refused
     /// before anything is written.
     Unsupported,
-    /// `install._absolute_gate_root` raised ValueError: the CLI prints
+    /// `install._absolute_warden_root` raised ValueError: the CLI prints
     /// the traceback form and exits 1.
-    GateRoot(String),
+    WardenRoot(String),
 }
 
 impl std::fmt::Display for InstErr {
@@ -31,17 +31,17 @@ impl std::fmt::Display for InstErr {
         match self {
             InstErr::Fail(w) => write!(f, "{w}"),
             InstErr::Unsupported => write!(f, "a settings file holds a shape this binary does not edit yet"),
-            InstErr::GateRoot(m) => write!(f, "{m}"),
+            InstErr::WardenRoot(m) => write!(f, "{m}"),
         }
     }
 }
 
 pub(super) type R<T> = Result<T, InstErr>;
 
-/// `install._absolute_gate_root`. The hook bakes the gate root and runs in
-/// the agent's workspace, so a relative root would put the gate's state
+/// `install._absolute_warden_root`. The hook bakes the warden root and runs in
+/// the agent's workspace, so a relative root would put the warden's state
 /// where the agent can write. It is refused.
-pub(super) fn check_gate_root(root: &str) -> R<()> {
+pub(super) fn check_warden_root(root: &str) -> R<()> {
     if root.starts_with('/') {
         return Ok(());
     }
@@ -50,8 +50,8 @@ pub(super) fn check_gate_root(root: &str) -> R<()> {
     if q == '\'' {
         r = r.replace('\'', "\\'");
     }
-    Err(InstErr::GateRoot(format!(
-        "the gate root {q}{r}{q} is not an absolute path; set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path"
+    Err(InstErr::WardenRoot(format!(
+        "the warden root {q}{r}{q} is not an absolute path; set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path"
     )))
 }
 
@@ -74,8 +74,8 @@ pub const RUNTIMES: &[Runtime] = &[
     Runtime { key: "openclaw", name: "OpenClaw" },
 ];
 
-/// The gate gap Hermes and OpenClaw report.
-pub const NOT_WIRED: &str = "Not wired: external/JS-shim gate not yet wired — follow-up";
+/// The warden gap Hermes and OpenClaw report.
+pub const NOT_WIRED: &str = "Not wired: external/JS-shim warden not yet wired — follow-up";
 
 /// `shutil.which` over the PATH in env.
 pub fn look_path(env: &HashMap<String, String>, name: &str) -> Option<String> {
@@ -97,7 +97,7 @@ pub fn detect(home: &str, env: &HashMap<String, String>) -> Vec<Runtime> {
     RUNTIMES
         .iter()
         .filter(|rt| {
-            let found = gateroot::is_dir(&join(home, &format!(".{}", rt.key)));
+            let found = wardenroot::is_dir(&join(home, &format!(".{}", rt.key)));
             found || (rt.key == "codex" && look_path(env, "codex").is_some())
         })
         .cloned()
@@ -116,7 +116,7 @@ pub fn select(names: &[String]) -> Result<Vec<Runtime>, String> {
         if matches.len() != 1 {
             return Err(format!(
                 "--runtime {} matched {} runtimes; use one of: claude, codex, hermes, openclaw",
-                crate::gate::py::text::repr(raw),
+                crate::warden::py::text::repr(raw),
                 matches.len()
             ));
         }
@@ -127,37 +127,48 @@ pub fn select(names: &[String]) -> Result<Vec<Runtime>, String> {
     Ok(out)
 }
 
-/// An InstallStep of the gate layer.
+/// An InstallStep of the warden layer.
 pub struct Step {
-    /// "gate" or "base_url".
+    /// "warden" or "base_url".
     pub layer: &'static str,
     pub description: String,
     pub target: String,
     pub supported: bool,
 }
 
-/// `Runtime.plan(home, {GATE}, enforce=..., ask=...)`.
+/// `Runtime.plan(home, {WARDEN}, enforce=..., ask=...)`.
 pub fn plan(rt: &Runtime, home: &str, enforce: bool, ask: bool) -> Vec<Step> {
-    let mode = if enforce { "ENFORCE" } else { "audit" };
+    // A plain install never lowers an installed enforce hook.
+    let mode_for = |file: &str| -> &'static str {
+        if enforce {
+            "ENFORCE"
+        } else if super::config::installed_hook_mode(file).map(|m| m == "enforce").unwrap_or(false) {
+            "ENFORCE, kept"
+        } else {
+            "audit"
+        }
+    };
     match rt.key {
         "claude" => vec![Step {
-            layer: "gate",
+            layer: "warden",
             description: format!(
-                "Install fail-closed gate PreToolUse hook ({mode}{})",
+                "Install fail-closed warden PreToolUse hook ({}{})",
+                mode_for(&join(home, ".claude/settings.json")),
                 if ask { " + operator ask" } else { "" }
             ),
             target: join(home, ".claude/settings.json"),
             supported: true,
         }],
         "codex" => vec![Step {
-            layer: "gate",
+            layer: "warden",
             description: format!(
-                "Install gate PreToolUse hook ({mode}) — Codex hooks fail OPEN on hook crash/timeout: deny works, a dead gate does not block"
+                "Install warden PreToolUse hook ({}) — Codex hooks fail OPEN on hook crash/timeout: deny works, a dead warden does not block",
+                mode_for(&join(home, ".codex/hooks.json"))
             ),
             target: join(home, ".codex/hooks.json"),
             supported: true,
         }],
-        _ => vec![Step { layer: "gate", description: NOT_WIRED.into(), target: String::new(), supported: false }],
+        _ => vec![Step { layer: "warden", description: NOT_WIRED.into(), target: String::new(), supported: false }],
     }
 }
 
@@ -176,9 +187,14 @@ pub struct Edit {
     pub kind: String,
     /// Reported among the files written even when it changes nothing.
     pub listed: bool,
+    /// A line said after the file list: a warden hook stepped up from audit
+    /// to enforce, or kept in enforce.
+    pub note: String,
+    /// An edit that only carries `note`: it writes nothing and is not listed.
+    pub note_only: bool,
 }
 
-/// What applying the gate layer to one runtime does.
+/// What applying the warden layer to one runtime does.
 pub struct Change {
     pub runtime: Runtime,
     pub mkdirs: Vec<String>,
@@ -198,31 +214,31 @@ impl Change {
 
     /// The paths the change reports, in order.
     pub fn written(&self) -> Vec<String> {
-        self.edits.iter().filter(|e| e.warning.is_empty()).map(|e| e.path.clone()).collect()
+        self.edits.iter().filter(|e| e.warning.is_empty() && !e.note_only).map(|e| e.path.clone()).collect()
     }
 }
 
-/// `gate.gate_settings_json`'s arguments.
+/// `warden.warden_settings_json`'s arguments.
 pub struct HookOptions {
     pub mode: String,
     pub root: String,
     pub format: String,
-    /// `captures_root`: where the gate mirrors each call as a passive
+    /// `captures_root`: where the warden mirrors each call as a passive
     /// capture, or None.
     pub captures_root: Option<String>,
     pub session: Option<String>,
     pub ask: bool,
 }
 
-/// The PreToolUse entry `gate_settings_json` builds, with the command
-/// running `<self> gate check` instead of `python -m
-/// opendaisugi.gate_client`. The flags after it are the same.
+/// The PreToolUse entry `warden_settings_json` builds, with the command
+/// running `<self> warden check` instead of `python -m
+/// opendaisugi.warden_client`. The flags after it are the same.
 pub fn hook_entry(self_path: &str, o: &HookOptions) -> Object {
     let (hook_timeout, verify_timeout, ask_timeout) = (30i64, 10.0f64, 90.0f64);
     let inner = verify_timeout.min((hook_timeout as f64 - 5.0).max(1.0));
     let q = shlex_quote;
     let mut cmd = format!(
-        "{GATE_HOOK_MARKER} {} gate check --mode {} --root {} --format {} --verify-timeout {}",
+        "{WARDEN_HOOK_MARKER} {} warden check --mode {} --root {} --format {} --verify-timeout {}",
         q(self_path),
         q(&o.mode),
         q(&o.root),
@@ -242,7 +258,7 @@ pub fn hook_entry(self_path: &str, o: &HookOptions) -> Object {
     }
     // Default-deny at the process boundary: on Claude Code a hook exit
     // other than 2 does not block, so in enforce mode every other nonzero
-    // exit of the gate is made a deny.
+    // exit of the warden is made a deny.
     if o.format == "claude" && o.mode == "enforce" {
         cmd.push_str(" || exit 2");
     }
@@ -254,7 +270,7 @@ pub fn hook_entry(self_path: &str, o: &HookOptions) -> Object {
     )
 }
 
-/// `gate_settings_json`: the hooks settings document, as json.dumps
+/// `warden_settings_json`: the hooks settings document, as json.dumps
 /// writes it.
 pub fn settings_json(self_path: &str, o: &HookOptions) -> String {
     let doc =
@@ -268,21 +284,44 @@ pub fn self_path(arg0: &str, path: &str) -> std::io::Result<String> {
     if arg0.contains('/') {
         return go_abs(arg0);
     }
-    for dir in path.split(':') {
-        let dir = if dir.is_empty() { "." } else { dir };
-        let p = format!("{dir}/{arg0}");
-        if let Ok(m) = fs::metadata(&p) {
-            if !m.is_dir() && m.permissions().mode() & 0o111 != 0 {
-                return go_abs(&p);
-            }
-        }
+    if let Some(p) = on_path(arg0, path) {
+        return go_abs(&p);
     }
     std::env::current_exe()?.into_os_string().into_string().map_err(|_| std::io::Error::other("not UTF-8"))
 }
 
+/// `install.daisugi_exe`: the program a hook or an MCP entry runs. It is the
+/// path this binary was run by when that is one of our own names. A binary
+/// run under another name, such as a wrapper, is not ours: the hooks name
+/// what PATH calls daisugi, else the bare name, which the check after the
+/// write reports.
+pub fn entry_path(arg0: &str, path: &str) -> std::io::Result<String> {
+    if super::words::is_entry_path(arg0) {
+        return self_path(arg0, path);
+    }
+    match on_path("daisugi", path) {
+        Some(p) => go_abs(&p),
+        None => Ok("daisugi".to_string()),
+    }
+}
+
+/// The first executable file called `name` in a PATH list.
+fn on_path(name: &str, path: &str) -> Option<String> {
+    for dir in path.split(':') {
+        let dir = if dir.is_empty() { "." } else { dir };
+        let p = format!("{dir}/{name}");
+        if let Ok(m) = fs::metadata(&p) {
+            if !m.is_dir() && m.permissions().mode() & 0o111 != 0 {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// `filepath.Abs`: joined to the working directory and cleaned.
 fn go_abs(p: &str) -> std::io::Result<String> {
-    let joined = if p.starts_with('/') { p.to_string() } else { format!("{}/{p}", gateroot::getwd()?) };
+    let joined = if p.starts_with('/') { p.to_string() } else { format!("{}/{p}", wardenroot::getwd()?) };
     let rooted = joined.starts_with('/');
     let mut out: Vec<&str> = vec![];
     for c in joined.split('/') {
@@ -422,17 +461,97 @@ fn hook_command(entry: &Object) -> String {
     }
 }
 
-/// `_patch_claude_gate` with this binary's hook command: `None` when the
-/// exact hook is already installed, a warning when another gate hook is,
-/// else the new settings.json.
-pub fn plan_claude_gate(settings_path: &str, entry: &Object) -> R<Option<Edit>> {
-    plan_claude_gate_on(settings_path, entry, None)
+fn warden_mode_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r" --mode (audit|enforce) ").unwrap())
 }
 
-/// `plan_claude_gate` on the content an earlier edit of this run left.
-pub fn plan_claude_gate_on(settings_path: &str, entry: &Object, prior: Option<&Edit>) -> R<Option<Edit>> {
-    let gate_command = hook_command(entry);
-    let (mut v, st) = super::installgw::json_of(settings_path, prior)?;
+fn warden_ask_re() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r" --ask --ask-timeout \d+").unwrap())
+}
+
+/// A warden command without its mode, its ask words and its enforce tail:
+/// two commands with the same shape differ only in those.
+fn warden_shape(command: &str) -> String {
+    let shape = command.strip_suffix(" || exit 2").unwrap_or(command);
+    let shape = warden_ask_re().replace_all(shape, "").into_owned();
+    match warden_mode_re().find(&shape) {
+        Some(m) => format!("{} --mode _ {}", &shape[..m.start()], &shape[m.end()..]),
+        None => shape,
+    }
+}
+
+fn warden_mode_of(command: &str) -> &str {
+    warden_mode_re().captures(command).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or("")
+}
+
+/// How an installed warden command relates to the one a run asks for when
+/// only the mode (and the ask words that go with enforce) differ: "up" for
+/// audit installed and enforce asked, "keep" for enforce installed and
+/// audit asked, else "".
+pub fn warden_mode_relation(old: &str, new: &str) -> &'static str {
+    if warden_shape(old) != warden_shape(new) {
+        return "";
+    }
+    match (warden_mode_of(old), warden_mode_of(new)) {
+        ("audit", "enforce") => "up",
+        ("enforce", "audit") => "keep",
+        _ => "",
+    }
+}
+
+/// Rewrites every command hook that is the asked-for command with only
+/// the mode raised. Returns (stepped up, kept in enforce).
+fn step_warden_hooks(pre: &mut [Value], new_command: &str, new_timeout: Option<Value>) -> (bool, bool) {
+    let (mut stepped, mut kept) = (false, false);
+    for e in pre.iter_mut() {
+        let Value::Obj(entry) = e else { continue };
+        let Some(Value::List(hs)) = entry.get_mut("hooks") else { continue };
+        for h in hs.iter_mut() {
+            let Value::Obj(hook) = h else { continue };
+            if hook.get("type") != Some(&Value::Str("command".into())) {
+                continue;
+            }
+            let old = hook.value("command").as_str().unwrap_or("").to_string();
+            match warden_mode_relation(&old, new_command) {
+                "up" => {
+                    hook.set("command", Value::Str(new_command.into()));
+                    if let Some(t) = &new_timeout {
+                        hook.set("timeout", t.clone());
+                    }
+                    stepped = true;
+                }
+                "keep" => kept = true,
+                _ => {}
+            }
+        }
+    }
+    (stepped, kept)
+}
+
+fn warden_step_up_note(runtime: &str, path: &str) -> String {
+    format!("Warden: the {runtime} hook in {path} now runs in enforce mode (it was audit).")
+}
+
+fn warden_keep_note(runtime: &str, path: &str) -> String {
+    format!(
+        "Warden: the {runtime} hook in {path} stays in enforce mode; a plain install never lowers it. To go back \
+         to audit, run daisugi install --uninstall, then daisugi install."
+    )
+}
+
+/// `_patch_claude_warden` with this binary's hook command: `None` when the
+/// exact hook is already installed, a warning when another warden hook is,
+/// else the new settings.json.
+pub fn plan_claude_warden(settings_path: &str, entry: &Object) -> R<Option<Edit>> {
+    plan_claude_warden_on(settings_path, entry, None)
+}
+
+/// `plan_claude_warden` on the content an earlier edit of this run left.
+pub fn plan_claude_warden_on(settings_path: &str, entry: &Object, prior: Option<&Edit>) -> R<Option<Edit>> {
+    let warden_command = hook_command(entry);
+    let (mut v, st) = super::installrouter::json_of(settings_path, prior)?;
     let existed = st != ReadState::Missing;
     if st == ReadState::Bad {
         return Ok(Some(Edit {
@@ -440,7 +559,7 @@ pub fn plan_claude_gate_on(settings_path: &str, entry: &Object, prior: Option<&E
             existed: false,
             content: String::new(),
             warning: format!(
-                "{settings_path} is not valid JSON; skipping gate hook installation to avoid overwriting your \
+                "{settings_path} is not valid JSON; skipping warden hook installation to avoid overwriting your \
                  Claude Code settings (permissions/env). Fix the file and re-run `daisugi install`."
             ),
             pre_warning: String::new(),
@@ -463,16 +582,45 @@ pub fn plan_claude_gate_on(settings_path: &str, entry: &Object, prior: Option<&E
         }
         existing.push(c.clone());
     }
-    if existing.iter().any(|c| c.as_str() == Some(gate_command.as_str())) {
+    if existing.iter().any(|c| c.as_str() == Some(warden_command.as_str())) {
         return Ok(None);
     }
-    if existing.iter().any(|c| gate_hook_kind(c) != KIND_NONE) {
+    if existing.iter().any(|c| warden_hook_kind(c) != KIND_NONE) {
+        // Audit to enforce, nothing else different, is the one step
+        // `daisugi install --enforce` asks for: the hook is rewritten in
+        // place. Enforce is never lowered by a plain install.
+        let new_timeout = match entry.value("hooks") {
+            Value::List(l) => match l.first() {
+                Some(Value::Obj(h)) => Some(h.value("timeout").clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (stepped, kept) = step_warden_hooks(&mut pre, &warden_command, new_timeout);
+        if stepped {
+            set_pre(&mut v, pre);
+            return Ok(Some(Edit {
+                path: settings_path.into(),
+                existed,
+                content: dump_settings(&v),
+                note: warden_step_up_note("Claude Code", settings_path),
+                ..Edit::default()
+            }));
+        }
+        if kept {
+            return Ok(Some(Edit {
+                path: settings_path.into(),
+                note: warden_keep_note("Claude Code", settings_path),
+                note_only: true,
+                ..Edit::default()
+            }));
+        }
         return Ok(Some(Edit {
             path: settings_path.into(),
             existed: false,
             content: String::new(),
             warning: format!(
-                "a gate hook is already installed in {settings_path} with a different mode/config; run \
+                "a warden hook is already installed in {settings_path} with a different mode/config; run \
                  `daisugi install --uninstall` first if you want to change it (idempotent by presence, not content).{}",
                 not_isolated_note(&existing)
             ),
@@ -485,9 +633,9 @@ pub fn plan_claude_gate_on(settings_path: &str, entry: &Object, prior: Option<&E
     Ok(Some(Edit { path: settings_path.into(), existed, content: dump_settings(&v), warning: String::new(), pre_warning: String::new(), ..Edit::default() }))
 }
 
-/// `_patch_codex_gate`: the gate entry with matcher ".*", added unless any
-/// gate hook is there already.
-pub fn plan_codex_gate(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
+/// `_patch_codex_warden`: the warden entry with matcher ".*", added unless any
+/// warden hook is there already.
+pub fn plan_codex_warden(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
     let mut entry = entry.clone();
     entry.set("matcher", ".*");
     let (mut v, st) = read_json(hooks_path)?;
@@ -498,7 +646,7 @@ pub fn plan_codex_gate(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
             existed: false,
             content: String::new(),
             warning: format!(
-                "{hooks_path} is not valid JSON; skipping gate hook installation. Fix the file and re-run `daisugi install`."
+                "{hooks_path} is not valid JSON; skipping warden hook installation. Fix the file and re-run `daisugi install`."
             ),
             pre_warning: String::new(),
             ..Edit::default()
@@ -515,7 +663,27 @@ pub fn plan_codex_gate(hooks_path: &str, entry: &Object) -> R<Option<Edit>> {
             return fail(format!("a hook command is a {}", kind(c)));
         }
     }
-    if cmds.iter().any(|h| gate_hook_kind(h.value("command")) != KIND_NONE) {
+    if cmds.iter().any(|h| warden_hook_kind(h.value("command")) != KIND_NONE) {
+        let new_command = hook_command(&entry);
+        let (stepped, kept) = step_warden_hooks(&mut pre, &new_command, None);
+        if stepped {
+            set_pre(&mut v, pre);
+            return Ok(Some(Edit {
+                path: hooks_path.into(),
+                existed,
+                content: dump_settings(&v),
+                note: warden_step_up_note("Codex", hooks_path),
+                ..Edit::default()
+            }));
+        }
+        if kept {
+            return Ok(Some(Edit {
+                path: hooks_path.into(),
+                note: warden_keep_note("Codex", hooks_path),
+                note_only: true,
+                ..Edit::default()
+            }));
+        }
         return Ok(None);
     }
     pre.push(Value::Obj(entry));
@@ -645,10 +813,10 @@ pub fn plan_pop_hook(
     }))
 }
 
-/// `install._refuse_unknown_gate_hooks`: why a reverse must not touch a
-/// settings file holding a PreToolUse hook with the gate module in a form
+/// `install._refuse_unknown_warden_hooks`: why a reverse must not touch a
+/// settings file holding a PreToolUse hook with the warden module in a form
 /// not read, or `None`.
-pub(super) fn unknown_gate_hook(settings_path: &str) -> Option<String> {
+pub(super) fn unknown_warden_hook(settings_path: &str) -> Option<String> {
     let (v, st) = read_json(settings_path).ok()?;
     if st != ReadState::Ok {
         return None;
@@ -665,10 +833,10 @@ pub(super) fn unknown_gate_hook(settings_path: &str) -> Option<String> {
         };
         for h in inner {
             let command = h.as_obj().map(|o| o.value("command").clone()).unwrap_or(Value::Null);
-            if gate_hook_kind(&command) == KIND_UNKNOWN {
-                let shown = crate::gate::pyjson::py_str(&command).unwrap_or_default();
+            if warden_hook_kind(&command) == KIND_UNKNOWN {
+                let shown = crate::warden::pyjson::py_str(&command).unwrap_or_default();
                 return Some(format!(
-                    "{settings_path} holds a gate hook in a form this CLI does not read, so it is left in place: \
+                    "{settings_path} holds a warden hook in a form this CLI does not read, so it is left in place: \
                      {shown}. Remove it by hand, then run this again"
                 ));
             }
@@ -690,7 +858,7 @@ pub fn backup(p: &str) -> std::io::Result<()> {
         .to_string();
     let mut dest = format!("{p}.bak{stamp}");
     let mut n = 1;
-    while gateroot::lexists(&dest) {
+    while wardenroot::lexists(&dest) {
         dest = format!("{p}.bak{stamp}.{n}");
         n += 1;
     }
@@ -718,7 +886,7 @@ pub fn backup(p: &str) -> std::io::Result<()> {
 /// existed, then the write. Returns the file written when the path was a
 /// symlink.
 pub fn apply(e: &Edit) -> std::io::Result<Option<String>> {
-    if !e.warning.is_empty() {
+    if !e.warning.is_empty() || e.note_only {
         return Ok(None);
     }
     if !e.kind.is_empty() {
@@ -727,7 +895,7 @@ pub fn apply(e: &Edit) -> std::io::Result<Option<String>> {
     if e.existed {
         backup(&e.path).map_err(|err| std::io::Error::other(format!("backup {}: {err}", e.path)))?;
     }
-    gateroot::write_file(&e.path, &e.content)
+    wardenroot::write_file(&e.path, &e.content)
 }
 
 /// Makes the directories and applies the edits in order. Returns
@@ -752,13 +920,13 @@ pub fn apply_change(ch: &Change) -> (Vec<String>, std::io::Result<()>) {
     (followed, Ok(()))
 }
 
-/// The gate extensions, byte for byte the files Python ships.
+/// The warden extensions, byte for byte the files Python ships.
 pub const PI_EXTENSION: &str = include_str!("../../../../src/opendaisugi/harness_pi/extension/index.ts");
-pub const OPENCODE_PLUGIN: &str = include_str!("../../../../src/opendaisugi/harness_opencode/plugin/daisugi-gate.ts");
+pub const OPENCODE_PLUGIN: &str = include_str!("../../../../src/opendaisugi/harness_opencode/plugin/daisugi-warden.ts");
 
 /// `install.pi_extension_dir`.
 pub fn pi_dir(home: &str) -> String {
-    join(home, ".pi/agent/extensions/daisugi-gate")
+    join(home, ".pi/agent/extensions/daisugi-warden")
 }
 
 /// `install.opencode_plugin_path`: under $XDG_CONFIG_HOME when it is
@@ -768,7 +936,7 @@ pub fn opencode_path(home: &str, env: &HashMap<String, String>) -> String {
         Some(x) if x.starts_with('/') => path_str(x),
         _ => join(home, ".config"),
     };
-    join(&base, "opencode/plugins/daisugi-gate.ts")
+    join(&base, "opencode/plugins/daisugi-warden.ts")
 }
 
 /// `install.harness_extension_target`.
@@ -795,14 +963,14 @@ pub fn install_harness(name: &str, home: &str, env: &HashMap<String, String>) ->
     let text = if name == "opencode" { OPENCODE_PLUGIN } else { PI_EXTENSION };
     if name == "opencode" {
         let p = parent(&out);
-        if gateroot::is_link(&p) {
+        if wardenroot::is_link(&p) {
             return Err(HarnessErr::Value(format!(
                 "{p} is a symlink, so the plugin would land somewhere else. Replace it with a directory, then run this again."
             )));
         }
     }
     mkdir_all(&parent(&out)).map_err(HarnessErr::Io)?;
-    if gateroot::is_link(&out) {
+    if wardenroot::is_link(&out) {
         fs::remove_file(&out).map_err(HarnessErr::Io)?;
     }
     match fs::read(&out) {
@@ -811,7 +979,7 @@ pub fn install_harness(name: &str, home: &str, env: &HashMap<String, String>) ->
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(HarnessErr::Io(e)),
     }
-    gateroot::replace(&out, text).map_err(HarnessErr::Io)?;
+    wardenroot::replace(&out, text).map_err(HarnessErr::Io)?;
     Ok(vec![out])
 }
 
@@ -820,10 +988,10 @@ pub fn install_harness(name: &str, home: &str, env: &HashMap<String, String>) ->
 pub fn uninstall_harness(name: &str, home: &str, env: &HashMap<String, String>) -> std::io::Result<Vec<String>> {
     if name == "pi" {
         let d = pi_dir(home);
-        if !gateroot::is_link(&d) && !gateroot::exists(&d) {
+        if !wardenroot::is_link(&d) && !wardenroot::exists(&d) {
             return Ok(vec![]);
         }
-        if gateroot::is_dir_no_follow(&d) {
+        if wardenroot::is_dir_no_follow(&d) {
             fs::remove_dir_all(&d)?;
         } else {
             fs::remove_file(&d)?;
@@ -831,7 +999,7 @@ pub fn uninstall_harness(name: &str, home: &str, env: &HashMap<String, String>) 
         return Ok(vec![d]);
     }
     let out = opencode_path(home, env);
-    if gateroot::is_link(&out) || gateroot::exists(&out) {
+    if wardenroot::is_link(&out) || wardenroot::exists(&out) {
         fs::remove_file(&out)?;
         return Ok(vec![out]);
     }
@@ -1002,21 +1170,21 @@ pub fn mise_which(env: &HashMap<String, String>, tool: &str) -> Option<String> {
 
 /// The one line install prints when the hook keeps a versioned mise path.
 pub fn versioned_note(path: &str) -> String {
-    format!("note: {path} is a versioned mise install. Run daisugi install --gate again after mise upgrades daisugi.")
+    format!("note: {path} is a versioned mise install. Run daisugi install again after mise upgrades daisugi.")
 }
 
 /// `install._NOT_ISOLATED_NOTE`: added to the "different mode/config"
-/// warning when a gate hook there runs the Python module without -I
+/// warning when a warden hook there runs the Python module without -I
 /// (SX-R-9).
 pub const NOT_ISOLATED_NOTE: &str = " That hook also runs Python without -I, so it can import a module from the \
-agent's working directory: run `daisugi install --uninstall` and then `daisugi install --gate` to replace it.";
+agent's working directory: run `daisugi install --uninstall` and then `daisugi install` to replace it.";
 
 /// `install._not_isolated_note`: a plain text test, as the oracle's.
 fn not_isolated_note(existing: &[Value]) -> &'static str {
     for c in existing {
         if let Value::Str(s) = c {
-            if gate_hook_kind(c) != KIND_NONE
-                && (s.contains("-m opendaisugi.gate") || s.contains("-mopendaisugi.gate"))
+            if warden_hook_kind(c) != KIND_NONE
+                && (s.contains("-m opendaisugi.warden") || s.contains("-mopendaisugi.warden"))
                 && !s.contains(" -I -m ")
             {
                 return NOT_ISOLATED_NOTE;

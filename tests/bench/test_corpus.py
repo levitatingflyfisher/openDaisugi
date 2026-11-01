@@ -111,7 +111,7 @@ def test_battery_envelope_and_vocabulary_load():
     assert vocab["opencode"]["names"] is None, "opencode's vocabulary is not pinned yet"
 
 
-def test_pi_vocabulary_is_the_map_the_gate_consults():
+def test_pi_vocabulary_is_the_map_the_warden_consults():
     """pi's names come from hook.py's own pi map, so the corpus cannot drift
     from what the extension delivers under --format pi."""
     from opendaisugi.hook import _PI_TOOL_TYPE_MAP

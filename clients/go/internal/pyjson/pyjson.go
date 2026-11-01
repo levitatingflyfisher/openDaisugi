@@ -154,7 +154,7 @@ func Truthy(v any) bool {
 // with json.loads.
 var ErrUnsupported = errors.New("pyjson: input outside the modeled subset")
 
-// MaxDepth is how deeply nested a payload json.loads reads in the gate
+// MaxDepth is how deeply nested a payload json.loads reads in the warden
 // before its C scanner passes the recursion limit (measured: 9,994
 // containers, the outermost one included).
 const MaxDepth = 9994

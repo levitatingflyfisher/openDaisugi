@@ -1,6 +1,6 @@
 """`daisugi status` counts what the dialect's words would deny in audit.
 
-Calls are counted in the gate's audit log (``gate.word_would_deny``);
+Calls are counted in the warden's audit log (``warden.word_would_deny``);
 plans in the journal (``journal.word_would_deny``): traces whose
 verification result holds a ``dialect audit:`` warning. So the audit
 measurement covers plans as well as calls.
@@ -83,7 +83,7 @@ def test_a_trace_it_cannot_read_is_skipped(tmp_path: Path):
 def test_status_shows_both_counts(tmp_path: Path):
     ro = {"type": "read_only", "description": "d", "target": "src/**"}
     _log(tmp_path, "echo x > src/a.py", [ro])
-    audit = tmp_path / "gate" / "audit"
+    audit = tmp_path / "warden" / "audit"
     audit.mkdir(parents=True)
     (audit / "s.jsonl").write_text(
         json.dumps({"word_audit": ["dialect audit: x"]}) + "\n" + json.dumps({}) + "\n"
@@ -93,7 +93,7 @@ def test_status_shows_both_counts(tmp_path: Path):
     res = runner.invoke(app, ["status", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     assert (
-        "  • dialect would-denies: 1 plans in the journal, 1 calls in the gate's audit log\n"
+        "  • dialect would-denies: 1 plans in the journal, 1 calls in the warden's audit log\n"
         in res.output
     )
     res = runner.invoke(app, ["status", "--data-dir", str(tmp_path), "--json"])

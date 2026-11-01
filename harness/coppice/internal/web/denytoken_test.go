@@ -10,28 +10,28 @@ import (
 
 // denyFixture is a web server with a publisher that has put one card, and
 // so one deny token, on the lock screen for ask toolu_1.
-func denyFixture(t *testing.T) (url, bearer, deny, gate string, s *Server) {
+func denyFixture(t *testing.T) (url, bearer, deny, warden string, s *Server) {
 	t.Helper()
 	capd, base := newNtfy(t)
 	now := time.Unix(1_757_300_000, 0)
 	pub := newPublisher(t, base, &now, "")
 	pub.OnState(tieredEvent("w1:p1", "permanent"), "auth fix")
 	deny = denyTokenIn(t, capd.reqs[0].Actions)
-	gate = t.TempDir()
-	writeTieredAsk(t, gate, "toolu_1", "permanent")
-	writeTieredAsk(t, gate, "toolu_2", "undoable")
+	warden = t.TempDir()
+	writeTieredAsk(t, warden, "toolu_1", "permanent")
+	writeTieredAsk(t, warden, "toolu_2", "undoable")
 	_, d := newFakeServer(t, agentsWithAsk("toolu_2", "undoable"))
-	ts, srv, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}, Push: pub})
-	return ts.URL, tok, deny, gate, srv
+	ts, srv, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}, Push: pub})
+	return ts.URL, tok, deny, warden, srv
 }
 
 func TestADenyTokenDeniesItsOwnAsk(t *testing.T) {
-	url, _, deny, gate, _ := denyFixture(t)
+	url, _, deny, warden, _ := denyFixture(t)
 	code, msg := postAnswer(t, url, deny, `{"tool_use_id":"toolu_1","decision":"deny"}`)
 	if code != http.StatusOK {
 		t.Fatalf("status %d %q", code, msg)
 	}
-	if _, err := os.Stat(filepath.Join(gate, "answers", "toolu_1.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(warden, "answers", "toolu_1.json")); err != nil {
 		t.Fatal("no answer written")
 	}
 	// Used once, its ask is gone, and a second tap says so.
@@ -41,22 +41,22 @@ func TestADenyTokenDeniesItsOwnAsk(t *testing.T) {
 }
 
 func TestADenyTokenCannotAllow(t *testing.T) {
-	url, _, deny, gate, _ := denyFixture(t)
+	url, _, deny, warden, _ := denyFixture(t)
 	code, _ := postAnswer(t, url, deny, `{"tool_use_id":"toolu_1","decision":"allow","confirm":"auth fix"}`)
 	if code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", code)
 	}
-	if _, err := os.Stat(filepath.Join(gate, "answers", "toolu_1.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(warden, "answers", "toolu_1.json")); err == nil {
 		t.Fatal("a deny token wrote an allow")
 	}
 }
 
 func TestADenyTokenCannotDenyAnotherAsk(t *testing.T) {
-	url, _, deny, gate, _ := denyFixture(t)
+	url, _, deny, warden, _ := denyFixture(t)
 	if code, _ := postAnswer(t, url, deny, `{"tool_use_id":"toolu_2","decision":"deny"}`); code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", code)
 	}
-	if _, err := os.Stat(filepath.Join(gate, "answers", "toolu_2.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(warden, "answers", "toolu_2.json")); err == nil {
 		t.Fatal("a deny token answered another ask")
 	}
 }

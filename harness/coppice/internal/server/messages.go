@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/opendaisugi/coppice/internal/adapters/hermes"
 	"github.com/opendaisugi/coppice/internal/adapters/sprig"
 	"github.com/opendaisugi/coppice/internal/layout"
 	"github.com/opendaisugi/coppice/internal/proto"
@@ -35,7 +36,7 @@ type message struct {
 	Tool string  `json:"tool,omitempty"`
 	Pane string  `json:"pane,omitempty"`
 	// Read is set on floor.chat's owner lines only: true once that
-	// foreman's transcript records the line as the owner's.
+	// steward's transcript records the line as the owner's.
 	Read *bool `json:"read,omitempty"`
 	// Delivery is set on floor.chat's owner lines in chat mode: "delivered
 	// mid-turn" when the line reached a running turn at a tool call, and
@@ -55,8 +56,8 @@ const (
 	// messageRunes caps a message's text, and toolRunes a tool's summary.
 	messageRunes = 2000
 	toolRunes    = 200
-	// chatForemen is how many foremen's transcripts floor.chat reads.
-	chatForemen = 4
+	// chatStewards is how many stewards's transcripts floor.chat reads.
+	chatStewards = 4
 	// chatFilesMax is how many chat files floor.chat reads.
 	chatFilesMax = 31
 	// messagesEvery is how often the watch looks at each transcript.
@@ -75,9 +76,9 @@ const ChatRefusal = "the chat is for the owner's own sign-in."
 // which rewrites coppice.toml.
 const ConfigRefusal = "the project list is for the owner's own sign-in."
 
-// newForemanNote is the chat line the server writes when it starts a
-// foreman after an earlier one.
-const newForemanNote = "A new foreman started."
+// newStewardNote is the chat line the server writes when it starts a
+// steward after an earlier one.
+const newStewardNote = "A new steward started."
 
 // chatFields is what New sets up for the chat.
 type chatFields struct {
@@ -203,6 +204,9 @@ func (c *Client) tokenNamed() bool {
 // sprig pane's own session tree, or the transcript a Claude pane's own
 // hook reported last. It is "" when the server reads no file for p.
 func (s *Server) transcriptOf(p layout.Pane) (string, transcriptKind) {
+	if isHermes(p) {
+		return s.hermesRef(p), kindHermes
+	}
 	if p.Harness == "sprig" && p.Kind == layout.KindHeadless {
 		if path, ok := sprig.TreePath(p.Argv, p.HarnessSessionID); ok {
 			return path, kindSprig
@@ -226,6 +230,412 @@ func (s *Server) transcriptOf(p layout.Pane) (string, transcriptKind) {
 		return claimed[len(claimed)-1], kindClaude
 	}
 	return "", kindClaude
+}
+
+// isHermes reports whether pane p runs Hermes Agent: its command is
+// hermes, or its harness is named for it.
+func isHermes(p layout.Pane) bool {
+	if len(p.Argv) > 0 && filepath.Base(p.Argv[0]) == "hermes" {
+		return true
+	}
+	return p.Harness == "hermes" || strings.HasPrefix(p.Harness, "hermes-")
+}
+
+// hermesRows is how many rows one read of a Hermes session takes.
+const hermesRows = 2000
+
+// hermesRef is "db#session" for the Hermes session pane p shows. Only a
+// live pane reads a session into the lane: a closed pane that never bound
+// shows nothing, because its history is in Hermes and in Pando. A pane binds
+// once and keeps the session: a closed pane reads only that one, never the
+// newest.
+//
+// A pane that resumes (-r, -c) binds to the session the flags name, or to
+// the newest terminal session of the profile for a bare -c. Any other pane
+// binds at its first prompt, which the server saw because the input passes
+// through it: the session of the profile whose first user message is that
+// prompt, written then. Until the first prompt the pane shows nothing.
+// A session held by another pane is passed over. When a prompting pane and a
+// resuming pane hold one session, the prompting pane owns it; between two
+// of a kind the newer pane does. It is "" when no session matches yet.
+func (s *Server) hermesRef(p layout.Pane) string {
+	home := s.getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	h := hermes.Home(p.Argv, p.Env, home)
+	if h == "" {
+		return ""
+	}
+	db := hermes.StatePath(h)
+	bound := p.HermesSession
+	if bound == "" {
+		if p.Closed {
+			return ""
+		}
+		var id string
+		var err error
+		if hermesResumed(p) {
+			id, err = hermes.Pick(db, hermes.SessionName(p.Argv), hermes.WorkspaceKey(p.Cwd))
+		} else if p.HermesPrompt != "" {
+			at := float64(p.HermesPromptAt) / 1000
+			taken := s.hermesTaken(p, db, home)
+			id, err = hermes.PickByPrompt(db, p.HermesPrompt, at, taken)
+			if err == nil && id == "" && float64(s.clock().UnixMilli())/1000 > at+hermes.PromptSpan {
+				// The window is over and no text matched: the terminal
+				// showed one thing and Hermes stored another. Bind by time.
+				id, err = hermes.PickByTime(db, at, taken, s.hermesOtherPrompts(p, db, home))
+			}
+		}
+		if err != nil || id == "" {
+			return ""
+		}
+		bound = id
+		_ = s.updatePane(p.ID, func(r *layout.Pane) {
+			if r.HermesSession == "" {
+				r.HermesSession = id
+			}
+		})
+	}
+	tip := hermes.Tip(db, bound)
+	if s.hermesOwnerIsNewer(p, db, tip, home) {
+		return ""
+	}
+	return db + "#" + tip
+}
+
+// hermesResumed is true when pane p continues an older session: it carries
+// -c, --continue, -r or --resume, with a name or without.
+func hermesResumed(p layout.Pane) bool {
+	return hermes.SessionName(p.Argv) != "" || hermesResumes(p.Argv)
+}
+
+// noteInput sees bytes written to Hermes pane id. It keeps the line being
+// typed, and when a line ends it records the first prompt of a pane that
+// does not resume: the text and the moment. A line that starts with "/" is a
+// command to Hermes and starts no session, so it is not a prompt. A pane
+// with a prompt, a bound session, or a resume flag keeps no line.
+func (s *Server) noteInput(id string, data []byte, now time.Time) {
+	p, ok := s.tree.Pane(id)
+	if !ok || !isHermes(p) || p.Closed || p.HermesPrompt != "" || p.HermesSession != "" || hermesResumed(p) {
+		return
+	}
+	s.hermesInMu.Lock()
+	if s.hermesLine == nil {
+		s.hermesLine = map[string]*lineIn{}
+	}
+	l := s.hermesLine[id]
+	if l == nil {
+		l = &lineIn{}
+		s.hermesLine[id] = l
+	}
+	lines := l.feed(data)
+	s.hermesInMu.Unlock()
+	for _, line := range lines {
+		if line == "" || strings.HasPrefix(line, "/") {
+			continue
+		}
+		_ = s.updatePane(id, func(r *layout.Pane) {
+			if r.HermesPrompt == "" {
+				r.HermesPrompt, r.HermesPromptAt = line, now.UnixMilli()
+			}
+		})
+		s.hermesInMu.Lock()
+		delete(s.hermesLine, id)
+		s.hermesInMu.Unlock()
+		return
+	}
+}
+
+// lineIn is the line being typed into one Hermes pane: the text so far,
+// whether a bracketed paste is open, and the head of a UTF-8 character that a
+// write cut in two.
+type lineIn struct {
+	buf   []rune
+	paste bool
+	pend  []byte
+}
+
+// feed adds terminal input to the line and returns each line that ended. It
+// drops escape sequences, honours backspace and Ctrl-U, and ignores other
+// control bytes. A line break inside a bracketed paste counts as a space: the
+// paste is one message. A bare line feed (Ctrl-J) outside a paste is a new
+// line inside the message in Hermes, not Enter, so it counts as a space too.
+// Only a carriage return outside a paste ends the line. A character split
+// across two writes is joined before it is read.
+func (l *lineIn) feed(data []byte) []string {
+	data = append(l.pend, data...)
+	l.pend = nil
+	// Keep the head of an unfinished UTF-8 character for the next write.
+	for k := 1; k <= 3 && k <= len(data); k++ {
+		c := data[len(data)-k]
+		if c&0xC0 == 0x80 {
+			continue
+		}
+		if c >= 0xC0 {
+			need := 2
+			if c >= 0xF0 {
+				need = 4
+			} else if c >= 0xE0 {
+				need = 3
+			}
+			if k < need {
+				l.pend = append([]byte(nil), data[len(data)-k:]...)
+				data = data[:len(data)-k]
+			}
+		}
+		break
+	}
+	var lines []string
+	rs := []rune(string(data))
+	for i := 0; i < len(rs); i++ {
+		switch r := rs[i]; {
+		case r == 0x1b:
+			if i+1 < len(rs) && (rs[i+1] == '[' || rs[i+1] == 'O') {
+				start := i + 2
+				i += 2
+				for i < len(rs) && !(rs[i] >= 0x40 && rs[i] <= 0x7e) {
+					i++
+				}
+				if i < len(rs) && rs[i] == '~' {
+					switch string(rs[start:i]) {
+					case "200":
+						l.paste = true
+					case "201":
+						l.paste = false
+					}
+				}
+			} else {
+				i++
+			}
+		case r == '\r' || r == '\n':
+			if l.paste || r == '\n' {
+				l.buf = append(l.buf, ' ')
+				continue
+			}
+			lines = append(lines, strings.TrimSpace(string(l.buf)))
+			l.buf = nil
+		case r == 0x7f || r == 0x08:
+			if len(l.buf) > 0 {
+				l.buf = l.buf[:len(l.buf)-1]
+			}
+		case r == 0x15:
+			l.buf = nil
+		case r < 0x20:
+		default:
+			l.buf = append(l.buf, r)
+		}
+	}
+	return lines
+}
+
+// hermesStatePath is the state database a Hermes pane reads, or "".
+func hermesStatePath(p layout.Pane, home string) string {
+	h := hermes.Home(p.Argv, p.Env, home)
+	if h == "" {
+		return ""
+	}
+	return hermes.StatePath(h)
+}
+
+// hermesOthers is the sessions that other Hermes panes of the same database
+// hold, with each pane. The tips are read with one open of the database.
+func (s *Server) hermesOthers(p layout.Pane, db, home string) (panes []layout.Pane, tips []string) {
+	var ids []string
+	for _, o := range s.tree.Panes() {
+		if o.ID == p.ID || o.HermesSession == "" || !isHermes(o) || hermesStatePath(o, home) != db {
+			continue
+		}
+		panes = append(panes, o)
+		ids = append(ids, o.HermesSession)
+	}
+	return panes, hermes.Tips(db, ids)
+}
+
+// hermesTaken is the live tips of the sessions that other Hermes panes of
+// the same database hold. A pane that picks a session of its own passes
+// over these.
+func (s *Server) hermesTaken(p layout.Pane, db, home string) []string {
+	_, tips := s.hermesOthers(p, db, home)
+	return tips
+}
+
+// hermesOtherPrompts is the captured first prompts, with white space folded,
+// of the other live Hermes panes of the same database that have not bound
+// yet. A session whose first message is one of these is theirs to take.
+func (s *Server) hermesOtherPrompts(p layout.Pane, db, home string) []string {
+	var out []string
+	for _, o := range s.tree.Panes() {
+		if o.ID == p.ID || o.Closed || o.HermesSession != "" || o.HermesPrompt == "" || !isHermes(o) || hermesStatePath(o, home) != db {
+			continue
+		}
+		out = append(out, strings.Join(strings.Fields(o.HermesPrompt), " "))
+	}
+	return out
+}
+
+// hermesResumes is true when argv carries -c, --continue, -r or --resume,
+// with a session name or without: the pane continues an older session.
+func hermesResumes(argv []string) bool {
+	for i := 1; i < len(argv); i++ {
+		switch a := argv[i]; {
+		case a == "--":
+			return false
+		case a == "-c" || a == "--continue" || a == "-r" || a == "--resume",
+			strings.HasPrefix(a, "--continue="), strings.HasPrefix(a, "--resume="):
+			return true
+		}
+	}
+	return false
+}
+
+// hermesOwnerIsNewer is true when another Hermes pane of the same database
+// holds the session whose live tip is tip and owns it over p. A live pane
+// owns it over a closed one. Of two panes alike, a pane that
+// sent the prompt that began the session owns it over one that resumed it;
+// otherwise the newer pane owns it. Panes compare tips, not stored ids: a
+// compression can leave the older pane bound to the parent and the newer one
+// to the child, and both show the child.
+func (s *Server) hermesOwnerIsNewer(p layout.Pane, db, tip, home string) bool {
+	others, tips := s.hermesOthers(p, db, home)
+	for i, o := range others {
+		if tips[i] != tip {
+			continue
+		}
+		// A closed pane never owns a session over a live one.
+		if p.Closed != o.Closed {
+			if p.Closed {
+				return true
+			}
+			continue
+		}
+		if po, oo := promptOwner(p), promptOwner(o); po != oo {
+			if oo {
+				return true
+			}
+			continue
+		}
+		if paneNewer(o, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// promptOwner is true when pane p began its session with a prompt it was
+// sent, as opposed to resuming an older session.
+func promptOwner(p layout.Pane) bool { return p.HermesPrompt != "" && !hermesResumed(p) }
+
+// paneNewer is true when a began after b. Records with no start time sort
+// by their id, which counts up inside a workspace.
+func paneNewer(a, b layout.Pane) bool {
+	if a.StartedAt != b.StartedAt {
+		return a.StartedAt > b.StartedAt
+	}
+	return paneSeq(a.ID) > paneSeq(b.ID)
+}
+
+// paneSeq is the number in a pane id like "w1:p28".
+func paneSeq(id string) int {
+	i := strings.LastIndex(id, ":p")
+	if i < 0 {
+		return 0
+	}
+	n, _ := strconv.Atoi(id[i+2:])
+	return n
+}
+
+// hermesFile is the database file of a "db#session" reference.
+func hermesFile(ref string) string {
+	if i := strings.LastIndexByte(ref, '#'); i >= 0 {
+		return ref[:i]
+	}
+	return ref
+}
+
+// hermesCall is one tool call of an assistant row.
+type hermesCall struct {
+	name string
+	args any
+}
+
+// hermesCalls reads the tool_calls column of an assistant row. Hermes
+// writes it with json.dumps of the OpenAI list: [{function: {name,
+// arguments}}, ...] (hermes_state_messages.py), and that is the only shape
+// read.
+func hermesCalls(raw string) []hermesCall {
+	if raw == "" {
+		return nil
+	}
+	var list []struct {
+		Function struct {
+			Name      string `json:"name"`
+			Arguments any    `json:"arguments"`
+		} `json:"function"`
+	}
+	if json.Unmarshal([]byte(raw), &list) != nil {
+		return nil
+	}
+	var out []hermesCall
+	for _, c := range list {
+		args := c.Function.Arguments
+		if str, ok := args.(string); ok {
+			var m map[string]any
+			if json.Unmarshal([]byte(str), &m) == nil {
+				args = m
+			}
+		}
+		out = append(out, hermesCall{name: c.Function.Name, args: args})
+	}
+	return out
+}
+
+// hermesMarker matches the stand-in text Hermes keeps in the content of an
+// assistant row that only calls tools, such as "[terminal]"
+// (_STALE_TOOL_CALL_MARKER_RE in hermes_state.py). Hermes blanks it when it
+// restores a session; it is not the agent's words.
+var hermesMarker = regexp.MustCompile(`^\[[A-Za-z_][A-Za-z0-9_.-]*\]$`)
+
+// hermesMessages reads the messages of a "db#session" reference. A row's
+// id is its row number in the database, which only rises, so an id never
+// moves while the reply after it streams in. A tool call on an assistant
+// row gets the row id with ".n".
+func hermesMessages(ref string) ([]message, bool, error) {
+	i := strings.LastIndexByte(ref, '#')
+	if i < 0 {
+		return nil, false, nil
+	}
+	rows, cut, err := hermes.Messages(ref[:i], ref[i+1:], hermesRows)
+	if err != nil {
+		return nil, false, err
+	}
+	var out []message
+	for _, r := range rows {
+		var got []message
+		switch r.Role {
+		case "user":
+			if t := cleanMessage(r.Content); t != "" {
+				got = append(got, message{At: r.At, Role: "owner", Text: t})
+			}
+		case "assistant":
+			calls := hermesCalls(r.ToolCalls)
+			if t := cleanMessage(r.Content); t != "" && !(len(calls) > 0 && hermesMarker.MatchString(t)) {
+				got = append(got, message{At: r.At, Role: "agent", Text: t})
+			}
+			for _, c := range calls {
+				got = append(got, message{At: r.At, Role: "agent",
+					Text: toolSummary(c.args, ""), Tool: oneLine(c.name, toolRunes)})
+			}
+		}
+		for k := range got {
+			got[k].ID = strconv.FormatInt(r.ID, 10)
+			if k > 0 {
+				got[k].ID += "." + strconv.Itoa(k)
+			}
+		}
+		out = append(out, got...)
+	}
+	return out, cut, nil
 }
 
 // limitOf reads limit: absent or below 1 is messagesDefault, and above
@@ -298,6 +708,9 @@ func (s *Server) handlePaneMessages(c *Client, r *proto.Request) proto.Response 
 // path. cut is true when the read did not start at the start of the file.
 // A missing file has no messages.
 func readMessages(path string, kind transcriptKind) ([]message, bool, error) {
+	if kind == kindHermes {
+		return hermesMessages(path)
+	}
 	if kind == kindClaude {
 		if err := verifyReal(path); err != nil {
 			return nil, false, err
@@ -563,7 +976,7 @@ func toolSummary(input any, detail string) string {
 // chatDayName is the name of one day's chat file.
 var chatDayName = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.jsonl$`)
 
-// chatRecord is one line of a chat file. Kind is the foreman log's own:
+// chatRecord is one line of a chat file. Kind is the steward log's own:
 // user for the owner's words, note for a line the server adds. Date is
 // UTC to the millisecond, always the same length, so a line's length and
 // so each id after it does not hang on the clock.
@@ -606,7 +1019,7 @@ func (s *Server) writeChat(kind, pane, text string) {
 		return
 	}
 	if err != nil {
-		s.Note("cannot write the chat file "+path+". The words still go to the foreman.", pane)
+		s.Note("cannot write the chat file "+path+". The words still go to the steward.", pane)
 		return
 	}
 	s.sendMessagesEvent(pane, true)
@@ -898,33 +1311,33 @@ func (s *Server) handleFloorChat(_ *Client, r *proto.Request) proto.Response {
 	} else if err != nil {
 		return proto.ErrResp(r.ID, proto.ErrInternal, "cannot read the chat in "+s.chatDir()+".")
 	}
-	// The foremen the lines name, newest first, then put oldest first.
-	// The tracked foreman comes first even when no line names it yet, as
-	// for one that floor.foreman or the terminal floor started.
-	var foremen []string
+	// The stewards the lines name, newest first, then put oldest first.
+	// The tracked steward comes first even when no line names it yet, as
+	// for one that floor.steward or the terminal floor started.
+	var stewards []string
 	seen := map[string]bool{}
 	s.talkMu.Lock()
-	tracked := s.trackedForeman()
+	tracked := s.trackedSteward()
 	s.talkMu.Unlock()
 	if tracked != "" {
 		seen[tracked] = true
-		foremen = append(foremen, tracked)
+		stewards = append(stewards, tracked)
 	}
-	for i := len(lines) - 1; i >= 0 && len(foremen) < chatForemen; i-- {
+	for i := len(lines) - 1; i >= 0 && len(stewards) < chatStewards; i-- {
 		if id := lines[i].Pane; id != "" && !seen[id] {
 			seen[id] = true
-			foremen = append(foremen, id)
+			stewards = append(stewards, id)
 		}
 	}
 	var replies []message
 	heard := map[string][]message{}
-	for i := len(foremen) - 1; i >= 0; i-- {
-		id := foremen[i]
+	for i := len(stewards) - 1; i >= 0; i-- {
+		id := stewards[i]
 		for _, src := range s.chatSources(id) {
 			msgs, tcut, err := readMessages(src.path, src.kind)
 			if err != nil {
 				cut = true
-				s.noteOnce("cannot read the foreman's transcript " + src.path + ". The chat shows the rest.")
+				s.noteOnce("cannot read the steward's transcript " + src.path + ". The chat shows the rest.")
 				continue
 			}
 			cut = cut || tcut
@@ -949,7 +1362,7 @@ func (s *Server) handleFloorChat(_ *Client, r *proto.Request) proto.Response {
 }
 
 // markRead sets Read on each owner line of the chat. A line is read when
-// its foreman's transcript records the same words as the owner's, at or
+// its steward's transcript records the same words as the owner's, at or
 // after the time the line was written. Each recorded message reads one
 // line at most, in order, so an older message with the same words never
 // reads a new line, and a line typed while a turn holds stays unread until
@@ -976,7 +1389,7 @@ func markRead(lines []message, heard map[string][]message) {
 	}
 }
 
-// chatSource is one transcript of a foreman, and its number among the
+// chatSource is one transcript of a steward, and its number among the
 // pane's transcripts, oldest 0, which keeps message ids apart.
 type chatSource struct {
 	path string
@@ -984,10 +1397,16 @@ type chatSource struct {
 	n    string
 }
 
-// chatSources is the transcripts floor.chat reads for foreman id: a sprig
+// chatSources is the transcripts floor.chat reads for steward id: a sprig
 // pane's session tree, else every transcript the pane claimed, kept in
-// the data dir across a restart, the newest chatForemen of them.
+// the data dir across a restart, the newest chatStewards of them.
 func (s *Server) chatSources(id string) []chatSource {
+	if p, ok := s.tree.Pane(id); ok && isHermes(p) {
+		if path, kind := s.transcriptOf(p); path != "" {
+			return []chatSource{{path, kind, "0"}}
+		}
+		return nil
+	}
 	if p, ok := s.tree.Pane(id); ok && p.Harness == "sprig" && p.Kind == layout.KindHeadless {
 		if path, kind := s.transcriptOf(p); path != "" {
 			return []chatSource{{path, kind, "0"}}
@@ -996,7 +1415,7 @@ func (s *Server) chatSources(id string) []chatSource {
 	}
 	claimed := s.claimedBy(id)
 	var out []chatSource
-	for k := len(claimed) - 1; k >= 0 && len(out) < chatForemen; k-- {
+	for k := len(claimed) - 1; k >= 0 && len(out) < chatStewards; k-- {
 		out = append([]chatSource{{claimed[k], kindClaude, strconv.Itoa(k)}}, out...)
 	}
 	return out
@@ -1043,14 +1462,23 @@ func (s *Server) lookMessages(marks map[string]fileMark, send bool) {
 		path, _ := s.transcriptOf(p)
 		m := fileMark{path: path}
 		if path != "" {
-			if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+			if fi, err := os.Lstat(hermesFileOf(p, path)); err == nil && fi.Mode().IsRegular() {
 				m.size, m.mod = fi.Size(), fi.ModTime().UnixNano()
+			}
+			if isHermes(p) {
+				// Hermes keeps new rows in the -wal file until a checkpoint.
+				if fi, err := os.Lstat(hermesFile(path) + "-wal"); err == nil && fi.Mode().IsRegular() {
+					m.size += fi.Size()
+					if t := fi.ModTime().UnixNano(); t > m.mod {
+						m.mod = t
+					}
+				}
 			}
 		}
 		old, had := marks[p.ID]
 		marks[p.ID] = m
 		if send && ((had && old != m) || (!had && path != "")) {
-			s.sendMessagesEvent(p.ID, s.isTrackedForeman(p.ID))
+			s.sendMessagesEvent(p.ID, s.isTrackedSteward(p.ID))
 		}
 	}
 	for id := range marks {
@@ -1058,4 +1486,13 @@ func (s *Server) lookMessages(marks map[string]fileMark, send bool) {
 			delete(marks, id)
 		}
 	}
+}
+
+// hermesFileOf is the file to stat for a pane's transcript path: the
+// database of a Hermes reference, else the path itself.
+func hermesFileOf(p layout.Pane, path string) string {
+	if isHermes(p) {
+		return hermesFile(path)
+	}
+	return path
 }

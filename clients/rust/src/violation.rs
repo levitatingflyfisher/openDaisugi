@@ -5,7 +5,7 @@
 //! (the permissions and DAG stages); a caller that stores a violation
 //! must refuse one whose detail is None.
 
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::pyjson::{Object, Value};
 
 #[derive(Debug, Clone)]
 pub struct Violation {

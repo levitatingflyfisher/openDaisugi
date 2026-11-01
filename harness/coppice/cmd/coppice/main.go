@@ -25,8 +25,8 @@ func main() {
 	}
 	c := &cli.CLI{
 		Version: cli.Version(),
-		Socket:  server.SocketPath(),
-		DataDir: server.DataDir(),
+		Socket:  server.CLISocketPath(),
+		DataDir: server.CLIDataDir(),
 		In:      os.Stdin,
 		Out:     os.Stdout,
 		Err:     os.Stderr,

@@ -3,9 +3,9 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Write clients/rust/src/gate/py/tables.rs from this Python's own Unicode data.
+"""Write clients/rust/src/warden/py/tables.rs from this Python's own Unicode data.
 
-The Rust gate must read text the way the Python gate does: str.isspace,
+The Rust warden must read text the way the Python warden does: str.isspace,
 str.isalnum (the re module's \\w), str.isdecimal (\\d), str.isdigit,
 str.isprintable (repr), str.lower and str.casefold, and the characters
 whose NFKC form holds a character urllib refuses in a netloc. Run it
@@ -21,7 +21,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "src" / "gate" / "py" / "tables.rs"
+OUT = Path(__file__).resolve().parent.parent / "src" / "warden" / "py" / "tables.rs"
 MAX = sys.maxunicode
 
 

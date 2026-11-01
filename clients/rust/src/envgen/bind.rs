@@ -9,8 +9,8 @@ use num_traits::ToPrimitive;
 use super::prompts_gen::BIND_SYSTEM;
 use super::{list_of, obj, str_list, PyError};
 use crate::distill::params::capability_head_any;
-use crate::gate::py::text::repr_list;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr_list;
+use crate::warden::pyjson::{Object, Value};
 use crate::llm::{Call, Client, Schema};
 use crate::pathways::pmodel::{self, Id};
 use crate::tracejournal::dag::topo_order;
@@ -109,7 +109,7 @@ pub fn apply_bindings(template: &Object, ps: &[Object], values: &Object) -> Resu
         if !holds_a_string(&st, &field) {
             return Err(PyError::new(
                 "ValueError",
-                format!("the {st} step has no string field {}", crate::gate::py::text::repr(&field)),
+                format!("the {st} step has no string field {}", crate::warden::py::text::repr(&field)),
             ));
         }
         step.set(&field, value);
@@ -149,7 +149,7 @@ pub fn bind(c: Option<&mut Client>, pathway: &Object, task: &str, env: &Value, m
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::gate::pyjson::loads;
+    use crate::warden::pyjson::loads;
     use crate::pathways::verify::FORCE_Z3_UNKNOWN_TASK;
 
     fn o(t: &str) -> Object {

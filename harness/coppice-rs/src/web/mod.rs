@@ -1,7 +1,7 @@
 //! The phone server, ported from Go's `internal/web`: the bearer token and
 //! the ban list, the four ways to get a TLS certificate (a local CA among
 //! them), the HTTP and websocket server, the page the Go tree ships, the
-//! JSON routes under /api, the ask answer over the gate's files, view
+//! JSON routes under /api, the ask answer over the warden's files, view
 //! plugins, the event ring, voice and push.
 //!
 //! The coppice socket is bound to the operator's uid and nothing else can
@@ -175,7 +175,7 @@ mod tests {
         // a push says a block with no ask in the same words.
         let raw = include_str!("../../../coppice/testdata/words.json");
         let w: serde_json::Value = serde_json::from_str(raw).unwrap();
-        assert_eq!(w["blocked_by_gate"], push::BLOCKED_BY_GATE);
+        assert_eq!(w["blocked_by_warden"], push::BLOCKED_BY_WARDEN);
         assert_eq!(w["blocked_own_question"], push::BLOCKED_OWN_QUESTION);
     }
 }

@@ -40,6 +40,7 @@ The server prints each plugin that does not load, and why, when it starts.
 | id | kind | on by default | what it does |
 |---|---|---|---|
 | `tree` | view | yes | The task tree, the same lines the terminal floor draws, and a graph of it. A button switches between the two. |
+| `cards` | view | yes | The open review cards from `daisugi rank queue`: what an agent kept, why, and what switching costs. Level one shows no code; a switch shows the diff. Keep, Switch and Drop are the operator's answer and nothing else can give one. Four sorts. |
 | `minimap` | view | yes | The task tree shrunk to dots. It sits at the foot of the floor page rail. A dot click fills a tile. |
 | `kanban` | view | yes | Tasks as cards in four columns: inbox, working, needs you, done. The columns are states the server owns, so a card has no drag. |
 | `colony` | view | yes | Every pane as a forager on a field, in its state colour, with a bar for the time since its last state. Drag a box to select. |
@@ -56,7 +57,11 @@ The server prints each plugin that does not load, and why, when it starts.
 A view runs in a sandboxed frame and holds no token. The floor page posts
 it the panes, the tasks, the recent events and the selection. A view may
 post back three things: open a pane, set the selection, and watch up to
-nine panes. The floor attaches a watched pane view-only, which never
+nine panes. The `cards` and `tree` views post two more: `answer` (a card's
+keep, switch or drop) and `tree-answer` (allow or deny for a delegation
+ask). The floor page accepts each only for an id in the last list it sent
+that view, then makes the call with its own token. A view that is not named
+`cards` or `tree` is not sent those lists. The floor attaches a watched pane view-only, which never
 resizes it and may not type into it, and posts the view the text of each
 frame. Every shipped view imports `../_lib/view.js`, which the web server
 serves at `/plugins/_lib/view.js`.
@@ -118,7 +123,7 @@ So Herdr may never apply these rules. The rules also need the whole state
 word on the status line, so a pane narrower than its fields reads as
 unknown. attach makes each run of spaces in a label one space, so a label
 cannot hide the real state word. A label that reads like a state, such as
-`blocked via gate`, can still fake that state in Herdr's read, and an
+`blocked via warden`, can still fake that state in Herdr's read, and an
 agent can set a label. The attach status line still shows the state and its source to
 anyone who looks at the pane.
 
@@ -181,13 +186,13 @@ directory, or a link that leads out of it.
   page checks each pane against its pane list and acts on nothing else.
 - **Every mark in a view means a state the socket reports.** A view draws
   what the floor page posts, and nothing it guesses.
-- **An agent never edits the floor's config.** The gate denies every write
+- **An agent never edits the floor's config.** The warden denies every write
   it can place under `~/.config/coppice`, `~/.local/share/coppice` and
   `~/.opendaisugi/coppice`, and every shell line that names them, before
   any envelope check. It expands `~`, `$HOME` and the XDG homes, follows
   each `cd`, and normalizes `./`, `//` and `../`. It answers `this is the
   floor's own config. Edit it yourself.` A relative write after a `cd` the
-  gate cannot follow is left to its tier, which is permanent. A plugin is
+  warden cannot follow is left to its tier, which is permanent. A plugin is
   something you add by hand.
 - **A note names its plugin.** A `floor.note` from a policy leads with the
   plugin id and names no pane.

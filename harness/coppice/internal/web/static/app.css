@@ -34,6 +34,17 @@ body.offline #tiles, body.offline #roster { opacity: .45; }
 #queue-head h2 { font-size: 1.1rem; margin: 0; color: var(--blocked); }
 #queue-head p { margin: .1rem 0 0; }
 .card.ask { border-color: var(--blocked); }
+.card.envelope { border-color: var(--accent); }
+.card.envelope .envelope-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .15rem .6rem; margin: .4rem 0; }
+.card.envelope dt { color: var(--muted); }
+.card.envelope dd { margin: 0; overflow-wrap: anywhere; }
+.card.envelope .envelope-actions { display: flex; gap: .5rem; margin: .4rem 0 0; }
+/* In a box that scrolls, the buttons stay at its foot: Approve is never out of reach. */
+#envelopes .card.envelope .envelope-actions { position: sticky; bottom: 0; background: var(--bg); padding: .4rem 0; margin: 0; }
+.card.envelope button { min-height: 44px; min-width: 44px; }
+#envelopes[hidden] { display: none; }
+/* A card waits for an answer, so the floor is not quiet. */
+#envelopes:not([hidden]) ~ #quiet { display: none; }
 .card.ask code.summary { display: block; margin: .3rem 0 0; color: var(--blocked); white-space: pre-wrap; word-break: break-word; }
 .card.ask .verdict { margin: .3rem 0 0; font-weight: bold; }
 .card.row { padding: .4rem .8rem; flex-wrap: nowrap; align-items: center; cursor: pointer; }
@@ -219,6 +230,14 @@ canvas { display: block; }
   border-top: 1px solid var(--line); background: var(--bg); }
 section #compose input { flex: 1; min-width: 0; width: auto; margin: 0; }
 #compose button { flex: none; padding: 0 .6rem; }
+/* The words so far, under the mic while it records. Words grow at the end,
+   so the line keeps its last three lines and clips the top. */
+#compose { flex-wrap: wrap; }
+.voice-partial { margin: 0; color: var(--muted); font-size: .9rem; line-height: 1.3; overflow-wrap: anywhere;
+  display: flex; flex-direction: column; justify-content: flex-end; max-height: 3.9em; overflow: hidden; }
+.voice-partial[hidden] { display: none; }
+#compose .voice-partial { flex: 1 1 100%; order: 10; padding: 0 .2rem; }
+#tell .voice-partial { grid-column: 1 / -1; padding: 0 .2rem; }
 #compose #send-enter { border-color: var(--accent); color: var(--accent); font-weight: bold; }
 #keys-toggle[aria-expanded="true"] { background: #26312f; }
 #keys { display: flex; gap: .3rem; padding: .4rem .5rem 0; flex-wrap: wrap; border-top: 1px solid var(--line); }
@@ -237,9 +256,9 @@ section #compose input { flex: 1; min-width: 0; width: auto; margin: 0; }
 #pane-head #pane-source { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
 #pane-head #pane-chip { flex: none; }
 #sheet-back { flex: none; font-size: 1.5rem; line-height: 1; padding: 0 .5rem; }
-#pane-gate { display: inline-flex; align-items: center; flex: none; }
-#pane-gate button.gate { min-height: 32px; min-width: 32px; padding: 0 .3rem; border: 0; background: transparent; font-weight: bold; }
-#pane-gate .gate-tip { display: none; }
+#pane-warden { display: inline-flex; align-items: center; flex: none; }
+#pane-warden button.warden { min-height: 32px; min-width: 32px; padding: 0 .3rem; border: 0; background: transparent; font-weight: bold; }
+#pane-warden .warden-tip { display: none; }
 #pane-stack { display: flex; gap: .5rem; align-items: center; min-height: 22px; padding: 0 .6rem .3rem; white-space: nowrap;
   overflow: hidden; font-size: .74rem; }
 #pane-stack .stackbar .seg { min-height: 22px; line-height: 22px; }
@@ -284,6 +303,17 @@ body.phone #rail[data-fold="shut"] #agents, body.phone #rail[data-fold="shut"] #
 body.phone #rail[data-fold="shut"] #view-list { display: none; }
 body.phone #needs { padding-top: .3rem; }
 #needs[hidden] { display: none; }
+/* A card that waits on the owner: who, the one-line ask, and the way to
+   answer from the card. The controls are at least 44px tall. */
+#needs { max-height: 55vh; overflow-y: auto; }
+#needs .card.need, #needs .card.ask { margin-bottom: .4rem; }
+.card.need .need-line { margin: .3rem 0 0; overflow-wrap: anywhere; }
+.card.need .need-actions { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .4rem 0 0; }
+.card.need .need-actions button { min-height: 36px; min-width: 36px; }
+body.phone .card.need .need-actions button { min-height: 44px; min-width: 44px; }
+.card.need .need-input { flex: 1 1 8rem; min-width: 0; min-height: 36px; box-sizing: border-box; }
+body.phone .card.need .need-input { min-height: 44px; }
+.card.need button:disabled { opacity: .5; }
 body.phone .card.row.amber .label { color: var(--blocked); }
 body.phone #strip { margin: .4rem .8rem 0; height: 52px; }
 body.phone #pane-source { display: none; }
@@ -326,8 +356,33 @@ body.phone.sheet-open #tell { display: none; }
 body:not(.phone) #chat, body:not(.phone) #agents-fold { display: none; }
 #agents-fold { margin: .4rem .8rem 0; text-align: left; color: var(--muted); }
 #agents-fold[aria-expanded="true"] { color: var(--fg); }
-/* The chat with the foreman: oldest at the top, newest above the bar. */
+/* The chat with the steward: oldest at the top, newest above the bar. */
 #chat { margin: .4rem 0 0; padding: .4rem .8rem; border-top: 1px solid var(--line); }
+/* The phone's home is one screen, as the desk is: the page does not scroll,
+   so the bar, the facts and the agents stay in view, and the chat scrolls in
+   its own box. */
+body.phone:has(#screen-roster:not([hidden])) { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+body.phone:has(#screen-roster:not([hidden])) #screen-roster { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* The rail is not a scroller here: the agents header never leaves view.
+   Each area above the chat has a bounded height and scrolls inside its own
+   box, and shrinks before the chat does. Only the chat scrolls the page's
+   worth of lines. */
+body.phone:has(#screen-roster:not([hidden])) #rail { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+body.phone:has(#screen-roster:not([hidden])) #needs,
+body.phone:has(#screen-roster:not([hidden])) #envelopes,
+body.phone:has(#screen-roster:not([hidden])) #quiet,
+body.phone:has(#screen-roster:not([hidden])) #recent,
+body.phone:has(#screen-roster:not([hidden])) #view-list,
+body.phone:has(#screen-roster:not([hidden])) #agents { flex: 0 4 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* The cards that wait for an answer keep their height up to a bound, and the
+   lists give way first: the Approve button must not hide in a small box. */
+body.phone:has(#screen-roster:not([hidden])) #needs { max-height: 46vh; flex-shrink: 0; }
+body.phone:has(#screen-roster:not([hidden])) #envelopes { max-height: 46vh; flex-shrink: 0; }
+body.phone:has(#screen-roster:not([hidden])) #quiet { max-height: 12vh; }
+body.phone:has(#screen-roster:not([hidden])) #recent,
+body.phone:has(#screen-roster:not([hidden])) #view-list { max-height: 20vh; }
+body.phone:has(#screen-roster:not([hidden])) #agents { max-height: 34vh; }
+body.phone:has(#screen-roster:not([hidden])) #chat { flex: 1 1 8rem; min-height: 5rem; overflow-y: auto; overscroll-behavior: contain; }
 .import-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0 0 .55rem; padding: .4rem .6rem; border: 1px solid currentColor; border-radius: 6px; }
 .import-bar[hidden] { display: none; }
 .import-bar .import-text { flex: 1 1 12rem; }
@@ -368,7 +423,7 @@ button.chip-agent { min-height: 44px; min-width: 44px; padding: 0 .65rem; margin
 @media (max-width: 899px) {
   #overlay { position: fixed; left: 0; right: 0; bottom: 0; height: 65vh; z-index: 30; border-radius: 12px 12px 0 0; }
 }
-/* The journal: the gate verdicts, newest first. */
+/* The journal: the warden verdicts, newest first. */
 #journal { flex: 1; min-height: 0; overflow: auto; padding: .4rem .7rem; font-size: .85rem; }
 #journal[hidden] { display: none; }
 #journal .journal-bar { display: flex; gap: .6rem; align-items: center; }
@@ -379,7 +434,7 @@ button.chip-agent { min-height: 44px; min-width: 44px; padding: 0 .65rem; margin
 .journal-row { display: grid; grid-template-columns: 5.2em 1.2em minmax(5em, 11em) minmax(0, 1fr); gap: .5rem;
   padding: .15rem 0; border-bottom: 1px solid var(--line); align-items: baseline; }
 .journal-row > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal-row .gate-mark { font-weight: bold; text-align: center; }
+.journal-row .warden-mark { font-weight: bold; text-align: center; }
 /* The New form and Settings are panels over the floor, like a view: from
    900 px a panel over part of the windows, below that a sheet that rises
    from the bottom. The rail and a window stay in sight. */
@@ -429,10 +484,10 @@ body.pane-page #screen-pane { position: fixed; inset: 0; z-index: 20; background
 #facts .fact-fix { padding: 0 .4rem; margin-left: .25rem; font: inherit; }
 /* The install hint in the rail: shown where the header row is hidden, on a
    phone and on a narrow screen. */
-#gate-hint { margin: .4rem .8rem 0; padding: .35rem .6rem; border-radius: 8px;
+#warden-hint { margin: .4rem .8rem 0; padding: .35rem .6rem; border-radius: 8px;
   background: color-mix(in srgb, var(--blocked) 14%, transparent); }
-#gate-hint[hidden] { display: none; }
-@media (min-width: 600px) { body:not(.phone) #gate-hint { display: none; } }
+#warden-hint[hidden] { display: none; }
+@media (min-width: 600px) { body:not(.phone) #warden-hint { display: none; } }
 @media (max-width: 899px) { #facts .fact-tokens, #facts .fact-working { display: none; } }
 body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: none; }
 /* The stack bar: one bar per window header, in steps like an order
@@ -458,13 +513,13 @@ body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: no
 @media (prefers-reduced-motion: reduce) {
   .stackbar .seg.lit { animation: none; background: color-mix(in srgb, var(--h) 55%, #12181a); }
 }
-/* The gate mark: the last verdict. */
-.tile .head button.gate { flex: none; min-height: 0; min-width: 0; padding: 0 .3rem; border: 0; background: transparent;
+/* The warden mark: the last verdict. */
+.tile .head button.warden { flex: none; min-height: 0; min-width: 0; padding: 0 .3rem; border: 0; background: transparent;
   font-weight: bold; line-height: 1.4; }
-.gate-allow { color: var(--ok); } .gate-deny { color: var(--bad); } .gate-ask { color: var(--warn); }
-.tile .head .gate-tip { display: none; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+.warden-allow { color: var(--ok); } .warden-deny { color: var(--bad); } .warden-ask { color: var(--warn); }
+.tile .head .warden-tip { display: none; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   font-size: .75rem; color: var(--fg); }
-.tile .head .gate:focus-visible + .gate-tip { display: inline; }
+.tile .head .warden:focus-visible + .warden-tip { display: inline; }
 .tile .head .dot { flex: none; }
 /* The header's second line: the stack bar, the state word and the
    directory, 18 px tall. The bar keeps its words; the directory gives way
@@ -487,7 +542,7 @@ body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: no
 .stack-details .details-note { margin: .1rem 0 0; }
 .stack-details .mode-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .2rem 0; }
 .stack-details .mode-ask { flex-basis: 100%; margin: 0; }
-.stack-details .router-set:disabled { opacity: .45; cursor: not-allowed; }
+.stack-details .route-set:disabled { opacity: .45; cursor: not-allowed; }
 .stack-details .swap-input { flex: 1 1 8rem; min-width: 0; min-height: 26px; padding: 0 .4rem; font-size: .8rem; }
 /* A headless agent's window: no keys reach it; its line sends whole
    messages. */
@@ -524,7 +579,7 @@ body.phone #status-row:has(#status:empty):has(#status-fix[hidden]) { display: no
 .machine-key { color: var(--blocked); }
 .machine-address { overflow-wrap: anywhere; }
 #machines-line, #machines-note, .machines-foot { margin: .4rem .7rem; }
-/* The foreman's window on the desk: the chat in place of the terminal, with
+/* The steward's window on the desk: the chat in place of the terminal, with
    its own line under it. The Screen button in the header shows the terminal. */
 .tile.chat-window .chat-body { flex: 1; min-height: 0; overflow: auto; background: #0b0f10; margin-top: 4px; padding: .3rem .5rem; cursor: text; }
 .tile.chat-window .chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }

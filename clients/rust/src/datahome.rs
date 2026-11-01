@@ -7,7 +7,7 @@
 //! 3. else `~/.opendaisugi`.
 //!
 //! An existing install keeps its directory. coppice keeps its own rule
-//! (`coppice_dir`). The gate guards every
+//! (`coppice_dir`). The warden guards every
 //! directory the rule can pick (`guarded`), with no exists check. Paths
 //! print as pathlib prints them.
 
@@ -49,7 +49,7 @@ pub fn dir(get: impl Fn(&str) -> Option<String>, home: &str, exists: impl Fn(&st
 
 /// The rule coppice uses for its data directory
 /// (`harness/coppice-rs/src/datahome.rs`). It never asks whether
-/// `~/.opendaisugi` exists, because `daisugi install --gate` creates it and
+/// `~/.opendaisugi` exists, because `daisugi install` creates it and
 /// the same box would then use two places, depending on the order of two
 /// commands: `$OPENDAISUGI_HOME`, else `$XDG_DATA_HOME/opendaisugi` when
 /// that is usable, else `~/.opendaisugi`. XDG is chosen only when the
@@ -71,7 +71,10 @@ pub fn coppice_dir(
         return dot;
     };
     let xdg = join(&x, "opendaisugi");
-    if !has(&join(&xdg, "coppice")) && has(&join(&dot, "coppice")) {
+    if !has(&join(&xdg, "coppice"))
+        && !has(&join(&xdg, "foreman"))  // names-ok: the on-disk store name
+        && (has(&join(&dot, "coppice")) || has(&join(&dot, "foreman")))  // names-ok: the on-disk store name
+    {
         return dot;
     }
     xdg
@@ -163,6 +166,14 @@ mod tests {
         assert_eq!(dir(env(&[("XDG_DATA_HOME", "/x")]), "/h", yes), "/h/.opendaisugi");
         assert_eq!(dir(env(&[("OPENDAISUGI_HOME", ""), ("XDG_DATA_HOME", "")]), "/h", no), "/h/.opendaisugi");
         assert_eq!(dir(env(&[("XDG_DATA_HOME", "/h//x/")]), "/h", no), "/h/x/opendaisugi");
+    }
+
+    #[test]
+    fn an_old_foreman_store_keeps_the_legacy_dir() {  // names-ok: the on-disk store name
+        let foreman = |p: &str| p == "/h/.opendaisugi/foreman";
+        let both = |p: &str| p == "/h/.opendaisugi/foreman" || p == "/x/opendaisugi/foreman";
+        assert_eq!(coppice_dir(env(&[("XDG_DATA_HOME", "/x")]), "/h", foreman), "/h/.opendaisugi");  // names-ok: the on-disk store name
+        assert_eq!(coppice_dir(env(&[("XDG_DATA_HOME", "/x")]), "/h", both), "/x/opendaisugi");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stands in for a gate hook inside a pane, for the compare cases: from the
+"""Stands in for a warden hook inside a pane, for the compare cases: from the
 pane's own process it sends one pane.report_state that names a transcript,
 prints the reply (ok, the refusal of its transcript, or "refused" and
 the refusal of the whole report), then waits or turns into cat. The report
@@ -16,7 +16,7 @@ In every argument {pane} is the pane's id, ':' as '-', so each pane names
 its own new file. With --copy, SRC is first copied to PATH. With --when
 it reports only once FILE exists, so a case says when. With --link it
 first makes LINK a symlink to the directory DIR. With --cat the
-process then echoes what it reads, as the fake foreman does, after turning
+process then echoes what it reads, as the fake steward does, after turning
 bracketed paste on. The transcripts it names are invented fixtures.
 """
 
@@ -66,7 +66,7 @@ def main() -> None:
         "harness": "claude-code",
         "pane": pane,
         "state": "idle",
-        "source": "gate",
+        "source": "warden",
         "detail": "Stop",
         "transcript_path": path,
     }

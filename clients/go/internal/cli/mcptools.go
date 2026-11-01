@@ -12,14 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"daisugi-verify/internal/delegate"
 	"daisugi-verify/internal/envgen"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/recall"
+	"daisugi-verify/internal/router"
+	"daisugi-verify/internal/spawn"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
@@ -161,7 +161,7 @@ func (s *mcpServer) recallAnswer(a *pyjson.Object) (any, error) {
 	if math.IsNaN(maxAge) || math.IsInf(maxAge, 0) {
 		return nil, &toolError{"max_age_seconds must be a finite number, got " + pmodel.FloatRepr(maxAge)}
 	}
-	entries, err := gateway.LoadAnswers(filepath.Join(s.dataDir, "gateway", "answers.jsonl"))
+	entries, err := router.LoadAnswers(filepath.Join(s.dataDir, "router", "answers.jsonl"))
 	if err != nil {
 		return nil, refusef("an answer store this binary does not read (%v)", short(err))
 	}
@@ -481,7 +481,7 @@ func (s *mcpServer) runPlan(a *pyjson.Object) (any, error) {
 		executors["shell"] = supervise.Shell{Environ: s.e.Environ}
 	}
 	if !dry {
-		// The real approval gate; stdin is the MCP stream, never a
+		// The real approval warden; stdin is the MCP stream, never a
 		// terminal, so no prompt is read from it.
 		approval = supervise.Default{Getenv: s.e.lookup, Stdin: strings.NewReader(""), Stdout: io.Discard,
 			Terminal: func() bool { return false }}
@@ -512,11 +512,11 @@ func (s *mcpServer) runPlan(a *pyjson.Object) (any, error) {
 		Set("failed_step_id", failed).Set("receipts", receipts), nil
 }
 
-// delegate is the delegate tool: the router's worker reads
+// spawn is the spawn tool: the router's worker reads
 // the file and answers; each quote is checked against the file.
-func (s *mcpServer) delegate(a *pyjson.Object) (any, error) {
+func (s *mcpServer) spawn(a *pyjson.Object) (any, error) {
 	c := s.e.llmClient()
-	out, err := delegate.Run(a.Value("path").(string), a.Value("question").(string), a.Value("mode").(string),
+	out, err := spawn.Run(a.Value("path").(string), a.Value("question").(string), a.Value("mode").(string),
 		s.dataDir, s.e.lookup, c.CompleteAt)
 	if err != nil {
 		return nil, refusef("%v", err)

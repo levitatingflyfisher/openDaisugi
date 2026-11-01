@@ -1,7 +1,7 @@
 """Evaluate Herdr's TOML screen manifests, a port of harness/coppice/internal/detect.
 
 Master spec 5.5: coppice reuses Herdr's manifest format, so twenty-one agents
-are detected on day one. Master spec 5.1: this is the fallback path. A gate
+are detected on day one. Master spec 5.1: this is the fallback path. A condition
 event outranks anything decided here, a manifest may never assert ``done``,
 and a screen that matches nothing is ``unknown``, never a confident ``idle``.
 
@@ -9,7 +9,7 @@ This module ports three Go files under ``harness/coppice/internal/detect``,
 against the schema ``opendaisugi.floor.manifest_schema`` records:
 
 * ``manifest.go`` -- ``parse_manifest`` here, loading and validating one
-  manifest's rules, gates, limits, and the two Rust-only regex constructs.
+  manifest's rules, conditions, limits, and the two Rust-only regex constructs.
 * ``regions.go`` -- the ``_region_text`` dispatcher and its helpers, slicing
   the pane's screen text, title, and OSC progress the way a rule's own
   ``region`` field asks for.
@@ -70,8 +70,8 @@ class ManifestSchemaMismatch(OpenDaisugiError):
 
 
 @dataclass(frozen=True)
-class Gate:
-    """One gate: a rule's own matchers, or a nested all/any/not table.
+class Condition:
+    """One condition: a rule's own matchers, or a nested all/any/not table.
 
     ``contains`` is already lowercased. ``regex`` and ``line_regex`` are
     already compiled, so evaluation never compiles a pattern at match time.
@@ -80,9 +80,9 @@ class Gate:
     contains: tuple[str, ...] = ()
     regex: tuple[re.Pattern[str], ...] = ()
     line_regex: tuple[re.Pattern[str], ...] = ()
-    all: tuple["Gate", ...] = ()
-    any: tuple["Gate", ...] = ()
-    not_gates: tuple["Gate", ...] = ()
+    all: tuple["Condition", ...] = ()
+    any: tuple["Condition", ...] = ()
+    not_conditions: tuple["Condition", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,7 @@ class Rule:
     state: str
     priority: int
     region: str
-    gate: Gate
+    condition: Condition
     skip_state_update: bool = False
     visible_idle: bool = False
     visible_blocker: bool = False
@@ -773,12 +773,12 @@ def _region_text(spec: str, screen: str, title: str, osc_progress: str) -> str:
 
 
 class _Totals:
-    """Manifest-wide gate and matcher counters, shared across every rule."""
+    """Manifest-wide condition and matcher counters, shared across every rule."""
 
-    __slots__ = ("gates", "matchers")
+    __slots__ = ("conditions", "matchers")
 
     def __init__(self) -> None:
-        self.gates = 0
+        self.conditions = 0
         self.matchers = 0
 
 
@@ -805,7 +805,7 @@ def _as_bool(raw: dict, key: str, ctx: str) -> bool:
     return value
 
 
-def _as_gate_list(value: object, ctx: str, key: str) -> list:
+def _as_condition_list(value: object, ctx: str, key: str) -> list:
     """The raw all/any/not entries, type-checked before any len() call.
 
     A non-list value here (an int, say) must fail the load the same way a
@@ -819,27 +819,31 @@ def _as_gate_list(value: object, ctx: str, key: str) -> list:
     return value
 
 
-def _compile_gate(raw: dict, ctx: str, depth: int, totals: _Totals) -> Gate:
-    """Compile one gate: a rule's own matchers, or a nested table.
+def _compile_condition(raw: dict, ctx: str, depth: int, totals: _Totals) -> Condition:
+    """Compile one condition: a rule's own matchers, or a nested table.
 
     The caller has already validated ``raw``'s keys against the right key
     set -- ``RULE_KEYS`` for a rule's own top-level matchers,
-    ``MATCHER_KEYS`` for a nested gate table -- since a rule dict carries
-    more keys than a bare gate does.
+    ``MATCHER_KEYS`` for a nested condition table -- since a rule dict carries
+    more keys than a bare condition does.
     """
-    if depth > schema.MAX_GATE_DEPTH:
-        raise ManifestSchemaMismatch(f"{ctx} exceeds max gate depth {schema.MAX_GATE_DEPTH}")
-    totals.gates += 1
-    if totals.gates > schema.MAX_TOTAL_GATES:
-        raise ManifestSchemaMismatch(f"manifest exceeds max gate count {schema.MAX_TOTAL_GATES}")
+    if depth > schema.MAX_CONDITION_DEPTH:
+        raise ManifestSchemaMismatch(
+            f"{ctx} exceeds max condition depth {schema.MAX_CONDITION_DEPTH}"
+        )
+    totals.conditions += 1
+    if totals.conditions > schema.MAX_TOTAL_CONDITIONS:
+        raise ManifestSchemaMismatch(
+            f"manifest exceeds max condition count {schema.MAX_TOTAL_CONDITIONS}"
+        )
 
     contains_raw = _as_str_list(raw.get("contains"), ctx, "contains")
     regex_raw = _as_str_list(raw.get("regex"), ctx, "regex")
     line_regex_raw = _as_str_list(raw.get("line_regex"), ctx, "line_regex")
     direct = len(contains_raw) + len(regex_raw) + len(line_regex_raw)
-    if direct > schema.MAX_MATCHERS_PER_GATE:
+    if direct > schema.MAX_MATCHERS_PER_CONDITION:
         raise ManifestSchemaMismatch(
-            f"{ctx} has {direct} direct matchers, max is {schema.MAX_MATCHERS_PER_GATE}"
+            f"{ctx} has {direct} direct matchers, max is {schema.MAX_MATCHERS_PER_CONDITION}"
         )
     totals.matchers += direct
     if totals.matchers > schema.MAX_TOTAL_MATCHERS:
@@ -847,9 +851,9 @@ def _compile_gate(raw: dict, ctx: str, depth: int, totals: _Totals) -> Gate:
             f"manifest exceeds max matcher count {schema.MAX_TOTAL_MATCHERS}"
         )
 
-    all_raw = _as_gate_list(raw.get("all"), ctx, "all")
-    any_raw = _as_gate_list(raw.get("any"), ctx, "any")
-    not_raw = _as_gate_list(raw.get("not"), ctx, "not")
+    all_raw = _as_condition_list(raw.get("all"), ctx, "all")
+    any_raw = _as_condition_list(raw.get("any"), ctx, "any")
+    not_raw = _as_condition_list(raw.get("not"), ctx, "not")
     if direct + len(all_raw) + len(any_raw) == 0:
         raise ManifestSchemaMismatch(f"{ctx} must contain a positive matcher")
 
@@ -863,22 +867,22 @@ def _compile_gate(raw: dict, ctx: str, depth: int, totals: _Totals) -> Gate:
     regex = tuple(_compile_pattern(p, ctx, "regex") for p in regex_raw)
     line_regex = tuple(_compile_pattern(p, ctx, "line_regex") for p in line_regex_raw)
 
-    def _compile_nested(raw_list: object, kind: str) -> tuple[Gate, ...]:
+    def _compile_nested(raw_list: object, kind: str) -> tuple[Condition, ...]:
         out = []
         for g in raw_list or []:
             if not isinstance(g, dict):
                 raise ManifestSchemaMismatch(f"{ctx} > {kind} entries must be tables")
             _validate_keys(g, schema.MATCHER_KEYS, f"{ctx} > {kind}")
-            out.append(_compile_gate(g, f"{ctx} > {kind}", depth + 1, totals))
+            out.append(_compile_condition(g, f"{ctx} > {kind}", depth + 1, totals))
         return tuple(out)
 
-    return Gate(
+    return Condition(
         contains=contains,
         regex=regex,
         line_regex=line_regex,
         all=_compile_nested(all_raw, "all"),
         any=_compile_nested(any_raw, "any"),
-        not_gates=_compile_nested(not_raw, "not"),
+        not_conditions=_compile_nested(not_raw, "not"),
     )
 
 
@@ -916,11 +920,11 @@ def _compile_rule(
     if not valid_region(region):
         raise ManifestSchemaMismatch(f"{ctx} uses invalid region: {region}")
     if region.strip().startswith("top_non_empty_lines("):
-        gated = (
+        checked = (
             manifest_min_engine_version != 0
             and manifest_min_engine_version < schema.TOP_NON_EMPTY_LINES_MIN_ENGINE_VERSION
         )
-        if gated:
+        if checked:
             raise ManifestSchemaMismatch(
                 f"{ctx} uses top_non_empty_lines but min_engine_version is "
                 f"{manifest_min_engine_version}, need "
@@ -939,13 +943,13 @@ def _compile_rule(
                 f"{ctx} uses skip_state_update with visible state evidence"
             )
 
-    gate = _compile_gate(raw, ctx, 0, totals)
+    condition = _compile_condition(raw, ctx, 0, totals)
     return Rule(
         id=rule_id,
         state=state,
         priority=priority,
         region=region,
-        gate=gate,
+        condition=condition,
         skip_state_update=skip,
         visible_idle=visible_idle,
         visible_blocker=visible_blocker,
@@ -1026,26 +1030,26 @@ def load_manifests(dirs: Sequence[Path]) -> dict[str, Manifest]:
 # --- evaluate.go: running the rules -----------------------------------
 
 
-def _gate_matches(gate: Gate, text: str, lower: str) -> bool:
-    for needle in gate.contains:
+def _condition_matches(condition: Condition, text: str, lower: str) -> bool:
+    for needle in condition.contains:
         if needle not in lower:
             return False
-    for pattern in gate.regex:
+    for pattern in condition.regex:
         if not pattern.search(text):
             return False
-    if gate.line_regex:
+    if condition.line_regex:
         ls = text.split("\n")
-        for pattern in gate.line_regex:
+        for pattern in condition.line_regex:
             if not any(pattern.search(line) for line in ls):
                 return False
-    for nested in gate.all:
-        if not _gate_matches(nested, text, lower):
+    for nested in condition.all:
+        if not _condition_matches(nested, text, lower):
             return False
-    if gate.any:
-        if not any(_gate_matches(nested, text, lower) for nested in gate.any):
+    if condition.any:
+        if not any(_condition_matches(nested, text, lower) for nested in condition.any):
             return False
-    for nested in gate.not_gates:
-        if _gate_matches(nested, text, lower):
+    for nested in condition.not_conditions:
+        if _condition_matches(nested, text, lower):
             return False
     return True
 
@@ -1066,7 +1070,7 @@ def _evaluate(manifest: Manifest, screen: str, title: str, osc_progress: str) ->
     best: Rule | None = None
     for rule in manifest.rules:
         text = _region_text(rule.region, screen, title, osc_progress)
-        if _gate_matches(rule.gate, text, _go_lower(text)):
+        if _condition_matches(rule.condition, text, _go_lower(text)):
             if best is not None and best.priority >= rule.priority:
                 continue
             best = rule

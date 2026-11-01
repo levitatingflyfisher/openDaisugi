@@ -1,33 +1,33 @@
-//! A gate hook command found by its words, never by a substring, the way
+//! A warden hook command found by its words, never by a substring, the way
 //! `opendaisugi.config` reads it. The command is split as the shell splits
 //! it (quotes, backslashes, runs of ; | & as their own words), each simple
-//! command is read on its own, and these forms are a gate hook:
+//! command is read on its own, and these forms are a warden hook:
 //!
 //! ```text
-//! [NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.gate[_client] ARGS
-//! [NAME=val ...] .../daisugi gate check ARGS            (this binary)
-//! [NAME=val ...] <any program> gate check ARGS, where the NAME=val words
-//!   hold GATE_HOOK_MARKER and ARGS hold each flag the installer always
+//! [NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.warden[_client] ARGS
+//! [NAME=val ...] .../daisugi warden check ARGS            (this binary)
+//! [NAME=val ...] <any program> warden check ARGS, where the NAME=val words
+//!   hold WARDEN_HOOK_MARKER and ARGS hold each flag the installer always
 //!   writes (this binary installed under another file name)
 //! sh|bash|dash|zsh|ksh [opts] -c '<one of the above>'
 //! ```
 //!
-//! A command whose words hold opendaisugi.gate[_client] (alone, or joined
-//! to -m) in any other form is an unknown gate hook: it may gate, but its
+//! A command whose words hold opendaisugi.warden[_client] (alone, or joined
+//! to -m) in any other form is an unknown warden hook: it may warden, but its
 //! mode cannot be read, so status says so and uninstall refuses it. The Go
 //! client's `config/words.go` is the reference.
 
-use crate::gate::pyjson::Value;
+use crate::warden::pyjson::Value;
 use regex::Regex;
 use std::sync::OnceLock;
 
 /// The first word of every hook command this binary writes. Python's
-/// `config.gate_hook_args` accepts it as the entry point of a compiled
-/// gate.
-pub const GATE_HOOK_MARKER: &str = "DAISUGI_GATE_HOOK=opendaisugi.gate";
+/// `config.warden_hook_args` accepts it as the entry point of a compiled
+/// warden.
+pub const WARDEN_HOOK_MARKER: &str = "DAISUGI_WARDEN_HOOK=opendaisugi.warden";
 
 pub const KIND_NONE: &str = "";
-pub const KIND_GATE: &str = "gate";
+pub const KIND_WARDEN: &str = "warden";
 pub const KIND_UNKNOWN: &str = "unknown";
 
 const PY_NO_ARG_FLAGS: &[u8] = b"bBdEhiIOPqRsSuvx";
@@ -36,7 +36,7 @@ const MAX_SHELL_DEPTH: usize = 3;
 fn re(which: usize) -> &'static Regex {
     static RES: OnceLock<Vec<Regex>> = OnceLock::new();
     &RES.get_or_init(|| {
-        [r"^[A-Za-z_][A-Za-z0-9_]*=", r"^(python[0-9.]*|py)$", r"^-[A-Za-z]*m(opendaisugi\.gate(_client)?)$"]
+        [r"^[A-Za-z_][A-Za-z0-9_]*=", r"^(python[0-9.]*|py)$", r"^-[A-Za-z]*m(opendaisugi\.warden(_client)?)$"]
             .iter()
             .map(|p| Regex::new(p).expect("a fixed pattern"))
             .collect()
@@ -47,8 +47,8 @@ fn is_assignment(w: &str) -> bool {
     re(0).is_match(w)
 }
 
-fn is_gate_module(w: &str) -> bool {
-    w == "opendaisugi.gate" || w == "opendaisugi.gate_client"
+fn is_warden_module(w: &str) -> bool {
+    w == "opendaisugi.warden" || w == "opendaisugi.warden_client"
 }
 
 fn env_value_opt(w: &str) -> bool {
@@ -227,7 +227,7 @@ fn skip_env(mut words: &[String]) -> &[String] {
     words
 }
 
-/// `python* [flags] -m MODULE ARGS`: the words after a gate MODULE.
+/// `python* [flags] -m MODULE ARGS`: the words after a warden MODULE.
 fn python_module_args(words: &[String]) -> Option<Vec<String>> {
     let mut i = 1;
     while i < words.len() {
@@ -266,7 +266,7 @@ fn python_module_args(words: &[String]) -> Option<Vec<String>> {
             return None;
         }
         if let Some(m) = module {
-            if is_gate_module(&m) {
+            if is_warden_module(&m) {
                 return Some(words[i + 1..].to_vec());
             }
             return None;
@@ -283,21 +283,21 @@ fn is_shell(b: &str) -> bool {
 /// The flags the installer writes into every hook.
 const INSTALLED_FLAGS: [&str; 4] = ["--mode", "--root", "--format", "--verify-timeout"];
 
-/// `[NAME=val ...] PROGRAM gate check ARGS`: the ARGS when the program is
+/// `[NAME=val ...] PROGRAM warden check ARGS`: the ARGS when the program is
 /// named daisugi, or when the installer wrote the command (the marker is
 /// among the leading NAME=val words and ARGS hold each flag the installer
 /// always writes). A binary may be installed under any file name, so the
 /// name alone does not decide.
-fn binary_gate_args(seg: &[String]) -> Option<&[String]> {
+fn binary_warden_args(seg: &[String]) -> Option<&[String]> {
     let words = skip_env(seg);
-    if words.len() < 3 || words[1] != "gate" || words[2] != "check" {
+    if words.len() < 3 || words[1] != "warden" || words[2] != "check" {
         return None;
     }
     let args = &words[3..];
     if path_base(&words[0]) == "daisugi" {
         return Some(args);
     }
-    if !seg[..seg.len() - words.len()].iter().any(|w| w == GATE_HOOK_MARKER) {
+    if !seg[..seg.len() - words.len()].iter().any(|w| w == WARDEN_HOOK_MARKER) {
         return None;
     }
     let has = |flag: &str| args.iter().any(|w| w == flag || w.starts_with(&format!("{flag}=")));
@@ -308,8 +308,8 @@ fn binary_gate_args(seg: &[String]) -> Option<&[String]> {
     }
 }
 
-fn segment_gate_args(seg: &[String], depth: usize) -> (&'static str, Option<Vec<String>>) {
-    let binary = binary_gate_args(seg);
+fn segment_warden_args(seg: &[String], depth: usize) -> (&'static str, Option<Vec<String>>) {
+    let binary = binary_warden_args(seg);
     let mut words = skip_env(seg);
     if words.len() >= 2 && path_base(&words[0]) == "uv" && words[1] == "run" {
         words = &words[2..];
@@ -328,12 +328,12 @@ fn segment_gate_args(seg: &[String], depth: usize) -> (&'static str, Option<Vec<
     }
     if !words.is_empty() && re(1).is_match(path_base(&words[0])) {
         if let Some(args) = python_module_args(words) {
-            return (KIND_GATE, Some(args));
+            return (KIND_WARDEN, Some(args));
         }
-    } else if words.len() >= 3 && path_base(&words[0]) == "daisugi" && words[1] == "gate" && words[2] == "check" {
-        return (KIND_GATE, Some(words[3..].to_vec()));
+    } else if words.len() >= 3 && path_base(&words[0]) == "daisugi" && words[1] == "warden" && words[2] == "check" {
+        return (KIND_WARDEN, Some(words[3..].to_vec()));
     } else if let Some(args) = binary {
-        return (KIND_GATE, Some(args.to_vec()));
+        return (KIND_WARDEN, Some(args.to_vec()));
     } else if !words.is_empty() && is_shell(path_base(&words[0])) && depth < MAX_SHELL_DEPTH {
         for i in 1..words.len() {
             let w = &words[i];
@@ -341,23 +341,23 @@ fn segment_gate_args(seg: &[String], depth: usize) -> (&'static str, Option<Vec<
                 break;
             }
             if w[1..].contains('c') && i + 1 < words.len() {
-                return gate_hook(&words[i + 1], depth + 1);
+                return warden_hook(&words[i + 1], depth + 1);
             }
         }
     }
     for w in words {
-        if is_gate_module(w) || re(2).is_match(w) {
+        if is_warden_module(w) || re(2).is_match(w) {
             return (KIND_UNKNOWN, None);
         }
     }
     (KIND_NONE, None)
 }
 
-fn gate_hook(command: &str, depth: usize) -> (&'static str, Option<Vec<String>>) {
+fn warden_hook(command: &str, depth: usize) -> (&'static str, Option<Vec<String>>) {
     let tokens = match command_tokens(command) {
         Some(t) => t,
         None => {
-            if command.contains("opendaisugi.gate") {
+            if command.contains("opendaisugi.warden") {
                 return (KIND_UNKNOWN, None);
             }
             return (KIND_NONE, None);
@@ -365,8 +365,8 @@ fn gate_hook(command: &str, depth: usize) -> (&'static str, Option<Vec<String>>)
     };
     let mut unknown = false;
     for seg in segments(&tokens) {
-        let (kind, args) = segment_gate_args(&seg, depth);
-        if kind == KIND_GATE {
+        let (kind, args) = segment_warden_args(&seg, depth);
+        if kind == KIND_WARDEN {
             return (kind, Some(args.unwrap_or_default()));
         }
         unknown = unknown || kind == KIND_UNKNOWN;
@@ -378,48 +378,48 @@ fn gate_hook(command: &str, depth: usize) -> (&'static str, Option<Vec<String>>)
     }
 }
 
-/// `config.gate_hook_kind`.
-/// `config.gate_hook_program`: the program of a gate hook in the
-/// `daisugi gate check` form (the form the Go and Rust installs write,
+/// `config.warden_hook_kind`.
+/// `config.warden_hook_program`: the program of a warden hook in the
+/// `daisugi warden check` form (the form the Go and Rust installs write,
 /// under any file name), or "" for any other command.
-pub fn gate_hook_program(command: &Value) -> String {
+pub fn warden_hook_program(command: &Value) -> String {
     let Value::Str(s) = command else { return String::new() };
     let Some(tokens) = command_tokens(s) else { return String::new() };
     for seg in segments(&tokens) {
-        if binary_gate_args(&seg).is_some() {
+        if binary_warden_args(&seg).is_some() {
             return skip_env(&seg)[0].clone();
         }
     }
     String::new()
 }
 
-pub fn gate_hook_kind(command: &Value) -> &'static str {
+pub fn warden_hook_kind(command: &Value) -> &'static str {
     match command {
-        Value::Str(s) => gate_hook(s, 0).0,
+        Value::Str(s) => warden_hook(s, 0).0,
         _ => KIND_NONE,
     }
 }
 
-/// `config.gate_hook_args`: the words after the gate entry point, when
-/// command is a gate hook in a form read.
-pub fn gate_hook_args(command: &Value) -> Option<Vec<String>> {
+/// `config.warden_hook_args`: the words after the warden entry point, when
+/// command is a warden hook in a form read.
+pub fn warden_hook_args(command: &Value) -> Option<Vec<String>> {
     match command {
-        Value::Str(s) => match gate_hook(s, 0) {
-            (KIND_GATE, args) => Some(args.unwrap_or_default()),
+        Value::Str(s) => match warden_hook(s, 0) {
+            (KIND_WARDEN, args) => Some(args.unwrap_or_default()),
             _ => None,
         },
         _ => None,
     }
 }
 
-/// Whether command is a gate hook in a form read.
-pub fn is_gate_hook(command: &Value) -> bool {
-    gate_hook_args(command).is_some()
+/// Whether command is a warden hook in a form read.
+pub fn is_warden_hook(command: &Value) -> bool {
+    warden_hook_args(command).is_some()
 }
 
-/// `config.gate_hook_mode`: the last --mode a gate hook passes, or "".
-pub fn gate_hook_mode(command: &Value) -> String {
-    let mode = gate_hook_mode_word(command);
+/// `config.warden_hook_mode`: the last --mode a warden hook passes, or "".
+pub fn warden_hook_mode(command: &Value) -> String {
+    let mode = warden_hook_mode_word(command);
     if mode == "audit" || mode == "enforce" {
         mode
     } else {
@@ -427,10 +427,10 @@ pub fn gate_hook_mode(command: &Value) -> String {
     }
 }
 
-/// `config._gate_hook_mode_word`: the last --mode word a gate hook
+/// `config._warden_hook_mode_word`: the last --mode word a warden hook
 /// passes, valid or not.
-fn gate_hook_mode_word(command: &Value) -> String {
-    let args = gate_hook_args(command).unwrap_or_default();
+fn warden_hook_mode_word(command: &Value) -> String {
+    let args = warden_hook_args(command).unwrap_or_default();
     let mut mode = String::new();
     for (i, w) in args.iter().enumerate() {
         if w == "--mode" && i + 1 < args.len() {
@@ -442,11 +442,62 @@ fn gate_hook_mode_word(command: &Value) -> String {
     mode
 }
 
-/// `config.is_stale_mode_hook`: a gate hook that passes --mode shadow,
-/// the old name of audit mode. The gate refuses that word, so the hook
+/// `config.is_stale_mode_hook`: a warden hook that passes --mode shadow,
+/// the old name of audit mode. The warden refuses that word, so the hook
 /// denies every call.
 pub fn is_stale_mode_hook(command: &Value) -> bool {
-    gate_hook_mode_word(command) == "shadow"
+    warden_hook_mode_word(command) == "shadow"
+}
+
+/// The names a daisugi entry point goes by: an exact set. A user's own
+/// wrapper such as daisugi-local is not ours.
+fn is_entry_name(b: &str) -> bool {
+    matches!(b, "daisugi" | "daisugi-py" | "daisugi-go" | "daisugi-rs")
+}
+
+/// `config.is_entry_name` on a bare name or a path.
+pub fn is_entry_path(s: &str) -> bool {
+    is_entry_name(path_base(s))
+}
+
+/// `config.record_hook_programs`: the program word of each `daisugi hook
+/// record` segment of a command, after any NAME=val and env prefix.
+pub fn record_hook_programs(command: &Value) -> Vec<String> {
+    let Value::Str(s) = command else { return vec![] };
+    let Some(tokens) = command_tokens(s) else { return vec![] };
+    let mut out = vec![];
+    for seg in segments(&tokens) {
+        let words = skip_env(&seg);
+        if words.len() >= 3 && is_entry_name(path_base(&words[0])) && words[1] == "hook" && words[2] == "record" {
+            out.push(words[0].clone());
+        }
+    }
+    out
+}
+
+/// `install._hook_command_programs`: the program of each record hook segment,
+/// else the first program of a warden hook, else none.
+pub fn hook_command_programs(command: &Value) -> Vec<String> {
+    let found = record_hook_programs(command);
+    if !found.is_empty() {
+        return found;
+    }
+    if !is_warden_hook(command) {
+        return vec![];
+    }
+    let Value::Str(s) = command else { return vec![] };
+    let Some(tokens) = command_tokens(s) else { return vec![] };
+    let segs = segments(&tokens);
+    match segs.first().map(|seg| skip_env(seg)) {
+        Some(words) if !words.is_empty() => vec![words[0].clone()],
+        _ => vec![],
+    }
+}
+
+/// `install._is_entry_word`: a word whose last path part is one of those
+/// names.
+pub fn is_entry_word(v: &Value) -> bool {
+    matches!(v, Value::Str(s) if is_entry_name(path_base(s)))
 }
 
 /// `config.is_record_hook`: a `daisugi hook record` simple command; with
@@ -462,7 +513,7 @@ pub fn is_record_hook(command: &Value, event: &str) -> bool {
     };
     for seg in segments(&tokens) {
         let words = skip_env(&seg);
-        if words.len() < 3 || path_base(&words[0]) != "daisugi" || words[1] != "hook" || words[2] != "record" {
+        if words.len() < 3 || !is_entry_name(path_base(&words[0])) || words[1] != "hook" || words[2] != "record" {
             continue;
         }
         if event.is_empty() {
@@ -481,21 +532,21 @@ pub fn is_record_hook(command: &Value, event: &str) -> bool {
 mod tests {
     use super::*;
 
-    // The same rows as RENAMED in tests/test_gate_hook_words.py: a binary
+    // The same rows as RENAMED in tests/test_warden_hook_words.py: a binary
     // installed under another file name writes a hook the reader knows by
     // its shape, not by the program's name.
     const RENAMED: [(&str, &str, &str); 11] = [
-        ("uv run --project /p daisugi gate check --mode enforce", KIND_GATE, "enforce"),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate /opt/x/rs-daisugi gate check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2", KIND_GATE, "enforce"),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate '/opt/my tools/dsg' gate check --mode audit --root /x --format codex --verify-timeout 10.0 --session s1", KIND_GATE, "audit"),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate FOO=1 /opt/x/go-daisugi gate check --mode enforce --root /x --format claude --verify-timeout 5.0", KIND_GATE, "enforce"),
-        ("/opt/x/rs-daisugi gate check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate /opt/x/rs-daisugi gate check --mode enforce", KIND_NONE, ""),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate /opt/x/rs-daisugi gate check --mode enforce --root /x --format claude", KIND_NONE, ""),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate /opt/x/rs-daisugi gate status --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
-        ("/opt/x/rs-daisugi DAISUGI_GATE_HOOK=opendaisugi.gate gate check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
-        ("DAISUGI_GATE_HOOK=other /opt/x/rs-daisugi gate check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
-        ("DAISUGI_GATE_HOOK=opendaisugi.gate /bin/true gate check --mode enforce", KIND_NONE, ""),
+        ("uv run --project /p daisugi warden check --mode enforce", KIND_WARDEN, "enforce"),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/x/rs-daisugi warden check --mode enforce --root /x --format claude --verify-timeout 10.0 || exit 2", KIND_WARDEN, "enforce"),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden '/opt/my tools/dsg' warden check --mode audit --root /x --format codex --verify-timeout 10.0 --session s1", KIND_WARDEN, "audit"),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden FOO=1 /opt/x/go-daisugi warden check --mode enforce --root /x --format claude --verify-timeout 5.0", KIND_WARDEN, "enforce"),
+        ("/opt/x/rs-daisugi warden check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/x/rs-daisugi warden check --mode enforce", KIND_NONE, ""),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/x/rs-daisugi warden check --mode enforce --root /x --format claude", KIND_NONE, ""),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden /opt/x/rs-daisugi warden status --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
+        ("/opt/x/rs-daisugi DAISUGI_WARDEN_HOOK=opendaisugi.warden warden check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
+        ("DAISUGI_WARDEN_HOOK=other /opt/x/rs-daisugi warden check --mode enforce --root /x --format claude --verify-timeout 10.0", KIND_NONE, ""),
+        ("DAISUGI_WARDEN_HOOK=opendaisugi.warden /bin/true warden check --mode enforce", KIND_NONE, ""),
     ];
 
     fn mode_of(args: &[String]) -> String {
@@ -511,14 +562,14 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_binary_hook_is_the_gate() {
+    fn a_renamed_binary_hook_is_the_warden() {
         for (cmd, kind, mode) in RENAMED {
             let v = Value::Str(cmd.to_string());
-            assert_eq!(gate_hook_kind(&v), kind, "{cmd}");
-            let got = gate_hook_args(&v).map(|a| mode_of(&a)).unwrap_or_default();
+            assert_eq!(warden_hook_kind(&v), kind, "{cmd}");
+            let got = warden_hook_args(&v).map(|a| mode_of(&a)).unwrap_or_default();
             assert_eq!(got, mode, "{cmd}");
         }
-        assert_eq!(gate_hook_program(&Value::Str(RENAMED[1].0.to_string())), "/opt/x/rs-daisugi");
-        assert_eq!(gate_hook_program(&Value::Str("/opt/x/rs-daisugi gate check --mode enforce".into())), "");
+        assert_eq!(warden_hook_program(&Value::Str(RENAMED[1].0.to_string())), "/opt/x/rs-daisugi");
+        assert_eq!(warden_hook_program(&Value::Str("/opt/x/rs-daisugi warden check --mode enforce".into())), "");
     }
 }

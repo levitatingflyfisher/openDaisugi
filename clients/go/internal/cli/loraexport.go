@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // loraExport is `daisugi lora export OUTPUT`: (task → envelope JSON) pairs
@@ -65,7 +65,7 @@ func (e *Env) loraExport(args []string) error {
 		return err
 	}
 	defer j.Close()
-	out := gateroot.PathStr(p.args[0])
+	out := wardenroot.PathStr(p.args[0])
 	// emit_jsonl makes the parent first, then lists the traces.
 	if err := os.MkdirAll(filepath.Dir(out), 0o777); err != nil {
 		return e.failPy(cmd, err)
@@ -120,7 +120,7 @@ func (e *Env) loraExport(args []string) error {
 		b.WriteString(pyjson.Dumps(payload, true) + "\n")
 		written++
 	}
-	if _, err := gateroot.WriteFile(out, b.String()); err != nil {
+	if _, err := wardenroot.WriteFile(out, b.String()); err != nil {
 		return e.failPy(cmd, err)
 	}
 	stats := pyjson.NewObject().Set("total", len(rows)).Set("written", written).

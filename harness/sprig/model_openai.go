@@ -17,7 +17,7 @@ const DefaultOpenAIBase = "https://api.openai.com/v1"
 
 // OpenAIModel drives a model over the OpenAI chat-completions wire, with
 // native function calling. Many servers speak it: OpenAI, Ollama,
-// llama.cpp, vLLM, and gateways in front of other providers. The gate is
+// llama.cpp, vLLM, and routers in front of other providers. The warden is
 // unchanged: every returned call still goes through the executor.
 type OpenAIModel struct {
 	APIKey    string // empty sends no Authorization header
@@ -224,7 +224,7 @@ func jsonInt(v any) (int, bool) {
 }
 
 // openaiUsage maps the wire's usage onto sprig's four counts, as the
-// gateway does: prompt_tokens holds the cached tokens, so fresh input is
+// router does: prompt_tokens holds the cached tokens, so fresh input is
 // the difference; cache writes are not reported, so they are zero.
 func openaiUsage(u any) Usage {
 	var out Usage

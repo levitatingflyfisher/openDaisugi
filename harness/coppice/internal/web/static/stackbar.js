@@ -1,13 +1,14 @@
 // The stack bar: what each agent runs, as one bar on its window header.
-// Its segments run loop, daisugi and its mode, router, model. Colour is
+// Its segments run loop, daisugi and its mode, route, model. Colour is
 // health only: ok, warn, bad, or off for off and not known. The words are
 // the choice. A field the server does not know shows as not known, never
 // as a guess. The same file reads the floor facts for the header row.
 // Nothing here but the two mount functions touches the page.
 
 import { MESSAGES } from './messages.js';
+import { changed } from './reconcile.js';
 
-export const SEGMENTS = ['loop', 'daisugi', 'router', 'model'];
+export const SEGMENTS = ['loop', 'daisugi', 'route', 'model'];
 
 // SWAP_NOTE is what a segment's details say while no verb swaps it.
 export const SWAP_NOTE = 'Swap is not built yet.';
@@ -17,48 +18,48 @@ export const MODE_OFF_NOTE = MESSAGES.modeOff().text;
 
 // modeAsk is the one question before an agent goes from enforcing to
 // watching.
-export const modeAsk = (label) => 'Watch only? The gate will log the calls of ' + label + ' and stop none. While it watches, it can also change the gate for other agents.';
+export const modeAsk = (label) => 'Watch only? The warden will log the calls of ' + label + ' and stop none. While it watches, it can also change the warden for other agents.';
 
-// modeDone is the status line after agent.set_mode. The gate reads the
+// modeDone is the status line after agent.set_mode. The warden reads the
 // marker on the agent's next tool call, so it says when. Enforce takes the
-// marker away, and the agent goes back to whatever mode the gate itself
+// marker away, and the agent goes back to whatever mode the warden itself
 // runs in, which may be watching too, so it never says enforces
 // (F11-R-14).
 export function modeDone(label, mode) {
   return mode === 'watching'
-    ? label + ' watches from its next tool call. The gate logs its calls and stops none.'
-    : label + " goes back to the gate's own mode from its next tool call.";
+    ? label + ' watches from its next tool call. The warden logs its calls and stops none.'
+    : label + " goes back to the warden's own mode from its next tool call.";
 }
 
-// hookRootLine is the mode row's one line when the installed gate hook
-// names another gate root than coppice's (F11-R-15).
+// hookRootLine is the mode row's one line when the installed warden hook
+// names another warden root than coppice's (F11-R-15).
 export const hookRootLine = (root) =>
-  'The gate hook reads another gate root, ' + root + ', so a mode set here does nothing.';
+  'The warden hook reads another warden root, ' + root + ', so a mode set here does nothing.';
 
-// gateWatches is the mode row's one line when the whole gate watches: the
+// wardenWatches is the mode row's one line when the whole warden watches: the
 // hook runs in audit, so no agent can be lowered and the row offers no
 // button (F11-R-14).
-export const gateWatches = (label) =>
-  'The gate itself watches every call of ' + label + ': its hook runs in audit, so there is nothing to lower here.';
+export const wardenWatches = (label) =>
+  'The warden itself watches every call of ' + label + ': its hook runs in audit, so there is nothing to lower here.';
 
 // modeChoice is the mode row's one button for a pane row: the mode it sets
 // (next), its words, and the question it asks first ('' for none). The
-// marker the owner set wins over the mode the gate last reported, since
-// the gate reads it on the next call. An agent that watches with no marker
-// watches because the whole gate does, so the row has a line and no
-// button (next null). null when there is nothing to set: no gate hook
+// marker the owner set wins over the mode the warden last reported, since
+// the warden reads it on the next call. An agent that watches with no marker
+// watches because the whole warden does, so the row has a line and no
+// button (next null). null when there is nothing to set: no warden hook
 // reports for the agent, or the agent ended.
 export function modeChoice(row, facts) {
   const st = row && row.stack;
   const d = st && st.daisugi && typeof st.daisugi === 'object' ? st.daisugi : null;
   if (!d || !str(d.mode) || d.mode === 'off' || row.closed === true || row.state === 'done') return null;
   const label = str(row.label) || str(row.id) || 'this agent';
-  // The installed hook reads markers from another gate root, so a mode
+  // The installed hook reads markers from another warden root, so a mode
   // set here does nothing (F11-R-15).
   const hookRoot = facts && facts.daisugi && str(facts.daisugi.hook_root);
   if (hookRoot) return { next: null, line: hookRootLine(hookRoot) };
   if (d.marker === 'watching') return { next: 'enforcing', label: 'Enforce', ask: '' };
-  if (d.mode === 'watching') return { next: null, line: gateWatches(label) };
+  if (d.mode === 'watching') return { next: null, line: wardenWatches(label) };
   return { next: 'watching', label: 'Watch only', ask: modeAsk(label) };
 }
 
@@ -67,11 +68,11 @@ export function modeChoice(row, facts) {
 // takes a typed name, since sprig runs on any provider's model.
 export const MODELS = { claude: ['opus', 'sonnet', 'haiku'] };
 
-// ROUTER_NOTE is what the router details say under the swap row.
-export const ROUTER_NOTE = 'A router change restarts the agent and resumes its conversation.';
+// ROUTE_NOTE is what the route details say under the swap row.
+export const ROUTE_NOTE = 'A route change restarts the agent and resumes its conversation.';
 
-// routerAsk is the one question before a router swap.
-export const routerAsk = (label) => 'Restarts ' + label + ' and resumes its conversation. A turn in progress ends.';
+// routeAsk is the one question before a route swap.
+export const routeAsk = (label) => 'Restarts ' + label + ' and resumes its conversation. A turn in progress ends.';
 
 // modelDone is the status line after agent.set_model, from the reply's
 // when: now, queued or next turn.
@@ -81,11 +82,11 @@ export function modelDone(label, model, when) {
   return 'Asked ' + label + ' to switch to ' + model + '.';
 }
 
-// routerDone is the status line after agent.set_router. The agent comes
+// routeDone is the status line after agent.set_route. The agent comes
 // back as a new window that enforces, since its old mode marker went with
 // the old pane.
-export const routerDone = (label, router) =>
-  label + ' restarted and resumed ' + (router === 'direct' ? 'direct' : 'through the gateway') + '. It enforces again.';
+export const routeDone = (label, route) =>
+  label + ' restarted and resumed ' + (route === 'direct' ? 'direct' : 'through the router') + '. It enforces again.';
 
 // LOOPS is the harness names the loop row offers, the ones the new-agent
 // bar opens by name. The server refuses one that coppice.toml has no table
@@ -145,28 +146,28 @@ export function modelSwap(row) {
   return null;
 }
 
-// routerSwap is the router row for a pane row: the routes it may take
+// routeSwap is the route row for a pane row: the routes it may take
 // instead of its own, and the question asked first. Direct needs no
-// gateway. The gateway is offered only where the floor knows one.
-// Switchyard is a setting of the gateway, so it is not a choice here.
+// router. The router is offered only where the floor knows one.
+// Switchyard is a setting of the router, so it is not a choice here.
 // null where no swap is built: an ended agent, and every harness but claude.
-export function routerSwap(row, facts) {
+export function routeSwap(row, facts) {
   if (!row || row.closed === true || row.state === 'done') return null;
   if ((str(row.harness) || str(row.stack && row.stack.loop)) !== 'claude') return null;
   const label = str(row.label) || str(row.id) || 'this agent';
-  const cur = str(row.stack && row.stack.router);
-  const gw = facts && facts.gateway && str(facts.gateway.url);
+  const cur = str(row.stack && row.stack.route);
+  const gw = facts && facts.router && str(facts.router.url);
   const choices = [];
   if (cur !== 'direct') choices.push({ next: 'direct', label: 'Direct' });
-  if (gw && cur !== 'gateway' && cur !== 'switchyard') {
-    // A gateway the facts say is silent is shown but greyed out: the server
+  if (gw && cur !== 'router' && cur !== 'switchyard') {
+    // A router the facts say is silent is shown but greyed out: the server
     // refuses the swap before it stops the agent.
-    const down = gatewayDown(facts);
+    const down = routerDown(facts);
     choices.push(down
-      ? { next: 'gateway', label: 'Through the gateway', disabled: true, why: 'The gateway does not answer.' }
-      : { next: 'gateway', label: 'Through the gateway' });
+      ? { next: 'router', label: 'Through the router', disabled: true, why: 'The router does not answer.' }
+      : { next: 'router', label: 'Through the router' });
   }
-  return choices.length ? { kind: 'router', choices, ask: routerAsk(label) } : null;
+  return choices.length ? { kind: 'route', choices, ask: routeAsk(label) } : null;
 }
 
 // GLYPH marks a verdict. An ask has its own glyph, apart from the ? of a
@@ -194,13 +195,13 @@ export function ago(sec) {
   return Math.floor(s / 3600) + ' h ago';
 }
 
-// gatewayDown is true when the floor facts say the gateway does not answer.
-const gatewayDown = (facts) => Boolean(facts && facts.gateway && facts.gateway.answers === false);
+// routerDown is true when the floor facts say the router does not answer.
+const routerDown = (facts) => Boolean(facts && facts.router && facts.router.answers === false);
 
 // segments is the bar for one pane row: one entry per segment with its
 // key, word, health and why. A row with no stack draws no bar. The daisugi
 // step's place names it, so its word is the mode alone. A deny is a
-// verdict, not the gate's health, so it does not colour the step.
+// verdict, not the warden's health, so it does not colour the step.
 export function segments(row, facts) {
   const st = row && row.stack;
   if (!st || typeof st !== 'object') return [];
@@ -215,45 +216,45 @@ export function segments(row, facts) {
   const mode = d ? str(d.mode) : '';
   let daisugi;
   if (!mode) {
-    daisugi = { key: 'daisugi', word: 'mode ?', health: 'off', why: 'The gate mode is not known.' };
+    daisugi = { key: 'daisugi', word: 'mode ?', health: 'off', why: 'The warden mode is not known.' };
   } else {
     const disarmed = d.armed === false;
-    daisugi = { key: 'daisugi', word: mode + (disarmed ? ' · disarmed' : ''), health: 'ok', why: 'The gate checks each call.' };
+    daisugi = { key: 'daisugi', word: mode + (disarmed ? ' · disarmed' : ''), health: 'ok', why: 'The warden checks each call.' };
     if (mode === 'off') {
       daisugi.health = 'off';
-      daisugi.why = 'No gate hook reports for this agent.';
+      daisugi.why = 'No warden hook reports for this agent.';
     } else if (disarmed) {
       daisugi.health = 'warn';
-      daisugi.why = 'The gate is disarmed, so it checks nothing.';
+      daisugi.why = 'The warden is disarmed, so it checks nothing.';
     } else if (loopWord === 'codex') {
       daisugi.health = 'warn';
-      daisugi.why = 'Codex hooks fail open, so this gate is soft.';
+      daisugi.why = 'Codex hooks fail open, so this warden is soft.';
     }
   }
-  const route = str(st.router);
-  const router = { key: 'router', word: route || 'router ?', health: route ? 'ok' : 'off', why: route ? 'Calls go this way.' : 'No base URL is set, so the route is not known.' };
-  if ((route === 'gateway' || route === 'switchyard') && gatewayDown(facts)) {
-    router.health = 'bad';
-    router.why = 'The gateway does not answer.';
+  const route = str(st.route);
+  const routeSeg = { key: 'route', word: route || 'route ?', health: route ? 'ok' : 'off', why: route ? 'Calls go this way.' : 'No base URL is set, so the route is not known.' };
+  if ((route === 'router' || route === 'switchyard') && routerDown(facts)) {
+    routeSeg.health = 'bad';
+    routeSeg.why = 'The router does not answer.';
   }
   const modelWord = str(st.model);
   const model = { key: 'model', word: modelWord || 'model ?', health: modelWord ? 'ok' : 'off', why: modelWord ? 'The model the agent last used.' : 'No model reported yet.' };
-  return [loop, daisugi, router, model];
+  return [loop, daisugi, routeSeg, model];
 }
 
-// gateMark is the last verdict as a mark: its glyph, decision and a tip
+// wardenMark is the last verdict as a mark: its glyph, decision and a tip
 // with the tool and clause. null when there is no verdict.
-export function gateMark(gate) {
-  if (!gate || !GLYPH[gate.decision]) return null;
-  const tool = str(gate.tool);
-  const clause = str(gate.clause);
-  const tip = 'Last gate verdict: ' + gate.decision + (tool ? ' ' + tool : '') + (clause ? '. Clause: ' + clause : '');
-  return { glyph: GLYPH[gate.decision], decision: gate.decision, tip };
+export function wardenMark(warden) {
+  if (!warden || !GLYPH[warden.decision]) return null;
+  const tool = str(warden.tool);
+  const clause = str(warden.clause);
+  const tip = 'Last warden verdict: ' + warden.decision + (tool ? ' ' + tool : '') + (clause ? '. Clause: ' + clause : '');
+  return { glyph: GLYPH[warden.decision], decision: warden.decision, tip };
 }
 
 // light is the segment where the current turn is: the loop while the
 // agent works, daisugi while an ask waits for the owner, or '' when
-// neither. A held ask is the foreman's, so the loop keeps the light.
+// neither. A held ask is the steward's, so the loop keeps the light.
 export function light(row) {
   if (!row || !row.stack) return '';
   if (row.state === 'blocked' && row.ask && !row.held) return 'daisugi';
@@ -274,7 +275,7 @@ export function details(key, row, facts, now) {
     const lines = [['mode', d && str(d.mode) ? d.mode : 'not known']];
     if (d && d.marker === 'watching') lines.push(['next call', 'watching']);
     if (d && typeof d.armed === 'boolean') lines.push(['armed', d.armed ? 'yes' : 'no']);
-    const g = row && row.gate;
+    const g = row && row.warden;
     if (g && GLYPH[g.decision]) {
       lines.push(['last verdict', g.decision + (str(g.tool) ? ' ' + g.tool : '')]);
       lines.push(['clause', str(g.clause) || 'none']);
@@ -282,19 +283,19 @@ export function details(key, row, facts, now) {
     } else {
       lines.push(['last verdict', 'none yet']);
     }
-    // An agent no gate hook reports for gets the command that installs one.
-    const note = d && d.mode === 'off' ? MESSAGES.gateOff().text : MODE_OFF_NOTE;
+    // An agent no warden hook reports for gets the command that installs one.
+    const note = d && d.mode === 'off' ? MESSAGES.wardenOff().text : MODE_OFF_NOTE;
     return { title: 'daisugi', lines, note, mode: modeChoice(row, facts) };
   }
-  if (key === 'router') {
-    const lines = [['route', str(st.router) || 'not known']];
-    const gw = facts && facts.gateway;
+  if (key === 'route') {
+    const lines = [['route', str(st.route) || 'not known']];
+    const gw = facts && facts.router;
     if (gw && str(gw.url)) {
-      lines.push(['gateway', gw.url]);
+      lines.push(['router', gw.url]);
       lines.push(['answers', gw.answers === true ? 'yes' : gw.answers === false ? 'no' : 'not known']);
     }
-    const swap = routerSwap(row, facts);
-    return { title: 'Router', lines, note: swap ? ROUTER_NOTE : SWAP_NOTE, swap };
+    const swap = routeSwap(row, facts);
+    return { title: 'Route', lines, note: swap ? ROUTE_NOTE : SWAP_NOTE, swap };
   }
   const t = row && row.tokens;
   const lines = [['model', str(st.model) || 'not reported yet']];
@@ -313,8 +314,8 @@ const sum = (t) => (t && typeof t === 'object'
 const count = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
 
 // liveCounts counts working and needs-you over a live pane list the way
-// the rail does: a blocked pane whose ask a foreman holds is working, and
-// only a blocked pane no foreman holds needs you.
+// the rail does: a blocked pane whose ask a steward holds is working, and
+// only a blocked pane no steward holds needs you.
 export function liveCounts(rows) {
   let working = 0;
   let needing = 0;
@@ -347,11 +348,11 @@ export function factsItems(facts, rows) {
     health,
     title: 'Agents by mode: enforcing ' + n.enforcing + ', watching ' + n.watching + ', off ' + n.off,
   }];
-  // No harness has a gate hook and no agent is guarded: say how to turn
-  // the gate on, with a button that types the command in a shell.
+  // No harness has a warden hook and no agent is guarded: say how to turn
+  // the warden on, with a button that types the command in a shell.
   if (d.installed === false && guarded === 0) {
-    const hint = MESSAGES.gateNotInstalled();
-    items.push({ key: 'gate-hint', text: hint.text, health: 'warn', title: hint.text, action: hint.actions[0] });
+    const hint = MESSAGES.wardenNotInstalled();
+    items.push({ key: 'warden-hint', text: hint.text, health: 'warn', title: hint.text, action: hint.actions[0] });
   }
   // The phone's tailscale certificate is close to its end: warn, with
   // Renew. The server names it only under 7 days left.
@@ -359,11 +360,11 @@ export function factsItems(facts, rows) {
     const m = MESSAGES.phoneCert(facts.phone_cert_days);
     items.push({ key: 'phone-cert', text: m.text, health: facts.phone_cert_days < 0 ? 'bad' : 'warn', title: m.text, action: m.actions[0] });
   }
-  const gw = facts.gateway;
-  if (!gw || !str(gw.url)) items.push({ key: 'gateway', text: 'no gateway', health: 'off', title: 'No gateway is set in coppice.toml.' });
-  else if (gw.answers === true) items.push({ key: 'gateway', text: 'gateway answers', health: 'ok', title: gw.url });
-  else if (gw.answers === false) items.push({ key: 'gateway', text: 'gateway silent', health: 'bad', title: gw.url + ' does not answer.' });
-  else items.push({ key: 'gateway', text: 'gateway ?', health: 'off', title: gw.url + ' is not on this computer, so it is not checked.' });
+  const gw = facts.router;
+  if (!gw || !str(gw.url)) items.push({ key: 'router', text: 'no router', health: 'off', title: 'No router is set in coppice.toml.' });
+  else if (gw.answers === true) items.push({ key: 'router', text: 'router answers', health: 'ok', title: gw.url });
+  else if (gw.answers === false) items.push({ key: 'router', text: 'router silent', health: 'bad', title: gw.url + ' does not answer.' });
+  else items.push({ key: 'router', text: 'router ?', health: 'off', title: gw.url + ' is not on this computer, so it is not checked.' });
   const own = Array.isArray(rows) ? liveCounts(rows) : null;
   const working = own ? own.working : count(facts.working);
   items.push({ key: 'working', text: working + ' working', health: working > 0 ? 'ok' : 'off', title: 'Agents working now' });
@@ -375,13 +376,13 @@ export function factsItems(facts, rows) {
     key: 'tokens', text: 'tokens today ' + fmtTokens(sum(t)), health: 'plain',
     title: 'fresh in ' + part('fresh') + ', cache read ' + part('cache_read') + ', cache write ' + part('cache_write') + ', out ' + part('out'),
   });
-  // A saving comes from the gateway's own figure. With none, or one that is
+  // A saving comes from the router's own figure. With none, or one that is
   // not a count, the header names no saving.
   const sv = facts.saved_today;
   if (sv && typeof sv === 'object' && Number.isFinite(sv.tokens) && sv.tokens >= 0) {
     items.push({
       key: 'saved', text: 'saved ' + fmtTokens(sv.tokens), health: 'plain',
-      title: 'The gateway reports ' + sv.tokens + ' frontier tokens saved today.',
+      title: 'The router reports ' + sv.tokens + ' frontier tokens saved today.',
     });
   }
   return items;
@@ -420,11 +421,11 @@ export function stackBarEl(segs, { open, lit, onSeg }) {
   return bar;
 }
 
-// gateMarkEls is the last verdict's mark and its tip, which names the tool
+// wardenMarkEls is the last verdict's mark and its tip, which names the tool
 // and clause. The tip shows on hover as a title, and beside the mark while
 // the mark has the keyboard focus. onClick runs on a click.
-export function gateMarkEls(mark, onClick) {
-  const b = make('button', 'gate gate-' + mark.decision, mark.glyph);
+export function wardenMarkEls(mark, onClick) {
+  const b = make('button', 'warden warden-' + mark.decision, mark.glyph);
   b.type = 'button';
   b.title = mark.tip;
   b.setAttribute('aria-label', mark.tip);
@@ -432,7 +433,7 @@ export function gateMarkEls(mark, onClick) {
     stop(e);
     onClick();
   });
-  return [b, make('span', 'gate-tip', mark.tip)];
+  return [b, make('span', 'warden-tip', mark.tip)];
 }
 
 // detailsBox is an open segment's details: its title, a Journal button on
@@ -503,11 +504,11 @@ function modeRow(choice, { onMode, asking, onAsk }) {
   return row;
 }
 
-// swapRow is the swap row of the model and router details. A claude model
+// swapRow is the swap row of the model and route details. A claude model
 // row is one button for each model, and a sprig one a box for a name and a
-// Set button: onSwap('model', name). A router row has a button for each
+// Set button: onSwap('model', name). A route row has a button for each
 // route. A route asks first, with Resume and Keep: onAsk(next) shows the
-// question and onSwap('router', next) restarts the agent. A loop row has a
+// question and onSwap('route', next) restarts the agent. A loop row has a
 // button for each other harness; it shows the replay cost first, with Move
 // and Keep, and onSwap('loop', next) moves the conversation.
 function swapRow(sw, { onSwap, asking, onAsk, line, onPreview }) {
@@ -564,13 +565,13 @@ function swapRow(sw, { onSwap, asking, onAsk, line, onPreview }) {
   if (chosen) {
     row.append(
       make('p', 'mode-ask', sw.ask),
-      button('deny', 'Resume', () => { ask(''); onSwap('router', chosen.next); }),
+      button('deny', 'Resume', () => { ask(''); onSwap('route', chosen.next); }),
       button('ghost', 'Keep', () => ask('')),
     );
     return row;
   }
   for (const c of sw.choices) {
-    const b = button('ghost router-set', c.label, () => { if (!c.disabled) ask(c.next); });
+    const b = button('ghost route-set', c.label, () => { if (!c.disabled) ask(c.next); });
     if (c.disabled) {
       b.disabled = true;
       b.title = c.why;
@@ -598,13 +599,18 @@ export const FACTS_MS = 5000;
 // is hidden on a phone and on a narrow screen, so the rail carries it
 // there.
 // The phone certificate warning goes there too, for the same reason.
-const HINT_KEYS = ['gate-hint', 'phone-cert'];
+const HINT_KEYS = ['warden-hint', 'phone-cert'];
+
+const hintSlots = new WeakMap();
+const slotOf = (m, k) => { let s = m.get(k); if (!s) { s = {}; m.set(k, s); } return s; };
 
 export function paintHint(hintEl, items, onAction) {
   if (!hintEl) return;
   const its = (items || []).filter((x) => HINT_KEYS.includes(x.key));
-  hintEl.textContent = '';
   hintEl.hidden = its.length === 0;
+  // A hint that reads as it did is not drawn again.
+  if (!changed(slotOf(hintSlots, hintEl), JSON.stringify(its), hintEl)) return;
+  hintEl.textContent = '';
   its.forEach((it, i) => {
     if (i > 0) hintEl.append(' ');
     const words = document.createElement('span');
@@ -629,7 +635,15 @@ export function mountFacts(el, { rpc, connected, got, tick, later, cancel, rows,
     if (timer !== null) (cancel || clearTimeout)(timer);
     timer = null;
   };
+  const slot = {};
   const paint = (items) => {
+    // The same facts are not drawn again: a beat that changed nothing keeps
+    // the items, and a click on one.
+    if (!changed(slot, JSON.stringify(items), el)) {
+      el.hidden = items.length === 0;
+      paintHint(hintEl, items, onAction);
+      return;
+    }
     el.textContent = '';
     for (const it of items) {
       const li = document.createElement('li');

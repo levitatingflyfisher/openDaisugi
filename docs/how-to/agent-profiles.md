@@ -42,6 +42,31 @@ The fields:
 - `key_env`: the name of the variable that holds the key. Leave it out for
   a server that needs no key. A claude-code profile takes no `base_url`
   and no `key_env`.
+- `max_tokens`: the most tokens one `daisugi pando tend` summary call may
+  produce, from 1 to 1000000. Leave it out for 1024. A thinking model spends
+  part of this on its reasoning before it writes the summary line, so raise
+  it for such a model (for example `max_tokens: 4096`). When the model uses
+  all of it on reasoning, the reply has no text and the node falls back to a
+  clipped copy of the source; `tend` counts those and says so. Only
+  `pando` reads this field. A claude-code profile takes no `max_tokens`.
+- `timeout_s`: how many seconds `daisugi pando tend` waits for one summary
+  call, a whole number from 1 to 86400. Leave it out for 120. A slow local
+  model needs more (for example `timeout_s: 300`). The HTTP client waits at
+  least this long, even when `OPENDAISUGI_LLM_TIMEOUT` is lower. Only
+  `pando` reads this field. Every wire takes it, the claude-code wire too.
+
+- `thinking`: how hard a thinking model may think on one `daisugi pando tend`
+  summary call: `off`, `low`, `medium` or `high`. Leave it out to keep the
+  server's own default. A thinking model that thinks at its default effort
+  can take ten times as long for the same summary line. On the openai wire it
+  is sent as `reasoning_effort` (`off` is sent as `"none"`). On the
+  anthropic wire `off` sends nothing, and `low`, `medium` and `high` turn on
+  extended thinking with a budget of 1024, 4096 and 16000 tokens; the budget is
+  added to `max_tokens`, so the summary keeps the tokens you gave it. A bare
+  `off` in the file is fine: YAML reads it as false, and the profile reads
+  false as `off`. A claude-code profile takes no `thinking`. Only `pando`
+  reads this field. It does not replace the library's `thinking_budget`,
+  which the envelope and plan calls use.
 
 `default` is built in: the run's own runtime (`--agent claude|sprig`), with
 no key and no URL. `daisugi config` shows the profile names, never a key
@@ -123,7 +148,7 @@ ledger then charges the node its whole reservation. A `claude -p` child has
 no token cap; its use is charged after it ends. When a node ends, times
 out or writes more than 16 MiB, its starter kills its process group and
 the groups of the running nodes below it, deepest first, and sprig kills
-the groups of its own bash and gate processes when it ends.
+the groups of its own bash and warden processes when it ends.
 
 ## Check it
 
@@ -133,18 +158,18 @@ daisugi weave plan.json -e envelope.yaml --yes --tokens 200000
 ```
 
 Each agentic step runs as a tree in a private directory under `$TMPDIR`
-(`daisugi-agentic-*`, kept after the run): `gate/` holds the envelopes and
+(`daisugi-agentic-*`, kept after the run): `warden/` holds the envelopes and
 the audit log, `tree/` the ledger. `daisugi tree status --data-dir <that
 directory>` shows each node, its profile, its model and its use.
 
 ## The operator's bundle
 
 A starter that is not `daisugi` itself, such as the coppice server when it
-starts a foreman's worker, reads no key variable. It runs `daisugi
+starts a steward's worker, reads no key variable. It runs `daisugi
 agent-profiles bundle --fd 3` with a pipe on descriptor 3, and hands the
 bytes on to `daisugi tree run --keys-fd 3`. The verb reads each `key_env`
 once and writes the resolved table, keys included, to the descriptor; it
 prints nothing on stdout. A profile that is not valid, or whose variable is
 not set, is left out with one line on stderr that names the profile and the
-variable, never the key. An agent cannot run the verb: the gate denies it,
+variable, never the key. An agent cannot run the verb: the warden denies it,
 as it denies `tree run`.

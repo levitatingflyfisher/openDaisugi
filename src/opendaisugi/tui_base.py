@@ -3,8 +3,8 @@ and the ``:`` command line — composed on the SCREEN, not the App.
 
 B1 (adversarial review, 2026-08-27): ``App.query()`` resolves only against the
 App's ``_default`` screen, and a pushed ``Screen`` is opaque to it. Composing the
-header / gate-mode indicator / command line onto the App would (a) hide the
-always-visible gate-mode indicator behind the opaque pushed screen — a *safety*
+header / warden-mode indicator / command line onto the App would (a) hide the
+always-visible warden-mode indicator behind the opaque pushed screen — a *safety*
 failure, not cosmetics — and (b) make every ``app.query("#roster"/"#hdr"/…)``
 return ``NoMatches``. So the chrome lives here, on a base ``Screen`` inherited by
 ``SessionsScreen`` / ``TreeScreen`` / ``WiringScreen``, and every test queries
@@ -22,7 +22,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, Static
 
-_CMD_PLACEHOLDER = "sessions · tree <id> · wiring · gate enforce|audit · floor <backend>"
+_CMD_PLACEHOLDER = "sessions · tree <id> · wiring · warden enforce|audit · floor <backend>"
 _STATUS_DEFAULT = "Tab next view · : command · ? keys · q quit"
 
 
@@ -45,7 +45,7 @@ class CockpitScreen(Screen):
         return iter(())
 
     # --- lifecycle: the header refreshes on first mount AND on every re-show,
-    # so switching to any screen shows the current gate mode. One-time setup
+    # so switching to any screen shows the current warden mode. One-time setup
     # (columns, timers) belongs in a subclass ``on_mount`` that calls
     # ``super().on_mount()``; repeat work in ``on_screen_resume`` that calls
     # ``super().on_screen_resume()``. We never alias the two — a subclass that
@@ -69,13 +69,13 @@ class CockpitScreen(Screen):
         if h.cache_hit_rate is None:
             cache = "cache —"
         else:
-            # S5: a gateway-derived (blended) rate is an estimate and says so;
+            # S5: a router-derived (blended) rate is an estimate and says so;
             # a live per-session rate from this run's own transcripts does not.
             mark = " ?" if h.cache_is_estimate else ""
             cache = f"cache {h.cache_hit_rate:.0%} hit{mark} ({h.cache_source})"
         name = self.name or "sessions"
         hdr.update(
-            f" daisugi · {name:<9} gate: {h.gate_mode} ({h.gate_mode_source})   "
+            f" daisugi · {name:<9} warden: {h.warden_mode} ({h.warden_mode_source})   "
             f"{cache}   {h.session_count} sessions   ?=keys"
         )
 
@@ -83,7 +83,7 @@ class CockpitScreen(Screen):
     def on_cmd_submitted(self, value: str) -> bool:
         """Screen-specific command handling (an edit/label/steer prefill, or a
         wiring swap). Return ``True`` when consumed; ``False`` lets the App's
-        global command parser (view switch / gate / quit) take it."""
+        global command parser (view switch / warden / quit) take it."""
         return False
 
     def clear_prefill(self) -> None:

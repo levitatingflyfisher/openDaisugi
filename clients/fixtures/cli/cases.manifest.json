@@ -1,5 +1,13 @@
 {
  "v": 1,
- "count": 725,
- "sha256": "7f436bf52d583f5402e70b462e36d35e0c27dc03875da9a492471cfdfa5178d8"
+ "count": 905,
+ "sha256": "7c9aba385eefb5e97f6408dd1ddcd74b3e5aaaab3beaa8d96cda13cd69be3581",
+ "kept": [
+  "journal search int8",
+  "journal search minilm",
+  "status gpu bad number",
+  "status gpu fails",
+  "status gpu no comma",
+  "status pathways minilm"
+ ]
 }

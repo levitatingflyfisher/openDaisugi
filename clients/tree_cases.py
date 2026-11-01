@@ -1,5 +1,5 @@
 """Synthetic delegation-tree cases: `daisugi tree check|root|spawn|run|end|answer|status`
-and `daisugi gate register --parent`, run through the Python oracle.
+and `daisugi warden register --parent`, run through the Python oracle.
 
     uv run --no-sync python clients/tree_cases.py [--out clients/fixtures/tree] [--only NAME]
 
@@ -7,7 +7,7 @@ A case runs as a garden case does (clients/garden_cases.py): a scratch
 HOME, the tree laid out, one command, and the exit code, stdout, stderr and
 the tree after it recorded. A case that needs a tree already grown lays out
 its ledger (``.opendaisugi/tree/ledger.jsonl``) and the registered
-envelopes (``.opendaisugi/gate/envelopes``) as the commands write them, with
+envelopes (``.opendaisugi/warden/envelopes``) as the commands write them, with
 times relative to the run. No case calls a model or a host. Every path, id
 and task is synthetic. A `tree run` case starts the fake sprig of
 clients/agentic_fakes.py, which answers from the case's recorded replies.
@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import agentic_fakes  # noqa: E402, F401 - patches garden_cases: the fake sprig
 import garden_cases  # noqa: E402, F401 - sibling module, run as a script
+import gitfix  # noqa: E402
 from garden_cases import PY_CLI, body_id, record_replies, run_case, write_jsonl  # noqa: E402
 from pathway_cases import REPO  # noqa: E402
 
@@ -36,11 +37,130 @@ SCRATCH = Path(
 )
 CASE_VERSION = 1
 LEDGER = ".opendaisugi/tree/ledger.jsonl"
-ENVS = ".opendaisugi/gate/envelopes"
+ENVS = ".opendaisugi/warden/envelopes"
 
 
 def cmd_for(case: dict[str, Any], binary: str | None) -> list[str]:
     return PY_CLI if binary is None else [binary]
+
+
+# ---------------------------------------------------------------------------
+# Branching: git work trees, replies by session, a stable request order
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+
+def _git(cwd: Path, *args: str) -> None:
+    gitfix.run(cwd, *args)
+
+
+def _lay_out_git(tree: dict[str, Any], home: Path) -> None:
+    """Each ``git`` entry: a repository at the entry's path holding ``files``
+    in one commit, and a detached worktree for each ``worktrees`` entry
+    (a path under the home) with that entry's files written on top."""
+    for rel, spec in sorted(tree.items()):
+        repo = home / rel
+        repo.mkdir(parents=True, exist_ok=True)
+        _git(repo, "init", "-q", "-b", "main")
+        for name, body in spec["git"]["files"].items():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text(body, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "base")
+        for wt, files in spec["git"].get("worktrees", {}).items():
+            _git(repo, "worktree", "add", "-q", "--detach", str(home / wt), "HEAD")
+            for name, body in files.items():
+                (home / wt / name).parent.mkdir(parents=True, exist_ok=True)
+                (home / wt / name).write_text(body, encoding="utf-8")
+
+
+_plain_lay_out = garden_cases.lay_out
+
+
+def _lay_out_all(tree: dict[str, Any], home: Path, t0: float) -> None:
+    git = {k: v for k, v in tree.items() if "git" in v}
+    _plain_lay_out({k: v for k, v in tree.items() if k not in git}, home, t0)
+    _lay_out_git(git, home)
+
+
+garden_cases.lay_out = _lay_out_all
+
+_plain_read_tree = garden_cases.read_tree
+
+
+def _read_tree(home: Path) -> dict[str, Any]:
+    """garden_cases.read_tree without git's own files (their bytes carry
+    object ids and times that differ on every run)."""
+    out = _plain_read_tree(home)
+    return {k: v for k, v in out.items() if ".git" not in Path(k).parts}
+
+
+garden_cases.read_tree = _read_tree
+
+_plain_normalize = garden_cases.normalize
+_SEED = re.compile(r'("seed\\?": \\?")[0-9a-f]{16}')
+_WALL = re.compile(r'("wall_ms\\?": )[0-9]+')
+
+
+def _normalize(result: dict[str, Any], home: str, t0: float) -> dict[str, Any]:
+    """garden_cases.normalize, the branches' wall time (it differs on every
+    run) fixed, and the children's requests in session order (parallel
+    children log in the order they happen to start)."""
+    reqs = result.get("requests")
+    if isinstance(reqs, list):
+        result = {**result, "requests": sorted(reqs, key=lambda r: json.dumps(r, sort_keys=True))}
+    out = _plain_normalize(result, home, t0)
+    led = (out.get("tree") or {}).get(".opendaisugi/tree/ledger.jsonl")
+    if isinstance(led, dict) and isinstance(led.get("text"), str) and "branch_of" in led["text"]:
+        # Parallel children record their process groups as they start.
+        lines = led["text"].split("\n")
+        i = 0
+        while i < len(lines):
+            if lines[i].startswith('{"event": "group"'):
+                j = i
+                while j < len(lines) and lines[j].startswith('{"event": "group"'):
+                    j += 1
+                lines[i:j] = sorted(lines[i:j])
+                i = j
+            else:
+                i += 1
+        led["text"] = "\n".join(lines)
+    text = _WALL.sub(r"\g<1>0", json.dumps(out))
+    # The fit's seed hashes the measured wall time.
+    text = _SEED.sub(r"\g<1>0000000000000000", text)
+    return json.loads(text)
+
+
+garden_cases.normalize = _normalize
+
+
+def record_by_session(case: dict[str, Any], work: Path) -> None:
+    """Answer the case's requests: a sprig request from ``replies_by_session``
+    (by the session in its argv), any other in order from ``replies``. Run
+    the oracle, answer every request with no answer yet, and run again until
+    none is left."""
+    table: dict[str, Any] = {}
+    by_session = dict(case["replies_by_session"])
+    ordered = list(case.get("replies", []))
+    while True:
+        case["model"] = table
+        raw: list[dict[str, Any]] = []
+        run_case(case, PY_CLI, work, raw)
+        missing = [r for r in raw if r["key"] not in table]
+        if not missing:
+            break
+        for r in missing:
+            if r["kind"] == "sprig":
+                argv = r["argv"]
+                sid = argv[argv.index("--session") + 1]
+                kind, ans = garden_cases.make_answer(by_session.pop(sid))
+            else:
+                kind, ans = garden_cases.make_answer(ordered.pop(0))
+            if kind != r["kind"]:
+                raise SystemExit(f"{case['name']}: a {kind} reply for a {r['kind']} request")
+            table[r["key"]] = ans
+    case["model"] = table
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +193,7 @@ def text(obj: Any) -> dict[str, str]:
 
 
 def registered(e: dict[str, Any]) -> dict[str, Any]:
-    """An envelope as gate.register_envelope writes it."""
+    """An envelope as warden.register_envelope writes it."""
     from opendaisugi.models import Envelope
 
     return {"text": Envelope(**e).model_dump_json(indent=2), "mode": 0o600}
@@ -128,15 +248,15 @@ def case(name: str, argv: list[str], before: dict[str, Any] | None = None) -> di
 
 ROOT = env("env_root")
 ROOT_ENV = {f"{ENVS}/top.json": registered(ROOT)}
-GATE_DIRS = {
-    ".opendaisugi/gate": {"dir": True, "mode": 0o700},
+WARDEN_DIRS = {
+    ".opendaisugi/warden": {"dir": True, "mode": 0o700},
     ENVS: {"dir": True, "mode": 0o700},
 }
 
 
 def grown(*rows: dict[str, Any] | str, envs: dict[str, dict[str, Any]] | None = None):
     """A tree already grown: the ledger and the registered envelopes."""
-    tree = {**GATE_DIRS, **ledger(*rows)}
+    tree = {**WARDEN_DIRS, **ledger(*rows)}
     for s, e in (envs if envs is not None else {"top": ROOT}).items():
         tree[f"{ENVS}/{s}.json"] = registered(e)
     return tree
@@ -376,7 +496,7 @@ def root_cases(add: Any) -> None:
         case(
             "root envelope registered",
             ["tree", "root", "e.json", "--session", "top"],
-            {**e, **GATE_DIRS, **ROOT_ENV},
+            {**e, **WARDEN_DIRS, **ROOT_ENV},
         )
     )
     add(case("root no file", ["tree", "root", "e.json", "--session", "top"]))
@@ -389,7 +509,7 @@ def root_cases(add: Any) -> None:
     )
     add(
         case(
-            "root gate root",
+            "root warden root",
             ["tree", "root", "e.json", "--session", "top", "--root", "g"],
             e,
         )
@@ -902,17 +1022,305 @@ def run_cases(add: Any) -> None:
     add(case("status overrun two levels below", ["tree", "status"], grown(*deep)))
 
 
+def branch_cases(add: Any) -> None:
+    """`tree run` with attempts, `tree prune-branches`, `tree adopt` and the
+    branch groups of `tree status` (W3K-7 to W3K-13)."""
+    from opendaisugi import tree as tree_mod
+
+    kid = env("env_kid", file_read=["/w/src/**"], shell_allowlist=["git"])
+    repo = {"repo": {"git": {"files": {"a.txt": "one\n", "b.txt": "base\n"}}}}
+    sess = [tree_mod.mint_session("top", n) for n in range(3)]
+    base = ("--parent", "top", "--profile", "default")
+
+    def req(**kw: Any) -> str:
+        doc = {"task": "list the files", "envelope": kid, "tools": ["Read", "Bash"]}
+        doc.update(kw)
+        return json.dumps(doc)
+
+    def ran(text_: str, write: dict[str, str] | None = None, tokens: int = 5) -> dict[str, Any]:
+        body = {
+            "answer": text_,
+            "turns": 2,
+            "model_turns": 1,
+            "model": "haiku",
+            "usage": {"input_tokens": 20, "output_tokens": tokens},
+        }
+        out: dict[str, Any] = {"sprig": body}
+        if write:
+            out["write"] = write
+        return out
+
+    died = {"sprig_raw": "", "stderr": "sprig: boom\n", "exit": 1}
+
+    def br(
+        name: str,
+        before: dict[str, Any],
+        *argv: str,
+        stdin: str | None = None,
+        by: dict[str, Any] | None = None,
+        in_repo: bool = True,
+        fence: list[str] | None = None,
+    ) -> None:
+        c = case(f"run branches {name}", ["tree", "run", *argv], before)
+        if fence is not None:
+            c["env"] = {"DAISUGI_SPRIG_FENCE": json.dumps(["fence", "--harness", "sprig", *fence])}
+        c["stdin"] = req(attempts=2, why="operator") if stdin is None else stdin
+        c["sprig"] = "fake"
+        if in_repo:
+            c["cwd"] = "repo"
+        if by is not None:
+            c["replies_by_session"] = by
+        add(c)
+
+    budget = {**grown(root_row("top", tokens=1000, turns=20)), **repo}
+    two = ("--tokens", "100", "--turns", "4", "-")
+    # The request fields.
+    for label, kw in [
+        ("attempts nine", {"attempts": 9, "why": "operator"}),
+        ("attempts true", {"attempts": True, "why": "operator"}),
+        ("attempts text", {"attempts": "2", "why": "operator"}),
+        ("attempts zero", {"attempts": 0, "why": "operator"}),
+        ("why missing", {"attempts": 2}),
+        ("why other", {"attempts": 2, "why": "because"}),
+    ]:
+        br(f"bad {label}", budget, *base, *two, stdin=req(**kw))
+    br("one is the single child", budget, *base, *two, stdin=req(attempts=1), in_repo=False)
+    br("session with attempts", budget, *base, "--session", "kid", *two)
+    br("check malformed", budget, *base, "--check", "nope", *two)
+    # No git workspace, no budget: nothing starts and no worktree is left.
+    br("not git", grown(root_row("top", tokens=1000, turns=20)), *base, *two, in_repo=False)
+    # Another grant that covers the repository's git directory: nothing starts.
+    fenced = (*base, "--sprig-fence", *two)
+    for label, g in [
+        ("allow the repo", ["--allow", "{HOME}/repo:rw"]),
+        ("allow above the repo", ["--allow", "{HOME}:rw"]),
+        ("allow inside the git dir", ["--allow", "{HOME}/repo/.git/hooks:rw"]),
+        ("allow equals form", ["--allow={HOME}/repo/.git:rw"]),
+        ("workdir inside the git dir", ["--workdir", "{HOME}/repo/.git/hooks"]),
+        # read as the fence reads them: ~ is HOME, a relative path lies under
+        # the child's worktree ({HOME}/.opendaisugi/tree/branches/<session>)
+        ("allow tilde", ["--allow", "~/repo:rw"]),
+        ("workdir home", ["--workdir=~"]),
+        ("allow relative", ["--allow", "../../../../repo/.git:rw"]),
+    ]:
+        br(f"fence covers the repo {label}", budget, *fenced, fence=g)
+    wide = {**budget, f"{ENVS}/default.json": registered(env(file_write=["{HOME}/repo/**"]))}
+    br("fence covers the repo envelope", wide, *fenced, fence=[])
+    # Without the socket fence a child can start what the sweep cannot stop.
+    br("fence allow weak ipc", budget, *fenced, fence=["--allow-weak-ipc"])
+    br("budget", grown(root_row("top", tokens=150, turns=20)) | repo, *base, *two)
+    br("turns budget", grown(root_row("top", tokens=1000, turns=5)) | repo, *base, *two)
+    br("profile unknown", budget, "--parent", "top", "--profile", "desk", *two)
+    br("not a running parent", budget, "--parent", "nobody", "--profile", "default", *two)
+    # Two children that edit differently: ranked by cost, a card opens.
+    edits = {
+        sess[0]: ran("first answer", {"a.txt": "two\n"}, tokens=9),
+        sess[1]: ran("second answer", {"a.txt": "three\nmore\n"}, tokens=4),
+    }
+    br("two ran", budget, *base, *two, by=edits)
+    br("two ran parallel one", budget, *base, "--parallel", "1", *two, by=edits)
+    br("two ran text", budget, *base, *two, by=edits, stdin=req(attempts=2, why="failed_tests"))
+    br(
+        "one failed",
+        budget,
+        *base,
+        *two,
+        by={sess[0]: ran("good", {"a.txt": "two\n"}), sess[1]: died},
+    )
+    br("all failed", budget, *base, *two, by={sess[0]: died, sess[1]: died})
+    br(
+        "same edit",
+        budget,
+        *base,
+        *two,
+        by={
+            sess[0]: ran("same", {"a.txt": "two\n"}, tokens=5),
+            sess[1]: ran("same", {"a.txt": "two\n"}, tokens=6),
+        },
+    )
+    br(
+        "three attempts",
+        budget,
+        *base,
+        *two,
+        stdin=req(attempts=3, why="low_confidence"),
+        by={
+            sess[0]: ran("one", {"a.txt": "2\n"}),
+            sess[1]: ran("two", {"a.txt": "22\n"}, tokens=7),
+            sess[2]: died,
+        },
+    )
+    # A hard check from the starter's side decides.
+    check = 'tests=sh -c "grep -q two a.txt"'
+    br(
+        "check",
+        budget,
+        *base,
+        "--check",
+        check,
+        *two,
+        by={sess[0]: ran("pass", {"a.txt": "two\n"}), sess[1]: ran("fail", {"a.txt": "other\n"})},
+    )
+    br(
+        "check all fail",
+        budget,
+        *base,
+        "--check",
+        "never=false",
+        *two,
+        by={sess[0]: ran("a", {"a.txt": "2\n"}), sess[1]: ran("b", {"a.txt": "3\n"})},
+    )
+
+    # The tree and its branches as `tree status` shows them, and the
+    # worktrees `tree prune-branches` and `tree adopt` act on.
+    one = gitfix.commit_id({"a.txt": "one\n"})
+
+    def brow(s: str, rid: str) -> dict[str, Any]:
+        return {
+            **spawn_row("top", s, tokens=100, turns=4),
+            "branch_of": rid,
+            "why": "operator",
+            "base": one,
+            "repo": "{HOME}/repo/.git",
+        }
+
+    rid = "br_000000000001"
+    wts = {
+        f".opendaisugi/tree/branches/{s}": {"a.txt": f"edit {s}\n"}
+        for s in ("n-aaaaaaaaaaaa", "n-bbbbbbbbbbbb")
+    }
+    git = {"repo": {"git": {"files": {"a.txt": "one\n"}, "worktrees": wts}}}
+    rows = (
+        root_row("top", tokens=1000, turns=20),
+        brow("n-aaaaaaaaaaaa", rid),
+        brow("n-bbbbbbbbbbbb", rid),
+        end_row("n-aaaaaaaaaaaa", 30, 2),
+        end_row("n-bbbbbbbbbbbb", 20, 2),
+    )
+
+    def opened(open_: bool) -> dict[str, Any]:
+        row = {
+            "choice_id": "ch_000000000001",
+            "ranking_id": rid,
+            "project": "/w/app",
+            "task": "t",
+            "event": "opened",
+            "options": {
+                "survivors": [
+                    {"id": "n-aaaaaaaaaaaa", "content_hash": "sha256:aaaa"},
+                    {"id": "n-bbbbbbbbbbbb", "content_hash": "sha256:bbbb"},
+                ],
+                "eliminated": [],
+            },
+            "chosen": "n-aaaaaaaaaaaa",
+            "status": "provisional",
+            "facts": {
+                "order": ["n-aaaaaaaaaaaa", "n-bbbbbbbbbbbb"],
+                "decided_by": ["cost"],
+                "quality_tiers": [["n-aaaaaaaaaaaa", "n-bbbbbbbbbbbb"]],
+                "confidence": 0.5,
+                "cost": {},
+                "summary": {},
+                "where": {},
+                "run": None,
+                "adopt": "daisugi tree adopt n-aaaaaaaaaaaa",
+            },
+            "ts": "TS",
+        }
+        out = [json.dumps(row).replace('"TS"', "{NOWF:-3000}")]
+        if not open_:
+            out.append(
+                json.dumps(
+                    {
+                        "choice_id": "ch_000000000001",
+                        "ranking_id": rid,
+                        "event": "confirmed",
+                        "how": "drop",
+                        "ts": "TS",
+                    }
+                ).replace('"TS"', "{NOWF:-60}")
+            )
+        return {
+            ".opendaisugi/journal/rankings/choices.jsonl": {"text": "".join(x + "\n" for x in out)}
+        }
+
+    grown_branches = {**grown(*rows), **git}
+    add(case("status branches", ["tree", "status"], {**grown_branches, **opened(True)}))
+    add(
+        case(
+            "status branches json", ["tree", "status", "--json"], {**grown_branches, **opened(True)}
+        )
+    )
+    add(case("status branches no card", ["tree", "status"], grown_branches))
+    add(
+        case(
+            "prune-branches open card keeps worktrees",
+            ["tree", "prune-branches"],
+            {**grown_branches, **opened(True)},
+        )
+    )
+    add(
+        case(
+            "prune-branches closed card removes them",
+            ["tree", "prune-branches", "--json"],
+            {**grown_branches, **opened(False)},
+        )
+    )
+    # A ranking with no card keeps its worktrees (a lone survivor is copied
+    # only by `tree adopt`) until the nodes are older than the card decay.
+    add(case("prune-branches no card keeps them", ["tree", "prune-branches"], grown_branches))
+    old = 15 * 86400
+    aged_rows = [
+        json.dumps({**r, "ts": "TS"}).replace('"TS"', "{NOWF:-%d}" % (old + 100 - k))
+        for k, r in enumerate(rows)
+    ]
+    aged = {**grown(*aged_rows), **git}
+    add(case("prune-branches no card aged out removes them", ["tree", "prune-branches"], aged))
+    add(case("prune-branches aged out json", ["tree", "prune-branches", "--json"], aged))
+    add(case("prune-branches nothing", ["tree", "prune-branches"], {}))
+    adopt = ["tree", "adopt", "n-aaaaaaaaaaaa", "--cwd", "repo"]
+    add(case("adopt clean", adopt, {**grown_branches, **opened(True)}))
+    add(case("adopt json", [*adopt, "--json"], {**grown_branches, **opened(True)}))
+    add(case("adopt dirty file", adopt, {**grown_branches, "repo/a.txt": {"text": "mine\n"}}))
+    add(case("adopt unknown", ["tree", "adopt", "nope"], grown_branches))
+    add(case("adopt bad name", ["tree", "adopt", "../x"], grown_branches))
+    same = {
+        "repo": {
+            "git": {
+                "files": {"a.txt": "one\n"},
+                "worktrees": {".opendaisugi/tree/branches/n-cccccccccccc": {}},
+            }
+        }
+    }
+    same_rows = grown(root_row("top", tokens=1000, turns=20), brow("n-cccccccccccc", rid))
+    nothing = {**same_rows, **same}
+    add(
+        case("adopt changed nothing", ["tree", "adopt", "n-cccccccccccc", "--cwd", "repo"], nothing)
+    )
+    # The ledger names no base for the worktree: nothing is read or applied.
+    add(case("adopt not in the ledger", ["tree", "adopt", "n-cccccccccccc", "--cwd", "repo"], same))
+    # --cwd names another repository than the one the branch came from.
+    other = {"other": {"git": {"files": {"a.txt": "other\n"}}}}
+    add(
+        case(
+            "adopt into another repo",
+            ["tree", "adopt", "n-aaaaaaaaaaaa", "--cwd", "other", "--json"],
+            {**grown_branches, **other},
+        )
+    )
+
+
 def register_cases(add: Any) -> None:
     parent = env("env_p", deadline=1900000000)
     files = {
         "c.json": text(env("env_c", shell_allowlist=["git"])),
         "w.json": text(env("env_w", shell_allowlist=["rm"])),
-        **GATE_DIRS,
+        **WARDEN_DIRS,
         f"{ENVS}/p.json": registered(parent),
     }
 
     def rg(name: str, *argv: str, before: dict[str, Any] | None = None):
-        add(case(f"register {name}", ["gate", "register", *argv], {**files, **(before or {})}))
+        add(case(f"register {name}", ["warden", "register", *argv], {**files, **(before or {})}))
 
     rg("child proved", "c.json", "--session", "c", "--parent", "p")
     rg("child refused", "w.json", "--session", "c", "--parent", "p")
@@ -986,6 +1394,18 @@ def bundle_cases(add) -> None:
         ),
     )
     bn("table is not a mapping", ["--fd", "3"], config("agent_profiles: [a, b]\n"))
+    max_ok = "agent_profiles:\n  big:\n    wire: openai\n    max_tokens: 4096\n  none:\n    wire: anthropic\n    max_tokens:\n"
+    max_bad = (
+        "agent_profiles:\n  zero:\n    wire: openai\n    max_tokens: 0\n"
+        "  text:\n    wire: openai\n    max_tokens: '400'\n"
+        "  flag:\n    wire: openai\n    max_tokens: true\n"
+        "  half:\n    wire: openai\n    max_tokens: 1.5\n"
+        "  huge:\n    wire: openai\n    max_tokens: 1000001\n"
+        "  top:\n    wire: openai\n    max_tokens: 1000000\n"
+        "  cc:\n    wire: claude-code\n    max_tokens: 400\n"
+    )
+    bn("max_tokens is read and not carried", ["--fd", "3"], config(max_ok))
+    bn("max_tokens invalid", ["--fd", "3"], config(max_bad))
     bn("fd 0 is refused", ["--fd", "0"], config(table), keys)
     bn("fd 1 is refused", ["--fd", "1"], config(table), keys)
     bn("fd 2 is refused", ["--fd", "2"], config(table), keys)
@@ -1027,13 +1447,15 @@ def bundle_cases(add) -> None:
             "  bad:\n    wire: smoke\n  default:\n    wire: openai\n  odd: 3\n"
         ),
     )
+    ls("max_tokens valid", ["--json"], config(max_ok))
+    ls("max_tokens invalid", ["--json"], config(max_bad))
     ls("unknown option", ["--to", "2"])
 
 
 def link_cases(add: Any) -> None:
-    """GR r1 MAJOR-1 (GR-R-1, GR-R-7): the tree reads an envelope as the gate
+    """GR r1 MAJOR-1 (GR-R-1, GR-R-7): the tree reads an envelope as the warden
     does. A registered envelope that is a second name of a file, group
-    writable, or a link is one the gate refuses to read, so the tree cannot
+    writable, or a link is one the warden refuses to read, so the tree cannot
     read it either: a spawn or an answer that needs it is refused. Each case
     has a twin without the plant (``spawn ok``, ``answer allow``), so the set
     fails when the check is taken out and when it is too strict."""
@@ -1100,7 +1522,7 @@ def link_cases(add: Any) -> None:
                 tree[f"real-{who}.json"] = real
             label = "root" if who == "top" else "parent"
             add(case(f"answer {label} envelope {plant}", argv, tree))
-    # A physical parent whose envelope the gate refuses cannot be shown not
+    # A physical parent whose envelope the warden refuses cannot be shown not
     # to be physical: the allow is refused, not read as "no envelope".
     physical = env("env_mid", stakes="physical", shell_allowlist=["git", "ls", "rm"])
     tree = grown(*rows, envs={"top": wide_root, "mid": physical})
@@ -1118,21 +1540,21 @@ def link_cases(add: Any) -> None:
     # end removes through the directory fd: a symlinked envelopes/ is left alone.
     tree = {
         **ledger(root_row("top")),
-        ".opendaisugi/gate": {"dir": True, "mode": 0o700},
+        ".opendaisugi/warden": {"dir": True, "mode": 0o700},
         "real-envelopes": {"dir": True, "mode": 0o700},
         "real-envelopes/top.json": registered(ROOT),
         ENVS: {"symlink": "real-envelopes"},
     }
     add(case("end envelopes dir symlink", ["tree", "end", "top"], tree))
     # N3: envelopes/ moved aside with no link: nothing found, and that is said.
-    tree = {**ledger(root_row("top")), ".opendaisugi/gate": {"dir": True, "mode": 0o700}}
+    tree = {**ledger(root_row("top")), ".opendaisugi/warden": {"dir": True, "mode": 0o700}}
     add(case("end envelope not found", ["tree", "end", "top"], tree))
     # The register parent check reads the parent through the same checks.
     reg = {"k.json": text(kid), **planted("hard link")}
     add(
         case(
             "register parent envelope hard link",
-            ["gate", "register", "k.json", "--parent", "top", "--session", "kid"],
+            ["warden", "register", "k.json", "--parent", "top", "--session", "kid"],
             reg,
         )
     )
@@ -1147,6 +1569,7 @@ def build_cases() -> list[dict[str, Any]]:
     answer_cases(C.append)
     status_cases(C.append)
     run_cases(C.append)
+    branch_cases(C.append)
     register_cases(C.append)
     bundle_cases(C.append)
     link_cases(C.append)
@@ -1190,7 +1613,9 @@ def main() -> int:
                 c["model"] = prev["model"]
             continue
         work = SCRATCH / "gen" / f"{i:04d}"
-        if c.get("replies"):
+        if c.get("replies_by_session"):
+            record_by_session(c, work)
+        elif c.get("replies"):
             record_replies(c, work)
         c["expect"] = run_case(c, cmd_for(c, None), work)
         if args.only:

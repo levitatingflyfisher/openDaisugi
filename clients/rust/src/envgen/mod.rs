@@ -18,8 +18,8 @@ pub mod tier1;
 
 pub use prompts_gen::{PROMPT_VERSION, SYSTEM_PROMPT, TIER1_PROMPT};
 
-use crate::gate::py::text::{repr, repr_list, strip};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{repr, repr_list, strip};
+use crate::warden::pyjson::{Object, Value};
 use crate::llm::{Call, CallError, Client, Schema};
 use crate::pathways::find::{Cache as FindCache, FindErr};
 use crate::pathways::pmodel::Id;
@@ -453,7 +453,7 @@ fn generate_inner(o: &Options, c: &mut Client, warning: &mut String) -> Result<O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::loads;
+    use crate::warden::pyjson::loads;
     use crate::pathways::verify::FORCE_Z3_UNKNOWN_TASK;
 
     fn env(task: &str, perms: &str) -> Object {

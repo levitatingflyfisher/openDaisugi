@@ -8,7 +8,7 @@ safety-direction check.
 
 ## Before you run it
 
-Two gates the pilot checks (a full run is pointless unless both pass):
+Two checks the pilot checks (a full run is pointless unless both pass):
 1. **Reuse fires** on warm runs (else warm == cold and the experiment measures
    nothing).
 2. **Cold clears decompose+verify** a real fraction of the time (else there is
@@ -30,4 +30,4 @@ DAISUGI_CLAUDE_CODE_INTEGRATION=1 python run_pilot.py --full   # 20×5 (heavy)
 
 Status: the runner is written and the harness it drives is unit-tested, but the
 end-to-end live numbers have **not** been produced yet — that awaits a free box.
-No numbers are claimed until this pilot's two gates pass on a real run.
+No numbers are claimed until this pilot's two checks pass on a real run.

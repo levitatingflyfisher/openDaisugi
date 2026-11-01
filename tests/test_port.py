@@ -43,11 +43,10 @@ def test_port_hop_rules(tmp_path):
 
 
 def test_install_argv_keeps_root_flags_and_the_rest():
-    assert install_argv(["d", "-q", "--plain", "-v", "install", "--gate", "--help"]) == [
+    assert install_argv(["d", "-q", "--plain", "-v", "install", "--help"]) == [
         "-q",
         "--plain",
         "install",
-        "--gate",
         "--help",
     ]
     assert install_argv(["d", "status"]) is None
@@ -58,7 +57,7 @@ def test_hand_over_execs_the_sibling_with_the_hop_mark(tmp_path):
     _exe(tmp_path / "daisugi")
     calls = []
     hand_over(
-        [str(tmp_path / "daisugi-py"), "install", "--gate"],
+        [str(tmp_path / "daisugi-py"), "install"],
         {"DAISUGI_PORT": "go", "PATH": ""},
         execve=lambda *a: calls.append(a),
     )
@@ -66,7 +65,7 @@ def test_hand_over_execs_the_sibling_with_the_hop_mark(tmp_path):
     assert calls == [
         (
             target,
-            [target, "install", "--gate"],
+            [target, "install"],
             {"DAISUGI_PORT": "go", "PATH": "", "DAISUGI_PORT_HOP": "1"},
         )
     ]

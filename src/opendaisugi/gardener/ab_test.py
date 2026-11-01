@@ -42,6 +42,7 @@ class ABResult:
     postconditions_match: bool
     permissions_match: bool
     judge_verdict: bool | None = None
+    judge_error: str | None = None
     tier0_latency_ms: float = 0.0
     tier2_latency_ms: float = 0.0
     tier0_tokens: int = 0
@@ -50,7 +51,10 @@ class ABResult:
 
     @property
     def passed(self) -> bool:
-        """Overall pass: structural match + judge (if provided) agreed."""
+        """Overall pass: structural match + judge (if provided) agreed. A judge
+        that raised is no vote, and no vote is no pass."""
+        if self.judge_error is not None:
+            return False
         structural = self.postconditions_match and self.permissions_match
         if self.judge_verdict is None:
             return structural
@@ -120,7 +124,8 @@ async def ab_test(
         try:
             result.judge_verdict = await judge(tier0_env, tier2_env)
         except Exception as e:
-            _log.warning("judge raised %s; falling back to structural verdict", e)
+            _log.warning("judge raised %s; the A/B does not pass", e)
+            result.judge_error = f"{type(e).__name__}: {e}"
             result.notes.append(f"judge_error: {e.__class__.__name__}")
 
     return result

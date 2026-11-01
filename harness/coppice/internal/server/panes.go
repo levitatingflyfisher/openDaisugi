@@ -62,6 +62,10 @@ type LivePane struct {
 	// reads it without a lock.
 	harness string
 
+	// input, when set, sees every write to the pane. A Hermes pane uses it
+	// to learn its first prompt. Set once before putLive.
+	input func([]byte)
+
 	// gone closes when the goroutine that reports this pane's end (watchExit
 	// for a pty pane, pumpAdapter for a headless one) has returned. Both
 	// write into the data dir, so a teardown waits for it. It is nil for a
@@ -81,12 +85,12 @@ type LivePane struct {
 	procMu sync.Mutex
 	// procState is the last state the process fact applied.
 	procState string
-	// gateIdleSince is the server clock, in unix nanoseconds, of the first
-	// hook idle (gate or headless source) of a run; zero when none stands.
+	// wardenIdleSince is the server clock, in unix nanoseconds, of the first
+	// hook idle (warden or headless source) of a run; zero when none stands.
 	// A non-idle hook fact, or input that submits a line, clears it. The
 	// merged state forgets a hook idle when a process idle replaces it, so
 	// the pane keeps its own stamp (CP-R-56, CP-R-57).
-	gateIdleSince atomic.Int64
+	wardenIdleSince atomic.Int64
 	// stampMu orders the merge and the stamp of one pane's hook events.
 	stampMu sync.Mutex
 }
@@ -305,12 +309,17 @@ func (s *Server) setRecord(id string, f func(*layout.Pane)) error {
 // way to report it. Every caller of closePane ignores that error on
 // purpose - there is nothing left to close.
 func (s *Server) closePane(id string, exit *int) error {
+	// A Hermes pane that nobody read yet binds to its session now, while the
+	// session is still the pane's own.
+	if rec, ok := s.tree.Pane(id); ok && isHermes(rec) {
+		s.hermesRef(rec)
+	}
 	if err := s.tree.ClosePane(id, exit, s.clock().Unix()); err != nil {
 		return err
 	}
 	s.forgetChildren(id)
 	s.forgetAsks(id)
-	s.tree.DropForeman(id)
+	s.tree.DropSteward(id)
 	if lp, ok := s.Live(id); ok && lp.fenced {
 		s.fencedPaneEnded(id, lp)
 	}
@@ -326,7 +335,7 @@ func (s *Server) closePane(id string, exit *int) error {
 // seven-day sweep all end here. It frees the grid if one is still around -
 // an ended pty or headless pane keeps its grid readable until this runs -
 // stops the process tick, forgets the pane's stored state, asks and
-// children, clears it as any task's foreman, and removes the tree record
+// children, clears it as any task's steward, and removes the tree record
 // outright, never leaving a pane_closed zombie behind.
 //
 // removeLive runs before RemovePane: it stops the pty's own tick goroutine,
@@ -341,7 +350,7 @@ func (s *Server) dropRecord(id string) {
 	}
 	s.removeLive(id)
 	_ = s.tree.RemovePane(id)
-	s.tree.DropForeman(id)
+	s.tree.DropSteward(id)
 	s.forgetChildren(id)
 	s.forgetAsks(id)
 	s.states.Forget(id)
@@ -507,6 +516,11 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 	// when it has one, else in the task's cwd unless the request names its
 	// own. A cwd that differs from the worktree is refused, never moved.
 	taskID, _ := r.Str("task")
+	// A pane in a task with an envelope starts panes only under its own
+	// task, so a child never holds more than its parent (W3K-12).
+	if refused := s.ownTaskOnly(c, taskID); refused {
+		return proto.ErrResp(r.ID, proto.ErrUnauthorized, OwnTaskRefusal)
+	}
 	if taskID != "" {
 		tk, ok := s.tree.Task(taskID)
 		if !ok {
@@ -648,6 +662,15 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 		rows = 40
 	}
 	env, _ := r.StrMap("env")
+	// A pane an agent starts is a worker, not the owner's chat (pandoAgentEnv),
+	// in the caller's Pando branch; a long-running agent may start another
+	// below its own branch (agentPaneEnv).
+	if fro := roleOrOperator(c); fro.noAllow {
+		var perr error
+		if env, cwd, perr = s.agentPaneEnv(fro, r, env, cwd); perr != nil {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, perr.Error())
+		}
+	}
 	label, _ := r.Str("label")
 	label = cleanLabel(label)
 
@@ -667,17 +690,24 @@ func (s *Server) handlePaneCreate(c *Client, r *proto.Request) proto.Response {
 		label = s.defaultLabel(harness, cwd)
 	}
 	// The final label is checked, whatever made it: a pane never ends up
-	// named foreman.
-	if ro.noAllow && isForemanLabel(label) {
+	// named steward.
+	if ro.noAllow && isStewardLabel(label) {
 		if needsLabel {
 			s.labelMu.Unlock()
 		}
-		return proto.ErrResp(r.ID, proto.ErrUnauthorized, ForemanLabelRefusal)
+		return proto.ErrResp(r.ID, proto.ErrUnauthorized, StewardLabelRefusal)
+	}
+	// A pane another pane's connection creates is agent-made. The floor
+	// answers a routine prompt in it, and never in a pane the operator made.
+	madeBy := ""
+	if c != nil && c.roleOf().pane {
+		madeBy = layout.MadeByAgent
 	}
 	rec, err := s.tree.CreatePane(wsID, tabID, layout.Pane{
 		Label: label, Cwd: cwd, Argv: argv, Env: env, Kind: kind,
 		Harness: harness, Cols: cols, Rows: rows, TaskID: taskID,
-		ExtraArgs: extraArgs, Fence: fenceWord,
+		ExtraArgs: extraArgs, Fence: fenceWord, StartedAt: s.clock().Unix(),
+		MadeBy: madeBy,
 	})
 	if needsLabel {
 		s.labelMu.Unlock()
@@ -789,6 +819,7 @@ func (s *Server) handlePaneFork(c *Client, r *proto.Request) proto.Response {
 		Argv: append([]string(nil), info.Argv...), Kind: info.Kind,
 		Harness: info.Harness, Cols: info.Cols, Rows: info.Rows,
 		HarnessSessionID: sid, ParentPane: id, ForkPending: true, Fence: s.childFence(c, info.Fence),
+		StartedAt: s.clock().Unix(),
 	})
 	if err != nil {
 		code := proto.ErrNoSuchTab
@@ -833,8 +864,8 @@ func (s *Server) handlePaneRename(c *Client, r *proto.Request) proto.Response {
 			fmt.Sprintf("no pane %q. Run: coppice pane list", id))
 	}
 	if ro := roleOrOperator(c); ro.noAllow {
-		if isForemanLabel(label) {
-			return proto.ErrResp(r.ID, proto.ErrUnauthorized, ForemanLabelRefusal)
+		if isStewardLabel(label) {
+			return proto.ErrResp(r.ID, proto.ErrUnauthorized, StewardLabelRefusal)
 		}
 		if label != cur.Label && s.liveLabelTaken(label) {
 			return proto.ErrResp(r.ID, proto.ErrUnauthorized, LabelTakenRefusal)
@@ -902,7 +933,35 @@ func (s *Server) startPane(rec layout.Pane) error {
 		g.Close()
 		return err
 	}
+	// A pane in a task with an envelope is pinned to it: the warden hook
+	// carries the task's session, so the pane never reads the default
+	// envelope. A pane that cannot be pinned does not start (W3K-12).
+	pin, err := s.paneSession(rec)
+	if err == nil && pin != "" && (wrap == nil || rec.Harness != "claude") {
+		err = fmt.Errorf("task %s has an envelope, and only a fenced claude pane can be pinned to one. "+
+			"Start a claude pane with the fence on, or take the envelope off the task.", rec.TaskID)
+	}
+	if err != nil {
+		g.Close()
+		return err
+	}
+	// A worker pane's claude gets a session id that is on the skip list
+	// before the process runs.
+	ptyArgv := rec.Argv
+	if a, sid := s.listedClaudeArgv(rec); sid != "" {
+		ptyArgv, rec.HarnessSessionID = a, sid
+		_ = s.updatePane(rec.ID, func(p *layout.Pane) { p.HarnessSessionID = sid })
+	} else if a, sid := s.branchClaudeArgv(rec); sid != "" {
+		// A long-running agent's claude gets a session id that is on the
+		// store's session map before it runs: its chat is its branch.
+		ptyArgv, rec.HarnessSessionID = a, sid
+		_ = s.updatePane(rec.ID, func(p *layout.Pane) { p.HarnessSessionID = sid })
+	}
 	lp := &LivePane{Info: rec, Grid: g, started: time.Now(), harness: rec.Harness}
+	if isHermes(rec) {
+		id := rec.ID
+		lp.input = func(b []byte) { s.noteInput(id, b, time.Now()) }
+	}
 	if wrap != nil {
 		lp.fenceTmp = tmp
 		// The fence reads HOME and the data dirs from the env, and the
@@ -927,7 +986,7 @@ func (s *Server) startPane(rec layout.Pane) error {
 			}
 		}
 		p, err := pane.StartPTY(pane.SpawnOpts{
-			Cwd: rec.Cwd, Argv: s.fencedClaudeArgv(rec, wrap, rec.Argv, true), Env: env,
+			Cwd: rec.Cwd, Argv: s.fencedClaudeArgv(rec, wrap, ptyArgv, true, pin), Env: env,
 			Cols: rec.Cols, Rows: rec.Rows,
 			Sock: s.cfg.SocketPath, PaneID: rec.ID, DataDir: s.cfg.DataDir,
 			Wrap: wrap,
@@ -969,7 +1028,7 @@ func (s *Server) startPane(rec layout.Pane) error {
 			argv = append(append([]string(nil), rec.Argv...), extra...)
 		}
 		proc, err := a.Start(context.Background(), pane.StartOpts{
-			Cwd: rec.Cwd, Env: env, Argv: s.fencedClaudeArgv(rec, wrap, argv, false),
+			Cwd: rec.Cwd, Env: env, Argv: s.fencedClaudeArgv(rec, wrap, argv, false, pin),
 			Resume: rec.HarnessSessionID, Sock: s.cfg.SocketPath, PaneID: rec.ID,
 			DataDir: s.cfg.DataDir, Wrap: wrap,
 		}, g)
@@ -1030,7 +1089,7 @@ const processQuiet = pane.BurstGap
 
 // processSustain is how long a burst of output must go on, from its first
 // write (the grid marks it: the first write after a gap of processQuiet),
-// before a process working fact outranks a gate idle that stands (CP-R-56).
+// before a process working fact outranks a warden idle that stands (CP-R-56).
 const processSustain = time.Second
 
 // processTickEvery is how often runProcessTicks looks at a pty pane's grid.
@@ -1041,7 +1100,7 @@ const processTickEvery = time.Second
 // when that fact changed since the last one it sent. A fact that repeats
 // every second would override a manifest read of the same screen each time,
 // and the manifest is what tells a quiet prompt from a quiet wait. Merge
-// keeps a gate, headless or operator hold on top of this source, so a
+// keeps a warden, headless or operator hold on top of this source, so a
 // blocked pane stays blocked, and a done stays done.
 func (s *Server) processTick(paneID string, lp *LivePane) {
 	lp.procMu.Lock()
@@ -1059,19 +1118,19 @@ func (s *Server) processTick(paneID string, lp *LivePane) {
 		return
 	}
 	if st == proto.StateWorking {
-		// A short redraw of a quiet pane is no work while a gate idle
-		// stands (CP-R-56): the gate reports every turn, so output that
+		// A short redraw of a quiet pane is no work while a warden idle
+		// stands (CP-R-56): the warden reports every turn, so output that
 		// no turn announced and that stops soon is a clock or a status
 		// line. The fact waits until the burst has gone on for
 		// processSustain from its first write. The grid marks that
 		// write itself, so the answer does not depend on when the
 		// looks fell.
 		burst, _ := lp.Grid.BurstStart()
-		if lp.gateIdleSince.Load() != 0 && last.Sub(burst) < processSustain {
+		if lp.wardenIdleSince.Load() != 0 && last.Sub(burst) < processSustain {
 			return
 		}
 	}
-	if st == proto.StateIdle && lp.procState == "" && lp.gateIdleSince.Load() != 0 {
+	if st == proto.StateIdle && lp.procState == "" && lp.wardenIdleSince.Load() != 0 {
 		// The process source has published nothing yet, so this idle
 		// changes nothing anyone saw. A hook idle that stands says more,
 		// so it is not replaced: whether the hook or the first look came
@@ -1239,7 +1298,7 @@ func (s *Server) pumpAdapter(paneID, harness string, p pane.Proc, g *pane.Grid) 
 		if st == proto.StateBlocked {
 			e.Ask = ev.Ask
 			// A harness that answers its own asks marks them, so a client
-			// never offers an Allow the gate cannot take.
+			// never offers an Allow the warden cannot take.
 			if _, owns := p.(pane.Answerer); owns && ev.Ask != nil {
 				a := *ev.Ask
 				a.Holder = proto.HolderHarness
@@ -1253,6 +1312,7 @@ func (s *Server) pumpAdapter(paneID, harness string, p pane.Proc, g *pane.Grid) 
 				// different one. That first different id is the fork's own,
 				// and the pending flag ends with it.
 				if rec, ok := s.tree.Pane(paneID); ok && rec.HarnessSessionID != sid {
+					s.routePaneSession(rec, sid)
 					_ = s.updatePane(paneID, func(x *layout.Pane) {
 						x.HarnessSessionID = sid
 						x.ForkPending = false
@@ -1401,12 +1461,15 @@ func nowSeconds() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 // pane.forget or pane.resume frees it. With scope, only the panes of that
 // task and its descendants are listed. path is the labels from the root to
 // the scope.
-func (s *Server) handlePaneList(_ *Client, r *proto.Request) proto.Response {
+func (s *Server) handlePaneList(c *Client, r *proto.Request) proto.Response {
 	keep, path, bad := s.scopeOf(r)
 	if bad != nil {
 		return *bad
 	}
 	wantEnded, _ := r.Bool("ended")
+	// last_ask is the end of an agent's own message, so it goes only where
+	// pane.messages would: not to a pane, a plugin or a named web token.
+	withAsk := c != nil && !c.tokenNamed() && !c.roleOf().noAllow
 	s.pruneFacts()
 	s.refreshProcess()
 	matched := make([]layout.Pane, 0)
@@ -1424,16 +1487,25 @@ func (s *Server) handlePaneList(_ *Client, r *proto.Request) proto.Response {
 	}
 	out := make([]map[string]any, 0, len(matched))
 	for _, p := range matched {
-		out = append(out, s.paneListRow(p))
+		out = append(out, s.paneListRowFor(p, withAsk))
 	}
-	return proto.OKResp(r.ID, map[string]any{"panes": out, "path": path})
+	res := map[string]any{"panes": out, "path": path}
+	if !wantEnded {
+		if line := s.UnconfinedNotice(); line != "" {
+			res["unconfined"] = line
+		}
+	}
+	return proto.OKResp(r.ID, res)
 }
 
 // paneListRow builds one pane.list row. A live pty pane always has a stored
 // event, because startPane applies the first process fact before
 // pane.create answers, so the unknown default below is reached only by a
 // record with no live entry and no stored event.
-func (s *Server) paneListRow(p layout.Pane) map[string]any {
+func (s *Server) paneListRow(p layout.Pane) map[string]any { return s.paneListRowFor(p, false) }
+
+// paneListRowFor is paneListRow, with last_ask when withAsk.
+func (s *Server) paneListRowFor(p layout.Pane, withAsk bool) map[string]any {
 	row := map[string]any{
 		"id": p.ID, "label": p.Label, "cwd": p.Cwd, "cmd": p.Argv,
 		"kind": string(p.Kind), "harness": p.Harness,
@@ -1491,6 +1563,9 @@ func (s *Server) paneListRow(p layout.Pane) map[string]any {
 		row["session_id"] = eff.SessionID
 		if eff.Ask != nil {
 			row["ask"] = eff.Ask
+		}
+		if withAsk && !p.Closed {
+			s.addAskLine(row, p, eff.State)
 		}
 		if h := s.heldFor(p.ID); h != nil && eff.State == proto.StateBlocked {
 			row["held"] = h
@@ -1560,6 +1635,9 @@ func (s *Server) livePane(r *proto.Request) (*LivePane, *proto.Response) {
 }
 
 func (lp *LivePane) write(b []byte) error {
+	if lp.input != nil {
+		lp.input(b)
+	}
 	switch {
 	case lp.PTY != nil:
 		_, err := lp.PTY.Write(b)
@@ -1586,7 +1664,7 @@ func (s *Server) handleSendText(c *Client, r *proto.Request) proto.Response {
 	if id, _ := r.Str("pane"); c.viewOnlyOn(id) {
 		return refuseViewOnly(r, id)
 	}
-	if id, _ := r.Str("pane"); isPromptRequest(r) && s.gated(id) {
+	if id, _ := r.Str("pane"); isPromptRequest(r) && s.checked(id) {
 		return s.promptReply(c, r, id, text)
 	}
 	enter, ok := r.Bool("enter")
@@ -1660,7 +1738,7 @@ func (s *Server) handleRun(c *Client, r *proto.Request) proto.Response {
 	// On a harness pane under the ready-prompt rules, the line is a
 	// prompt: refused on a question, queued while the pane starts or
 	// works. See ready.go.
-	if id := paneOf(r); s.gated(id) {
+	if id := paneOf(r); s.checked(id) {
 		return s.promptReply(c, r, id, line)
 	}
 	if id, _ := r.Str("pane"); id != "" {

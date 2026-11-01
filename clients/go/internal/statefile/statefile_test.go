@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// GR-R-1, GR-R-2: the gate reads its state through no link, and only from
+// GR-R-1, GR-R-2: the warden reads its state through no link, and only from
 // directories and regular files this user owns that group and other cannot
 // write. Each test fails when the check is taken out.
 
@@ -41,9 +41,9 @@ func capture(t *testing.T) func() string {
 	return func() string { return fixTail.ReplaceAllString(raw(), "\n") }
 }
 
-func gateRoot(t *testing.T) string {
+func wardenRoot(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "gate")
+	root := filepath.Join(t.TempDir(), "warden")
 	if err := os.MkdirAll(filepath.Join(root, "envelopes"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func opens(root string, dirs []string, name string) bool {
 
 func TestAPlainFileIsOpenedAndSilent(t *testing.T) {
 	notes := capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o600)
 	write(t, filepath.Join(root, "envelopes", "default.json"), 0o600)
 	if !opens(root, nil, "DISARMED") || !opens(root, []string{"envelopes"}, "default.json") {
@@ -90,7 +90,7 @@ func TestAPlainFileIsOpenedAndSilent(t *testing.T) {
 }
 
 func TestARefusalLeavesOneNoteNamingTheFileAndTheReason(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	other := t.TempDir()
 	write(t, filepath.Join(other, "target"), 0o600)
 	cases := []struct {
@@ -121,7 +121,7 @@ func TestARefusalLeavesOneNoteNamingTheFileAndTheReason(t *testing.T) {
 				t.Fatal("a refused file was opened")
 			}
 			opens(root, c.dirs, c.file)
-			want := "daisugi gate: not reading " + root + "/" + c.where + ": " + c.why + "\n"
+			want := "daisugi warden: not reading " + root + "/" + c.where + ": " + c.why + "\n"
 			if got := notes(); got != want {
 				t.Fatalf("notes = %q, want %q", got, want)
 			}
@@ -131,7 +131,7 @@ func TestARefusalLeavesOneNoteNamingTheFileAndTheReason(t *testing.T) {
 }
 
 func TestADirectoryIsOpenedThroughNoLink(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	real := filepath.Join(filepath.Dir(root), "real-envelopes")
 	write(t, filepath.Join(root, "envelopes", "default.json"), 0o600)
 	if err := os.Rename(filepath.Join(root, "envelopes"), real); err != nil {
@@ -144,13 +144,13 @@ func TestADirectoryIsOpenedThroughNoLink(t *testing.T) {
 	if opens(root, []string{"envelopes"}, "default.json") {
 		t.Fatal("a file below a symlinked directory was opened")
 	}
-	if got, want := notes(), "daisugi gate: not reading "+root+"/envelopes: is a symbolic link\n"; got != want {
+	if got, want := notes(), "daisugi warden: not reading "+root+"/envelopes: is a symbolic link\n"; got != want {
 		t.Fatalf("notes = %q, want %q", got, want)
 	}
 }
 
 func TestASymlinkedRootIsRefusedAndASymlinkedParentIsFollowed(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o600)
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(root, link); err != nil {
@@ -160,7 +160,7 @@ func TestASymlinkedRootIsRefusedAndASymlinkedParentIsFollowed(t *testing.T) {
 	if opens(link, nil, "DISARMED") {
 		t.Fatal("a file below a symlinked root was opened")
 	}
-	if got, want := notes(), "daisugi gate: not reading "+link+": is a symbolic link\n"; got != want {
+	if got, want := notes(), "daisugi warden: not reading "+link+": is a symbolic link\n"; got != want {
 		t.Fatalf("notes = %q, want %q", got, want)
 	}
 	// A link ABOVE the root is followed (GR-R-2).
@@ -169,7 +169,7 @@ func TestASymlinkedRootIsRefusedAndASymlinkedParentIsFollowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	notes = capture(t)
-	if !opens(filepath.Join(parent, "gate"), nil, "DISARMED") {
+	if !opens(filepath.Join(parent, "warden"), nil, "DISARMED") {
 		t.Fatal("a root behind a symlinked parent was refused")
 	}
 	if got := notes(); got != "" {
@@ -178,7 +178,7 @@ func TestASymlinkedRootIsRefusedAndASymlinkedParentIsFollowed(t *testing.T) {
 }
 
 func TestARootOthersCanWriteIsRefused(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o600)
 	for _, m := range []os.FileMode{0o770, 0o707, 0o777} {
 		os.Chmod(root, m)
@@ -186,7 +186,7 @@ func TestARootOthersCanWriteIsRefused(t *testing.T) {
 		if opens(root, nil, "DISARMED") {
 			t.Fatalf("a root of mode %o was read", m)
 		}
-		if got, want := notes(), "daisugi gate: not reading "+root+": is writable by group or others\n"; got != want {
+		if got, want := notes(), "daisugi warden: not reading "+root+": is writable by group or others\n"; got != want {
 			t.Fatalf("notes = %q, want %q", got, want)
 		}
 	}
@@ -194,7 +194,7 @@ func TestARootOthersCanWriteIsRefused(t *testing.T) {
 }
 
 func TestAFileAnotherUserOwnsIsRefused(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o600)
 	if !opens(root, nil, "DISARMED") {
 		t.Fatal("a plain file was refused")
@@ -207,13 +207,13 @@ func TestAFileAnotherUserOwnsIsRefused(t *testing.T) {
 		t.Fatal("a file another user owns was opened")
 	}
 	// The root is the first thing refused, so it is the one named.
-	if got, want := notes(), "daisugi gate: not reading "+root+": is owned by another user\n"; got != want {
+	if got, want := notes(), "daisugi warden: not reading "+root+": is owned by another user\n"; got != want {
 		t.Fatalf("notes = %q, want %q", got, want)
 	}
 }
 
 func TestANoteIsGivenOncePerFileAndReason(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o666)
 	notes := capture(t)
 	for i := 0; i < 3; i++ {
@@ -225,7 +225,7 @@ func TestANoteIsGivenOncePerFileAndReason(t *testing.T) {
 }
 
 func TestAFifoIsRefusedWithoutBlocking(t *testing.T) {
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	if err := syscall.Mkfifo(filepath.Join(root, "DISARMED"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestAFifoIsRefusedWithoutBlocking(t *testing.T) {
 	if opens(root, nil, "DISARMED") {
 		t.Fatal("a FIFO was opened")
 	}
-	if got, want := notes(), "daisugi gate: not reading "+root+"/DISARMED: is not a regular file\n"; got != want {
+	if got, want := notes(), "daisugi warden: not reading "+root+"/DISARMED: is not a regular file\n"; got != want {
 		t.Fatalf("notes = %q, want %q", got, want)
 	}
 }

@@ -37,14 +37,14 @@ type Row struct {
 	// only. It gets no tile, no peek, no attach and no close.
 	Parent string
 	Child  string
-	// Held is set while a foreman hears this row's ask first. The row
+	// Held is set while a steward hears this row's ask first. The row
 	// sits under WORKING until the hold ends.
 	Held *Held
 	// Looking names the people attached to the pane now, from pane.list.
 	Looking []string
 	// Stack is the one line a window header shows under the name: the
-	// loop, model, router, daisugi mode, last gate verdict and tokens,
-	// from the stack, gate and tokens fields of pane.list. It is "" when
+	// loop, model, route, daisugi mode, last warden verdict and tokens,
+	// from the stack, warden and tokens fields of pane.list. It is "" when
 	// the server sends none of them.
 	Stack string
 	// ExitCode is set on an ended row when the server knows the exit
@@ -58,7 +58,7 @@ type Row struct {
 	// Claude's project settings) a fenced run changed, from pane.list's
 	// workspace_changed. The rail shows them.
 	Changed []string
-	// Mode is the daisugi mode the gate last reported (enforcing,
+	// Mode is the daisugi mode the warden last reported (enforcing,
 	// watching or off), "" when the server sends none. Marker is
 	// "watching" while the owner set the agent to watching.
 	Mode, Marker string
@@ -69,10 +69,10 @@ type Row struct {
 // stream-json mode.
 const KindHeadless = "headless"
 
-// Held is who holds a row's ask: the task whose foreman hears it, and
+// Held is who holds a row's ask: the task whose steward hears it, and
 // how long it has waited there.
 type Held struct {
-	Foreman   string
+	Steward   string
 	TaskLabel string
 	Waited    float64
 }
@@ -84,7 +84,7 @@ func heldOf(m map[string]any, now float64) *Held {
 	if !ok {
 		return nil
 	}
-	out := &Held{Foreman: str(h, "by"), TaskLabel: str(h, "task_label")}
+	out := &Held{Steward: str(h, "by"), TaskLabel: str(h, "task_label")}
 	if out.TaskLabel == "" {
 		out.TaskLabel = str(h, "task")
 	}
@@ -95,7 +95,7 @@ func heldOf(m map[string]any, now float64) *Held {
 }
 
 // needsYou is true for a row the operator must answer now: a blocked
-// pane whose ask no foreman holds.
+// pane whose ask no steward holds.
 func (r Row) needsYou() bool {
 	return r.State == "blocked" && r.Held == nil && r.Parent == ""
 }
@@ -130,18 +130,18 @@ type Section struct {
 }
 
 // PeekView is the open detail view on one pane: the last lines of its screen,
-// the ask it holds, and the gate's verdict when the data carries one. Ask
+// the ask it holds, and the warden's verdict when the data carries one. Ask
 // is the same line the row shows, the tool and a colon leading the summary
 // when the tool is known.
 type PeekView struct {
-	Pane    string
-	Label   string
-	Text    string
-	Ask     string
-	Tool    string
-	Verdict string
-	Rule    int
-	HasGate bool
+	Pane      string
+	Label     string
+	Text      string
+	Ask       string
+	Tool      string
+	Verdict   string
+	Rule      int
+	HasWarden bool
 	// AskID is the id of the ask the pane holds, or "" when it holds
 	// none. Tier is that ask's tier, undoable or permanent. An ask with no
 	// tier is permanent.
@@ -177,6 +177,9 @@ type Model struct {
 	Peek    *PeekView
 	Prompt  string
 	Message string
+	// Unconfined is the server's one line while the warden is on and no
+	// fence runs. The floor keeps it on screen; it is not a per-call message.
+	Unconfined string
 	// Restarted is how many agents the restart line offered to bring
 	// back. While it is above 0 the footer adds R resume all. Any key
 	// ends it.
@@ -195,9 +198,9 @@ type Model struct {
 	// watching.
 	Confirm     string
 	ConfirmMode bool
-	// ConfirmRouter is the route (direct or gateway) the question asks
-	// about when Confirm names an agent to restart for a router swap.
-	ConfirmRouter string
+	// ConfirmRoute is the route (direct or router) the question asks
+	// about when Confirm names an agent to restart for a route swap.
+	ConfirmRoute string
 	// ConfirmLoop is the harness the question asks about when Confirm names
 	// an agent whose conversation moves there, and ConfirmLine the replay
 	// cost line the server's preview gave.
@@ -238,18 +241,18 @@ type Model struct {
 	// away and back, keyed by pane id.
 	HeadlessLine   map[string]string
 	HeadlessCursor map[string]int
-	// ForemanID is the pane id of the floor's tracked foreman, from
+	// StewardID is the pane id of the floor's tracked steward, from
 	// floor.facts, or "". Its window draws Chat, the messages of
 	// floor.chat, with an input line of its own that sends floor.talk.
-	// ChatScreen turns that window to the foreman's terminal. ChatSeen is
+	// ChatScreen turns that window to the steward's terminal. ChatSeen is
 	// the id of the newest reply a chat window has shown.
-	ForemanID  string
+	StewardID  string
 	Chat       []ChatMsg
 	ChatSeen   string
 	ChatScreen bool
 	// ChatErr is set while the server refuses floor.chat for this floor.
 	ChatErr string
-	// ImportLine is "importing 12/340" while the foreman imports old chats
+	// ImportLine is "importing 12/340" while the steward imports old chats
 	// (FM-R-85), else "". The bar shows it.
 	ImportLine string
 	// Leave is the key that gives the keyboard back to the roster. The
@@ -295,9 +298,9 @@ type Model struct {
 	// Renaming holds the id of the pane the prompt line renames. The
 	// prompt holds the new label until Enter sends it or Esc drops it.
 	Renaming string
-	// Swapping holds the id of the agent whose model or router the prompt
-	// line swaps. The prompt holds the line, model NAME or router
-	// direct|gateway, until Enter sends it or Esc drops it.
+	// Swapping holds the id of the agent whose model or route the prompt
+	// line swaps. The prompt holds the line, model NAME or route
+	// direct|router, until Enter sends it or Esc drops it.
 	Swapping string
 	// ClearAll is true while the prompt line asks whether to forget
 	// every ended agent the fold lists.
@@ -447,7 +450,7 @@ const (
 
 // Group sorts the pane rows into the three sections. Subagent rows are
 // left out: they follow their parent, see ordered. NEEDS YOU holds blocked
-// rows whose ask no foreman holds, DONE holds done rows, and WORKING holds
+// rows whose ask no steward holds, DONE holds done rows, and WORKING holds
 // every other row. Inside a section rows keep the order they were made
 // in, so a state change never moves a row within its section. Every
 // section is returned even when it is empty.
@@ -682,9 +685,9 @@ func lineFor(detail string, ask map[string]any) string {
 }
 
 // Words a blocked row with no ask shows, by what found the block. Only the
-// gate's own block blames the gate.
+// warden's own block blames the warden.
 const (
-	BlockedByGate      = "Blocked. The gate gave no detail."
+	BlockedByWarden    = "Blocked. The warden gave no detail."
 	BlockedOwnQuestion = "Waiting on the agent's own question. Open it to answer."
 	// TrustLine is what a row on Claude's folder trust screen shows.
 	TrustLine = "Asks to trust this folder. Peek with Space, then y trusts it or n is not now."
@@ -702,8 +705,8 @@ func trustOf(m map[string]any) bool {
 func eventLine(m map[string]any) string {
 	ask := askOf(m)
 	if ask == nil && str(m, "state") == "blocked" {
-		if str(m, "source") == "gate" {
-			return BlockedByGate
+		if str(m, "source") == "warden" {
+			return BlockedByWarden
 		}
 		if trustOf(m) {
 			return TrustLine
@@ -1052,7 +1055,7 @@ func (m *Model) NextNeed() {
 
 // OpenPeek opens the peek on the row under the cursor. read is the pane's
 // visible text. ask, which may be nil, carries the ask the pane holds, and
-// an optional gate sub-map with the verdict and the rule that decided it.
+// an optional warden sub-map with the verdict and the rule that decided it.
 // The verdict shows only when that sub-map is present. An empty floor has
 // nothing to peek at, so nothing opens.
 func (m *Model) OpenPeek(read string, ask map[string]any) {
@@ -1066,10 +1069,10 @@ func (m *Model) OpenPeek(read string, ask map[string]any) {
 		p.Tool = str(ask, "tool")
 		p.AskID = str(ask, "id")
 		p.Tier = proto.NormalTier(str(ask, "tier"))
-		if gate, ok := ask["gate"].(map[string]any); ok {
-			p.HasGate = true
-			p.Verdict = str(gate, "verdict")
-			rule, _ := num(gate, "rule")
+		if warden, ok := ask["warden"].(map[string]any); ok {
+			p.HasWarden = true
+			p.Verdict = str(warden, "verdict")
+			rule, _ := num(warden, "rule")
 			p.Rule = int(rule)
 		}
 	}
@@ -1093,8 +1096,8 @@ func (m *Model) labelOf(id string) string {
 // asked, the clear-all question, the rename field, or the typed prompt.
 func (m *Model) PromptLine() string {
 	switch {
-	case m.Confirm != "" && m.ConfirmRouter != "":
-		return RouterQuestion(m.labelOf(m.Confirm))
+	case m.Confirm != "" && m.ConfirmRoute != "":
+		return RouteQuestion(m.labelOf(m.Confirm))
 	case m.Confirm != "" && m.ConfirmLoop != "":
 		return LoopQuestion(m.ConfirmLine)
 	case m.Confirm != "" && m.ConfirmMode:
@@ -1111,8 +1114,8 @@ func (m *Model) PromptLine() string {
 	return m.Prompt
 }
 
-// RouterQuestion is the one question s asks before a router swap.
-func RouterQuestion(label string) string {
+// RouteQuestion is the one question s asks before a route swap.
+func RouteQuestion(label string) string {
 	return "Restarts " + textwidth.Printable(label, 0) + " and resumes its conversation. A turn in progress ends. Enter resumes, Esc keeps."
 }
 
@@ -1123,7 +1126,7 @@ func LoopQuestion(line string) string {
 }
 
 // SwapHint is what s says to a line it cannot read.
-const SwapHint = "Type model NAME, router direct|gateway or loop HARNESS. Esc keeps things as they are."
+const SwapHint = "Type model NAME, route direct|router or loop HARNESS. Esc keeps things as they are."
 
 // tokenWord is a token count in a few characters: 999, 12.3k, 2.5M.
 func tokenWord(n float64) string {
@@ -1184,12 +1187,12 @@ func ModelDone(label, model, when string) string {
 	return "Asked " + label + " to switch to " + model + "."
 }
 
-// RouterDone is the status line after s swaps a router. The agent comes
+// RouteDone is the status line after s swaps a route. The agent comes
 // back as a new window that enforces, since its mode marker went with the
 // old pane.
-func RouterDone(label, router string) string {
-	way := "through the gateway"
-	if router == "direct" {
+func RouteDone(label, route string) string {
+	way := "through the router"
+	if route == "direct" {
 		way = "direct"
 	}
 	return textwidth.Printable(label, 0) + " restarted and resumed " + way + ". It enforces again."
@@ -1200,21 +1203,21 @@ func SwapNone(label, harness string) string {
 	if harness == "" {
 		harness = "a pane with no harness"
 	}
-	return "Swapping the model, router or loop of " + textwidth.Printable(label, 0) + " is not built for " + harness + " yet."
+	return "Swapping the model, route or loop of " + textwidth.Printable(label, 0) + " is not built for " + harness + " yet."
 }
 
 // swaps says which swaps s offers for a row: a model for claude in a
-// terminal and for headless sprig, a router for claude, and a move to
+// terminal and for headless sprig, a route for claude, and a move to
 // another loop for claude and headless sprig, the two conversations the
 // server can read.
-func swaps(r Row) (model, router, loop bool) {
+func swaps(r Row) (model, route, loop bool) {
 	if r.Parent != "" {
 		return false, false, false
 	}
 	model = (r.Harness == "claude" && r.Kind != KindHeadless) || (r.Harness == "sprig" && r.Kind == KindHeadless)
-	router = r.Harness == "claude"
+	route = r.Harness == "claude"
 	loop = r.Harness == "claude" || (r.Harness == "sprig" && r.Kind == KindHeadless)
-	return model, router, loop
+	return model, route, loop
 }
 
 // ClearAllQuestion is the one line Clear all asks before it forgets n
@@ -1234,37 +1237,37 @@ func StopQuestion(label string) string {
 // WatchQuestion is the one question m asks before an agent goes from
 // enforcing to watching.
 func WatchQuestion(label string) string {
-	return "Watch only? The gate will log the calls of " + textwidth.Printable(label, 0) +
-		" and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no."
+	return "Watch only? The warden will log the calls of " + textwidth.Printable(label, 0) +
+		" and stop none. While it watches, it can also change the warden for other agents. Enter yes, Esc no."
 }
 
-// ModeDone is the status line after m sets a mode. The gate reads the
+// ModeDone is the status line after m sets a mode. The warden reads the
 // marker on the agent's next tool call, so it says when.
 func ModeDone(label, mode string) string {
 	label = textwidth.Printable(label, 0)
 	if mode == "watching" {
-		return label + " watches from its next tool call. The gate logs its calls and stops none."
+		return label + " watches from its next tool call. The warden logs its calls and stops none."
 	}
-	return label + " goes back to the gate's own mode from its next tool call."
+	return label + " goes back to the warden's own mode from its next tool call."
 }
 
-// HookRootLine is what m says when the installed gate hook names another
-// gate root than the server's: a mode set here would do nothing
+// HookRootLine is what m says when the installed warden hook names another
+// warden root than the server's: a mode set here would do nothing
 // (F11-R-15).
 func HookRootLine(root string) string {
-	return "The gate hook reads another gate root, " + textwidth.Printable(root, 0) +
+	return "The warden hook reads another warden root, " + textwidth.Printable(root, 0) +
 		", so a mode set here does nothing."
 }
 
-// GateWatches is what m says on an agent that watches because the whole
-// gate does: its hook runs in audit, so there is nothing to lower
+// WardenWatches is what m says on an agent that watches because the whole
+// warden does: its hook runs in audit, so there is nothing to lower
 // (F11-R-14).
-func GateWatches(label string) string {
-	return "The gate itself watches every call of " + textwidth.Printable(label, 0) +
+func WardenWatches(label string) string {
+	return "The warden itself watches every call of " + textwidth.Printable(label, 0) +
 		": its hook runs in audit, so there is nothing to lower here."
 }
 
-// ModeNoGate is what m says on an agent no gate hook reports for.
-func ModeNoGate(label string) string {
-	return "No gate hook reports for " + textwidth.Printable(label, 0) + ", so it has no daisugi mode to set."
+// ModeNoWarden is what m says on an agent no warden hook reports for.
+func ModeNoWarden(label string) string {
+	return "No warden hook reports for " + textwidth.Printable(label, 0) + ", so it has no daisugi mode to set."
 }

@@ -3,7 +3,7 @@
 A package installs the three ports beside each other as ``daisugi`` (Go),
 ``daisugi-rs`` and ``daisugi-py``. ``install`` in any of them hands the
 whole command to the one the variable names, once, at install time. The
-hook it writes then runs that port's program directly, so the gate's hot
+hook it writes then runs that port's program directly, so the warden's hot
 path has no extra exec.
 """
 

@@ -7,7 +7,7 @@ writes that format down from Herdr's src/detect/manifest.rs, with a complete
 implementation beside it in manifest.go, regions.go and evaluate.go. This
 module records the same facts as importable Python constants, so a Python
 port of the evaluator does not have to read Go source to know the schema,
-and can refuse a key, gate or region name the Go side does not recognise
+and can refuse a key, condition or region name the Go side does not recognise
 instead of silently matching nothing.
 
 Nothing here is a guess. Every constant traces to a line in README.md or the
@@ -44,7 +44,7 @@ MANIFEST_KEYS = frozenset({"id", "version", "min_engine_version", "updated_at", 
 
 # --- A rule -------------------------------------------------------------
 #
-# The eight keys a rule carries beyond the six matcher/gate keys below.
+# The eight keys a rule carries beyond the six matcher/condition keys below.
 RULE_ONLY_KEYS = frozenset(
     {
         "id",
@@ -58,7 +58,7 @@ RULE_ONLY_KEYS = frozenset(
     }
 )
 
-# The six matcher/gate keys. A gate table takes exactly these six, whether
+# The six matcher/condition keys. A condition table takes exactly these six, whether
 # it is nested under all/any/not or is a rule's own top-level matchers.
 MATCHER_KEYS = frozenset({"contains", "regex", "line_regex", "all", "any", "not"})
 
@@ -81,7 +81,7 @@ DEFAULT_RULE_STATE = "unknown"
 # --- Matcher semantics --------------------------------------------------
 #
 # Read off README.md's "Matcher semantics" section and cross-checked
-# against gateMatches in evaluate.go. Every pattern list is ANDed: every
+# against conditionMatches in evaluate.go. Every pattern list is ANDed: every
 # needle, every regex, every line_regex pattern must match. "any" is the
 # only OR in the whole schema.
 MATCHER_SEMANTICS = {
@@ -102,27 +102,27 @@ MATCHER_SEMANTICS = {
     },
 }
 
-# all: every nested gate must match.
-# any: enforced only when non-empty; then at least one nested gate must match.
-# not: no nested gate may match.
-GATE_COMBINATOR_SEMANTICS = {
-    "all": "every nested gate must match",
-    "any": "enforced only when non-empty; then at least one nested gate must match",
-    "not": "no nested gate may match",
+# all: every nested condition must match.
+# any: enforced only when non-empty; then at least one nested condition must match.
+# not: no nested condition may match.
+CONDITION_COMBINATOR_SEMANTICS = {
+    "all": "every nested condition must match",
+    "any": "enforced only when non-empty; then at least one nested condition must match",
+    "not": "no nested condition may match",
 }
 
-# A gate needs at least one of these five to be non-empty. A gate here
+# A condition needs at least one of these five to be non-empty. A condition here
 # means a rule's own matchers, or a nested all/any/not table. "not" alone
-# does not count: a gate with only "not" is a load error. See
-# compileGate's "must contain a positive matcher" check.
+# does not count: a condition with only "not" is a load error. See
+# compileCondition's "must contain a positive matcher" check.
 POSITIVE_MATCHER_KEYS = frozenset({"contains", "regex", "line_regex", "all", "any"})
 
-# Herdr accepts one narrower shape here: a gate nested inside "not" that is
+# Herdr accepts one narrower shape here: a condition nested inside "not" that is
 # itself only another "not" list, such as not = [{ not = [...] }]. Herdr
 # allows it because something to negate is present even without a positive
-# matcher. coppice does not carry that split: every gate, "not"-nested or
-# otherwise, needs a positive matcher. See README.md's "A gate" section.
-COPPICE_IS_STRICTER_THAN_HERDR_FOR_NOT_ONLY_GATES = True
+# matcher. coppice does not carry that split: every condition, "not"-nested or
+# otherwise, needs a positive matcher. See README.md's "A condition" section.
+COPPICE_IS_STRICTER_THAN_HERDR_FOR_NOT_ONLY_CONDITIONS = True
 
 # skip_state_update = true means "emit no event at all" when the rule
 # matches. It requires state to be "unknown" or absent, and it forbids the
@@ -185,9 +185,9 @@ TOP_NON_EMPTY_LINES_ENGINE_CHECK_SKIPPED_WHEN_UNSET = True
 
 # --- Load limits, all load errors when exceeded ---------------------------
 MAX_RULES = 128
-MAX_GATE_DEPTH = 8
-MAX_TOTAL_GATES = 512
-MAX_MATCHERS_PER_GATE = 32
+MAX_CONDITION_DEPTH = 8
+MAX_TOTAL_CONDITIONS = 512
+MAX_MATCHERS_PER_CONDITION = 32
 MAX_TOTAL_MATCHERS = 1024
 MAX_MATCHER_CHARS = 512
 

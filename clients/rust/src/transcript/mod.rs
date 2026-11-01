@@ -13,17 +13,21 @@
 //! reference.
 
 mod codex;
+mod opencode;
+mod pi;
 
 pub use codex::codex_messages;
+pub use opencode::opencode_messages;
+pub use pi::pi_messages;
 
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::gate::check::split_compound_shell;
-use crate::gate::py::text::{head, split, strip};
-use crate::gate::pyjson::{py_str, py_type_name, Object, Value};
-use crate::gate::pymodel::decode_stream;
+use crate::warden::check::split_compound_shell;
+use crate::warden::py::text::{head, split, strip};
+use crate::warden::pyjson::{py_str, py_type_name, Object, Value};
+use crate::warden::pymodel::decode_stream;
 use crate::pathways::pmodel::{self, Id, Mode, ValidationError};
 
 /// Why a transcript was not read, or a parse failed.
@@ -178,7 +182,7 @@ pub fn lines(text: &str) -> Vec<&str> {
 /// past the decoder's stack is unreadable (where Python's RecursionError
 /// comes depends on its C stack).
 fn load_line(line: &str) -> R<Option<Value>> {
-    use crate::gate::pyjson::{loads, py_decode_error, PyDecodeFail};
+    use crate::warden::pyjson::{loads, py_decode_error, PyDecodeFail};
     match py_decode_error(line, 900) {
         Some(PyDecodeFail::Raised(m)) if m.starts_with("Exceeds the limit ") => return Err(Fail::Parse(m)),
         Some(PyDecodeFail::Raised(_)) => return Ok(None),
@@ -198,7 +202,11 @@ fn load_line(line: &str) -> R<Option<Value>> {
 /// episodes.
 pub fn read(raw: &[u8], format: &str) -> R<Vec<RawEpisode>> {
     let (text, dec) = decode_stream(raw);
-    let msgs = if format == "codex" { codex_messages(&text) } else { claude_messages(&text) };
+    let msgs = match format {
+        "codex" => codex_messages(&text),
+        "pi" => pi_messages(&text),
+        _ => claude_messages(&text),
+    };
     // The lines read before a byte that is not UTF-8 are parsed first, so
     // an error in them comes first.
     let msgs = msgs?;
@@ -206,6 +214,12 @@ pub fn read(raw: &[u8], format: &str) -> R<Vec<RawEpisode>> {
         return Err(Fail::Parse(m));
     }
     identify(&msgs)
+}
+
+/// `parse()` up to the merge for an OpenCode session: the session file at
+/// `path` names a storage tree, which holds the messages.
+pub fn read_opencode(path: &str) -> R<Vec<RawEpisode>> {
+    identify(&opencode_messages(path)?)
 }
 
 /// `ClaudeCodeParser._read_messages`.
@@ -843,6 +857,33 @@ mod tests {
         assert_eq!(quote("a b/c?é"), "a%20b/c%3F%C3%A9");
     }
 
+    #[test]
+    fn a_pi_session_becomes_an_episode_with_mapped_tools() {
+        let text = concat!(
+            r#"{"type":"session","version":3,"id":"s"}"#, "\n",
+            r#"{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"fix it"}]}}"#, "\n",
+            r#"{"type":"message","id":"a1","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash","arguments":{"command":"make"}},{"type":"toolCall","name":"deploy","arguments":{}}]}}"#, "\n",
+            r#"{"type":"message","id":"r1","message":{"role":"toolResult"}}"#, "\n",
+        );
+        let msgs = pi_messages(text).unwrap();
+        assert_eq!(msgs.len(), 2);
+        let eps = identify(&msgs).unwrap();
+        assert_eq!(eps.len(), 1);
+        assert_eq!(eps[0].steps(), 2);
+    }
+
+    #[test]
+    fn an_opencode_session_without_messages_is_a_parse_error() {
+        let d = std::env::temp_dir().join(format!("daisugi-oc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("storage/session/p")).unwrap();
+        let f = d.join("storage/session/p/ses_9.json");
+        std::fs::write(&f, "{}").unwrap();
+        let m = parse_err(read_opencode(f.to_str().unwrap()));
+        assert_eq!(m, "no OpenCode messages for session ses_9");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     fn parse_err(r: R<Vec<RawEpisode>>) -> String {
         match r {
             Err(Fail::Parse(m)) => m,
@@ -880,7 +921,7 @@ mod tests {
         let t = "{\"type\": \"user\", \"message\": {\"role\": \"user\", \"content\": \"t\"}}\n{\"type\": \"assistant\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"tool_use\", \"name\": \"mcp__a__b\", \"input\": {\"x\": NaN, \"y\": [Infinity]}}]}}\n";
         let eps = read(t.as_bytes(), "claude-code").unwrap();
         let out = finalize(&eps).unwrap();
-        let dumped = crate::gate::pyjson::dumps(&out[0], true);
+        let dumped = crate::warden::pyjson::dumps(&out[0], true);
         assert!(dumped.contains("\"arguments\": {\"x\": null, \"y\": [null]}"), "{dumped}");
     }
 

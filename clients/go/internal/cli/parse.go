@@ -10,7 +10,7 @@ import (
 // over click) spells it.
 type opt struct {
 	names    []string // "--root", or "--yes" and "-y"
-	neg      string   // "--no-gate" for a --gate/--no-gate pair
+	neg      string   // "--no-warden" for a --warden/--no-warden pair
 	value    bool     // takes a value
 	multiple bool     // may repeat; every value kept
 	help     string

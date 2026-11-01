@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 
 pub use tools_gen::*;
 
-use crate::gate::pyjson::{any_json, loads, py_decode_error, Object, PyDecodeFail, Value};
+use crate::warden::pyjson::{any_json, loads, py_decode_error, Object, PyDecodeFail, Value};
 use crate::pathways::pmodel::{self, Field, Loc, Mode, Model, Schema, ValidationError};
 
 /// Reads stdin as the oracle's stdio transport does.
@@ -71,7 +71,7 @@ impl<R: BufRead> LineReader<R> {
 }
 
 fn decode(b: &[u8]) -> String {
-    crate::gate::py::text::decode_utf8_replace(b)
+    crate::warden::py::text::decode_utf8_replace(b)
 }
 
 /// What a line holds for the server.
@@ -705,9 +705,9 @@ pub fn args(tool: &str) -> Option<&'static Model> {
             ),
         );
         m.insert(
-            "delegate",
+            "spawn",
             model(
-                "delegateArguments",
+                "spawnArguments",
                 vec![
                     field("path", str_s(), None),
                     field("question", str_s(), None),
@@ -743,7 +743,7 @@ pub fn pre_parse(m: &Model, args: &Object) -> Option<Object> {
         }
         let parsed = match loads(s) {
             Ok(p) => p,
-            Err(crate::gate::pyjson::LoadError::Recursion) => return None,
+            Err(crate::warden::pyjson::LoadError::Recursion) => return None,
             Err(_) => continue,
         };
         if matches!(

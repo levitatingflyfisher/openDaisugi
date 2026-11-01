@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// heldList is a pane.list with one ask a foreman holds and one it does
+// heldList is a pane.list with one ask a steward holds and one it does
 // not.
 func heldList() []map[string]any {
 	return []map[string]any{
@@ -31,7 +31,7 @@ func TestAHeldAskRendersUnderWorkingAndNotUnderNeedsYou(t *testing.T) {
 		t.Fatalf("WORKING = %+v", secs[1].Rows)
 	}
 	text := stripSGR(strings.Join(Render(m, 100, 20), "\n"))
-	if !strings.Contains(text, "waiting on review-team's foreman · 1m") {
+	if !strings.Contains(text, "waiting on review-team's steward · 1m") {
 		t.Fatalf("no waiting line:\n%s", text)
 	}
 	if !strings.Contains(text, "▾ t2  1 working") || !strings.Contains(text, "▾ no directory  1 needs") {
@@ -44,12 +44,12 @@ func TestAHeldAskRendersUnderWorkingAndNotUnderNeedsYou(t *testing.T) {
 func TestAnEventWithNoHoldMovesTheAskToNeedsYou(t *testing.T) {
 	m := &Model{}
 	m.Apply(heldList(), 100)
-	m.Event(map[string]any{"pane": "w1:p1", "state": "blocked", "source": "gate",
+	m.Event(map[string]any{"pane": "w1:p1", "state": "blocked", "source": "warden",
 		"ask": map[string]any{"id": "ask-1", "summary": "rm -rf build/"}})
 	if m.NeedYou != 2 {
 		t.Fatalf("NeedYou = %d, want 2", m.NeedYou)
 	}
-	m.Event(map[string]any{"pane": "w1:p1", "state": "blocked", "source": "gate",
+	m.Event(map[string]any{"pane": "w1:p1", "state": "blocked", "source": "warden",
 		"ask":  map[string]any{"id": "ask-1", "summary": "rm -rf build/"},
 		"held": map[string]any{"by": "w1:p9", "task": "t1", "task_label": "review-team", "since": 40.0}})
 	if m.NeedYou != 1 {

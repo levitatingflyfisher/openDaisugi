@@ -40,8 +40,8 @@ the one `daisugi models use` recorded, else the default for this box. The
 trainer's lines stream on stderr; the last line says where the adapter is.
 
 On a CPU, training is slow. One step on 4 examples with
-`ibm-granite/granite-4.0-1b` took about 14 minutes on a 4-core i5 from
-2017, and needed about 4 GB of memory. A GPU pack is listed
+`ibm-granite/granite-4.0-1b` took many minutes on an older laptop CPU,
+and needed about 4 GB of memory. A GPU pack is listed
 (`train-cuda`) but not built in this release.
 
 ## Install with no network

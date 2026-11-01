@@ -3,7 +3,7 @@
 ![Property-security patrol in MuJoCo](../../docs/assets/property-patrol.gif)
 
 ```
-python run_demo.py            # the gate, text output (CPU, zero deps)
+python run_demo.py            # the warden, text output (CPU, zero deps)
 
 pip install mujoco imageio pillow
 MUJOCO_GL=egl python mujoco_render.py    # regenerate the GIF above (headless CPU render)

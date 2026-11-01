@@ -1,0 +1,14 @@
+# Round 4. The steward's own tools live on the standing socket. With the
+# fence on, the steward's fence prefix names that socket as well as the
+# floor's. A pane that is not the steward names the floor's only.
+#!config fence = "on"
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/adapters/fake-fence.sh
+#!env FAKE_FENCE_LOG={WORK}/fence-argv
+{"id":"w0","write":"{WORK}/s/.stay","text":""}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"t1","cmd":"pane.create","cwd":"{WORK}/s","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","label":"steward"}
+{"id":"$id","ok":true,"result":{"pane":"$st"}}
+{"id":"s1","sleep":600}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"t2","file":"{WORK}/fence-argv"}
+{"id":"$id","ok":true,"result":{"text":"harness claude\nsocket {SOCK}\nsocket {DATA}/foreman/tools.sock\n","mode":"0o644"}}

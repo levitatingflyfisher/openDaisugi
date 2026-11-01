@@ -25,7 +25,7 @@ def _seed_lowblast(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="t1",
         question={
             "sessionId": "s1",
@@ -41,7 +41,7 @@ def _seed_destructive(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="t1",
         question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": "rm -rf build/"}},
         deadline=now + 60,
@@ -49,7 +49,7 @@ def _seed_destructive(tmp_path):
 
 
 def _answer(tmp_path):
-    return tmp_path / "gate" / "answers" / "t1.json"
+    return tmp_path / "warden" / "answers" / "t1.json"
 
 
 def test_allow_needs_a_then_enter(tmp_path):
@@ -120,7 +120,7 @@ def _seed_shell(tmp_path, command):
     now = time.time()
     _claude_session(tmp_path, "s1", last_ts=now - 2, tool_use_id="t1", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="t1",
         question={"sessionId": "s1", "toolName": "Bash", "toolInput": {"command": command}},
         deadline=now + 60,
@@ -182,7 +182,7 @@ def test_confirm_rechecks_the_armed_id_against_the_selected_row(tmp_path):
     now = time.time()
     _claude_session(tmp_path, "sa", last_ts=now - 1, tool_use_id="ta", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="ta",
         question={
             "sessionId": "sa",
@@ -194,7 +194,7 @@ def test_confirm_rechecks_the_armed_id_against_the_selected_row(tmp_path):
     )
     _claude_session(tmp_path, "sb", last_ts=now - 5, tool_use_id="tb", decision="deny")
     ask.post_ask(
-        tmp_path / "gate",
+        tmp_path / "warden",
         tool_use_id="tb",
         question={
             "sessionId": "sb",
@@ -219,8 +219,8 @@ def test_confirm_rechecks_the_armed_id_against_the_selected_row(tmp_path):
             await pilot.press("enter")  # confirm while sb is selected
             await pilot.pause()
             # neither ta (not the row under the cursor) nor tb (not armed) is allowed
-            assert not (tmp_path / "gate" / "answers" / "ta.json").exists()
-            assert not (tmp_path / "gate" / "answers" / "tb.json").exists()
+            assert not (tmp_path / "warden" / "answers" / "ta.json").exists()
+            assert not (tmp_path / "warden" / "answers" / "tb.json").exists()
 
     _run(scenario)
 
@@ -278,11 +278,11 @@ def test_remember_writes_a_proposal_not_an_envelope(tmp_path):
             await pilot.pause()
             await pilot.press("p")  # scope: project
             await pilot.pause()
-            files = list((tmp_path / "gate" / "proposals").glob("*.json"))
+            files = list((tmp_path / "warden" / "proposals").glob("*.json"))
             assert len(files) == 1
             body = json.loads(files[0].read_text())
             assert body["scope"] == "project" and body["kind"] == "allow-pattern"
-            assert not list((tmp_path / "gate" / "envelopes").glob("*.json"))  # nothing applied
+            assert not list((tmp_path / "warden" / "envelopes").glob("*.json"))  # nothing applied
 
     _run(scenario)
 
@@ -316,8 +316,8 @@ def test_presence_while_running_and_gone_after(tmp_path):
         app = DaisugiApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert ask.operator_present(tmp_path / "gate")
-        assert not (tmp_path / "gate" / "operator.json").exists()
+            assert ask.operator_present(tmp_path / "warden")
+        assert not (tmp_path / "warden" / "operator.json").exists()
 
     _run(scenario)
 
@@ -328,7 +328,7 @@ def _seed_tool(tmp_path, tool, tool_input, tier=None):
     question = {"sessionId": "s1", "toolName": tool, "toolInput": tool_input}
     if tier is not None:
         question["tier"] = tier
-    ask.post_ask(tmp_path / "gate", tool_use_id="t1", question=question, deadline=now + 60)
+    ask.post_ask(tmp_path / "warden", tool_use_id="t1", question=question, deadline=now + 60)
 
 
 @pytest.mark.parametrize(
@@ -371,7 +371,7 @@ def test_the_writer_rechecks_the_tier_in_the_ask_file(tmp_path):
             await pilot.press("j")
             await pilot.press("a")
             await pilot.pause()
-            path = tmp_path / "gate" / "asks" / "t1.json"
+            path = tmp_path / "warden" / "asks" / "t1.json"
             body = json.loads(path.read_text())
             body["tier"] = "permanent"
             path.write_text(json.dumps(body))
@@ -384,7 +384,7 @@ def test_the_writer_rechecks_the_tier_in_the_ask_file(tmp_path):
 
 
 def test_check_allow_follows_the_go_rule(tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "warden"
     now = time.time()
     ask.post_ask(root, tool_use_id="u", question={"tier": "undoable"}, deadline=now + 60)
     ask.post_ask(root, tool_use_id="p", question={"tier": "permanent"}, deadline=now + 60)

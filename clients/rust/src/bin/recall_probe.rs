@@ -1,4 +1,4 @@
-//! A test instrument for clients/gateway_compare.py: it runs the recall
+//! A test instrument for clients/router_compare.py: it runs the recall
 //! library on one query per input line and prints the result the way the
 //! oracle's MCP tools return it. A line is {"kind": "recall", "db",
 //! "matcher", "task", "envelope", "z3_timeout_ms"} or {"kind": "answer",
@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
 use daisugi_verify::distill::load_embedder;
-use daisugi_verify::gate::pyjson::{self, loads, Object, Value};
-use daisugi_verify::gateway::answers::load_answers;
-use daisugi_verify::gateway::recall::{recall, recall_answer, DEFAULT_MAX_AGE, DEFAULT_MODEL};
+use daisugi_verify::warden::pyjson::{self, loads, Object, Value};
+use daisugi_verify::router::answers::load_answers;
+use daisugi_verify::router::recall::{recall, recall_answer, DEFAULT_MAX_AGE, DEFAULT_MODEL};
 use daisugi_verify::pathways::find::select_matcher;
 use daisugi_verify::pathways::potion;
 use daisugi_verify::pathways::store::Store;

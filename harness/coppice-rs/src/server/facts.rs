@@ -1,5 +1,5 @@
-//! What the floor knows about a pane beyond its state: the router its
-//! model calls go through, the gate verdict and mode its hook last
+//! What the floor knows about a pane beyond its state: the route its
+//! model calls go through, the warden verdict and mode its hook last
 //! reported, and its tokens and model from the transcripts it may read;
 //! and floor.facts, the floor's header row.
 
@@ -22,15 +22,15 @@ use crate::layout;
 use crate::proto::{self, Request, Response};
 use crate::state::{self, ReportExtras};
 
-/// How long the floor trusts what it read about the gateway.
+/// How long the floor trusts what it read about the router.
 const OUTSIDE_TTL: Duration = Duration::from_secs(5);
 /// How close to its end the phone's tailscale certificate must be before
 /// floor.facts names it. The phone server renews it under 30 days.
 const PHONE_CERT_WARN_DAYS: i64 = 7;
-/// The bound on the ask for the gateway's capabilities.
+/// The bound on the ask for the router's capabilities.
 const CAPS_TIMEOUT: Duration = Duration::from_millis(500);
-/// The bound on the check that the gateway answers.
-const GATEWAY_DIAL_TIMEOUT: Duration = Duration::from_millis(300);
+/// The bound on the check that the router answers.
+const ROUTER_DIAL_TIMEOUT: Duration = Duration::from_millis(300);
 /// The most bytes one poll reads.
 const TAIL_CAP: u64 = 4 << 20;
 /// How many message ids a tailer remembers to count a split message once.
@@ -45,7 +45,7 @@ const FACTS_EVERY: Duration = Duration::from_secs(1);
 const POLL_WAIT: Duration = Duration::from_millis(50);
 /// A read longer than this marks its path refused.
 const POLL_DEADLINE: Duration = Duration::from_secs(5);
-/// The daisugi mode of a harness pane no gate hook reported for.
+/// The daisugi mode of a harness pane no warden hook reported for.
 const MODE_OFF: &str = "off";
 
 /// Token use summed over an agent's turns.
@@ -98,20 +98,23 @@ pub enum Kind {
     /// message.
     Claude,
     /// A sprig session tree. An assistant entry carries a unique id, model
-    /// and usage; a verdict entry carries the gate's decision.
+    /// and usage; a verdict entry carries the warden's decision.
     Sprig,
+    /// A Hermes Agent session in its state.db. The path names the database
+    /// and the session, as "db#session". No tailer reads it.
+    Hermes,
 }
 
 /// The last verdict known for a pane. at is unix seconds.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct GateFact {
+pub struct WardenFact {
     pub decision: String,
     pub tool: String,
     pub clause: String,
     pub at: f64,
 }
 
-impl GateFact {
+impl WardenFact {
     fn to_value(&self) -> Value {
         gojson::obj(vec![
             ("decision", json!(self.decision)),
@@ -129,7 +132,7 @@ struct TailSnap {
     refused: bool,
     sum: Tokens,
     model: String,
-    verdict: Option<GateFact>,
+    verdict: Option<WardenFact>,
     mode: String,
     off: u64,
     dev: u64,
@@ -153,13 +156,13 @@ pub struct Tailer {
     model: String,
     by_id: HashMap<String, Tokens>,
     ids: VecDeque<String>,
-    verdict: Option<GateFact>,
+    verdict: Option<WardenFact>,
     mode: String,
     last_call_id: String,
     last_call_name: String,
     /// Each verdict read since the owner last took them, the newest
     /// JOURNAL_KEPT of them, for the journal.
-    verdicts: Vec<GateFact>,
+    verdicts: Vec<WardenFact>,
 }
 
 /// Opens path for reading only when it is a regular file: never through a
@@ -233,7 +236,7 @@ struct SprigAssistant {
 }
 
 #[derive(Deserialize)]
-struct SprigGate {
+struct SprigWarden {
     #[serde(default, rename = "type")]
     kind: String,
     #[serde(default)]
@@ -404,9 +407,10 @@ impl Tailer {
                 if contains(b, b"\"assistant\"") {
                     self.sprig_assistant(b);
                 } else if contains(b, b"\"tool_call\"") || contains(b, b"\"verdict\"") {
-                    self.sprig_gate(b);
+                    self.sprig_warden(b);
                 }
             }
+            Kind::Hermes => {}
         }
     }
 
@@ -456,8 +460,8 @@ impl Tailer {
         }
     }
 
-    fn sprig_gate(&mut self, b: &[u8]) {
-        let Ok(e) = serde_json::from_slice::<SprigGate>(b) else {
+    fn sprig_warden(&mut self, b: &[u8]) {
+        let Ok(e) = serde_json::from_slice::<SprigWarden>(b) else {
             return;
         };
         match e.kind.as_str() {
@@ -469,7 +473,7 @@ impl Tailer {
                 if e.decision != "allow" && e.decision != "deny" {
                     return;
                 }
-                let mut v = GateFact {
+                let mut v = WardenFact {
                     decision: e.decision,
                     tool: String::new(),
                     clause: truncate(&e.clause, 200),
@@ -538,7 +542,7 @@ struct RetiredAt {
 #[derive(Default)]
 pub struct PaneFacts {
     mode: String,
-    verdict: Option<GateFact>,
+    verdict: Option<WardenFact>,
     path: String,
     files: HashMap<String, TailEntry>,
     order: Vec<String>,
@@ -645,7 +649,7 @@ struct FactsView {
     model: String,
     tokens: Option<Tokens>,
     mode: String,
-    verdict: Option<GateFact>,
+    verdict: Option<WardenFact>,
     seen: Option<f64>,
 }
 
@@ -757,17 +761,17 @@ fn first_record(path: &str) -> Option<Result<(f64, String), ()>> {
     None
 }
 
-/// What the floor last read about the gateway.
+/// What the floor last read about the router.
 #[derive(Default)]
 pub struct Outside {
     read_at: Option<Instant>,
-    gateway: String,
     router: String,
+    route: String,
     dial_at: Option<Instant>,
     dial_for: String,
     answers: bool,
-    /// What each gateway address said about the pane prefix: whether it
-    /// takes it, and when it was asked. See Server::gateway_stamps.
+    /// What each router address said about the pane prefix: whether it
+    /// takes it, and when it was asked. See Server::router_stamps.
     caps: std::collections::HashMap<String, (bool, Instant)>,
 }
 
@@ -842,15 +846,15 @@ fn split_url(raw: &str) -> Option<(String, String, String)> {
     Some((scheme.to_string(), host, port))
 }
 
-/// Sends GET /_caps to a loopback gateway and reads pane_prefix. It follows
+/// Sends GET /_caps to a loopback router and reads pane_prefix. It follows
 /// no redirect and reads at most 4 KiB. Anything but a 200 with a true
 /// pane_prefix is false.
-pub(super) fn ask_pane_prefix(gateway: &str) -> bool {
+pub(super) fn ask_pane_prefix(router: &str) -> bool {
     use std::io::{Read, Write};
-    let Some((_, host, _)) = split_url(gateway) else {
+    let Some((_, host, _)) = split_url(router) else {
         return false;
     };
-    let Some(e) = endpoint(gateway) else {
+    let Some(e) = endpoint(router) else {
         return false;
     };
     let Some(port) = e.rfind(':').and_then(|i| e[i + 1..].parse::<u16>().ok()) else {
@@ -871,7 +875,7 @@ pub(super) fn ask_pane_prefix(gateway: &str) -> bool {
     };
     let _ = c.set_read_timeout(Some(CAPS_TIMEOUT));
     let _ = c.set_write_timeout(Some(CAPS_TIMEOUT));
-    let after = gateway.split_once("://").map_or("", |(_, r)| r);
+    let after = router.split_once("://").map_or("", |(_, r)| r);
     let path = after
         .find('/')
         .map_or("", |i| after[i..].trim_end_matches('/'));
@@ -920,14 +924,14 @@ pub(super) fn same_endpoint(a: &str, b: &str) -> bool {
     }
 }
 
-/// The gateway_router key of daisugi's config.yaml, read from its one
+/// The routing_mode key of daisugi's config.yaml, read from its one
 /// line shape. "" when there is none.
-fn daisugi_router(path: &Path) -> String {
+fn daisugi_route(path: &Path) -> String {
     let Ok(text) = std::fs::read_to_string(path) else {
         return String::new();
     };
     for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("gateway_router:") {
+        if let Some(rest) = line.strip_prefix("routing_mode:") {
             let rest = rest.split('#').next().unwrap_or("");
             return rest.trim().trim_matches(['"', '\'']).to_string();
         }
@@ -976,49 +980,49 @@ impl Server {
         self.outside.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The gateway base URL and what routes behind it, read at most every
+    /// The router base URL and what routes behind it, read at most every
     /// OUTSIDE_TTL.
-    pub(super) fn gateway_facts(&self) -> (String, String) {
+    pub(super) fn router_facts(&self) -> (String, String) {
         let mut g = self.outside_lock();
         if let Some(at) = g.read_at {
             if at.elapsed() < OUTSIDE_TTL {
-                return (g.gateway.clone(), g.router.clone());
+                return (g.router.clone(), g.route.clone());
             }
         }
-        let gateway = match config::load() {
-            Ok(Some(c)) => c.gateway_url(),
-            Ok(None) => config::Config::default().gateway_url(),
+        let router = match config::load() {
+            Ok(Some(c)) => c.router_url(),
+            Ok(None) => config::Config::default().router_url(),
             Err(_) => String::new(),
         };
         let cfg_yaml = self
-            .gate_root()
+            .warden_root()
             .parent()
             .map(|p| p.join("config.yaml"))
             .unwrap_or_default();
-        let router = if daisugi_router(&cfg_yaml) == "switchyard" {
+        let route = if daisugi_route(&cfg_yaml) == "switchyard" {
             "switchyard"
         } else {
-            "gateway"
+            "router"
         };
         g.read_at = Some(Instant::now());
-        g.gateway = gateway.clone();
-        g.router = router.to_string();
-        (gateway, router.to_string())
+        g.router = router.clone();
+        g.route = route.to_string();
+        (router, route.to_string())
     }
 
-    /// Whether something accepts a connection at the gateway's address.
+    /// Whether something accepts a connection at the router's address.
     /// Only a loopback address is dialed, and the answer is kept for
-    /// OUTSIDE_TTL. None when there is no loopback gateway to dial.
-    pub(super) fn gateway_answers(&self, gateway: &str) -> Option<bool> {
-        let (_, host, _) = split_url(gateway)?;
+    /// OUTSIDE_TTL. None when there is no loopback router to dial.
+    pub(super) fn router_answers(&self, router: &str) -> Option<bool> {
+        let (_, host, _) = split_url(router)?;
         if !is_loopback_name(&host.to_lowercase()) {
             return None;
         }
-        let e = endpoint(gateway)?;
+        let e = endpoint(router)?;
         let port: u16 = e[e.rfind(':')? + 1..].parse().ok()?;
         {
             let g = self.outside_lock();
-            if g.dial_for == gateway && g.dial_at.is_some_and(|t| t.elapsed() < OUTSIDE_TTL) {
+            if g.dial_for == router && g.dial_at.is_some_and(|t| t.elapsed() < OUTSIDE_TTL) {
                 return Some(g.answers);
             }
         }
@@ -1030,41 +1034,41 @@ impl Server {
         let answers = match host.parse::<std::net::IpAddr>() {
             Ok(ip) => std::net::TcpStream::connect_timeout(
                 &std::net::SocketAddr::new(ip, port),
-                GATEWAY_DIAL_TIMEOUT,
+                ROUTER_DIAL_TIMEOUT,
             )
             .is_ok(),
             Err(_) => false,
         };
         let mut g = self.outside_lock();
         g.dial_at = Some(Instant::now());
-        g.dial_for = gateway.to_string();
+        g.dial_for = router.to_string();
         g.answers = answers;
         Some(answers)
     }
 
-    /// Whether the gateway at this address says it takes the pane prefix:
-    /// GET /_caps answers {"pane_prefix": true}. An older gateway has no
+    /// Whether the router at this address says it takes the pane prefix:
+    /// GET /_caps answers {"pane_prefix": true}. An older router has no
     /// such route, and a stamped path would fail upstream, so anything but
-    /// a clear yes is a no (F12-R-10). Only a loopback gateway is asked,
+    /// a clear yes is a no (F12-R-10). Only a loopback router is asked,
     /// once for each address: a yes is kept for the life of the server, a
-    /// no for OUTSIDE_TTL, so a gateway that starts or updates later is
+    /// no for OUTSIDE_TTL, so a router that starts or updates later is
     /// asked again.
-    pub(super) fn gateway_stamps(&self, gateway: &str) -> bool {
-        let Some((_, host, _)) = split_url(gateway) else {
+    pub(super) fn router_stamps(&self, router: &str) -> bool {
+        let Some((_, host, _)) = split_url(router) else {
             return false;
         };
         if !is_loopback_name(&host.to_lowercase()) {
             return false;
         }
-        if let Some((yes, at)) = self.outside_lock().caps.get(gateway) {
+        if let Some((yes, at)) = self.outside_lock().caps.get(router) {
             if *yes || at.elapsed() < OUTSIDE_TTL {
                 return *yes;
             }
         }
-        let yes = ask_pane_prefix(gateway);
+        let yes = ask_pane_prefix(router);
         self.outside_lock()
             .caps
-            .insert(gateway.to_string(), (yes, Instant::now()));
+            .insert(router.to_string(), (yes, Instant::now()));
         yes
     }
 
@@ -1076,9 +1080,9 @@ impl Server {
         std::env::var(key).unwrap_or_default()
     }
 
-    /// Who routes a pane's model calls: the gateway's router when its base
-    /// URL is the gateway, "direct" for anything else, "" when none is set.
-    fn router_of(&self, p: &layout::Pane) -> String {
+    /// Who routes a pane's model calls: the router's route when its base
+    /// URL is the router, "direct" for anything else, "" when none is set.
+    fn route_of(&self, p: &layout::Pane) -> String {
         let bases: Vec<String> = ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"]
             .iter()
             .map(|k| self.pane_env(p, k).trim().to_string())
@@ -1087,8 +1091,8 @@ impl Server {
         if bases.is_empty() {
             return String::new();
         }
-        let (gateway, router) = self.gateway_facts();
-        if gateway.is_empty() {
+        let (router, route) = self.router_facts();
+        if router.is_empty() {
             for b in &bases {
                 if VENDOR_APIS.iter().any(|v| same_endpoint(b, v)) {
                     return "direct".into();
@@ -1096,20 +1100,23 @@ impl Server {
             }
             return String::new();
         }
-        if bases.iter().any(|b| same_endpoint(b, &gateway)) {
-            return router;
+        if bases.iter().any(|b| same_endpoint(b, &router)) {
+            return route;
         }
         "direct".into()
     }
 
     fn disarmed(&self) -> bool {
-        std::fs::symlink_metadata(self.gate_root().join("DISARMED")).is_ok()
+        std::fs::symlink_metadata(self.warden_root().join("DISARMED")).is_ok()
     }
 
     /// The file the server reads for pane p, and its kind: a sprig pane's
     /// own session tree, or the transcript a Claude pane's own hook
     /// reported last. The path is "" when the server reads no file for p.
     pub(super) fn transcript_of(&self, p: &layout::Pane) -> (String, Kind) {
+        if super::messages::is_hermes(p) {
+            return (self.hermes_ref(p), Kind::Hermes);
+        }
         if p.harness == "sprig" && p.kind == layout::KIND_HEADLESS {
             let path = crate::adapters::sprig::tree_path(
                 p.argv.as_deref().unwrap_or_default(),
@@ -1451,7 +1458,7 @@ impl Server {
             }
             if let Some(v) = &x.verdict {
                 verdict = Some(v.clone());
-                pf.verdict = Some(GateFact {
+                pf.verdict = Some(WardenFact {
                     decision: v.decision.clone(),
                     tool: v.tool.clone(),
                     clause: v.clause.clone(),
@@ -1493,7 +1500,7 @@ impl Server {
                 tl.mode.clone(),
             )
         };
-        // Verdicts a sprig tree holds go to the journal, as the gate's own
+        // Verdicts a sprig tree holds go to the journal, as the warden's own
         // do. This runs before the pane's lock is taken, so the two never
         // nest.
         if let Some(s) = &srv {
@@ -1614,7 +1621,7 @@ impl Server {
         g.facts.retain(|id, _| self.tree.pane(id).is_some());
     }
 
-    /// A row's stack object: loop, model, router and daisugi, each only
+    /// A row's stack object: loop, model, route and daisugi, each only
     /// when known.
     fn stack_of(&self, p: &layout::Pane, v: &FactsView) -> Option<Value> {
         let mut st: Vec<(&str, Value)> = Vec::new();
@@ -1624,14 +1631,14 @@ impl Server {
         if !v.model.is_empty() {
             st.push(("model", json!(v.model)));
         }
-        let router = self.router_of(p);
-        if !router.is_empty() {
-            st.push(("router", json!(router)));
+        let route = self.route_of(p);
+        if !route.is_empty() {
+            st.push(("route", json!(route)));
         }
         if !p.harness.is_empty() && !p.closed {
             let mode = if v.mode.is_empty() { MODE_OFF } else { &v.mode };
             let mut d = vec![("mode", json!(mode)), ("armed", json!(!self.disarmed()))];
-            // The owner set this agent to watching; the gate reads it on the
+            // The owner set this agent to watching; the warden reads it on the
             // agent's next tool call, so mode may still say enforcing.
             let (marker, note) = self.mode_marker(&p.id);
             if !marker.is_empty() {
@@ -1645,7 +1652,7 @@ impl Server {
         (!st.is_empty()).then(|| gojson::map(st))
     }
 
-    /// Puts stack, gate and tokens on one pane.list row, each only when
+    /// Puts stack, warden and tokens on one pane.list row, each only when
     /// known.
     pub fn add_facts(&self, row: &mut Vec<(&'static str, Value)>, p: &layout::Pane) {
         let v = self.view_facts(p);
@@ -1653,25 +1660,25 @@ impl Server {
             row.push(("stack", st));
         }
         if let Some(g) = &v.verdict {
-            row.push(("gate", g.to_value()));
+            row.push(("warden", g.to_value()));
         }
         if let Some(t) = v.tokens {
             row.push(("tokens", t.to_value()));
         }
     }
 
-    /// Whether a harness settings file under the home names the gate.
-    /// The gate root an installed gate hook names with --root when it is
-    /// not this server's gate root, or None: then the gate reads markers
+    /// Whether a harness settings file under the home names the warden.
+    /// The warden root an installed warden hook names with --root when it is
+    /// not this server's warden root, or None: then the warden reads markers
     /// from another place and a mode set here does nothing (F11-R-15). A
     /// root that starts with ~/ is read from the home.
     fn hook_root(&self) -> Option<String> {
         static ARG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let re = ARG.get_or_init(|| {
-            regex::Regex::new(r#"opendaisugi\.gate[^"\n]*?--root(?:=|\s+)([^\s"\\]+)"#).unwrap()
+            regex::Regex::new(r#"opendaisugi\.warden[^"\n]*?--root(?:=|\s+)([^\s"\\]+)"#).unwrap()
         });
         let home = crate::sys::home_dir()?;
-        let own = PathBuf::from(crate::sys::clean(&self.gate_root().to_string_lossy()));
+        let own = PathBuf::from(crate::sys::clean(&self.warden_root().to_string_lossy()));
         for f in [".claude/settings.json", ".codex/hooks.json"] {
             let Ok(b) = std::fs::read(home.join(f)) else {
                 continue;
@@ -1691,7 +1698,7 @@ impl Server {
         None
     }
 
-    fn gate_installed(&self) -> bool {
+    fn warden_installed(&self) -> bool {
         let Some(home) = crate::sys::home_dir() else {
             return false;
         };
@@ -1699,7 +1706,7 @@ impl Server {
             .iter()
             .any(|f| {
                 std::fs::read(home.join(f))
-                    .is_ok_and(|b| String::from_utf8_lossy(&b).contains("opendaisugi.gate"))
+                    .is_ok_and(|b| String::from_utf8_lossy(&b).contains("opendaisugi.warden"))
             })
     }
 
@@ -1754,7 +1761,7 @@ impl Server {
                 continue;
             }
             if let Some(eff) = self.effective_state(&p.id) {
-                // A blocked pane whose foreman hears the ask first counts
+                // A blocked pane whose steward hears the ask first counts
                 // as working, as every floor counts it from pane.list.
                 let held = eff.state == state::STATE_BLOCKED && self.held_for(&p.id).is_some();
                 if eff.state == state::STATE_WORKING || held {
@@ -1793,7 +1800,7 @@ impl Server {
             ("enforcing", json!(counts["enforcing"])),
             ("watching", json!(counts["watching"])),
             ("off", json!(counts[MODE_OFF])),
-            ("installed", json!(self.gate_installed())),
+            ("installed", json!(self.warden_installed())),
         ];
         if let Some(root) = self.hook_root() {
             daisugi.push(("hook_root", json!(root)));
@@ -1806,22 +1813,22 @@ impl Server {
         ];
         let fid = {
             let mut t = self.talk_lock();
-            self.tracked_foreman(&mut t)
+            self.tracked_steward(&mut t)
         };
-        if self.foreman_state(&fid).0 {
+        if self.steward_state(&fid).0 {
             res.push((
-                "foreman",
+                "steward",
                 gojson::map(vec![
                     ("pane", json!(fid)),
                     ("label", json!(self.label_of(&fid))),
                 ]),
             ));
         }
-        // The chat foreman's last turn: the profile it ran on, once one has
+        // The chat steward's last turn: the profile it ran on, once one has
         // run.
         if let Some(name) = self.last_turn_profile() {
             res.push((
-                "foreman_turn",
+                "steward_turn",
                 gojson::map(vec![("ran_on", json!(name))]),
             ));
         }
@@ -1830,15 +1837,15 @@ impl Server {
                 res.push(("phone_cert_days", json!(days)));
             }
         }
-        let (gateway, _) = self.gateway_facts();
-        if !gateway.is_empty() {
-            let mut gw: Vec<(&str, Value)> = vec![("url", json!(gateway))];
-            if let Some(a) = self.gateway_answers(&gateway) {
+        let (router, _) = self.router_facts();
+        if !router.is_empty() {
+            let mut gw: Vec<(&str, Value)> = vec![("url", json!(router))];
+            if let Some(a) = self.router_answers(&router) {
                 gw.push(("answers", json!(a)));
             }
-            res.push(("gateway", gojson::map(gw)));
+            res.push(("router", gojson::map(gw)));
         }
-        // The saving is the gateway's own figure and nothing else: with
+        // The saving is the router's own figure and nothing else: with
         // none, the reply has no such key.
         if let Some(tokens) = self.saved_today(now) {
             res.push(("saved_today", gojson::map(vec![("tokens", json!(tokens))])));
@@ -2049,7 +2056,7 @@ mod tests {
             data_dir: d.join("data"),
             start_dir: d.clone(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         let path = fixture("sprig-tree.jsonl");
         let t = Arc::new(Mutex::new(Tailer::new(&path, Kind::Sprig)));

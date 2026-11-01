@@ -170,14 +170,14 @@ def test_setup_remote_rejects_a_scheme_in_the_host(tmp_path):
 
 def test_setup_remote_exits_1_when_httpx_is_missing(tmp_path, monkeypatch):
     def fake_probe(host, port, *, kind="auto", timeout_s=3.0, client=None):
-        raise ImportError("the model-host probe needs the [gateway] extra")
+        raise ImportError("the model-host probe needs the [router] extra")
 
     monkeypatch.setattr(model_host, "probe", fake_probe)
     res = runner.invoke(
         app, ["tiers", "setup", "--data-dir", str(tmp_path), "--remote", "box:11434"]
     )
     assert res.exit_code == 1
-    assert "opendaisugi[gateway]" in res.output
+    assert "opendaisugi[router]" in res.output
 
 
 def test_setup_remote_rejects_a_bad_kind(tmp_path):

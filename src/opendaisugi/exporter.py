@@ -87,48 +87,48 @@ def render_prometheus(data_dir: Path) -> str:
             [(None, raw.pathway_hits)],
         )
 
-    if raw.gateway_turns is not None:
+    if raw.router_turns is not None:
         _metric(
             lines,
-            "daisugi_gateway_turns_total",
+            "daisugi_router_turns_total",
             "counter",
-            "Gateway turns routed.",
-            [(None, raw.gateway_turns)],
+            "Router turns routed.",
+            [(None, raw.router_turns)],
         )
         _metric(
             lines,
-            "daisugi_gateway_downgraded_turns_total",
+            "daisugi_router_downgraded_turns_total",
             "counter",
-            "Gateway turns routed to a cheaper model than requested.",
-            [(None, raw.gateway_downgraded)],
+            "Router turns routed to a cheaper model than requested.",
+            [(None, raw.router_downgraded)],
         )
         _metric(
             lines,
-            "daisugi_gateway_frontier_tokens_saved_total",
+            "daisugi_router_frontier_tokens_saved_total",
             "counter",
             "Tokens kept off the frontier model by routing.",
-            [(None, raw.gateway_frontier_tokens_saved)],
+            [(None, raw.router_frontier_tokens_saved)],
         )
         _metric(
             lines,
-            "daisugi_gateway_dollars_saved",
+            "daisugi_router_dollars_saved",
             "gauge",
             "Estimated dollars saved by routing (best-effort).",
-            [(None, raw.gateway_dollars_saved)],
+            [(None, raw.router_dollars_saved)],
         )
         _metric(
             lines,
-            "daisugi_gateway_blended_multiplier",
+            "daisugi_router_blended_multiplier",
             "gauge",
             "Blended cost multiplier versus all-frontier routing.",
-            [(None, raw.gateway_multiplier)],
+            [(None, raw.router_multiplier)],
         )
         _metric(
             lines,
-            "daisugi_gateway_cache_hit_rate",
+            "daisugi_router_cache_hit_rate",
             "gauge",
             "Share of input tokens served from cache (0..1).",
-            [(None, raw.gateway_cache_hit_rate)],
+            [(None, raw.router_cache_hit_rate)],
         )
 
     return "\n".join(lines) + "\n"

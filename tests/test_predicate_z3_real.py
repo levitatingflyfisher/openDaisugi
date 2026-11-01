@@ -23,7 +23,9 @@ def _env():
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo", "rm"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo", "rm"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 

@@ -1,0 +1,22 @@
+# A steward branch run puts its ask in the steward's work dir. The floor lists
+# it with the asks of the configured dir, and carries the answer to the dir
+# that holds it. The fake daisugi holds a1 in the configured dir and a2 in
+# the work dir.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-cards-daisugi
+#!env COPPICE_DAISUGI_DATA_DIR={WORK}/dd
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "w1", "write": "{DATA}/foreman/work/ledger.txt", "text": "x\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g0", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t1", "http": "GET", "url": "http://{ADDR}/api/tree", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t2", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"a2\",\"decision\":\"allow\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t3", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"a1\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t4", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"zz\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 404}}

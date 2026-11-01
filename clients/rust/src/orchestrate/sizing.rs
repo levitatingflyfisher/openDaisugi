@@ -1,7 +1,7 @@
 //! `model_sizer.py`: each step sized to the cheapest capable model.
 
-use crate::gate::pyjson::{Object, Value};
-use crate::gateway::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
+use crate::warden::pyjson::{Object, Value};
+use crate::router::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
 
 /// `model_sizer.ModelRung`.
 #[derive(Debug, Clone, PartialEq)]

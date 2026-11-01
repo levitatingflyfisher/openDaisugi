@@ -65,14 +65,14 @@ func TestAClosedRowIsDropped(t *testing.T) {
 func TestApplyCopiesTheListFields(t *testing.T) {
 	var m Model
 	m.Apply([]map[string]any{{
-		"id": "a", "label": "gate-refactor", "cwd": "/work/gate", "harness": "claude",
-		"state": "working", "source": "gate", "detail": "editing", "quiet_for": 4.5,
+		"id": "a", "label": "gear-refactor", "cwd": "/work/warden", "harness": "claude",
+		"state": "working", "source": "warden", "detail": "editing", "quiet_for": 4.5,
 	}, {
 		"id": "b", "state": "idle", "source": nil,
 	}}, 0)
 	a := m.Rows[0]
-	if a.Label != "gate-refactor" || a.Worktree != "/work/gate" || a.Harness != "claude" ||
-		a.Source != "gate" || a.Line != "editing" || a.QuietFor != 4.5 {
+	if a.Label != "gear-refactor" || a.Worktree != "/work/warden" || a.Harness != "claude" ||
+		a.Source != "warden" || a.Line != "editing" || a.QuietFor != 4.5 {
 		t.Fatalf("row a = %+v", a)
 	}
 	if m.Rows[1].Source != "" {
@@ -152,11 +152,11 @@ func TestEventOnAKnownPaneChangesItsStateAndNeedYou(t *testing.T) {
 	var m Model
 	m.Apply([]map[string]any{{"id": "a", "state": "working", "ts": 10.0}}, 70)
 	m.Event(map[string]any{
-		"event": "state", "pane": "a", "state": "blocked", "source": "gate", "detail": "",
+		"event": "state", "pane": "a", "state": "blocked", "source": "warden", "detail": "",
 		"ask": map[string]any{"tool": "Bash", "summary": "ls"},
 	})
 	r := m.Rows[0]
-	if r.State != "blocked" || r.Source != "gate" || r.Line != "Bash: ls" || r.Age != 0 {
+	if r.State != "blocked" || r.Source != "warden" || r.Line != "Bash: ls" || r.Age != 0 {
 		t.Fatalf("row = %+v", r)
 	}
 	if m.NeedYou != 1 {
@@ -167,8 +167,8 @@ func TestEventOnAKnownPaneChangesItsStateAndNeedYou(t *testing.T) {
 func TestEventOnAnUnknownPaneChangesNothing(t *testing.T) {
 	var m Model
 	m.Apply([]map[string]any{{"id": "a", "state": "working"}}, 0)
-	m.Event(map[string]any{"event": "state", "pane": "zzz", "state": "blocked", "source": "gate"})
-	m.Event(map[string]any{"event": "state", "pane": nil, "state": "blocked", "source": "gate"})
+	m.Event(map[string]any{"event": "state", "pane": "zzz", "state": "blocked", "source": "warden"})
+	m.Event(map[string]any{"event": "state", "pane": nil, "state": "blocked", "source": "warden"})
 	if len(m.Rows) != 1 || m.Rows[0].State != "working" || m.NeedYou != 0 {
 		t.Fatalf("model changed: %+v", m)
 	}

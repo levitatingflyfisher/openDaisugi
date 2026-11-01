@@ -25,7 +25,9 @@ def test_consistent_empty_envelope():
 
 
 def test_consistent_shell_with_allowlist():
-    env = _envelope(Permission(shell=True, shell_allowlist=["python3"]))
+    env = _envelope(
+        Permission(shell=True, shell_allowlist=["python3"], file_read=["**"], file_write=["**"])
+    )
     assert check_envelope_self_consistency(env) == []
 
 
@@ -93,7 +95,9 @@ def _plan(steps: list[ActionStep]) -> ActionPlan:
 
 
 def test_plan_shell_step_with_shell_permission_passes():
-    env = _envelope(Permission(shell=True, shell_allowlist=["python3"]))
+    env = _envelope(
+        Permission(shell=True, shell_allowlist=["python3"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan([ShellStep(id="s1", command="python3 chart.py")])
     assert check_plan_against_envelope(plan, env) == []
 

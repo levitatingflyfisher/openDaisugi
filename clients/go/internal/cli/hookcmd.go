@@ -8,10 +8,10 @@ import (
 	"syscall"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gate"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/warden"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // hookEvents are the --event values `hook record` takes.
@@ -23,15 +23,22 @@ var hookEvents = map[string]bool{
 // auto-tend --data-dir <dir>` started in a session of its own, its
 // streams on /dev/null, never waited on. Tests replace it.
 var spawnAutoTend = func(env map[string]string, dataDir string) {
-	bin, err := install.LookPath(env)("daisugi")
+	// The path this binary ran from, as install writes it into a hook: the
+	// agent's PATH often lacks the directory `daisugi` is in.
+	self, err := install.Self()
 	if err != nil {
 		return
 	}
-	cmd := exec.Command(bin, "hook", "auto-tend", "--data-dir", dataDir)
+	cmd := exec.Command(self, autoTendArgs(dataDir)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if cmd.Start() == nil {
 		_ = cmd.Process.Release()
 	}
+}
+
+// autoTendArgs are the words after the program.
+func autoTendArgs(dataDir string) []string {
+	return []string{"hook", "auto-tend", "--data-dir", dataDir}
 }
 
 // hookRecord is `daisugi hook record`: read a hook payload from stdin,
@@ -56,7 +63,7 @@ func (e *Env) hookRecord(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Read a hook payload from stdin, record it, return the host's continue contract.", opts)
 	}
-	root := p.str("--captures-root", gateroot.Join(e.dataHome(), "captures"))
+	root := p.str("--captures-root", wardenroot.Join(e.dataHome(), "captures"))
 	format := p.str("--format", "claude")
 	event := p.str("--event", "pre_tool_use")
 	if !hookEvents[event] {
@@ -67,11 +74,18 @@ func (e *Env) hookRecord(args []string) error {
 	if err != nil {
 		raw = nil
 	}
-	e.out("%s\n", gate.HookRecord(raw, root, format, event, e.env))
+	e.out("%s\n", warden.HookRecord(raw, root, format, event, e.env))
 	if event == "pre_tool_use" {
-		e.maybeTriggerTend(gateroot.Parent(root), nowSeconds())
+		e.maybeTriggerTend(wardenroot.Parent(root), nowSeconds())
 	}
 	return nil
+}
+
+func init() {
+	// The resident warden's capture mirror starts the same background tend.
+	warden.CaptureTrigger = func(env map[string]string, dataDir string) {
+		(&Env{env: env}).maybeTriggerTend(dataDir, nowSeconds())
+	}
 }
 
 // maybeTriggerTend is hook.maybe_trigger_background_tend: at most once

@@ -53,6 +53,7 @@ P = ⟨ file_read, file_write : set of glob,
       network : bool, network_hosts : set of host,
       shell : bool, shell_allowlist : set of command-head,
       mcp_allowlist : set of tool-pattern,
+      mcp_rules : list of (tool-pattern, predicate list, known-keys),
       workspace_bounds : AABB ∪ {⊥}, velocity/torque : ℝ⁺ ∪ {⊥},
       joint_limits : map ∪ {}, obstacles : set of AABB,
       max_execution_time_s, max_output_size_mb : ℕ ⟩
@@ -89,7 +90,8 @@ An `ActionPlan` `π = ⟨V, D⟩` is a set of steps `V ⊆ 𝒮` with a dependen
 
 **Status.** Built 2026-09-30 in Python, Go and Rust (`src/opendaisugi/write_paths.py`,
 `forall_writes` in `predicate.py`). Ruled DI-10; rulings DL-1 to DL-3 and DL-11 to
-DL-13.
+DL-13. Version 3 of the write paths (rulings SG-1 to SG-7) adds the reads, the trees
+and the two bases below; `writes(s)` is the write half of the access analysis of §4.2.
 
 Each step `s` has a derived field `writes(s)`, a finite list of normalized paths, or
 `?` (unknown). It is not stored in the step record; only the quantifier below reads it.
@@ -103,8 +105,8 @@ W(c, k, a) = ?                                         if k > 4
            = [ ]                                       if strip(c) = ""
            = P(c, k, a)                                if c has no shell metacharacter
            = ?                                         if the shell grammar refuses c
-           = ?                                         if c runs cd, pushd or popd and
-                                                       the list below holds a relative path
+           = ?                                         if c moves its cwd (cwd movers below)
+                                                       and the list below holds a relative path
            = [ norm(t) : t ∈ writes_redirect(c), t ∉ Sinks ] ++ P(c₁, k, a) ++ … ++ P(cₙ, k, a)
                                                        else, c₁ … cₙ its simple commands
 P(c, k, a) = W(i₁, k+1, a') ++ … ++ W(iₘ, k+1, a')     i₁ … iₘ the payloads of a
@@ -153,10 +155,23 @@ conjunction; a symbolic step (vacuity, subsumption) has one free write path `w` 
 free Boolean `n` ("the step writes"), and compiles to `n ⟹ φ(w)`. So the quantifier is
 a tautology exactly when `φ` is, and it is never a contradiction.
 
-**What `writes` does not see.** Files a command writes through its operands (`cp`,
-`mv`, `tee`, `sed -i`, `touch`), the work of an interpreter (`python`, `sed`, `awk`),
-and the writes of MCP tools, skills and delegated agents. A predicate over `writes`
-says nothing about them; §4.2's permission checks still govern each of them as today.
+**The cwd and the two bases (version 3).** A cwd mover is `cd`, `pushd`, `popd`,
+`builtin`, `command`, `exec`, `eval`, `source`, `.`, and `env` with `-C`, `-S` or
+`--chdir`. If the first command of a level is `cd LIT` (one literal operand: no `-`,
+`~`, `$`, glob or brace) and the level's text starts with that command, and no other cwd
+mover appears at any level (a `cd` inside a loop, a function or a group is one), each relative path
+at that level and below is placed from both `b` and `b/LIT`, because a failed `cd`
+leaves the cwd where it was. Any other cwd mover makes every relative path `?`. `exec`, `eval`, `builtin`, `source` and `.`
+given an argument make the whole line `?`: they run a command the placer cannot read. Without
+a base the relative paths stay relative.
+
+**What `writes` does not see.** The work of an interpreter (`python`, `awk`, `make`,
+`node`, `perl`, and `sed` script commands such as `w`), a command that is in neither
+table (`git`, `npm`, `curl`, `pip`, …), the file arguments of MCP tools, symlinks and
+bind mounts (every scope is a path string), a persistent shell whose cwd is not the
+payload's cwd, and the heredoc body as data. A predicate over `writes` says nothing
+about them. §4.2 places the operands of the commands in its tables; it does not place
+these either.
 
 ### 2.4 Dialects (Proposed; stage 0 Built)
 
@@ -164,8 +179,8 @@ says nothing about them; §4.2's permission checks still govern each of them as 
 What exists today is the definition store (`src/opendaisugi/aliases.py`): named,
 parameterized predicates unfolded by `resolve()` before a check, and the **system
 dialect** of stage 0 below. Permission words, population dialects, envelope-level pins,
-the register-time order check and the size bound are **not built**. Today the gate
-passes no definition registry, so an `alias` reference at the gate is an unresolved
+the register-time order check and the size bound are **not built**. Today the warden
+passes no definition registry, so an `alias` reference at the warden is an unresolved
 definition: a violation (a deny in enforce mode; logged in audit mode).
 
 **Stage 0 (Built 2026-09-30; rulings DL-1 to DL-17).** The system dialect
@@ -187,22 +202,27 @@ is a use of it, with its `target` as the argument. The dialect's identity is the
 16 hex digits of the SHA-256 of the canonical JSON of its definitions, with the
 versions of `R` and of the write paths.
 
-At the gate a word is placed from the call's cwd `b` (DL-13): a relative target `g`
+At the warden a word is placed from the call's cwd `b` (DL-13): a relative target `g`
 becomes `b/g`, and the unfolded `forall_writes` reads `writes_b` (§2.3.1). A target
 that starts with `/` or `**` is left as it is, so the default `**` still names every
 path. A cwd with a glob character, a target that starts with `~`, and a target with a
 `.` or `..` segment that does not end in `/**` are refused. A plan verified outside the
-gate has no base, and nothing is placed.
+warden has no base, and nothing is placed.
 
-Audit first (DI-1). With no pin, a word use is evaluated and a failure is recorded as a
-warning (`dialect audit: …`); the verdict is the one the opaque invariant gets today. A
-pin equal to the dialect hash (`config.yaml` `dialect_enforce`) enforces the word: the
-word decides the invariant. A pin that names another hash makes every word use `⊥`.
+Audit first (DI-1), enforce when the warden enforces (SG-9). The pin the warden uses is
+`dialect_enforce` from `config.yaml` when it is set; else this build's dialect hash when
+the warden's mode is `enforce`; else none. With no pin (audit mode) a word use is
+evaluated and a failure is recorded as a warning (`dialect audit: …`); the verdict is
+the one the opaque invariant gets (§6). A pin equal to the dialect hash enforces the
+word: the word decides the invariant. A pin that names another hash makes every word use
+`⊥`, in both modes. A plan verified outside the warden has no pin and audits. Version 3
+of the write paths is a new dialect hash, so a pin from an earlier build makes every
+word use `⊥` until the operator sets the new hash or removes the pin.
 The pin lives in the operator's config, not in the envelope (DL-4), and a hard-deny
 rule stops an agent's tool call from writing or naming that config (DL-15). A second
-hard-deny rule stops every agent write the gate can place under the gate's own state:
-the gate root (the disarm marker, envelopes, graft rules, asks, audit logs) and each
-data dir's `router`, `journal`, `tree`, `gateway`, `weave` and `envelope_cache.db`
+hard-deny rule stops every agent write the warden can place under the warden's own state:
+the warden root (the disarm marker, envelopes, graft rules, asks, audit logs) and each
+data dir's `router`, `journal`, `tree`, `router`, `weave` and `envelope_cache.db`
 (SW-17). Reads stay allowed.
 
 **Kernel.** Let `K` be the kernel: the `Permission` record (§2.1), the predicate
@@ -266,7 +286,7 @@ unfolding, and every decision procedure runs on the unfolding:
 ⟦t⟧_D  ≝  ⟦U_D(t)⟧            δ_D(x)  ≝  δ(U_D(x))
 ```
 
-for every `δ` in §4, §5, §6 and §8 (verify, the gate, subsumption, vacuity,
+for every `δ` in §4, §5, §6 and §8 (verify, the warden, subsumption, vacuity,
 deconfliction).
 
 **Intended properties** (with the same caveat as §7: tested and intended, not
@@ -336,6 +356,33 @@ For each step `s` and its capability dimension `d`, require `s ∈ ⟦P⟧_d`. S
 scheme membership; no SMT. **Default rule (fail-closed):** a step whose type has no
 permission surface and no handler (an unknown custom `@step_type`) is *rejected*
 under `strict`, never waved through.
+
+**Shell file accesses (Built; SG-1 to SG-6).** A shell step `s` has two derived lists,
+`reads(s)` and `writes(s)` (§2.3.1), each a list of accesses `(p, tree)` or `?`. A
+`tree` access is the path and everything under it: a recursive copy's source, `rm -r`,
+`tar -x` into a directory, `grep -r`, `find` from a start, and `mv` (a directory moves
+whole). The read set comes from a closed table of reading commands (`cat`, `head`,
+`tail`, `grep`, `rg`, `ls`, `find`, `diff`, `sort`, `wc`, …), from the source side of
+`cp`, `mv`, `install`, `rsync`, `tar`, `dd` and `sed`, and from redirects. `ls`, `find`
+and `grep -r` read names and contents under a path, as the `Glob` and `Grep` tools do.
+`xargs` adds operands the line does not show, so a reader or writer under it is `?`;
+under `find -exec` a writer is `?` and a reader adds its literal operands that are not
+`{}`. For a glob list `G`:
+
+```
+in(p, G)         = ∃ g ∈ G . p ⊨ g                                   p a path
+in(p, G)         = ∃ g ∈ G . g ∈ {**, /**}  ∨  (g ends in /**  ∧  p ⊨ g or p ⊨ g minus /**)
+                                                                      p a tree
+⟦s⟧_perm         = ∀ (p,t) ∈ writes(s) . in(p, file_write)  ∧  ∀ (p,t) ∈ reads(s) . in(p, file_read)
+                   ∧ (writes(s) = ?  ⟹  file_write ∋ ** or /**)  ∧ (reads(s) = ?  ⟹  file_read ∋ ** or /**)
+```
+
+A glob that does not end in `/**` never covers a tree, and `/**/*` or `/home/**` is not
+everything. A relative path is placed from the call's cwd under the rule of §2.3.1; a
+plan verified without a cwd matches the path as written. A line that is blanket-rejected
+for its metacharacters, and a line whose head the allowlist refuses, are denied already;
+the first also names its files after the reject. The work an interpreter does and the
+commands in neither table are not placed (§2.3.1).
 
 ### 4.3 Stage 1b: skill-delegation subsumption
 Each `SkillStep` carries a contract envelope `E_c`; require `envelope_subsumes(E,
@@ -440,10 +487,10 @@ the whole step by `envelope_subsumes(strict = ⊤)`. With no such invariant the 
 step reduces to the head rule, which decides it exactly, so Z3 does not run there. The reasons
 name the part that fails, never a solver model.
 
-**What it does not prove.** That the child stays inside its envelope at run time (the gate checks
+**What it does not prove.** That the child stays inside its envelope at run time (the warden checks
 that, call by call); that a plan's order or count properties hold (sequence invariants are not
 compared); that the budgets the starter reports are true (tokens and turns are estimates in a
-ledger, not a proof); that the deadline is kept after it passes (the gate does not read it yet);
+ledger, not a proof); that the deadline is kept after it passes (the warden does not read it yet);
 that a child the operator allowed after a refusal fits inside its parent (it is marked not
 proved; it is proved inside the root of its branch, so the induction below still holds, TR-R-7).
 
@@ -453,28 +500,61 @@ proved against its branch's root instead of its parent (TR-R-7), so the inductio
 through it. There is no depth limit, and strict mode is on at every edge whatever the stakes.
 
 **Registration** (Built for daisugi, TR-R-8 and TR-R-9). Only the operator registers an envelope
-with no parent (a root): the gate denies an agent's shell line that runs `gate register`,
-`gate init`, `start` or a tree verb that writes. `gate disarm` and the other verbs that
+with no parent (a root): the warden denies an agent's shell line that runs `warden register`,
+`warden init`, `start` or a tree verb that writes. `warden disarm` and the other verbs that
 change enforcement are denied too (SW-1), and so is a write to the disarm marker or an
 envelope file (SW-17). Any other registration names its parent and runs `edge_ok`
-(`gate register --parent`, `tree spawn`). The starter, not the
+(`warden register --parent`, `tree spawn`). The starter, not the
 child, binds the child's session. A child session with no exact registered envelope is
 `⊥`, never the `default` envelope. What is built today: a hook payload's session id
-never selects an envelope; an unpinned gate checks every call against `default`, and a
-gate pinned to a session with no envelope denies (commit `31871c4d`).
+never selects an envelope; an unpinned warden checks every call against `default`, and a
+warden pinned to a session with no envelope denies (commit `31871c4d`).
 
 **What an edge does not give.** The proof bounds actions, not the quality of the
 child's work. It does not see data flow (§8.3), collusion between siblings whose
 envelopes each fit, or the joint motion of sibling robots. The tree never exceeds the
 root; it promises no more than the root.
 
+### 5.6 MCP argument rules
+
+A call to `server/tool` is decided in five steps. (1) Caps: arguments longer than 262144
+characters or nested deeper than 64 levels deny, with or without a rule. (2) Match: the rules whose
+pattern matches the name; with none, `mcp_allowlist` decides on the name alone, and the host-name
+guard can still deny an allowlisted name: a tool of server `opencode` or `pi` that a rule names
+once case is ignored and every character but a letter or digit is read as `_` is denied when only
+an allowlist entry for another name admits it. When rules match, the rules the host-name guard
+finds apply with them. (3) Keys: arguments
+that are not an object deny; every top-level key must be in the union of the matching rules' known
+keys. (4) Predicates: every expression of every matching rule holds over the arguments object; a
+`matches` or `not_matches` must match the whole string, over a string of at most 4096
+characters of valid UTF-8 text, with a regex inside one small subset (a hand-written validator,
+the same in every port; the engine runs in linear time);
+otherwise the call is denied. (5) Reads: a string argument that starts
+with `/` or `~/` and exists is a read that `file_read` must admit (a directory as the directory and
+as a tree below it).
+`path_in` places a string against the call's cwd and matches the scope's globs. It places no
+value with a URI scheme, a Windows drive prefix, a backslash, a NUL or white space at either end,
+and no relative value with a `..` segment. `equals`, `not_equals`,
+`in_set` and `not_in_set` compare a bool and a number as different kinds. Subsumption of a rule
+set: for each inner rule, the outer has a rule whose pattern covers it with a known set at least as
+large and an `and` of expressions the inner implies (Z3; a timeout is not subsumed), or the outer has
+no overlapping rule and admits the tool by name. The Go and Rust standalone verifiers prove only the
+structural case (every outer expression stands in the inner rule, equal as JSON) and refuse the rest
+(`clients/ADJUDICATIONS.md`, MP-R-1). Built, all three clients: the warden and the standalone
+verifier decide the same calls message for message (2479 warden cases, 2000 fuzzed MCP calls per
+port and seed, no disagreement).
+
 ## 6. Strict mode, vacuity, and the fail-closed law
 
 `strict` (default-on at high/physical stakes) closes the gaps where an *unenforceable*
 constraint could masquerade as enforcement:
 
-- **Opaque invariants.** An invariant with no verifiable expression, and no
-  registered handler, is rejected under strict rather than assumed satisfied.
+- **Opaque invariants.** An enforced invariant or postcondition with no verifiable
+  expression, no registered handler and no definition is rejected at every stakes
+  (SG-8), never assumed satisfied. A word of the system dialect with no pin is audited
+  below strict stakes and rejected under strict. `daisugi warden register` refuses an
+  envelope that holds such an item, and generation turns it into documentation
+  (`enforce: false`) with a warning.
 - **Vacuity.** A predicate that is tautological (always ⊤) or contradictory is
   caught before the solver: a "safety" invariant that is vacuously true enforces
   nothing. A recognized robotics invariant declared *without its backing bound*
@@ -532,7 +612,7 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
   script produces an action, never *what is admitted*. Each reused, batched, or routed
   action is re-verified against the **caller's** envelope (§5; VISION invariant 3), so
   no lever can widen `⟦E⟧`. The two ledgers are observational: they record deeds and
-  rationale but never gate an action. The one lever that touches authority is
+  rationale but never warden an action. The one lever that touches authority is
   *constraint promotion* (a mid-task invariant captured into the envelope), and it is
   admitted only through the monotone-narrowing subsumption of §5, so it may only
   tighten. A lever that cannot exhibit this reduction is a design regression, not an
@@ -567,8 +647,8 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
   additionally conditional on the honesty of the evidence a step reports and on the
   envelope's `parent`/provenance being independent of the plan's author (§VISION
   invariant 4).
-- **Call-time gating is safety-only, and narrower than "benign."** The
-  call-time gate (§8) soundly enforces that every executed action is in `⟦E⟧`,
+- **Call-time checking is safety-only, and narrower than "benign."** The
+  call-time warden (§8) soundly enforces that every executed action is in `⟦E⟧`,
   but cannot establish plan-structure or liveness properties (no plan exists to
   range over), cannot enforce information-flow (a hyperproperty), and does not
   make an in-envelope *trajectory* benign. Individually-admitted calls compose
@@ -578,20 +658,20 @@ pin that names a hash this build does not have, are each `⊥`; `writes(s) = ?` 
   flight-safety certificate: waypoint-in-box ≠ path-in-box, and disjoint boxes ≠
   collision-free unless margins ≥ vehicle radius + position uncertainty.
 
-## 8. Two checkpoints: plan-time verification and call-time gating
+## 8. Two checkpoints: plan-time verification and call-time checking
 
 Everything above concerns **plan-time** verification: a declared plan `π` is
 handed to `verify(π, E)` before any step runs. A second checkpoint operates
 where no `π` exists: an agent already running inside a host harness, emitting
-tool calls one at a time. The **call-time gate** (ADR-0007) intercepts each
+tool calls one at a time. The **call-time warden** (ADR-0007) intercepts each
 call, synthesizes it into a one-step plan `⟨aᵢ⟩`, and evaluates
 `verify(⟨aᵢ⟩, E) ` before the call executes, preventing `aᵢ` when
 `aᵢ ∉ ⟦E⟧`. The two checkpoints share the decision procedure of §4; they do
 **not** share what they can guarantee, and conflating them would over-claim.
 
-### 8.1 The gate as an execution monitor
+### 8.1 The warden as an execution monitor
 
-Model the running agent as emitting a trace `a₁ a₂ a₃ …`. The gate is an
+Model the running agent as emitting a trace `a₁ a₂ a₃ …`. The warden is an
 **execution monitor** in the sense of Schneider [Sch00]: it observes the trace
 step by step and prevents any action that would violate the policy. The policy
 it enforces is
@@ -604,7 +684,7 @@ P(a₁ … aₙ)  ≝  ∀ i ≤ n .  aᵢ ∈ ⟦E⟧
 single out-of-envelope action falsifies it irrecoverably. A prefix-closed trace
 property is a **safety property** (Alpern–Schneider [AS85]), and safety
 properties are exactly the class an execution monitor can soundly enforce
-[Sch00]. So the gate's guarantee is real and not weaker than its mechanism:
+[Sch00]. So the warden's guarantee is real and not weaker than its mechanism:
 *every executed action lies in `⟦E⟧`.* Whether the target **halts** after a
 denial or **continues** with that one action suppressed is a host-contract
 detail (on the Claude Code path the call is blocked and the agent continues);
@@ -616,7 +696,7 @@ Two properties are provable at plan time and **not** at call time. The first
 fails by construction of this codebase, the second by the enforceability class.
 
 - **No cross-step structure at call time.** A call-time evaluation has no `π`:
-  the gate builds a *singleton* plan per call. Exactly the checks that quantify
+  the warden builds a *singleton* plan per call. Exactly the checks that quantify
   over multiple steps therefore have nothing to range over and are not run:
   DAG ordering (§4.5), the predicate invariants `exists_step` / `forall_steps`
   (§4.4, §2b), and postconditions spanning more than one step. This is not a
@@ -630,13 +710,13 @@ fails by construction of this codebase, the second by the enforceability class.
   witnesses its violation [AS85]. Nor can it enforce a **hyperproperty**:
   information-flow / non-interference is 2-safety over *pairs* of traces
   [CS10], not a property of the single trace in front of the monitor, so no
-  per-call gate enforces "this run leaked nothing." These are limits of the
+  per-call warden enforces "this run leaked nothing." These are limits of the
   mechanism, independent of `E`.
 
 ### 8.3 In-envelope ≠ trajectory-benign (policy-adequacy gap)
 
 Distinct from §8.2, and the easier one to mistake for a bug: `⟦E⟧` is a
-predicate on **individual actions**. The gate soundly enforces
+predicate on **individual actions**. The warden soundly enforces
 `∀ i . aᵢ ∈ ⟦E⟧`. That predicate does **not** entail "the trajectory is
 benign." Concretely, let `E` grant `file_read : /work/**` and
 `network → api.github.com`. Then
@@ -648,10 +728,10 @@ a₂ = POST  api.github.com  ⟨secret⟩ a₂ ∈ ⟦E⟧
 
 Each call is inside the envelope. The composition is exfiltration. Nothing is
 broken: this is **not** an enforcement failure but the difference between
-*per-action authorization* and a *trajectory specification*. A gate cannot make
+*per-action authorization* and a *trajectory specification*. A warden cannot make
 `⟦E⟧` say more than it says; tightening the envelope (drop the network grant,
 or bound the host set) is the only remedy, and it is the envelope author's, not
-the gate's. Stated plainly for the scorecard: **a call being inside the
+the warden's. Stated plainly for the scorecard: **a call being inside the
 envelope does not make the trajectory benign.**
 
 ### 8.4 Threat model and boundaries
@@ -663,25 +743,25 @@ envelope does not make the trajectory benign.**
   (§7: a soundness bug there is a silent fail-open); the envelope's provenance
   being independent of the plan's author (VISION invariant 4: a self-authored
   envelope authorizes nothing meaningfully); and the host faithfully invoking
-  the gate.
-- **Mediation boundary.** The gate sees only what the host routes through the
+  the warden.
+- **Mediation boundary.** The warden sees only what the host routes through the
   **hooked tool surface**. An action taken over a channel the host does not
-  hook is unmediated. It is outside the gate's view and therefore outside its
+  hook is unmediated. It is outside the warden's view and therefore outside its
   guarantee. Enforcement is per-harness and per-version (roadmap Stage 5).
 
 ### 8.5 The conditioned guarantee, and the fail-open edges
 
 The safety guarantee of §8.1 holds **conditioned on** all of: (i) the host
-invokes the gate on *every* tool call; (ii) the host's deny path actually
+invokes the warden on *every* tool call; (ii) the host's deny path actually
 blocks; (iii) the action traverses a hooked surface (§8.4). Where a condition
 can fail outside our control, it is named here, not buried:
 
 - **Host outer hook timeout**: fails open on every harness measured. Mitigated,
-  not eliminated: the gate owns an *inner* timeout that denies first (§6's
+  not eliminated: the warden owns an *inner* timeout that denies first (§6's
   fail-closed law applied to the clock).
 - **A harness that silently stops firing hooks**: condition (i) fails with no
   signal; only a per-version contract test detects it (Stage 5).
-- **Gate-process death / import failure**: would make condition (ii) fail
+- **Warden-process death / import failure**: would make condition (ii) fail
   (a non-deny exit is non-blocking on the host). Closed at the process
   boundary: the emitted hook command maps every non-deny exit to a deny.
 
@@ -692,7 +772,7 @@ a trusted safety layer vetoing an untrusted controller. The lineage is
 **inspirational, and the call-time guarantee is strictly weaker.** Simplex
 guarantees the system remains in a *recoverable safe state over time*. This is a
 trajectory-level, liveness-flavored property delivered by a safety controller
-that can *act*. The call-time gate only **prevents** individual actions; it
+that can *act*. The call-time warden only **prevents** individual actions; it
 provides no recoverable-state guarantee over the trajectory (indeed §8.2 says
 it cannot). A reader who knows Simplex should not import its temporal guarantee
 here.

@@ -96,6 +96,7 @@ func handleVerify(out *bufio.Writer, c verify.Case) {
 		Z3TimeoutMs: c.Options.Z3Timeout(),
 		DialectPin:  c.Options.DialectPin,
 		DialectBase: c.Options.DialectBase,
+		Fenced:      c.Options.Fenced != nil && *c.Options.Fenced,
 	})
 	audit := []string{}
 	for _, w := range res.Warnings {

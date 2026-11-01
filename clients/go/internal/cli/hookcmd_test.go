@@ -113,3 +113,40 @@ func TestHookStopReportsToCoppice(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func writeCap(t *testing.T, root, sid string, n int) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		b.WriteString(`{"captured_at": ` + string(rune('1'+i)) + `.0, "session_id": "` + sid +
+			`", "tool_name": "Bash", "step_type": "shell", "command": "ls"}` + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(root, sid+".jsonl"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutoTendReadsTheWardenRootAndSkipsTheDuplicate(t *testing.T) {
+	home := t.TempDir()
+	data := filepath.Join(home, ".opendaisugi")
+	if err := os.MkdirAll(data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "config.yaml"), []byte("auto_tend: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeCap(t, filepath.Join(data, "captures"), "claude-s", 2)
+	writeCap(t, filepath.Join(data, "warden", "captures"), "claude-s", 2)
+	writeCap(t, filepath.Join(data, "warden", "captures"), "pi-s", 1)
+	code, out, errText := run(t, home, "", "hook", "auto-tend", "--force", "--skip-distill")
+	if code != 0 {
+		t.Fatalf("exit %d, %q, %q", code, out, errText)
+	}
+	if strings.Count(out, "converted claude-s") != 1 || !strings.Contains(out, "converted pi-s") ||
+		!strings.Contains(out, "converted 2 sessions") {
+		t.Fatalf("out = %q", out)
+	}
+}

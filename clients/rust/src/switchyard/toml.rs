@@ -288,7 +288,7 @@ fn illegal_multiline(c: u8) -> bool {
 
 /// `repr()` of a str, for an error message.
 fn py_repr(s: &str) -> String {
-    crate::gate::py::text::repr(s)
+    crate::warden::py::text::repr(s)
 }
 
 fn key_repr(k: &[String]) -> String {
@@ -941,7 +941,7 @@ pub fn parse(text: &str) -> Result<Table, TomlDecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::{dumps, float_repr, loads_py, Object, Value};
+    use crate::warden::pyjson::{dumps, float_repr, loads_py, Object, Value};
 
     fn typed(v: &Tv) -> Value {
         let one = |k: &str, v: Value| Value::Obj(Object::new().with(k, v));

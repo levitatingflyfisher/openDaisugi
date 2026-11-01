@@ -140,6 +140,8 @@ func Read(raw []byte, format string) ([]*RawEpisode, error) {
 	var err error
 	if format == "codex" {
 		msgs, err = CodexMessages(text)
+	} else if format == "pi" {
+		msgs, err = PiMessages(text)
 	} else {
 		msgs, err = ClaudeMessages(text)
 	}
@@ -150,6 +152,16 @@ func Read(raw []byte, format string) ([]*RawEpisode, error) {
 	}
 	if dec != nil {
 		return nil, &ParseError{Msg: dec.Msg}
+	}
+	return Identify(msgs)
+}
+
+// ReadOpenCode is parse() up to the merge for an OpenCode session: the
+// session file at path names a storage tree, which holds the messages.
+func ReadOpenCode(path string) ([]*RawEpisode, error) {
+	msgs, err := OpenCodeMessages(path)
+	if err != nil {
+		return nil, err
 	}
 	return Identify(msgs)
 }

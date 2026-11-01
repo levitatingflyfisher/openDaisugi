@@ -32,29 +32,32 @@
       <h2 id="queue-title"></h2>
       <p id="queue-sub" class="muted"></p>
     </header>
-    <p id="gate-hint" role="note" hidden></p>
+    <p id="warden-hint" role="note" hidden></p>
     <ul id="needs" class="cards" aria-label="Needs you" hidden></ul>
+    <ul id="envelopes" class="cards" aria-label="Envelopes to approve" hidden></ul>
     <section id="quiet" class="quiet" aria-live="polite" hidden></section>
     <button id="agents-fold" type="button" class="ghost" aria-controls="agents" aria-expanded="false">&#9656; No agents yet</button>
     <section id="agents">
       <ul id="roster" class="cards" aria-label="Agents"></ul>
       <p id="roster-empty" class="empty" hidden>No agents yet. Press New to start one.</p>
     </section>
-    <section id="chat" aria-label="Chat with the foreman">
+    <section id="chat" aria-label="Chat with the steward">
       <p id="import-bar" class="import-bar" hidden></p>
       <ol id="chat-list" aria-live="polite"></ol>
     </section>
     <form id="tell" autocomplete="off">
-      <label for="tell-text">Tell the foreman</label>
-      <input id="tell-text" type="text" enterkeyhint="send" placeholder="Tell the foreman…" title="A sentence goes to the foreman. To open or close an agent, start with a slash: /claude, /close NAME.">
+      <label for="tell-text">Tell the steward</label>
+      <input id="tell-text" type="text" enterkeyhint="send" placeholder="Tell the steward…" title="A sentence goes to the steward. To open or close an agent, start with a slash: /claude, /close NAME.">
       <button id="tell-mic" type="button">Mic</button>
       <button id="tell-send" type="submit">Send</button>
+      <p id="tell-mic-partial" class="voice-partial" aria-live="off" hidden></p>
     </form>
     <details id="recent" hidden>
       <summary>Recent <span id="recent-count" class="count">0</span></summary>
       <p class="recent-all">
         <button id="recent-resume-all" type="button">Resume all</button>
         <button id="recent-clear" type="button" class="ghost">Clear all</button>
+        <button id="recent-finished" type="button" class="ghost" aria-pressed="false" hidden>Show finished</button>
       </p>
       <p id="recent-confirm" class="confirm" hidden></p>
       <ul id="recent-list" aria-label="Ended agents"></ul>
@@ -138,7 +141,7 @@
     <button id="sheet-back" type="button" class="ghost" aria-label="Back to the floor" title="Back to the floor. A swipe right goes back too.">&#8249;</button>
     <span id="pane-dot" class="dot"></span>
     <strong id="pane-label"></strong>
-    <span id="pane-gate"></span>
+    <span id="pane-warden"></span>
     <span id="pane-chip" class="chip"></span>
     <span id="pane-source" class="muted"></span>
   </div>
@@ -174,6 +177,7 @@
     <input id="text" type="text" enterkeyhint="done" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Type to the agent" placeholder="Type here" title="Your keyboard's Enter types this into the agent. The Enter button types it and presses Enter.">
     <button id="record" type="button" title="Speak. The words land in this field.">Mic</button>
     <button id="send-enter" type="button" title="Type the text, if any, and press Enter">Enter</button>
+    <p id="record-partial" class="voice-partial" aria-live="off" hidden></p>
   </form>
 </section>
 

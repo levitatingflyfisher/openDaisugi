@@ -1,8 +1,8 @@
-"""The gate's rule that no search reaches coppice's secrets.
+"""The warden's rule that no search reaches coppice's secrets.
 
 A recursive search reads every file under its root. A root that is an
 ancestor of a coppice data directory, such as the home directory or /,
-reads every secret the data directory holds. So the gate refuses such a
+reads every secret the data directory holds. So the warden refuses such a
 search with ``SEARCH_REFUSAL``, which names the fix: search a narrower
 directory. The pane rule already refuses a search of the data directory
 itself and of each directory in it that holds a secret.
@@ -28,7 +28,7 @@ after an option that may take a value is placed as a root too, but it
 does not count as one: a search that names no root it surely has
 searches its cwd, so the cwd is checked as well. The first sure word is
 the pattern, unless -e, -f, --regexp, --file or --files gives it. The
-gate refuses the search when any root, placed from the cwd the line has
+warden refuses the search when any root, placed from the cwd the line has
 reached:
 
 - is an ancestor of a data directory, typed, normalized or resolved;
@@ -38,10 +38,10 @@ reached:
   leads to a secret. A brace past 64 words, or a zero-padded or mixed
   sequence, is not expanded: it counts as a match unless the plain
   absolute path before it cannot lead to one;
-- holds a ``$`` or a backtick, or starts with ``~`` after the gate
-  expands the home, so the gate cannot tell where it points;
+- holds a ``$`` or a backtick, or starts with ``~`` after the warden
+  expands the home, so the warden cannot tell where it points;
 - is relative, or is the cwd, and the cwd is unknown: the call names no
-  absolute cwd, or a cd the gate cannot follow (cd -, a .., a symlink)
+  absolute cwd, or a cd the warden cannot follow (cd -, a .., a symlink)
   came before it.
 
 A line the shell parser or the word splitter cannot read is refused when
@@ -66,7 +66,7 @@ _ALWAYS = frozenset({"rg", "ag", "ack", "rgrep", "ugrep", "ug"})
 _GREPS = frozenset({"grep", "egrep", "fgrep", "zgrep"})
 _FIND_EXEC = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 _ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-# Any of the programs above as a word, for a line the gate cannot split.
+# Any of the programs above as a word, for a line the warden cannot split.
 _PROGRAM_TEXT = re.compile(
     r"(^|[^A-Za-z0-9_.-])(rg|ag|ack|rgrep|ugrep|ug|grep|egrep|fgrep|zgrep|find)($|[^A-Za-z0-9_.-])"
 )
@@ -245,7 +245,7 @@ def _search_roots(tokens: list[str]) -> list[str] | None:
     """Every root a simple command searches, or None when it is no search
     this rule knows. The program counts as the first word, or anywhere
     after a program that runs the command after it, such as env or sudo.
-    A search fed by xargs gets the root "$(xargs)", which no gate can place."""
+    A search fed by xargs gets the root "$(xargs)", which no warden can place."""
     words = [t[1:] if t.startswith("\\") else t for t in tokens]
     start = 0
     while start < len(words) and _ASSIGN.match(words[start]):
@@ -308,7 +308,7 @@ def _sequence(body: str) -> list[str] | None:
 
 def _brace_expand(word: str, out: list[str]) -> bool:
     """Expand the first {a,b} or bash sequence brace in word, again and
-    again. False when the word holds more than the gate will expand, or a
+    again. False when the word holds more than the warden will expand, or a
     sequence it will not expand, such as a zero-padded one."""
     for m in _BRACE.finditer(word):
         body = m.group(1)
@@ -373,7 +373,7 @@ def _parts(path: str) -> list[str]:
 
 
 def _overflow_reaches(word: str, base: str, targets: list[str]) -> bool:
-    """For a word the gate will not expand: True unless the text before
+    """For a word the warden will not expand: True unless the text before
     its first brace shows it cannot reach a target. A word with no / is
     placed in base, so it can reach one only when base leads to a target.
     A word whose text before the brace is not a plain absolute path is
@@ -410,14 +410,14 @@ def _data_dirs() -> list[str]:
     return [str(d) for d in coppice_data_dirs()]
 
 
-def _foreman_dir_names() -> list[str]:
-    from opendaisugi.floor_config import foreman_dirs
+def _steward_dir_names() -> list[str]:
+    from opendaisugi.floor_config import steward_dirs
 
-    return [str(d) for d in foreman_dirs()]
+    return [str(d) for d in steward_dirs()]
 
 
 def secret_files() -> list[str]:
-    """Every coppice secret file under every data directory the gate knows."""
+    """Every coppice secret file under every data directory the warden knows."""
     from opendaisugi.pane_rule import _SECRET_NAMES
 
     return [d + "/" + s for d in _data_dirs() for s in _SECRET_NAMES]
@@ -427,7 +427,7 @@ def _reach_targets() -> list[str]:
     """Every path a search root must not match: each prefix of each secret
     file, from / down to the file."""
     out: list[str] = ["/"]
-    for f in [*secret_files(), *_foreman_dir_names()]:
+    for f in [*secret_files(), *_steward_dir_names()]:
         parts = _parts(f)
         for i in range(1, len(parts) + 1):
             p = "/" + "/".join(parts[:i])
@@ -458,11 +458,11 @@ def path_above_secret(raw: str, cwd: str) -> bool:
         return False
     p = _place(raw, cwd)
     cands = {os.path.normpath(p), str(Path(p).resolve(strict=False))}
-    dirs = [*_data_dirs(), *_foreman_dir_names()]
+    dirs = [*_data_dirs(), *_steward_dir_names()]
     return any(d.startswith(c.rstrip("/") + "/") for d in dirs for c in cands)
 
 
-# A variable, a command substitution, or a ~ form the gate does not
+# A variable, a command substitution, or a ~ form the warden does not
 # expand. A $ at the end of a word, or before ) or |, is a regex anchor.
 _UNRESOLVED = re.compile(r"\$[A-Za-z_{(0-9@*#?!$-]|`")
 
@@ -503,7 +503,7 @@ def _line_reaches(command: str, cwd: str | None, depth: int) -> bool:
             return bool(_PROGRAM_TEXT.search(command))
         for w in raw:
             if " " in w and _PROGRAM_TEXT.search(w):
-                # Past the depth the gate follows, a line that still names
+                # Past the depth the warden follows, a line that still names
                 # a search program is refused.
                 if depth >= _MAX_DEPTH or _line_reaches(w, here, depth + 1):
                     return True
@@ -561,7 +561,7 @@ def search_above_secret_hit(payload: dict[str, Any], record: dict[str, Any] | No
             return True
         placed = all(os.path.isabs(os.path.expanduser(_home_text(p))) for p in paths)
         if not os.path.isabs(cwd) and (not paths or not placed):
-            # A relative path, or no path, from a cwd the gate cannot place.
+            # A relative path, or no path, from a cwd the warden cannot place.
             return True
         if paths:
             return any(path_above_secret(p, cwd) for p in paths)

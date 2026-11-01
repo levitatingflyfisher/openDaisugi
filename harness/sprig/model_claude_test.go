@@ -154,8 +154,8 @@ func TestClaudeCodeModelNextFailsOnValidJSONWithNoTypeField(t *testing.T) {
 
 func TestAgentRunsEndToEndWithClaudeCodeModelFake(t *testing.T) {
 	// The FULL harness, end to end, with a fake claude-code backend: it calls a
-	// tool (gated) then finishes. Proves sprig is functional; only the live model
-	// substitution is quota-gated.
+	// tool (checked) then finishes. Proves sprig is functional; only the live model
+	// substitution is quota-checked.
 	step := 0
 	m := &ClaudeCodeModel{run: func(string) (string, error) {
 		step++
@@ -192,6 +192,23 @@ func TestClaudeArgsRequestsJSONOutputAndBindsModelSafely(t *testing.T) {
 			t.Fatalf("model must never appear as a bare argv element: %v", args)
 		}
 	}
+	// sprig's tools ride in the prompt as text, and sprig runs them in the
+	// worker's folder. Claude's own built-in tools must be off, or the
+	// model reaches for Bash and Read in its neutral cwd, is refused
+	// ("you haven't granted it yet"), and reports a sandbox it never had
+	// (the Trellis workers of 2026-11-06).
+	if !strings.Contains(joined, "--tools  ") && !hasPair(args, "--tools", "") {
+		t.Fatalf("want --tools '' so the built-ins are off, got %v", args)
+	}
+}
+
+func hasPair(args []string, a, b string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == a && args[i+1] == b {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAgentReportsRealUsageIntoTheSessionTree(t *testing.T) {

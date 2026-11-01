@@ -22,8 +22,28 @@ shift
 exec "$@"
 `
 
+// kernelFences swaps the Landlock probe for the test: a kernel that can
+// fence answers ABI 9, one that cannot answers 0.
+func kernelFences(t *testing.T, ok bool) {
+	t.Helper()
+	abi := 0
+	if ok {
+		abi = fenceMinABI
+	}
+	kernelABI(t, abi)
+}
+
+// kernelABI swaps the Landlock ABI the probe reports.
+func kernelABI(t *testing.T, abi int) {
+	t.Helper()
+	old := landlockABI
+	landlockABI = func() int { return abi }
+	t.Cleanup(func() { landlockABI = old })
+}
+
 func fakeFenceBin(t *testing.T) (log string) {
 	t.Helper()
+	kernelFences(t, true)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "daisugi")
 	if err := os.WriteFile(bin, []byte(fakeFence), 0o755); err != nil {
@@ -35,21 +55,71 @@ func fakeFenceBin(t *testing.T) (log string) {
 	return log
 }
 
-func armGate(t *testing.T, s *Server) {
+func armWarden(t *testing.T, s *Server) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(s.cfg.GateRoot, "envelopes"), 0o700); err != nil {
+	kernelFences(t, true)
+	if err := os.MkdirAll(filepath.Join(s.cfg.WardenRoot, "envelopes"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestFenceFollowsTheGateUnderAuto(t *testing.T) {
+// A pane that runs Hermes is fenced with Hermes's own table, like the
+// other harnesses the fence knows.
+func TestAHermesPaneGetsTheHermesFenceTable(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	w, err := s.fenceWrap(layout.Pane{Harness: "hermes", Cwd: "/work"}, s.fenceTmp("w1:p1"))
+	if err != nil || !hasPair(w, "--harness", "hermes") {
+		t.Fatalf("wrap = %v, err %v", w, err)
+	}
+}
+
+// A pane opened in the home folder is refused by the fence. The refusal
+// says what to do, in one line, instead of a bare spawn failure.
+func TestAFencedPaneInTheHomeFolderIsToldWhatToDo(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	home, _ := os.UserHomeDir()
+	_, err := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: home}, s.fenceTmp("w1:p1"))
+	if err == nil || !strings.Contains(err.Error(), "project folder") || !strings.Contains(err.Error(), `fence = "off"`) || strings.Contains(err.Error(), "\n") {
+		t.Errorf("cwd %s: %v", home, err)
+	}
+	if _, err := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: filepath.Join(home, "code", "x")}, s.fenceTmp("w1:p1")); err != nil {
+		t.Errorf("a project folder was refused: %v", err)
+	}
+}
+
+// A fenced steward reaches its tools on the standing socket in the steward
+// log dir; the fence plan must grant it. Other panes do not get it.
+func TestAFencedStewardIsGrantedItsToolsSocket(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	want := s.standingSockPath()
+	w, err := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/work", Label: "steward"}, s.fenceTmp("w1:p1"))
+	if err != nil || !hasPair(w, "--coppice-socket", want) || !hasPair(w, "--coppice-socket", s.cfg.SocketPath) {
+		t.Fatalf("steward wrap = %v, err %v (want socket %s)", w, err, want)
+	}
+	w, _ = s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/work", Label: "worker"}, s.fenceTmp("w1:p2"))
+	if hasPair(w, "--coppice-socket", want) {
+		t.Errorf("a worker got the steward's tools socket: %v", w)
+	}
+	c, err := s.fenceCmdSockets("claude", "/work", nil, false, []string{want})
+	if err != nil || !hasPair(c, "--coppice-socket", want) {
+		t.Errorf("a chat-mode steward turn lacks the socket: %v %v", c, err)
+	}
+}
+
+func TestFenceFollowsTheWardenUnderAuto(t *testing.T) {
 	fakeFenceBin(t)
 	s := newTestServer(t)
 	rec := layout.Pane{Harness: "claude", Cwd: "/work"}
 	if w, err := s.fenceWrap(rec, s.fenceTmp("w1:p1")); err != nil || w != nil {
-		t.Fatalf("no gate: wrap %v err %v", w, err)
+		t.Fatalf("no warden: wrap %v err %v", w, err)
 	}
-	armGate(t, s)
+	armWarden(t, s)
 	w, err := s.fenceWrap(rec, s.fenceTmp("w1:p1"))
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +127,7 @@ func TestFenceFollowsTheGateUnderAuto(t *testing.T) {
 	if len(w) < 4 || w[1] != "fence" || w[len(w)-1] != "--" {
 		t.Fatalf("wrap = %v", w)
 	}
-	for _, want := range [][]string{{"--harness", "claude"}, {"--workspace", "/work"}, {"--gate-root", s.cfg.GateRoot}} {
+	for _, want := range [][]string{{"--harness", "claude"}, {"--workspace", "/work"}, {"--warden-root", s.cfg.WardenRoot}} {
 		found := false
 		for i := 0; i+1 < len(w); i++ {
 			if w[i] == want[0] && w[i+1] == want[1] {
@@ -68,19 +138,19 @@ func TestFenceFollowsTheGateUnderAuto(t *testing.T) {
 			t.Errorf("wrap lacks %v: %v", want, w)
 		}
 	}
-	// Disarmed: the gate is off, so no fence.
-	if err := os.WriteFile(filepath.Join(s.cfg.GateRoot, "DISARMED"), nil, 0o600); err != nil {
+	// Disarmed: the warden is off, so no fence.
+	if err := os.WriteFile(filepath.Join(s.cfg.WardenRoot, "DISARMED"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if w, _ := s.fenceWrap(rec, s.fenceTmp("w1:p1")); w != nil {
-		t.Fatalf("disarmed gate still fenced: %v", w)
+		t.Fatalf("disarmed warden still fenced: %v", w)
 	}
 }
 
 func TestFenceSettingsAndTheShellPane(t *testing.T) {
 	fakeFenceBin(t)
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	cases := []struct {
 		cfg, pane, harness string
 		want               bool
@@ -103,16 +173,16 @@ func TestFenceSettingsAndTheShellPane(t *testing.T) {
 			t.Errorf("%+v: wrap %v err %v", c, w, err)
 		}
 	}
-	// With the gate off, "on" still fences and auto does not.
-	if err := os.RemoveAll(filepath.Join(s.cfg.GateRoot, "envelopes")); err != nil {
+	// With the warden off, "on" still fences and auto does not.
+	if err := os.RemoveAll(filepath.Join(s.cfg.WardenRoot, "envelopes")); err != nil {
 		t.Fatal(err)
 	}
 	s.cfg.Fence = "auto"
 	if w, _ := s.fenceWrap(layout.Pane{Harness: "claude"}, s.fenceTmp("w1:p1")); w != nil {
-		t.Errorf("gate off, auto: %v", w)
+		t.Errorf("warden off, auto: %v", w)
 	}
 	if w, _ := s.fenceWrap(layout.Pane{Harness: "claude", Fence: "on"}, s.fenceTmp("w1:p1")); w == nil {
-		t.Errorf("gate off, pane on: no wrap")
+		t.Errorf("warden off, pane on: no wrap")
 	}
 }
 
@@ -142,7 +212,7 @@ func TestAPaneStartsUnderTheFenceWithoutChangingItsSavedCommand(t *testing.T) {
 	log := fakeFenceBin(t)
 	saveFakeHarness(t)
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	res := createByHarness(t, s, "")
 	id, _ := res["pane"].(string)
 	if id == "" {
@@ -220,21 +290,21 @@ func TestFN_V2_V9_TheWrapNamesTheSocketAndAPrivateTmp(t *testing.T) {
 	}
 }
 
-// FN-V-5: only a missing envelopes dir turns the gate off; a root made
-// unreadable still counts as on. The foreman's workers and turns run
+// FN-V-5: only a missing envelopes dir turns the warden off; a root made
+// unreadable still counts as on. The steward's workers and turns run
 // under the same fence.
-func TestFN_V5_AnUnreadableGateRootStillFencesAndWorkersAreWrapped(t *testing.T) {
+func TestFN_V5_AnUnreadableWardenRootStillFencesAndWorkersAreWrapped(t *testing.T) {
 	fakeFenceBin(t)
 	s := newTestServer(t)
-	armGate(t, s)
-	if err := os.Chmod(s.cfg.GateRoot, 0); err != nil {
+	armWarden(t, s)
+	if err := os.Chmod(s.cfg.WardenRoot, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(s.cfg.GateRoot, 0o700) })
-	if !s.gateOn() {
-		t.Errorf("a chmod 000 gate root reads as off")
+	t.Cleanup(func() { _ = os.Chmod(s.cfg.WardenRoot, 0o700) })
+	if !s.wardenOn() {
+		t.Errorf("a chmod 000 warden root reads as off")
 	}
-	if err := os.Chmod(s.cfg.GateRoot, 0o700); err != nil {
+	if err := os.Chmod(s.cfg.WardenRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	w, err := s.fenceCmd("", "/repo/wt", []string{"/data/work"}, true)
@@ -247,31 +317,31 @@ func TestFN_V5_AnUnreadableGateRootStillFencesAndWorkersAreWrapped(t *testing.T)
 			t.Errorf("worker wrap lacks %v: %v", p, w)
 		}
 	}
-	if err := os.RemoveAll(filepath.Join(s.cfg.GateRoot, "envelopes")); err != nil {
+	if err := os.RemoveAll(filepath.Join(s.cfg.WardenRoot, "envelopes")); err != nil {
 		t.Fatal(err)
 	}
 	if w, _ := s.fenceCmd("", "/repo/wt", nil, false); w != nil {
-		t.Errorf("gate off, worker wrapped: %v", w)
+		t.Errorf("warden off, worker wrapped: %v", w)
 	}
 }
 
 // FN-V-6: a fenced claude pane starts with the pinned --settings document.
 func TestFN_V6_AFencedClaudePaneGetsThePinnedSettings(t *testing.T) {
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	wrap := []string{"/opt/bin/daisugi", "fence", "--"}
-	got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, wrap, []string{"claude", "--model", "x"}, true)
+	got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, wrap, []string{"claude", "--model", "x"}, true, "")
 	want := `{"disableAllHooks":false,"hooks":{"ConfigChange":[{"hooks":[{"command":"exit 2","type":"command"}]}],` +
-		`"PreToolUse":[{"hooks":[{"command":"DAISUGI_GATE_HOOK=opendaisugi.gate '/opt/bin/daisugi' gate check --root '` +
-		s.cfg.GateRoot + `' --format claude --verify-timeout 10 --ask --ask-timeout 90 || exit 2",` +
+		`"PreToolUse":[{"hooks":[{"command":"DAISUGI_WARDEN_HOOK=opendaisugi.warden '/opt/bin/daisugi' warden check --root '` +
+		s.cfg.WardenRoot + `' --format claude --verify-timeout 10 --ask --ask-timeout 90 || exit 2",` +
 		`"onFailure":"block","timeout":105,"type":"command"}],"matcher":"*"}]}}`
 	if !reflect.DeepEqual(got, []string{"claude", "--settings", want, "--model", "x"}) {
 		t.Fatalf("argv:\n got %q\nwant %q", got, []string{"claude", "--settings", want, "--model", "x"})
 	}
-	if got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, wrap, []string{"-p"}, false); got[0] != "--settings" || got[2] != "-p" {
+	if got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, wrap, []string{"-p"}, false, ""); got[0] != "--settings" || got[2] != "-p" {
 		t.Errorf("adapter argv: %q", got)
 	}
-	if got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, nil, []string{"claude"}, true); len(got) != 1 {
+	if got := s.fencedClaudeArgv(layout.Pane{Harness: "claude"}, nil, []string{"claude"}, true, ""); len(got) != 1 {
 		t.Errorf("an unfenced pane got settings: %q", got)
 	}
 }
@@ -284,7 +354,7 @@ func TestFN_V1_AFencedPaneGetsOnlyFencedPanes(t *testing.T) {
 	log := fakeFenceBin(t)
 	saveFakeHarness(t)
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	parent, _ := createByHarness(t, s, "")["pane"].(string)
 	bare, _ := createByHarness(t, s, `,"fence":"off"`)["pane"].(string)
 	if parent == "" || bare == "" {
@@ -339,7 +409,7 @@ func TestFN_V6_AWorkspaceHookChangeShowsOnTheRow(t *testing.T) {
 	fakeFenceBin(t)
 	saveFakeHarness(t)
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	ws := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(ws, ".git", "hooks"), 0o700); err != nil {
 		t.Fatal(err)
@@ -459,14 +529,52 @@ func TestN3_TheWorkspaceWatchCoversWhatRunsLater(t *testing.T) {
 	}
 }
 
-// N-4: a worker's sprig starts under a fence whose gate root is the
+// A home folder holds Claude Code's global state dir. What the harness
+// writes while it runs (projects, todos, tool results) is no config change;
+// settings, hooks, commands and the like still are.
+func TestTheWatchSkipsHarnessStateButKeepsHarnessConfig(t *testing.T) {
+	ws := t.TempDir()
+	for _, p := range []string{".claude/projects/x", ".claude/todos", ".claude/hooks", ".codex/sessions", ".codex/rules", ".opencode/plugin"} {
+		if err := os.MkdirAll(filepath.Join(ws, p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := func(p, b string) {
+		if err := os.WriteFile(filepath.Join(ws, p), []byte(b), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w(".claude/settings.json", "{}")
+	w(".claude/hooks/h.sh", "a")
+	w(".claude/projects/x/y.txt", "a")
+	w(".claude/todos/t.json", "a")
+	w(".codex/sessions/s.jsonl", "a")
+	w(".codex/rules/r.rules", "a")
+	w(".opencode/package.json", "{}")
+	before := workspaceWatched(ws)
+	w(".claude/projects/x/y.txt", "changed")
+	w(".claude/todos/new.json", "new")
+	w(".codex/sessions/s.jsonl", "changed")
+	if ch := workspaceChanges(before, workspaceWatched(ws)); len(ch) != 0 {
+		t.Errorf("state files counted as config changes: %v", ch)
+	}
+	w(".claude/settings.json", `{"hooks":{}}`)
+	w(".claude/hooks/h.sh", "b")
+	w(".codex/rules/r.rules", "b")
+	w(".opencode/package.json", `{"dependencies":{}}`)
+	if ch := workspaceChanges(before, workspaceWatched(ws)); !reflect.DeepEqual(ch, []string{".claude/hooks/h.sh", ".claude/settings.json", ".codex/rules/r.rules", ".opencode/package.json"}) {
+		t.Errorf("config changes: %v", ch)
+	}
+}
+
+// N-4: a worker's sprig starts under a fence whose warden root is the
 // worker's own (so the fence keeps it read only and starts its resident
-// gate) and that grants no write over it; the tree run itself runs bare.
-func TestN4_AWorkersSprigFenceGrantsNoWriteOverItsGateRoot(t *testing.T) {
+// warden) and that grants no write over it; the tree run itself runs bare.
+func TestN4_AWorkersSprigFenceGrantsNoWriteOverItsWardenRoot(t *testing.T) {
 	fakeFenceBin(t)
 	s := newTestServer(t)
-	armGate(t, s)
-	root := "/data/foreman/work/gate"
+	armWarden(t, s)
+	root := "/data/steward/work/warden"
 	w, err := s.sprigFence("/repo", root)
 	if err != nil || w == nil {
 		t.Fatalf("%v %v", w, err)
@@ -476,10 +584,10 @@ func TestN4_AWorkersSprigFenceGrantsNoWriteOverItsGateRoot(t *testing.T) {
 	}
 	roots := 0
 	for i, a := range w {
-		if a == "--gate-root" {
+		if a == "--warden-root" {
 			roots++
 			if w[i+1] != root {
-				t.Errorf("gate root %s", w[i+1])
+				t.Errorf("warden root %s", w[i+1])
 			}
 		}
 		if a == "--allow" || a == "--workdir" {
@@ -489,11 +597,11 @@ func TestN4_AWorkersSprigFenceGrantsNoWriteOverItsGateRoot(t *testing.T) {
 	if roots != 1 || !hasPair(w, "--workspace", "/repo") {
 		t.Errorf("prefix %v", w)
 	}
-	if err := os.RemoveAll(filepath.Join(s.cfg.GateRoot, "envelopes")); err != nil {
+	if err := os.RemoveAll(filepath.Join(s.cfg.WardenRoot, "envelopes")); err != nil {
 		t.Fatal(err)
 	}
 	if w, _ := s.sprigFence("/repo", root); w != nil {
-		t.Errorf("gate off, sprig fenced: %v", w)
+		t.Errorf("warden off, sprig fenced: %v", w)
 	}
 }
 
@@ -505,7 +613,7 @@ func TestR2_4_AHoldCoversSubdirsAndIsSetWhileTheFencedPaneRuns(t *testing.T) {
 	fakeFenceBin(t)
 	saveFakeHarness(t)
 	s := newTestServer(t)
-	armGate(t, s)
+	armWarden(t, s)
 	base := t.TempDir()
 	ws := filepath.Join(base, "ws")
 	for _, d := range []string{filepath.Join(ws, ".git", "hooks"), filepath.Join(ws, "sub"), ws + "x"} {
@@ -546,4 +654,150 @@ func TestR2_4_AHoldCoversSubdirsAndIsSetWhileTheFencedPaneRuns(t *testing.T) {
 	}
 	id2, _ := result(t, got[0])["pane"].(string)
 	closePane(t, s, id2)
+}
+
+// ADR-0028: under auto a kernel without Landlock runs agent work bare, and
+// the floor says files are not confined. "on" stays fail closed.
+func TestAutoRunsBareOnAKernelWithoutLandlock(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	kernelFences(t, false)
+	for _, mode := range []string{"", "auto"} {
+		s.cfg.Fence = mode
+		if w, err := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/w"}, s.fenceTmp("w1:p1")); err != nil || w != nil {
+			t.Errorf("mode %q: wrap %v err %v, want bare", mode, w, err)
+		}
+		if w, err := s.fenceCmd("", "/w", nil, false); err != nil || w != nil {
+			t.Errorf("mode %q: worker fence %v err %v, want bare", mode, w, err)
+		}
+		if !s.Unconfined() {
+			t.Errorf("mode %q: bare run not reported", mode)
+		}
+	}
+	s.cfg.Fence = "on"
+	if w, _ := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/w"}, s.fenceTmp("w1:p1")); w == nil {
+		t.Error("on: no wrap")
+	}
+	if s.Unconfined() {
+		t.Error("on is never unconfined")
+	}
+}
+
+// The notice shows only when the warden is on and the config turns the fence off.
+func TestUnconfinedNamesTheOffConfigOnlyWithTheWardenOn(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	s.cfg.Fence = "off"
+	if s.Unconfined() {
+		t.Error("warden off: nothing is checked, nothing to say")
+	}
+	armWarden(t, s)
+	if !s.Unconfined() {
+		t.Error("warden on, fence off: not reported")
+	}
+	s.cfg.Fence = "auto"
+	if s.Unconfined() {
+		t.Error("auto with Landlock: reported")
+	}
+}
+
+// Plan task 4: the floor's pane.list carries the one-line notice while the
+// warden is on and the config turns the fence off, and not otherwise.
+func TestPaneListCarriesTheUnconfinedLine(t *testing.T) {
+	fakeFenceBin(t)
+	s := newAgentServer(t)
+	armWarden(t, s)
+	s.cfg.Fence = "off"
+	got := roundTrip(t, s, `{"id":"3","cmd":"pane.list"}`)
+	if m := result(t, got[0]); m["unconfined"] != UnconfinedLine {
+		t.Fatalf("unconfined = %v", m["unconfined"])
+	}
+	s.cfg.Fence = "auto"
+	got = roundTrip(t, s, `{"id":"3","cmd":"pane.list"}`)
+	if m := result(t, got[0]); m["unconfined"] != nil {
+		t.Fatalf("auto with Landlock still says %v", m["unconfined"])
+	}
+}
+
+// Review F2: `daisugi fence` needs Landlock ABI 9 (it refuses a lower one
+// unless asked to allow weak IPC, which coppice never does). Under auto a
+// kernel below 9 runs agent work bare and the floor says why. "on" stays
+// fail closed.
+func TestAutoFencesOnlyAtLandlockABI9(t *testing.T) {
+	fakeFenceBin(t)
+	for _, tc := range []struct {
+		abi   int
+		fence bool
+	}{{0, false}, {3, false}, {8, false}, {9, true}, {10, true}} {
+		s := newTestServer(t)
+		armWarden(t, s)
+		kernelABI(t, tc.abi) // after armWarden, which sets a kernel that fences
+		s.cfg.Fence = "auto"
+		w, err := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/w"}, s.fenceTmp("w1:p1"))
+		if err != nil || (w != nil) != tc.fence {
+			t.Errorf("ABI %d: wrap %v err %v, want fenced=%v", tc.abi, w, err, tc.fence)
+		}
+		if s.Unconfined() == tc.fence {
+			t.Errorf("ABI %d: Unconfined() = %v", tc.abi, s.Unconfined())
+		}
+		line := s.UnconfinedNotice()
+		if tc.fence && line != "" {
+			t.Errorf("ABI %d: notice %q", tc.abi, line)
+		}
+		if !tc.fence {
+			if !strings.Contains(line, "cannot fence") || !strings.Contains(line, "needs") ||
+				strings.Contains(line, "Turn the fence on") {
+				t.Errorf("ABI %d: notice %q", tc.abi, line)
+			}
+		}
+		s.cfg.Fence = "on"
+		if w, _ := s.fenceWrap(layout.Pane{Harness: "claude", Cwd: "/w"}, s.fenceTmp("w1:p1")); w == nil {
+			t.Errorf("ABI %d: on must fence (fail closed)", tc.abi)
+		}
+	}
+}
+
+// The notice for "off" tells the operator to turn the fence on; the notice
+// for "auto on a kernel that cannot fence" names the kernel and does not.
+func TestTheNoFenceKernelNoticeNamesTheABI(t *testing.T) {
+	fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	kernelABI(t, 3)
+	s.cfg.Fence = "auto"
+	want := "Files are not confined: the warden checks commands, but only a fence stops a file access. " +
+		"This kernel cannot fence (Landlock ABI 3, the fence needs 9)."
+	if got := s.UnconfinedNotice(); got != want {
+		t.Fatalf("notice %q", got)
+	}
+	kernelABI(t, 0)
+	want = "Files are not confined: the warden checks commands, but only a fence stops a file access. " +
+		"This kernel cannot fence (no Landlock, the fence needs ABI 9)."
+	if got := s.UnconfinedNotice(); got != want {
+		t.Fatalf("notice %q", got)
+	}
+	s.cfg.Fence = "off"
+	if got := s.UnconfinedNotice(); got != UnconfinedLine {
+		t.Fatalf("off notice %q", got)
+	}
+}
+
+// Coppice never adds --allow-weak-ipc: weak IPC would let a child reach
+// D-Bus or the user systemd outside the fence.
+func TestCoppiceNeverAllowsWeakIPC(t *testing.T) {
+	log := fakeFenceBin(t)
+	s := newTestServer(t)
+	armWarden(t, s)
+	s.cfg.Fence = "auto"
+	w, err := s.fenceCmd("", "/w", nil, false)
+	if err != nil || w == nil {
+		t.Fatalf("wrap %v err %v", w, err)
+	}
+	for _, a := range w {
+		if strings.Contains(a, "weak-ipc") {
+			t.Fatalf("argv has %q", a)
+		}
+	}
+	_ = log
 }

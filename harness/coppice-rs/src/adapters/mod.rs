@@ -5,7 +5,7 @@
 //! Every adapter keeps the rules Go's pane.Adapter states:
 //!
 //! 1. The child's environment is pane::build_env of the server's own, so
-//!    a harness's gate hook finds COPPICE_SOCK, COPPICE_PANE and
+//!    a harness's warden hook finds COPPICE_SOCK, COPPICE_PANE and
 //!    COPPICE_DATA_DIR.
 //! 2. The server renders. An adapter never writes into the grid.
 //! 3. stop signals and kills, and waits until the event stream has ended.
@@ -15,6 +15,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod hermes;
 pub mod http;
 pub mod opencode;
 pub mod pi;

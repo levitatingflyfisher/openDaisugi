@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // Compact is pydantic's model_dump_json of a value: no spaces, text as
@@ -46,7 +46,7 @@ func floatText(f float64, nanText bool) string {
 		}
 		return "null"
 	}
-	return gateroot.FloatJSON(f)
+	return wardenroot.FloatJSON(f)
 }
 
 func write(b *strings.Builder, v any, unit string, level int, nanText bool) {

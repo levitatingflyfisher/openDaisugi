@@ -44,7 +44,7 @@ agent_profiles:
 ```
 
 See [agent profiles](agent-profiles.md) for the fields, and
-[run the foreman on any model](foreman-any-model.md) to put the foreman there.
+[run the steward on any model](steward-any-model.md) to put the steward there.
 
 ## 4. Look at Machines
 
@@ -67,3 +67,15 @@ line, with the command to run.
 The same facts are the `floor.machines` verb (see the coppice PROTOCOL, The
 machines view). The check is one TCP connection to each profile's host and
 port. It sends no request to the model server and never sends a key.
+
+## 5. Qualify a model on the box
+
+`daisugi tiers setup --endpoint http://box:11434/v1 --model gemma4` asks the
+server once whether it is Ollama (`GET /api/tags`). On an Ollama host it sends
+`reasoning_effort: none`, so a thinking model answers without thinking.
+`--kind openai` sends the request as is. `--kind ollama` skips the question.
+
+A probe that stops at the token limit is reported as `truncated`. The advice
+is to turn thinking off at the server, or to raise its limit. Add `--wire` to
+save the model as Tier-1. The saved `local_tier1.json` keeps `host_kind`, so
+later Tier-1 calls send the same field.

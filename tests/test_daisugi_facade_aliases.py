@@ -22,7 +22,9 @@ def test_facade_round_trip_register_verify_enforce():
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls", "rm"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls", "rm"], file_read=["**"], file_write=["**"]
+        ),
         stakes="high",
         invariants=[
             Invariant(type="only_ls", description="via alias", expr=AliasRef(name="only_ls"))
@@ -47,25 +49,27 @@ def test_daisugi_run_strict_kwarg_overrides_low_stakes_default():
     strict=True on Daisugi.run must flip it through to the Supervisor."""
     import asyncio
 
-    from opendaisugi.models import Postcondition
+    from opendaisugi.models import Invariant
     from opendaisugi.run_session import RunStatus
 
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="low",
-        postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
+        invariants=[Invariant(type="read_only", description="a dialect word")],
     )
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
     dai = Daisugi(pathway_store=False, cache=False)
 
-    # Default (non-strict at low stakes) — verify passes because opaque
-    # postcondition is tolerated.
+    # Default (non-strict at low stakes) — verify passes because a dialect word
+    # with no pin is only audited below strict stakes.
     session = asyncio.run(dai.run(plan, env))
     assert session.verification.ok
 
-    # strict=True via run kwarg — verify rejects the opaque postcondition.
+    # strict=True via run kwarg — verify rejects the unpinned word.
     session = asyncio.run(dai.run(plan, env, strict=True))
     assert not session.verification.ok
     assert session.status == RunStatus.REJECTED
@@ -75,14 +79,16 @@ def test_daisugi_constructor_strict_kwarg_persists():
     """Daisugi(strict=True) sets the default for every subsequent run."""
     import asyncio
 
-    from opendaisugi.models import Postcondition
+    from opendaisugi.models import Invariant
 
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="low",
-        postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
+        invariants=[Invariant(type="read_only", description="a dialect word")],
     )
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
     dai = Daisugi(pathway_store=False, cache=False, strict=True)
@@ -97,14 +103,16 @@ def test_daisugi_run_strict_kwarg_overrides_constructor_strict():
     the precedence chain — method kwarg wins over constructor."""
     import asyncio
 
-    from opendaisugi.models import Postcondition
+    from opendaisugi.models import Invariant
 
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="low",
-        postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
+        invariants=[Invariant(type="read_only", description="a dialect word")],
     )
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
     dai = Daisugi(pathway_store=False, cache=False, strict=True)
@@ -116,14 +124,16 @@ def test_daisugi_run_strict_kwarg_overrides_constructor_strict():
 def test_daisugi_verify_honors_constructor_strict():
     """v0.28.3 follow-up — Daisugi.verify() (not .run()) previously
     ignored the constructor strict, contradicting precedence claims."""
-    from opendaisugi.models import Postcondition
+    from opendaisugi.models import Invariant
 
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="low",
-        postconditions=[Postcondition(type="custom_unknown", description="opaque", enforce=True)],
+        invariants=[Invariant(type="read_only", description="a dialect word")],
     )
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="ls")])
     # No constructor strict → stake-based default (low → non-strict) → ok

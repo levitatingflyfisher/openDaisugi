@@ -2,7 +2,7 @@
 //! beside each other as `daisugi` (Go), `daisugi-rs` and `daisugi-py`, and
 //! `install` in any of them hands the whole command to the one the
 //! variable names, once, at install time. The hook it writes then runs
-//! that port's binary directly, so the gate's hot path has no extra exec.
+//! that port's binary directly, so the warden's hot path has no extra exec.
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;

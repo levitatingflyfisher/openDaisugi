@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var pathwaysHelp = `Usage: daisugi pathways [OPTIONS] COMMAND [ARGS]...
@@ -299,7 +299,7 @@ func (e *Env) pathwaysExport(args []string) error {
 	if err != nil {
 		return e.storeErr(cmd, err)
 	}
-	out := gateroot.PathStr(output)
+	out := wardenroot.PathStr(output)
 	if err := os.MkdirAll(filepath.Dir(out), 0o777); err != nil {
 		return e.failPy(cmd, err)
 	}
@@ -356,9 +356,9 @@ func (e *Env) pathwaysImport(args []string) error {
 	var parseErr error
 	if readErr == nil {
 		if pathways.IsSkill(text) {
-			pw, parseErr = pathways.ParseSkill(text, gateroot.PathStr(source))
+			pw, parseErr = pathways.ParseSkill(text, wardenroot.PathStr(source))
 		} else {
-			pw, parseErr = pathways.ParseBundle(text, gateroot.PathStr(source))
+			pw, parseErr = pathways.ParseBundle(text, wardenroot.PathStr(source))
 		}
 		if errors.Is(parseErr, pathways.ErrNotYet) {
 			return e.notYet("daisugi pathways import of this skill file's frontmatter")

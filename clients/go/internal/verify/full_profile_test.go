@@ -138,8 +138,9 @@ func TestCheckPredicateInvariants_OpaqueUnderStrict(t *testing.T) {
 	if v := CheckPredicateInvariants(plan, env, true, &warnings); len(v) != 1 {
 		t.Fatalf("strict mode: want one violation for an opaque unrecognized invariant, got %+v", v)
 	}
-	if v := CheckPredicateInvariants(plan, env, false, &warnings); len(v) != 0 {
-		t.Fatalf("non-strict mode: want zero violations for an opaque invariant, got %+v", v)
+	// SG-8: a safety property nothing can check is never a silent pass.
+	if v := CheckPredicateInvariants(plan, env, false, &warnings); len(v) != 1 {
+		t.Fatalf("non-strict mode: want one violation for an opaque unrecognized invariant, got %+v", v)
 	}
 }
 

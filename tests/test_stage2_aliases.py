@@ -29,7 +29,9 @@ def _env():
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[
             Postcondition(
                 type="cmd_is_ls",

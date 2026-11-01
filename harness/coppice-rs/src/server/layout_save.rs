@@ -127,7 +127,7 @@ mod tests {
             data_dir: dir.clone(),
             start_dir: dir,
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         s.set_layout_settle(settle);
         let n = Arc::new(AtomicUsize::new(0));

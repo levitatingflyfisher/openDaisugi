@@ -9,8 +9,8 @@
 
 use crate::deeds::{self, Report};
 use crate::envgen::bind::apply_bindings;
-use crate::gate::py::text::repr_list;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr_list;
+use crate::warden::pyjson::{Object, Value};
 use crate::glob_engine::path_matches_any;
 use crate::lerr::{LErr, PyError, LR};
 use crate::pathways::pathway::dump_json;
@@ -201,7 +201,7 @@ pub fn list_repr(xs: &[String]) -> String {
 }
 
 /// `prove_footprint`: every write each item resolves to checked with the
-/// runtime gate's own path matcher against the envelope's file_write
+/// runtime warden's own path matcher against the envelope's file_write
 /// globs and the declared footprint.
 pub fn prove(d: &Decl, env_file_write: &[String]) -> LR<Proof> {
     let (plans, bad) = resolve(d)?;
@@ -595,7 +595,7 @@ pub fn rollback_result(r: &BatchResult) -> LR<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::loads;
+    use crate::warden::pyjson::loads;
 
     fn decl(text: &str) -> Decl {
         validate(&loads(text).unwrap()).unwrap()

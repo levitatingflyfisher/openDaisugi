@@ -4,7 +4,7 @@
 //! own: agent.allow and agent.deny answer a permission prompt, the
 //! operator's next prompt answers a question, and an ask nobody answers
 //! is rejected at its deadline. The adapter refuses to start unless the
-//! gate plugin this coppice ships sits in OpenCode's config dir. Model
+//! warden plugin this coppice ships sits in OpenCode's config dir. Model
 //! text goes into the grid as is.
 
 use std::collections::{BTreeMap, HashSet};
@@ -33,7 +33,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const STREAM_GRACE: Duration = Duration::from_millis(300);
 const ASK_TICK: Duration = Duration::from_secs(1);
 const ASK_DEADLINE: Duration = Duration::from_secs(90);
-const GATE_PLUGIN_SHA256: &str = "68f4bda2dca4ef6443fb51baf5f1ca02cfe14eed5d4df2c1fa9a614cf8217864";
+const WARDEN_PLUGIN_SHA256: &str = "607ec704dcbc327ce982fd7544ca4f351d7ccfcb5bf8e34e19b512b836afff7e";
 const MAX_PLUGIN_BYTES: u64 = 1 << 20;
 
 pub struct Opencode;
@@ -44,7 +44,7 @@ fn refuse_pure(argv: &[String]) -> Result<(), String> {
         .any(|a| a == "--pure" || a.starts_with("--pure="))
     {
         return Err(
-            "opencode: --pure makes OpenCode skip the gate plugin. Remove --pure from the pane's argv"
+            "opencode: --pure makes OpenCode skip the warden plugin. Remove --pure from the pane's argv"
                 .into(),
         );
     }
@@ -98,9 +98,9 @@ fn parse_listen_line(line: &str) -> Result<String, String> {
     }
 }
 
-/// Where OpenCode loads the gate plugin from, by the child's own HOME and
+/// Where OpenCode loads the warden plugin from, by the child's own HOME and
 /// XDG_CONFIG_HOME.
-fn gate_plugin_path(env: &[(String, String)]) -> Result<String, String> {
+fn warden_plugin_path(env: &[(String, String)]) -> Result<String, String> {
     let mut home = String::new();
     let mut xdg = String::new();
     for (k, v) in env {
@@ -115,15 +115,15 @@ fn gate_plugin_path(env: &[(String, String)]) -> Result<String, String> {
     } else if home.starts_with('/') {
         format!("{home}/.config")
     } else {
-        return Err("opencode: neither XDG_CONFIG_HOME nor HOME names a config directory, so the adapter cannot find the gate plugin".into());
+        return Err("opencode: neither XDG_CONFIG_HOME nor HOME names a config directory, so the adapter cannot find the warden plugin".into());
     };
     Ok(crate::sys::clean(&format!(
-        "{base}/opencode/plugins/daisugi-gate.ts"
+        "{base}/opencode/plugins/daisugi-warden.ts"
     )))
 }
 
-fn require_gate_plugin(env: &[(String, String)]) -> Result<(), String> {
-    let p = gate_plugin_path(env)?;
+fn require_warden_plugin(env: &[(String, String)]) -> Result<(), String> {
+    let p = warden_plugin_path(env)?;
     let fix = "Run: daisugi install --harness opencode";
     let md = std::fs::metadata(&p);
     let ok = md
@@ -131,18 +131,18 @@ fn require_gate_plugin(env: &[(String, String)]) -> Result<(), String> {
         .is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= MAX_PLUGIN_BYTES);
     if !ok {
         return Err(format!(
-            "opencode: the gate plugin is not at {p}, so OpenCode would run ungated. {fix}"
+            "opencode: the warden plugin is not at {p}, so OpenCode would run ungated. {fix}"
         ));
     }
     let b = std::fs::read(&p).map_err(|e| {
         format!(
-            "opencode: cannot read the gate plugin at {p}: {}. {fix}",
+            "opencode: cannot read the warden plugin at {p}: {}. {fix}",
             crate::sys::go_path_err("open", std::path::Path::new(&p), &e)
         )
     })?;
-    if crate::sha256::hex(&b) != GATE_PLUGIN_SHA256 {
+    if crate::sha256::hex(&b) != WARDEN_PLUGIN_SHA256 {
         return Err(format!(
-            "opencode: the gate plugin at {p} is not the one this coppice ships. {fix}"
+            "opencode: the warden plugin at {p} is not the one this coppice ships. {fix}"
         ));
     }
     Ok(())
@@ -177,7 +177,7 @@ impl Adapter for Opencode {
         let base: Vec<(String, String)> = std::env::vars().filter(|(k, _)| k != PURE_ENV).collect();
         let env = crate::pane::build_env(base, &extra, &o.sock, &o.pane_id, &o.data_dir);
         let lookup = super::command(&bin, &argv, &o.cwd, env.clone(), &o.wrap);
-        require_gate_plugin(&env)?;
+        require_warden_plugin(&env)?;
         let mut cmd = lookup.map_err(|e| format!("cannot start {bin}: {e}"))?;
         let (r, w) = super::pipe().map_err(|e| format!("opencode: stdout pipe: {e}"))?;
         cmd.stdin(Stdio::null())

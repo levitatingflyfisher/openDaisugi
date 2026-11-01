@@ -1,13 +1,13 @@
 //! `opendaisugi/llm_client.py` for the HTTP backend: which wire a model
 //! name takes, the URL and credential, the exact request bytes, the reply,
-//! and the error texts (rulings LLM-2 to LLM-8, LLM-14). The gate's
+//! and the error texts (rulings LLM-2 to LLM-8, LLM-14). The warden's
 //! llm_check and the structured call both use it.
 
 use std::sync::OnceLock;
 
 use super::http;
-use crate::gate::py::text::{head, repr};
-use crate::gate::pyjson::{dumps, loads_py, Value};
+use crate::warden::py::text::{head, repr};
+use crate::warden::pyjson::{dumps, loads_py, Value};
 use crate::netproxy;
 
 pub const DEFAULT_MAX_TOKENS: i64 = 8192;
@@ -145,7 +145,7 @@ pub fn resolve(model: &str, base_url: &str, api_key: &str, get: &dyn Fn(&str) ->
 /// `llm_client.resolve_timeout` with no timeout from the call.
 pub fn timeout(get: &dyn Fn(&str) -> Option<String>) -> f64 {
     if let Some(v) = get("OPENDAISUGI_LLM_TIMEOUT") {
-        if let Some(t) = crate::gate::argparse::py_float(&v) {
+        if let Some(t) = crate::warden::argparse::py_float(&v) {
             if t.is_finite() && t > 0.0 {
                 return t;
             }

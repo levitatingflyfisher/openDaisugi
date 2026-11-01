@@ -23,6 +23,11 @@ func TestEveryAPIPathRefusesAMissingToken(t *testing.T) {
 		{"GET", "/api/tasks"},
 		{"GET", "/api/views"},
 		{"POST", "/api/ask/answer"},
+		{"GET", "/api/cards"},
+		{"GET", "/api/cards/ch_1/diff"},
+		{"POST", "/api/cards/answer"},
+		{"GET", "/api/tree"},
+		{"POST", "/api/tree/answer"},
 		{"POST", "/api/push/test"},
 		{"POST", "/api/voice/transcribe"},
 	}
@@ -30,7 +35,7 @@ func TestEveryAPIPathRefusesAMissingToken(t *testing.T) {
 	// it, and this test is about the guard on each route, not the ban.
 	for _, r := range routes {
 		_, d := newFakeServer(t, echoOK)
-		ts, _, _ := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+		ts, _, _ := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 		req, err := http.NewRequest(r.Method, ts.URL+r.Path, bytes.NewReader([]byte(`{}`)))
 		if err != nil {
 			t.Fatal(err)
@@ -55,7 +60,7 @@ func TestAPIPanesProxiesPaneList(t *testing.T) {
 			"panes": []any{map[string]any{"id": "w1:p1", "label": "auth fix"}},
 		}}}
 	})
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 	req, _ := http.NewRequest("GET", ts.URL+"/api/panes", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := http.DefaultClient.Do(req)
@@ -83,7 +88,7 @@ func TestAPIPanesSurfacesARefusalInsteadOfAnEmptyRoster(t *testing.T) {
 			"code": "internal", "message": "the layout store is unreadable",
 		}}}
 	})
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 	req, _ := http.NewRequest("GET", ts.URL+"/api/panes", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	resp, err := http.DefaultClient.Do(req)
@@ -130,7 +135,7 @@ func TestAPIPanesTreatsANonObjectResultAsARefusal(t *testing.T) {
 				}
 				return []map[string]any{msg}
 			})
-			ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+			ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 			req, _ := http.NewRequest("GET", ts.URL+"/api/panes", nil)
 			req.Header.Set("Authorization", "Bearer "+tok)
 			resp, err := http.DefaultClient.Do(req)
@@ -170,9 +175,9 @@ func agentsWithAsk(id, tier string) func(map[string]any) []map[string]any {
 
 func TestAPIAskAnswerAllowsAPendingAsk(t *testing.T) {
 	_, d := newFakeServer(t, agentsWithAsk("toolu_01ABC", "undoable"))
-	gate := t.TempDir()
-	writeTieredAsk(t, gate, "toolu_01ABC", "undoable")
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}})
+	warden := t.TempDir()
+	writeTieredAsk(t, warden, "toolu_01ABC", "undoable")
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}})
 	req, _ := http.NewRequest("POST", ts.URL+"/api/ask/answer",
 		bytes.NewReader([]byte(`{"tool_use_id":"toolu_01ABC","decision":"allow","reason":"fine"}`)))
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -184,7 +189,7 @@ func TestAPIAskAnswerAllowsAPendingAsk(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	raw, err := os.ReadFile(filepath.Join(gate, "answers", "toolu_01ABC.json"))
+	raw, err := os.ReadFile(filepath.Join(warden, "answers", "toolu_01ABC.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +209,7 @@ func TestAPIAskAnswerAllowsAPendingAsk(t *testing.T) {
 // know why the button did nothing.
 func TestAPIAskAnswerReturns409AndSaysWhyWhenTheAskIsGone(t *testing.T) {
 	_, d := newFakeServer(t, agentsWithAsk("toolu_other", "undoable"))
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 	req, _ := http.NewRequest("POST", ts.URL+"/api/ask/answer",
 		bytes.NewReader([]byte(`{"tool_use_id":"toolu_gone","decision":"allow"}`)))
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -242,7 +247,7 @@ func TestPushTestAnswersMatchWhetherPushIsConfiguredAndWhetherNtfyAccepts(t *tes
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, d := newFakeServer(t, echoOK)
-			opts := Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}}
+			opts := Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}}
 			if c.configure {
 				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(c.ntfyStatus)
@@ -297,14 +302,14 @@ func postAnswer(t *testing.T, url, tok, body string) (int, string) {
 // name, or no allow.
 func TestAPIAskAnswerNeedsThePaneNameOnAPermanentAsk(t *testing.T) {
 	_, d := newFakeServer(t, agentsWithAsk("toolu_1", "permanent"))
-	gate := t.TempDir()
-	writeTieredAsk(t, gate, "toolu_1", "permanent")
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}})
+	warden := t.TempDir()
+	writeTieredAsk(t, warden, "toolu_1", "permanent")
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}})
 	code, msg := postAnswer(t, ts.URL, tok, `{"tool_use_id":"toolu_1","decision":"allow"}`)
 	if code != http.StatusForbidden || msg != "this cannot be undone. Type the pane name to allow: auth fix" {
 		t.Fatalf("status %d %q, want 403 and the name refusal", code, msg)
 	}
-	if _, err := os.Stat(filepath.Join(gate, "answers", "toolu_1.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(warden, "answers", "toolu_1.json")); err == nil {
 		t.Fatal("a refused allow wrote an answer")
 	}
 	code, msg = postAnswer(t, ts.URL, tok, `{"tool_use_id":"toolu_1","decision":"allow","confirm":"auth fix"}`)
@@ -317,9 +322,9 @@ func TestAPIAskAnswerNeedsThePaneNameOnAPermanentAsk(t *testing.T) {
 // server cannot say which pane holds the ask.
 func TestAPIAskAnswerDeniesWithoutALookup(t *testing.T) {
 	f, d := newFakeServer(t, echoOK)
-	gate := t.TempDir()
-	writeTieredAsk(t, gate, "toolu_1", "permanent")
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}})
+	warden := t.TempDir()
+	writeTieredAsk(t, warden, "toolu_1", "permanent")
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}})
 	if code, msg := postAnswer(t, ts.URL, tok, `{"tool_use_id":"toolu_1","decision":"deny"}`); code != http.StatusOK {
 		t.Fatalf("status %d %q, want 200", code, msg)
 	}
@@ -333,13 +338,13 @@ func TestAPIAskAnswerDeniesWithoutALookup(t *testing.T) {
 // An allow whose tier the server cannot give is refused, never written.
 func TestAPIAskAnswerRefusesAnAllowWhenTheServerCannotSay(t *testing.T) {
 	_, d := newFakeServer(t, echoOK)
-	gate := t.TempDir()
-	writeTieredAsk(t, gate, "toolu_1", "undoable")
-	ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}})
+	warden := t.TempDir()
+	writeTieredAsk(t, warden, "toolu_1", "undoable")
+	ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}})
 	if code, _ := postAnswer(t, ts.URL, tok, `{"tool_use_id":"toolu_1","decision":"allow"}`); code == http.StatusOK {
 		t.Fatal("an allow with no tier from the server passed")
 	}
-	if _, err := os.Stat(filepath.Join(gate, "answers", "toolu_1.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(warden, "answers", "toolu_1.json")); err == nil {
 		t.Fatal("an allow with no tier from the server wrote an answer")
 	}
 }

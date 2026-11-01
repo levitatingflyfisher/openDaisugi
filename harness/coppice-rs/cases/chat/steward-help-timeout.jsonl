@@ -1,0 +1,29 @@
+# A question that no one answers within the project's help_wait_s (one second here) ends
+# the worker as given up, with the question in its report.
+#!config projects = ["{WORK}/proj"]
+#!config [steward]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_GO={WORK}/go
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"], \"paths\": [\"<repo>\"]}, \"tokens\": 5000, \"turns\": 3, \"help_wait_s\": 1}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"spawn proj help-timeout"}
+{"id":"$id","ok":true,"result":{"message":"log/0"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0"},{"id":"log/1","role":"agent","text":"*","tool":"spawn"},{"id":"log/2","role":"agent","text":"*"}]}}
+{"id":"g3","write":"{WORK}/go/help-timeout","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/2"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/3","role":"work","text":"[proj-1] asks a question\n> which db?\n(Answer it with reply.)"},{"id":"log/4","role":"work","text":"[proj-1] gave up: no answer came in time\nquestion (need_info):\n> which db?\nchanged: unknown (no session file)"}]}}
+{"id":"5","cmd":"floor.talk","text":"reply proj-1 late"}
+{"id":"$id","ok":true,"result":{"message":"log/5"}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/5"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/6","role":"agent","text":"*","tool":"reply"},{"id":"log/7","role":"agent","text":"*"}]}}

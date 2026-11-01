@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::prompts_gen::TIER1_PROMPT;
 use super::{GenErr, PyError};
-use crate::gate::pyjson::{loads_py, py_type_name, Object, Value};
+use crate::warden::pyjson::{loads_py, py_type_name, Object, Value};
 use crate::llm::{Call, CallError, Client, Schema};
 use crate::pathways::pmodel::Id;
 
@@ -24,6 +24,9 @@ pub struct Tier1 {
     pub name: String,
     /// The whole call's limit (`asyncio.wait_for`).
     pub timeout: Duration,
+    /// The chat body's `reasoning_effort`; empty leaves it out. An Ollama
+    /// host gets `OLLAMA_NO_THINK_EFFORT`.
+    pub reasoning_effort: String,
     /// A base_url the config file gives as something other than a
     /// string: every call with it fails in the oracle, so it declines.
     bad_base: bool,
@@ -35,7 +38,7 @@ impl Tier1 {
     pub fn new(model: &str, base_url: Option<String>, api_key: Option<String>, name: &str) -> Tier1 {
         let model = if base_url.is_some() && !model.contains('/') { format!("openai/{model}") } else { model.to_string() };
         let name = if name.is_empty() { format!("http:{model}") } else { name.to_string() };
-        Tier1 { model, base_url, api_key, name, timeout: Duration::from_secs(30), bad_base: false }
+        Tier1 { model, base_url, api_key, name, timeout: Duration::from_secs(30), reasoning_effort: String::new(), bad_base: false }
     }
 
     /// `HTTPTier1Provider.generate_envelope`: the envelope, or None when
@@ -63,6 +66,7 @@ impl Tier1 {
         call.deadline = Some(Instant::now() + self.timeout);
         call.base_url = self.base_url.as_deref().unwrap_or("");
         call.api_key = self.api_key.as_deref().unwrap_or("");
+        call.reasoning_effort = &self.reasoning_effort;
         c.structured(&call).map_err(|e| call_error_text(&e))
     }
 }
@@ -79,8 +83,17 @@ pub const QUALIFY_TIMEOUT: Duration = Duration::from_secs(300);
 /// Outcomes of one qualification probe.
 pub const OUTCOME_VALID: &str = "valid";
 pub const OUTCOME_DECLINED: &str = "declined";
+pub const OUTCOME_TRUNCATED: &str = "truncated";
 pub const OUTCOME_ERROR: &str = "error";
 pub const OUTCOME_TIMEOUT: &str = "timeout";
+
+/// `tier1.OLLAMA_NO_THINK_EFFORT`. Ollama's /v1 honours `reasoning_effort`
+/// "none" and ignores `"think": false`.
+pub const OLLAMA_NO_THINK_EFFORT: &str = "none";
+
+/// `tier1.TRUNCATED_ADVICE`.
+pub const TRUNCATED_ADVICE: &str =
+    " A model that thinks first spends the limit on thinking: turn thinking off at the server, or raise the limit.";
 
 /// The longest reason kept, in characters.
 const MAX_REASON: usize = 200;
@@ -93,7 +106,8 @@ fn call_error_text(e: &CallError) -> String {
 }
 
 /// Names the outcome of a failed probe and a one-line reason. `declined` is
-/// a model that answered, but not with a valid envelope; `error` is a call
+/// a model that answered, but not with a valid envelope; `truncated` is a
+/// reply cut at the token limit; `error` is a call
 /// that failed (a server, a key, a wire); `timeout` is a probe that ran past
 /// its deadline.
 pub fn classify(msg: &str) -> (&'static str, String) {
@@ -107,12 +121,7 @@ pub fn classify(msg: &str) -> (&'static str, String) {
         return (OUTCOME_DECLINED, clean_reason(msg));
     }
     if msg.starts_with("The output is incomplete due to a max_tokens") {
-        return (
-            OUTCOME_DECLINED,
-            clean_reason(&format!(
-                "{msg} A model that thinks first may have spent the token budget on thinking; raise max_tokens."
-            )),
-        );
+        return (OUTCOME_TRUNCATED, clean_reason(&format!("{msg}{TRUNCATED_ADVICE}")));
     }
     (OUTCOME_ERROR, clean_reason(msg))
 }
@@ -163,5 +172,36 @@ pub fn load_configured(data_dir: &str) -> Result<Option<Tier1>, GenErr> {
     };
     let mut t = Tier1::new(model, base, None, "");
     t.bad_base = bad;
+    if matches!(cfg.value("host_kind"), Value::Str(k) if k == "ollama") {
+        t.reasoning_effort = OLLAMA_NO_THINK_EFFORT.to_string();
+    }
     Ok(Some(t))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cut_reply_is_truncated() {
+        let (o, r) = classify("The output is incomplete due to a max_tokens length limit.");
+        assert_eq!(o, OUTCOME_TRUNCATED);
+        assert_eq!(r, format!("The output is incomplete due to a max_tokens length limit.{TRUNCATED_ADVICE}"));
+        assert!(r.chars().count() <= 200);
+    }
+
+    #[test]
+    fn load_configured_reads_host_kind() {
+        let dir = std::env::temp_dir().join(format!("w1-tier1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let load = |body: &str| {
+            std::fs::write(dir.join(CONFIG_FILE), body).unwrap();
+            load_configured(dir.to_str().unwrap()).ok().flatten().unwrap().reasoning_effort
+        };
+        assert_eq!(load(r#"{"model": "m", "base_url": "http://h/v1", "host_kind": "ollama"}"#), "none");
+        assert_eq!(load(r#"{"model": "m", "base_url": "http://h/v1", "host_kind": "openai"}"#), "");
+        assert_eq!(load(r#"{"model": "m", "base_url": "http://h/v1"}"#), "");
+        assert_eq!(load(r#"{"model": "m", "base_url": "http://h/v1", "host_kind": 7}"#), "");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

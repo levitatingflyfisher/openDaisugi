@@ -16,6 +16,7 @@ package llm
 
 import (
 	"bytes"
+	"daisugi-verify/internal/pandoskip"
 	"errors"
 	"fmt"
 	"io"
@@ -273,8 +274,9 @@ func (c *Client) runClaude(prompt string, limit time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, c.claudeArgs()...)
+	cmd := exec.Command(bin, append(c.claudeArgs(), pandoskip.SessionArgs(pandoskip.Environ(nil))...)...)
 	cmd.Dir = dir
+	cmd.Env = pandoskip.Environ(nil) // a model call of ours, not the owner's chat
 	cmd.Stdin = strings.NewReader(prompt)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -469,9 +471,11 @@ func (c *Client) SyncInEnv(dir, prompt, model string, timeoutS float64, environ 
 		}
 	}
 	args = append(args, extra...)
+	// Under a spawner's skip list the session is listed before it exists.
+	args = append(args, pandoskip.SessionArgs(pandoskip.Environ(environ))...)
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	cmd.Env = environ
+	cmd.Env = pandoskip.Environ(environ)
 	cmd.Stdin = strings.NewReader(prompt)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

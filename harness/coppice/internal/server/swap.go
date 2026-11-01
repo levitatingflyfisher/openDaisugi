@@ -16,17 +16,17 @@ import (
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
-// The model and router swaps of the stack bar (F12a). Each says when it
+// The model and route swaps of the stack bar (F12a). Each says when it
 // takes effect: a model swap on claude lands at the next idle prompt, on
-// headless sprig with the next turn; a router swap restarts the agent and
+// headless sprig with the next turn; a route swap restarts the agent and
 // resumes its conversation with a new base URL in its env, since a running
 // process cannot change its own env.
 
-// ModelRefusal and RouterRefusal are what a pane, a plugin and an unplaced
+// ModelRefusal and RouteRefusal are what a pane, a plugin and an unplaced
 // peer get for the swap verbs.
 const (
-	ModelRefusal  = "only the operator sets an agent's model."
-	RouterRefusal = "only the operator sets an agent's router."
+	ModelRefusal = "only the operator sets an agent's model."
+	RouteRefusal = "only the operator sets an agent's route."
 )
 
 // ModelWordsRefusal is what a model name that is not plain gets. The name
@@ -34,43 +34,43 @@ const (
 // character.
 const ModelWordsRefusal = "model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters."
 
-// RouterWordsRefusal is what a router word other than direct or gateway
-// gets. Switchyard is a mode of the gateway itself, so a pane picks the
-// gateway and the gateway's own setting names what routes behind it.
-const RouterWordsRefusal = "router must be direct or gateway."
+// RouteWordsRefusal is what a route word other than direct or router
+// gets. Switchyard is a mode of the router itself, so a pane picks the
+// router and the router's own setting names what routes behind it.
+const RouteWordsRefusal = "route must be direct or router."
 
 var modelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,63}$`)
 
-func validRouterWord(w string) bool { return w == "direct" || w == "gateway" }
+func validRouteWord(w string) bool { return w == "direct" || w == "router" }
 
 // swapRefusal is the words for a swap the pane's harness has no way to do.
 func swapRefusal(what, label, harness string) string {
 	return fmt.Sprintf("Swapping the %s of %s is not built for %s yet.", what, label, harness)
 }
 
-// routerKeys names, for each harness a router swap is built for, the env
+// routeKeys names, for each harness a route swap is built for, the env
 // key that holds its base URL and the vendor address it takes for direct.
-var routerKeys = map[string]struct{ key, vendor string }{
+var routeKeys = map[string]struct{ key, vendor string }{
 	"claude": {"ANTHROPIC_BASE_URL", "https://api.anthropic.com"},
 }
 
-// routerEnv is the env entry a router swap sets for a harness. Direct is
+// routeEnv is the env entry a route swap sets for a harness. Direct is
 // the vendor's own address, never a missing key: a pane's process also
 // inherits the server's env, so a missing key could still route through
-// the gateway.
-func (s *Server) routerEnv(harness, router string) (key, val string, err error) {
-	k, ok := routerKeys[harness]
+// the router.
+func (s *Server) routeEnv(harness, route string) (key, val string, err error) {
+	k, ok := routeKeys[harness]
 	if !ok {
-		return "", "", fmt.Errorf("Swapping the router is not built for %s yet.", harnessWord(harness))
+		return "", "", fmt.Errorf("Swapping the route is not built for %s yet.", harnessWord(harness))
 	}
-	if router == "direct" {
+	if route == "direct" {
 		return k.key, k.vendor, nil
 	}
-	gateway, _ := s.gatewayFacts()
-	if gateway == "" {
-		return "", "", fmt.Errorf("no gateway is set. Add gateway = \"http://127.0.0.1:8787\" to coppice.toml.")
+	router, _ := s.routerFacts()
+	if router == "" {
+		return "", "", fmt.Errorf("no router is set. Add router = \"http://127.0.0.1:8787\" to coppice.toml.")
 	}
-	return k.key, gateway, nil
+	return k.key, router, nil
 }
 
 // handleSetModel answers agent.set_model {pane, model}. On claude it
@@ -131,23 +131,23 @@ func harnessWord(h string) string {
 	return h
 }
 
-// stopWait is the longest a router swap waits for the old process to go.
+// stopWait is the longest a route swap waits for the old process to go.
 const stopWait = 10 * time.Second
 
-// handleSetRouter answers agent.set_router {pane, router}: it stops the
+// handleSetRoute answers agent.set_route {pane, route}: it stops the
 // agent, keeps its record as ended, and resumes the conversation in a new
 // pane whose env names the new base URL. It refuses an agent that has no
 // conversation to resume, because a restart would lose it. The agent comes
 // back with a new pane id and enforcing: a watching marker goes with the
 // old pane.
-func (s *Server) handleSetRouter(c *Client, r *proto.Request) proto.Response {
+func (s *Server) handleSetRoute(c *Client, r *proto.Request) proto.Response {
 	id := paneOf(r)
 	if c.viewOnlyOn(id) {
 		return refuseViewOnly(r, id)
 	}
-	router, _ := r.Str("router")
-	if !validRouterWord(router) {
-		return proto.ErrResp(r.ID, proto.ErrBadRequest, RouterWordsRefusal)
+	route, _ := r.Str("route")
+	if !validRouteWord(route) {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest, RouteWordsRefusal)
 	}
 	if s.isClosed() {
 		return proto.ErrResp(r.ID, proto.ErrServerClosed, "this server has closed. It cannot start a new pane.")
@@ -161,20 +161,20 @@ func (s *Server) handleSetRouter(c *Client, r *proto.Request) proto.Response {
 	if rec.Closed {
 		return proto.ErrResp(r.ID, proto.ErrPaneClosed, fmt.Sprintf("%s has ended.", label))
 	}
-	if _, built := routerKeys[rec.Harness]; !built {
-		return proto.ErrResp(r.ID, proto.ErrBadRequest, swapRefusal("router", label, harnessWord(rec.Harness)))
+	if _, built := routeKeys[rec.Harness]; !built {
+		return proto.ErrResp(r.ID, proto.ErrBadRequest, swapRefusal("route", label, harnessWord(rec.Harness)))
 	}
-	if _, _, err := s.routerEnv(rec.Harness, router); err != nil {
+	if _, _, err := s.routeEnv(rec.Harness, route); err != nil {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest, err.Error())
 	}
 	// The agent would come back with a base URL that fails every call, so
-	// a gateway that does not answer is refused before anything stops. A
-	// gateway off this computer is not dialed, so it is not judged here.
-	if router == "gateway" {
-		gateway, _ := s.gatewayFacts()
-		if answers, known := s.gatewayAnswers(gateway); known && !answers {
+	// a router that does not answer is refused before anything stops. A
+	// router off this computer is not dialed, so it is not judged here.
+	if route == "router" {
+		router, _ := s.routerFacts()
+		if answers, known := s.routerAnswers(router); known && !answers {
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("the gateway at %s does not answer. Start it, then swap.", gateway))
+				fmt.Sprintf("the router at %s does not answer. Start it, then swap.", router))
 		}
 	}
 	if !s.canResume(rec) {
@@ -206,7 +206,7 @@ func (s *Server) handleSetRouter(c *Client, r *proto.Request) proto.Response {
 	// Keep the record, as a process that ends on its own does, so the
 	// resume below reads it. The exit code is the one watchExit stored.
 	_ = s.closePane(id, nil)
-	resp := s.resumeEnded(r.ID, resumeArgs{id: id, router: router})
+	resp := s.resumeEnded(r.ID, resumeArgs{id: id, route: route})
 	if resp.OK {
 		return resp
 	}
@@ -221,22 +221,22 @@ func (s *Server) handleSetRouter(c *Client, r *proto.Request) proto.Response {
 		if m, ok := back.Result.(map[string]any); ok {
 			newID, _ = m["pane"].(string)
 		}
-		return proto.ErrResp(r.ID, proto.ErrSpawnFailed, routerKeptMessage(label, why, newID))
+		return proto.ErrResp(r.ID, proto.ErrSpawnFailed, routeKeptMessage(label, why, newID))
 	}
-	return proto.ErrResp(r.ID, proto.ErrSpawnFailed, routerLostMessage(label, id))
+	return proto.ErrResp(r.ID, proto.ErrSpawnFailed, routeLostMessage(label, id))
 }
 
-// routerLostMessage is the reply for a router swap that stopped the agent
-// and then could not start it again, on either router.
-func routerLostMessage(label, id string) string {
-	return fmt.Sprintf("%s was stopped and its router did not change. It is in the ended list. "+
+// routeLostMessage is the reply for a route swap that stopped the agent
+// and then could not start it again, on either route.
+func routeLostMessage(label, id string) string {
+	return fmt.Sprintf("%s was stopped and its route did not change. It is in the ended list. "+
 		"To start it again, run: coppice pane resume %s.", label, id)
 }
 
-// routerKeptMessage is the reply for a router swap whose new start failed
-// and whose old router came back. why is the failure of the new start.
-func routerKeptMessage(label, why, newID string) string {
-	return fmt.Sprintf("The router of %s did not change: %s The agent runs again on its old router, as pane %s.",
+// routeKeptMessage is the reply for a route swap whose new start failed
+// and whose old route came back. why is the failure of the new start.
+func routeKeptMessage(label, why, newID string) string {
+	return fmt.Sprintf("The route of %s did not change: %s The agent runs again on its old route, as pane %s.",
 		label, endSentence(why), newID)
 }
 
@@ -271,7 +271,7 @@ var panePathStamp = regexp.MustCompile(`^/pane/[0-9a-f]{16}/w[0-9]{1,9}:p[0-9]{1
 
 // stampURL puts the pane prefix /pane/<floor>/<pane> at the start of a base
 // URL's path, ahead of any path it has (a /v1), and takes off a stamp it
-// already carries. The gateway strips the prefix and stamps its turn
+// already carries. The router strips the prefix and stamps its turn
 // record with the pane and the floor, so the floor can say which pane a
 // saving belongs to. A URL it cannot read comes back as it was.
 func stampURL(raw, floor, id string) string {
@@ -286,7 +286,7 @@ func stampURL(raw, floor, id string) string {
 }
 
 // stampedEnv is the env a pane's process starts with: the record's own,
-// with each base URL that the record's own env sets to the gateway
+// with each base URL that the record's own env sets to the router
 // carrying the pane prefix. A base URL the process only inherits from the
 // server is left alone, and the record keeps the plain URL, so a resume or
 // a restart stamps the new pane id.
@@ -294,14 +294,14 @@ func (s *Server) stampedEnv(rec layout.Pane) map[string]string {
 	if len(rec.Env) == 0 {
 		return rec.Env
 	}
-	gateway, _ := s.gatewayFacts()
-	if gateway == "" {
+	router, _ := s.routerFacts()
+	if router == "" {
 		return rec.Env
 	}
 	out := maps.Clone(rec.Env)
 	for _, k := range []string{"ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"} {
 		v := strings.TrimSpace(rec.Env[k])
-		if v == "" || !sameEndpoint(v, gateway) || !s.gatewayStamps(gateway) {
+		if v == "" || !sameEndpoint(v, router) || !s.routerStamps(router) {
 			continue
 		}
 		out[k] = stampURL(v, s.floorKey(), rec.ID)
@@ -309,51 +309,51 @@ func (s *Server) stampedEnv(rec layout.Pane) map[string]string {
 	return out
 }
 
-// capsAnswer is what the gateway at one address said about the pane prefix.
+// capsAnswer is what the router at one address said about the pane prefix.
 type capsAnswer struct {
 	yes bool
 	at  time.Time
 }
 
-// capsTimeout bounds the ask for the gateway's capabilities.
+// capsTimeout bounds the ask for the router's capabilities.
 const capsTimeout = 500 * time.Millisecond
 
-// gatewayStamps reports whether the gateway at this address says it takes
+// routerStamps reports whether the router at this address says it takes
 // the pane prefix: GET /_caps answers {"pane_prefix": true}. An older
-// gateway has no such route, and a stamped path would fail upstream, so
+// router has no such route, and a stamped path would fail upstream, so
 // anything but a clear yes is a no and the base URL stays plain (F12-R-10).
-// It asks only a loopback gateway, once for each address: a yes is kept for
-// the life of the server, a no for outsideTTL, so a gateway that starts or
+// It asks only a loopback router, once for each address: a yes is kept for
+// the life of the server, a no for outsideTTL, so a router that starts or
 // updates later is asked again.
-func (s *Server) gatewayStamps(gateway string) bool {
-	u, err := url.Parse(gateway)
+func (s *Server) routerStamps(router string) bool {
+	u, err := url.Parse(router)
 	if err != nil || u.Host == "" || !isLoopbackName(strings.ToLower(u.Hostname())) {
 		return false
 	}
 	s.outsideMu.Lock()
-	a, ok := s.caps[gateway]
+	a, ok := s.caps[router]
 	s.outsideMu.Unlock()
 	if ok && (a.yes || time.Since(a.at) < outsideTTL) {
 		return a.yes
 	}
-	yes := askPanePrefix(gateway)
+	yes := askPanePrefix(router)
 	s.outsideMu.Lock()
 	if s.caps == nil {
 		s.caps = map[string]capsAnswer{}
 	}
-	s.caps[gateway] = capsAnswer{yes: yes, at: time.Now()}
+	s.caps[router] = capsAnswer{yes: yes, at: time.Now()}
 	s.outsideMu.Unlock()
 	return yes
 }
 
-// askPanePrefix sends GET /_caps to a loopback gateway and reads
+// askPanePrefix sends GET /_caps to a loopback router and reads
 // pane_prefix. It follows no redirect and reads at most 1 KiB.
-func askPanePrefix(gateway string) bool {
+func askPanePrefix(router string) bool {
 	client := http.Client{
 		Timeout:       capsTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	resp, err := client.Get(strings.TrimRight(gateway, "/") + "/_caps")
+	resp, err := client.Get(strings.TrimRight(router, "/") + "/_caps")
 	if err != nil {
 		return false
 	}

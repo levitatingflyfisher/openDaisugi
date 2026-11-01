@@ -14,10 +14,10 @@
 {"id":"g14","path":"opencode-plugin","case":"deny","payload":{"session_id":"s4","tool":"Bash","args":{"command":"curl https://example.com"}},"expect":"deny"}
 {"id":"g15","path":"opencode-plugin","case":"malformed","payload":"not-an-object","expect":"deny"}
 {"id":"g16","path":"opencode-plugin","case":"alt-key","payload":{"session_id":"s4","tool":"Bash","args":{"cmd":"ls"}},"expect":"allow"}
-{"id":"g17","path":"sprig-gate","case":"allow","payload":{"session_id":"s5","tool_name":"Write","tool_input":{"file_path":"build/a.txt","content":"ok"}},"expect":"allow"}
-{"id":"g18","path":"sprig-gate","case":"deny","payload":{"session_id":"s5","tool_name":"Bash","tool_input":{"command":"rm -rf /"}},"expect":"deny"}
-{"id":"g19","path":"sprig-gate","case":"malformed","payload":{"session_id":"s5","tool_name":"write","tool_input":{"path":"build/a.txt"}},"expect":"deny"}
-{"id":"g20","path":"sprig-gate","case":"alt-key","payload":{"session_id":"s5","tool_name":"Write","tool_input":{"path":"build/a.txt","content":"ok"}},"expect":"allow"}
+{"id":"g17","path":"sprig-warden","case":"allow","payload":{"session_id":"s5","tool_name":"Write","tool_input":{"file_path":"build/a.txt","content":"ok"}},"expect":"allow"}
+{"id":"g18","path":"sprig-warden","case":"deny","payload":{"session_id":"s5","tool_name":"Bash","tool_input":{"command":"rm -rf /"}},"expect":"deny"}
+{"id":"g19","path":"sprig-warden","case":"malformed","payload":{"session_id":"s5","tool_name":"write","tool_input":{"path":"build/a.txt"}},"expect":"deny"}
+{"id":"g20","path":"sprig-warden","case":"alt-key","payload":{"session_id":"s5","tool_name":"Write","tool_input":{"path":"build/a.txt","content":"ok"}},"expect":"allow"}
 {"id":"g21","path":"mcp","case":"allow","payload":{"session_id":"s6","name":"mcp__daisugi__verify","input":{"plan":"p"}},"expect":"allow"}
 {"id":"g22","path":"mcp","case":"deny","payload":{"session_id":"s6","name":"mcp__github__create_issue","input":{}},"expect":"deny"}
 {"id":"g23","path":"mcp","case":"malformed","payload":{"session_id":"s6","name":"mcp__"},"expect":"deny"}

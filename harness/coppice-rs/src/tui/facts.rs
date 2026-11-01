@@ -1,4 +1,4 @@
-//! The floor header row: the agents by daisugi mode, the gateway, and the
+//! The floor header row: the agents by daisugi mode, the router, and the
 //! tokens used today, in the web page's words.
 
 use crate::textwidth;
@@ -14,13 +14,13 @@ pub struct Facts {
     pub off: i64,
     pub disarmed: bool,
     pub not_installed: bool,
-    /// The gate root the installed hook names when it is not the server's,
+    /// The warden root the installed hook names when it is not the server's,
     /// or "": then m sets nothing (F11-R-15).
     pub hook_root: String,
-    pub gateway: String,
+    pub router: String,
     pub answers: String,
     pub tokens: f64,
-    /// The frontier tokens the gateway says it saved today, only when the
+    /// The frontier tokens the router says it saved today, only when the
     /// server sent that figure. With none the header names no saving.
     pub saved: Option<f64>,
 }
@@ -28,16 +28,16 @@ pub struct Facts {
 /// The narrowest screen that shows the header row.
 pub const FACTS_MIN_COLS: i64 = 100;
 
-/// The line the floor shows while no harness has a daisugi gate hook.
-pub const GATE_HINT: &str = "daisugi is off: no agent is guarded. Run: daisugi install --gate";
+/// The line the floor shows while no harness has a daisugi warden hook.
+pub const WARDEN_HINT: &str = "daisugi is off: no agent is guarded. Run: daisugi install";
 
-pub fn gate_hint_shown(fa: &Option<Facts>) -> bool {
+pub fn warden_hint_shown(fa: &Option<Facts>) -> bool {
     matches!(fa, Some(f) if f.not_installed && f.enforcing + f.watching == 0)
 }
 
 /// The narrowest screen that can hold the hint.
 pub fn hint_min_cols() -> i64 {
-    textwidth::width(GATE_HINT) as i64
+    textwidth::width(WARDEN_HINT) as i64
 }
 
 /// Reads a floor.facts reply, or None when it has no daisugi object.
@@ -64,8 +64,8 @@ pub fn decode_facts(res: &Obj) -> Option<Facts> {
         f.not_installed = true;
     }
     f.hook_root = s(d, "hook_root");
-    if let Some(gw) = obj(res, "gateway") {
-        f.gateway = s(gw, "url");
+    if let Some(gw) = obj(res, "router") {
+        f.router = s(gw, "url");
         if let Some(a) = boolean(gw, "answers") {
             f.answers = if a { "yes" } else { "no" }.into();
         }
@@ -109,14 +109,14 @@ pub fn facts_line(m: &Model) -> String {
     if fa.disarmed {
         daisugi.push_str(" · disarmed");
     }
-    let gateway = if fa.gateway.is_empty() {
-        "no gateway"
+    let router = if fa.router.is_empty() {
+        "no router"
     } else if fa.answers == "yes" {
-        "gateway answers"
+        "router answers"
     } else if fa.answers == "no" {
-        "gateway silent"
+        "router silent"
     } else {
-        "gateway ?"
+        "router ?"
     };
     let working = m
         .rows
@@ -130,7 +130,7 @@ pub fn facts_line(m: &Model) -> String {
     };
     let mut parts = vec![
         daisugi,
-        gateway.to_string(),
+        router.to_string(),
         format!("{working} working"),
         need,
         format!("tokens today {}", count_text(fa.tokens)),

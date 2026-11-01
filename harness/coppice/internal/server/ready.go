@@ -48,7 +48,7 @@ func manifestDetail(r detect.Result) string {
 // IsTrustDetail reports whether a state detail came from the trust rule.
 func IsTrustDetail(detail string) bool { return proto.IsTrustDetail(detail) }
 
-// pasteGap, in foreman.go, is also the pause between a prompt's text and
+// pasteGap, in steward.go, is also the pause between a prompt's text and
 // its Enter. Claude Code reads a burst that ends in CR as a paste and
 // keeps the CR as a new line in the input box. A separate Enter after a
 // short pause submits it.
@@ -195,7 +195,7 @@ func (s *Server) setDetectSet(set *detect.Set) {
 
 // screenVerdict reads pane id's screen against its harness's manifest. ok
 // is false when the pane is no pty pane, has no harness or no manifest, or
-// no manifest tick runs. Then the prompt gate does not apply.
+// no manifest tick runs. Then the prompt warden does not apply.
 func (s *Server) screenVerdict(id string) (detect.Result, bool) {
 	s.promptMu.Lock()
 	set := s.detectSet
@@ -235,14 +235,14 @@ func hasIdleRule(c *detect.Compiled) bool {
 	return false
 }
 
-// gated reports whether prompts to pane id go through the prompt gate.
-func (s *Server) gated(id string) bool {
+// checked reports whether prompts to pane id go through the prompt warden.
+func (s *Server) checked(id string) bool {
 	_, ok := s.screenVerdict(id)
 	return ok
 }
 
 // waitsOnQuestion reports whether pane id waits on a question: its screen
-// shows one, or another source says it is blocked, as a gate ask does.
+// shows one, or another source says it is blocked, as a warden ask does.
 func (s *Server) waitsOnQuestion(id string, v detect.Result) bool {
 	if v.Matched && v.State == detect.StateBlocked {
 		return true
@@ -277,7 +277,7 @@ type promptOutcome struct {
 
 // submitPrompt sends a prompt to pane id now when the pane is ready,
 // queues it when the pane is starting or working, and refuses it when the
-// pane waits on a question. The caller has checked that the gate applies.
+// pane waits on a question. The caller has checked that the warden applies.
 // from and c name the sender, which hears of a drop.
 func (s *Server) submitPrompt(id, text, from string, c *Client) (promptOutcome, error) {
 	label := s.labelOf(id)
@@ -367,7 +367,7 @@ func (s *Server) deliverPrompt(id, text string) error {
 	lp, ok := s.Live(id)
 	if !ok {
 		s.clearSending(id)
-		return errForemanGone
+		return errStewardGone
 	}
 	s.markInput(id, true)
 	if err := lp.write([]byte(text)); err != nil {
@@ -468,7 +468,7 @@ func (s *Server) runPrompts(id string) {
 
 		rec, live := s.tree.Pane(id)
 		if !live || rec.Closed {
-			s.dropPrompts(id, errForemanGone)
+			s.dropPrompts(id, errStewardGone)
 			return
 		}
 		s.promptMu.Lock()
@@ -574,7 +574,7 @@ func (s *Server) dropPrompts(id string, why error) {
 	// Only a pane that ended forgets its trust answer. A drop for any
 	// other reason leaves the grace to pruning, so a second pane.trust
 	// right after the first is still refused.
-	if errors.Is(why, errForemanGone) {
+	if errors.Is(why, errStewardGone) {
 		delete(s.trusted, id)
 	}
 	s.promptMu.Unlock()
@@ -603,7 +603,7 @@ func (s *Server) dropPrompts(id string, why error) {
 		if p.from != "" && p.from != id && !told[p.from] {
 			told[p.from] = true
 			s.NoteTo(text, id, p.from)
-			if s.gated(p.from) {
+			if s.checked(p.from) {
 				// The sender's own queue keeps this line out of a
 				// question on its screen. A refusal is fine: the note
 				// stands.
@@ -619,7 +619,7 @@ func (s *Server) dropPrompts(id string, why error) {
 
 // isPromptRequest reports whether r is a text prompt: agent.prompt,
 // pane.run, or pane.send_text with text and Enter. Raw text and a bare
-// Enter are not. pane.run always ends in Enter, so on a gated pane it is
+// Enter are not. pane.run always ends in Enter, so on a checked pane it is
 // a prompt even with an empty line: that Enter would answer a question.
 func isPromptRequest(r *proto.Request) bool {
 	switch r.Cmd {
@@ -769,7 +769,7 @@ func promptErr(r *proto.Request, err error) proto.Response {
 	if errors.As(err, &refused) {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest, refused.msg)
 	}
-	if errors.Is(err, errForemanGone) {
+	if errors.Is(err, errStewardGone) {
 		id, _ := r.Str("pane")
 		return proto.ErrResp(r.ID, proto.ErrPaneClosed,
 			fmt.Sprintf("pane %s has closed. Create a new one with: coppice pane create", id))
@@ -777,7 +777,7 @@ func promptErr(r *proto.Request, err error) proto.Response {
 	return proto.ErrResp(r.ID, proto.ErrInternal, err.Error())
 }
 
-// promptReply answers pane.send_text for a prompt to a gated pane: sent
+// promptReply answers pane.send_text for a prompt to a checked pane: sent
 // now, queued, or refused.
 func (s *Server) promptReply(c *Client, r *proto.Request, id, text string) proto.Response {
 	out, err := s.submitPrompt(id, text, senderPane(c), c)

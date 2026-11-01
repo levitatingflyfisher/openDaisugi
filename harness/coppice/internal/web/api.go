@@ -14,6 +14,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/ask/answer", s.guardAnswer(s.handleAskAnswer))
 	s.mux.HandleFunc("POST /api/push/test", s.guard(s.handlePushTest))
 	s.mux.HandleFunc("POST /api/voice/transcribe", s.guard(s.handleVoiceTranscribe))
+	s.mux.HandleFunc("POST /api/voice/partial", s.guard(s.handleVoicePartial))
 	s.mux.HandleFunc("GET /api/voice/status", s.guard(s.handleVoiceStatus))
 	s.mux.HandleFunc("POST /api/voice/retry", s.guard(s.handleVoiceRetry))
 }
@@ -67,7 +68,7 @@ func (s *Server) guardAnswer(next http.HandlerFunc) http.HandlerFunc {
 		}
 		// A tap on an old card is normal use, not a guess at a token.
 		if s.opts.Push.DenyRetired(tok) {
-			writeErr(w, http.StatusConflict, "That ask is gone. The gate timed out, or another client answered it.")
+			writeErr(w, http.StatusConflict, "That ask is gone. The warden timed out, or another client answered it.")
 			return
 		}
 		s.bans.Fail(addr)
@@ -126,7 +127,7 @@ func (s *Server) handleAskAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case errors.Is(err, ErrNoAsk):
-			writeErr(w, http.StatusConflict, "That ask is gone. The gate timed out, or another client answered it.")
+			writeErr(w, http.StatusConflict, "That ask is gone. The warden timed out, or another client answered it.")
 			return
 		case err != nil:
 			s.opts.Log.Warn("web: could not read the ask's tier", "err", err)
@@ -136,17 +137,17 @@ func (s *Server) handleAskAnswer(w http.ResponseWriter, r *http.Request) {
 		reply.Tier, reply.Name = facts.Tier, facts.Name
 	}
 	s.answer(w, reply, func() (string, bool) {
-		// A deny the gate has no file for may be an ask a harness holds.
+		// A deny the warden has no file for may be an ask a harness holds.
 		// Say where to answer it, never that it is gone.
 		facts, err := lookupAsk(r.Context(), s.opts.Dial, body.ToolUseID, body.Pane)
 		return facts.Pane, err == nil && facts.Held
 	})
 }
 
-// answer writes one reply through the gate's ask channel and turns the
+// answer writes one reply through the warden's ask channel and turns the
 // result into a response.
 func (s *Server) answer(w http.ResponseWriter, reply Reply, held func() (string, bool)) {
-	err := s.opts.Gate.Answer(reply)
+	err := s.opts.Warden.Answer(reply)
 	var needsName *NeedsNameError
 	if errors.Is(err, ErrNoAsk) && held != nil {
 		if pane, ok := held(); ok {
@@ -160,14 +161,14 @@ func (s *Server) answer(w http.ResponseWriter, reply Reply, held func() (string,
 	case errors.Is(err, ErrBadScope):
 		writeErr(w, http.StatusBadRequest, "Send scope once or task.")
 	case errors.Is(err, ErrNoAsk):
-		writeErr(w, http.StatusConflict, "That ask is gone. The gate timed out, or another client answered it.")
+		writeErr(w, http.StatusConflict, "That ask is gone. The warden timed out, or another client answered it.")
 	case errors.As(err, &needsName):
 		writeErr(w, http.StatusForbidden, needsName.Error())
 	case errors.Is(err, ErrPermanentTask):
 		writeErr(w, http.StatusForbidden, err.Error()+" with the pane name.")
 	case err != nil:
 		s.opts.Log.Error("web: could not write the answer", "err", err)
-		writeErr(w, http.StatusInternalServerError, "The answer could not be written. Check that the gate directory exists.")
+		writeErr(w, http.StatusInternalServerError, "The answer could not be written. Check that the warden directory exists.")
 	default:
 		s.opts.Push.RetireDeny(reply.ToolUseID)
 		s.opts.Log.Info("web: answered an ask", "decision", reply.Decision, "tool_use_id", reply.ToolUseID)

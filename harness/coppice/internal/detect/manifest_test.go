@@ -100,7 +100,7 @@ func TestABadRegexIsALoadError(t *testing.T) {
 	mustFail(t, "id=\"x\"\n[[rules]]\nid=\"r\"\nregex=['(unclosed']\n", "regex")
 }
 
-func TestGateDepthOverEightIsALoadError(t *testing.T) {
+func TestConditionDepthOverEightIsALoadError(t *testing.T) {
 	body := "id=\"x\"\n[[rules]]\nid=\"r\"\ncontains=[\"a\"]\nall=["
 	open, close := "", ""
 	for i := 0; i < 10; i++ {
@@ -176,10 +176,10 @@ func TestRegionCountRejectsNonDigitCharacters(t *testing.T) {
 	}
 }
 
-// The recursive compileGate calls used to rebind the context
-// to a bare "all gate"/"any gate"/"not gate", losing the rule id. A matcher-cap error two
-// gates deep must still name the rule it came from.
-func TestNestedGateMatcherCapErrorNamesTheRule(t *testing.T) {
+// The recursive compileCondition calls used to rebind the context
+// to a bare "all condition"/"any condition"/"not condition", losing the rule id. A matcher-cap error two
+// conditions deep must still name the rule it came from.
+func TestNestedConditionMatcherCapErrorNamesTheRule(t *testing.T) {
 	matchers := strings.TrimSuffix(strings.Repeat(`"a",`, 33), ",")
 	body := "id=\"x\"\n[[rules]]\nid=\"deep_rule\"\ncontains=[\"top\"]\n" +
 		"all=[{all=[{contains=[" + matchers + "]}]}]\n"
@@ -198,7 +198,7 @@ func TestExactlyOneHundredTwentyEightRulesIsAccepted(t *testing.T) {
 	}
 }
 
-func TestGateDepthExactlyEightIsAccepted(t *testing.T) {
+func TestConditionDepthExactlyEightIsAccepted(t *testing.T) {
 	body := "id=\"x\"\n[[rules]]\nid=\"r\"\ncontains=[\"a\"]\nall=["
 	open, close := "", ""
 	for i := 0; i < 7; i++ {
@@ -207,11 +207,11 @@ func TestGateDepthExactlyEightIsAccepted(t *testing.T) {
 	}
 	body += open + "{contains=[\"a\"]}" + close + "]\n"
 	if _, _, err := Parse("test.toml", []byte(body)); err != nil {
-		t.Fatalf("gate depth exactly 8 should be accepted, got: %v", err)
+		t.Fatalf("condition depth exactly 8 should be accepted, got: %v", err)
 	}
 }
 
-func TestGateDepthNineIsRejected(t *testing.T) {
+func TestConditionDepthNineIsRejected(t *testing.T) {
 	body := "id=\"x\"\n[[rules]]\nid=\"r\"\ncontains=[\"a\"]\nall=["
 	open, close := "", ""
 	for i := 0; i < 8; i++ {

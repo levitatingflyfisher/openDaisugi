@@ -71,7 +71,7 @@ def test_the_payload_never_carries_the_asks_contents(tmp_path):
     out.write_text("")
     cmd = _capture_script(tmp_path, out)
     ask = Ask(id="a1", tool="Bash", summary="rm -rf build/ and other secrets", deadline=100.0)
-    ev = _ev(source="gate", ask=ask)
+    ev = _ev(source="warden", ask=ask)
     assert Notifier(cmd).notify(ev) is True
     payload = json.loads(out.read_text())
     assert set(payload) == {"pane", "harness", "state", "detail"}
@@ -113,7 +113,7 @@ def test_an_expired_ask_reads_working_and_never_notifies(tmp_path):
     counter.write_text("")
     cmd = _append_script(tmp_path, counter)
     ask = Ask(id="a1", tool="Bash", summary="rm -rf build/", deadline=100.0)
-    blocked = _ev(source="gate", ask=ask, ts=1.0)
+    blocked = _ev(source="warden", ask=ask, ts=1.0)
     lapsed = effective_state(blocked, now=101.0)
     assert lapsed.state == "working"
     assert Notifier(cmd).notify(lapsed) is False

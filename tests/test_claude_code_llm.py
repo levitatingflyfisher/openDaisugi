@@ -609,3 +609,50 @@ async def test_instructor_shim_reasks_a_non_finite_reply():
     assert out.permissions.velocity_limit == 2.5
     retry_prompt = good.communicate.await_args.kwargs["input"].decode()
     assert "Input should be a finite number [type=finite_number, input_value=nan" in retry_prompt
+
+
+# --- Pando: a call of ours is not the owner's chat -----------------------------
+
+
+def _fake_claude(tmp_path):
+    rec = tmp_path / "rec"
+    bin_ = tmp_path / "claude"
+    bin_.write_text(
+        f'#!/bin/sh\necho "$@" > {rec}\necho "skip=$DAISUGI_PANDO_SKIP" >> {rec}\necho ok\n'
+    )
+    bin_.chmod(0o755)
+    return str(bin_), rec
+
+
+def test_sync_call_carries_the_pando_skip_marker(tmp_path, monkeypatch):
+    monkeypatch.delenv("DAISUGI_PANDO_SKIPLIST", raising=False)
+    binary, rec = _fake_claude(tmp_path)
+    assert call_claude_p_sync("p", binary=binary, timeout_s=10) == "ok"
+    text = rec.read_text()
+    assert "skip=1" in text
+    assert "--session-id" not in text  # the argv is unchanged without a skip list
+
+
+async def test_async_call_carries_the_pando_skip_marker(tmp_path, monkeypatch):
+    monkeypatch.delenv("DAISUGI_PANDO_SKIPLIST", raising=False)
+    binary, rec = _fake_claude(tmp_path)
+    assert await call_claude_p_async("p", binary=binary, timeout_s=10) == "ok"
+    assert "skip=1" in rec.read_text()
+
+
+def test_a_named_skip_list_gets_the_session_id_before_the_call(tmp_path, monkeypatch):
+    binary, rec = _fake_claude(tmp_path)
+    lst = tmp_path / "pando" / "skip.sessions"
+    monkeypatch.setenv("DAISUGI_PANDO_SKIPLIST", str(lst))
+    for _ in range(2):
+        call_claude_p_sync("p", binary=binary, timeout_s=10)
+    ids = lst.read_text().split()
+    assert len(ids) == 2 and ids[0] != ids[1]
+    assert f"--session-id {ids[1]}" in rec.read_text()
+
+
+def test_the_skip_marker_reaches_a_call_with_its_own_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("DAISUGI_PANDO_SKIPLIST", raising=False)
+    binary, rec = _fake_claude(tmp_path)
+    call_claude_p_sync("p", binary=binary, timeout_s=10, env={"PATH": "/usr/bin:/bin"})
+    assert "skip=1" in rec.read_text()

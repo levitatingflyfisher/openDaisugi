@@ -1,8 +1,8 @@
-import { stateOf, askFor, answerBody, denyButton, allowControl, tierLine, verdictLine, needsYou, heldLine, heldTierLine, heldAnswer } from './pane.js';
+import { stateOf, askFor, answerBody, denyButton, allowControl, tierLine, verdictLine, needsYou, askOpen, markAnswered, forgetAnswered, trustFor, heldLine, heldTierLine, heldAnswer } from './pane.js';
+import { changed, reconcile } from './reconcile.js';
 import { ORDER, stateChip } from './chips.js';
 import { railEntries, countParts, recentLine, rowFromEvent, ROW_TYPE } from './rail.js';
 import { MESSAGES } from './messages.js';
-import { phoneQueue } from './dock.js';
 
 // unreadable is the error a pane list reply the page cannot read throws.
 // It carries its fix.
@@ -128,13 +128,13 @@ export function clearAllText(n) {
 }
 
 // Words a blocked card with no ask shows, by what found the block. Only
-// the gate's own block blames the gate.
-export const BLOCKED_BY_GATE = 'Blocked. The gate gave no detail.';
+// the warden's own block blames the warden.
+export const BLOCKED_BY_WARDEN = 'Blocked. The warden gave no detail.';
 export const BLOCKED_OWN_QUESTION = "Waiting on the agent's own question. Open it to answer.";
 
 // blockedLine is what a blocked card with no ask says.
 export function blockedLine(source) {
-  return source === 'gate' ? BLOCKED_BY_GATE : BLOCKED_OWN_QUESTION;
+  return source === 'warden' ? BLOCKED_BY_WARDEN : BLOCKED_OWN_QUESTION;
 }
 
 // confirmLine is the one line a kill asks before it stops an agent, with
@@ -254,19 +254,157 @@ function indent(li, depth) {
 }
 
 // askCard is one blocked pane in the queue: who asks, the summary in code,
-// the gate line when the gate gave one, and the answer controls.
+// the warden line when the warden gave one, and the answer controls.
 function askCard(pane) {
   const li = make('li', 'card ask');
   const who = make('div', 'who');
   const name = nameOf(pane);
-  who.append(...[make('span', 'dot dot-blocked'), name, harnessOf(pane), make('span', 'muted', ageText(pane)), ...tail(pane)].filter(Boolean));
+  who.append(...[make('span', 'dot dot-blocked'), name, harnessOf(pane), make('span', 'muted age', ageText(pane)), ...tail(pane)].filter(Boolean));
   li.append(who);
   if (pane.askSummary) li.append(make('code', 'summary', pane.askSummary));
   else li.append(make('p', 'muted', blockedLine(pane.source)));
-  const verdict = verdictLine({ gate: pane.gate });
+  const verdict = verdictLine({ warden: pane.warden });
   if (verdict) li.append(make('p', 'verdict', verdict));
   if (pane.askId) li.append(queueControls(pane));
   return markSelected(onOpen(li, pane, name), pane.id);
+}
+
+// needKind says why a roster row is in the "Needs you" queue, or "". A
+// permission ask has Deny and Allow. A folder trust screen has Trust and
+// Not now. Any other block on the agent's own screen is opened to answer. An
+// idle agent whose last message ends on a question has a field.
+export function needKind(pane) {
+  if (pane.state === 'blocked') {
+    if (pane.askId) return 'permission';
+    return pane.trust ? 'trust' : 'screen';
+  }
+  return pane.state === 'idle' && askOpen(pane) ? 'question' : '';
+}
+
+// needsList is the rows that wait on the owner: blocked agents first, then
+// idle agents with a question, each in the order given. A held ask reads as
+// working and is not in it.
+export function needsList(rows) {
+  const list = (rows || []).filter((r) => r && needKind(r));
+  return [...list.filter((r) => r.state === 'blocked'), ...list.filter((r) => r.state !== 'blocked')];
+}
+
+// openPane puts the agent in a window with the keys, or opens its screen.
+function openPane(pane) {
+  if (canTile()) floor.fillRow(pane.id);
+  else location.hash = paneHash(pane.id, pane.askId);
+}
+
+// cardButton is a control on a card. Its click stays off the card, so a tap
+// answers and never also opens the agent. Once clicked it stays off until the
+// card is drawn again, so a slow answer is not sent twice.
+function cardButton(text, cls, fn) {
+  const b = make('button', cls, text);
+  b.type = 'button';
+  b.addEventListener('click', (e) => {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    if (b.disabled) return;
+    fn(b);
+  });
+  return b;
+}
+
+// needHead is the first line of a need card: who waits, and since when.
+function needHead(pane, name) {
+  const who = make('div', 'who');
+  who.append(...[make('span', 'dot dot-' + (pane.state === 'blocked' ? 'blocked' : 'idle')), name, harnessOf(pane), make('span', 'muted age', ageText(pane)), ...tail(pane)].filter(Boolean));
+  return who;
+}
+
+// trustCard asks the owner about a folder trust screen. Trust presses the
+// yes option and Not now presses Esc, which ends the agent.
+function trustCard(pane) {
+  const li = make('li', 'card ask need need-trust');
+  const name = nameOf(pane);
+  li.append(needHead(pane, name));
+  li.append(make('p', 'need-line', 'Asks to trust this folder.'));
+  if (pane.cwd) li.append(make('code', 'summary', pane.cwd));
+  const act = (yes) => async (b) => {
+    const said = yes ? 'Trusted the folder for ' : 'Told ';
+    b.disabled = true;
+    try {
+      await window.coppice.rpc('pane.trust', { pane: pane.id, trust: yes });
+      window.coppice.status(yes ? said + pane.label + '.' : said + pane.label + ' not now. It ends.');
+    } catch (e) {
+      b.disabled = false;
+      window.coppice.status(e.message);
+    }
+  };
+  const bar = make('div', 'need-actions');
+  bar.append(cardButton('Trust this folder', 'fix', act(true)), cardButton('Not now', 'ghost', act(false)), cardButton('Open', 'ghost', () => openPane(pane)));
+  li.append(bar);
+  return markSelected(onOpen(li, pane, name), pane.id);
+}
+
+// screenCard is a block on the agent's own screen with no ask to answer here.
+function screenCard(pane) {
+  const li = make('li', 'card ask need need-screen');
+  const name = nameOf(pane);
+  li.append(needHead(pane, name));
+  li.append(make('p', 'need-line', blockedLine(pane.source)));
+  const bar = make('div', 'need-actions');
+  bar.append(cardButton('Open', 'fix', () => openPane(pane)));
+  li.append(bar);
+  return markSelected(onOpen(li, pane, name), pane.id);
+}
+
+// questionCard shows the question an idle agent ended on, with a field to
+// answer it. Send types the answer to the agent, and the card goes.
+function questionCard(pane) {
+  const li = make('li', 'card ask need need-question');
+  const name = nameOf(pane);
+  li.append(needHead(pane, name));
+  li.append(make('p', 'need-line', pane.lastAsk));
+  const form = make('form', 'need-actions need-answer');
+  const input = make('input', 'need-input');
+  input.type = 'text';
+  input.placeholder = 'Answer ' + pane.label;
+  if (typeof input.setAttribute === 'function') {
+    input.setAttribute('aria-label', 'Answer ' + pane.label);
+    input.setAttribute('enterkeyhint', 'send');
+  }
+  const stop = (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); };
+  for (const type of ['click', 'keydown', 'mousedown', 'dblclick']) input.addEventListener(type, stop);
+  const send = cardButton('Send', 'fix', async (b) => {
+    const text = String(input.value || '').trim();
+    if (!text) {
+      window.coppice.status('Type an answer first.');
+      return;
+    }
+    b.disabled = true;
+    try {
+      await window.coppice.rpc('agent.prompt', { pane: pane.id, text });
+      markAnswered(pane);
+      window.coppice.status('Sent to ' + pane.label + '.');
+      window.dispatchEvent(new CustomEvent('coppice:rail'));
+    } catch (e) {
+      b.disabled = false;
+      window.coppice.status(e.message);
+    }
+  });
+  send.type = 'submit';
+  form.addEventListener('submit', (e) => {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    if (typeof send.click === 'function') send.click();
+  });
+  form.append(input, send, cardButton('Open', 'ghost', () => openPane(pane)));
+  li.append(form);
+  return markSelected(onOpen(li, pane, name), pane.id);
+}
+
+// needCard draws one row of the queue by its kind.
+function needCard(pane) {
+  switch (needKind(pane)) {
+    case 'trust': return trustCard(pane);
+    case 'question': return questionCard(pane);
+    case 'screen': return screenCard(pane);
+    default: return askCard(pane);
+  }
 }
 
 // row is one pane that does not need the operator, in one compact line:
@@ -274,7 +412,7 @@ function askCard(pane) {
 // the x that stops it. The dot's shape and colour say the state, a filled
 // dot for work and a ring for idle, and its word is there for a screen
 // reader and on hover. A held ask adds the line that says
-// whose foreman hears it.
+// whose steward hears it.
 function row(pane) {
   const chip = stateChip(pane.state);
   const li = make('li', 'card row');
@@ -327,14 +465,15 @@ function groupLine(g) {
   return indent(li, g.depth);
 }
 
-// entryItem draws one line of the rail tree. On a phone the asks sit in
-// the queue at the top, so a blocked agent is one compact row in its group.
+// entryItem draws one line of the rail tree. The asks sit in the queue at
+// the top, on a phone and on the wide floor, so a blocked agent is one
+// compact row in its group.
 function entryItem(e, phone) {
   if (e.type === 'group') return groupLine(e);
   const pane = e.row;
   const pending = floor !== null && typeof floor.killPending === 'function' ? floor.killPending() : '';
   if (pending && pending === pane.id) return indent(confirmRow(pane), e.depth);
-  return indent(pane.state === 'blocked' && !phone ? askCard(pane) : row(pane), e.depth);
+  return indent(row(pane), e.depth);
 }
 
 // queueCounts counts the rows by state.
@@ -470,8 +609,11 @@ export function askClock(api) {
 
 // quietBlock fills the quiet screen: nothing needs the operator, how many
 // panes work, and the last ask line.
+const quietSlot = {};
 function quietBlock(el, counts, askLine) {
   const working = counts.working || 0;
+  // The same words are not drawn again.
+  if (!changed(quietSlot, working + '|' + (askLine || UNKNOWN_ASK), el)) return;
   const title = document.createElement('p');
   title.className = 'quiet-title';
   title.textContent = 'Nothing needs you.';
@@ -506,63 +648,123 @@ export function render(panes, opts = {}) {
   const tasks = floor !== null && typeof floor.tasks === 'function' ? floor.tasks() : [];
   const folded = floor !== null && typeof floor.folded === 'function' ? floor.folded() : new Set();
   const entries = railEntries(live, tasks, folded);
-  const sig = railSignature(entries, keepRow) + (phone ? '|phone' : '');
+  const sig = railSignature(entries, keepRow, phone) + (phone ? '|phone' : '');
   const same = drawn.list === list && drawn.sig === sig;
   if (!same) {
     drawn.list = list;
     drawn.sig = sig;
     const old = keepRow ? Array.from(list.children || []).find((c) => c.dataset && c.dataset.row === keepRow) : null;
-    const items = entries.map((e) => (old && e.type === 'row' && e.row.id === keepRow ? old : entryItem(e, phone)));
+    // An entry that reads as it did keeps its item: a draw for one changed
+    // row leaves the other rows, their hover and their clicks alone.
+    const ctx = JSON.stringify(railContext(keepRow)) + (phone ? '|phone' : '');
+    const sigs = entrySigs(entries, phone).map((x) => ctx + JSON.stringify(x));
+    const was = drawn.items;
+    drawn.items = new Map();
+    const items = entries.map((e, i) => {
+      const key = entryKey(e);
+      const prev = was.get(key);
+      const el = old && e.type === 'row' && e.row.id === keepRow ? old
+        : prev && prev.sig === sigs[i] && prev.list === list ? prev.el : entryItem(e, phone);
+      drawn.items.set(key, { sig: sigs[i], el, list });
+      return el;
+    });
     placeItems(list, items, keepRow);
     if (!keepRow && renameInput !== null) focusRename();
     const picked = items.find((li) => li.dataset.selected === '1');
     if (picked && typeof picked.scrollIntoView === 'function') picked.scrollIntoView({ block: 'nearest' });
   }
   list.hidden = entries.length === 0;
-  renderNeeds(phone ? phoneQueue(live) : []);
+  const needs = needsList(live);
+  renderNeeds(needs);
   empty.hidden = live.length > 0;
   empty.textContent = EMPTY_TEXT;
-  head.hidden = counts.blocked === 0;
-  document.getElementById('queue-title').textContent = queueTitle(counts);
+  head.hidden = needs.length === 0;
+  document.getElementById('queue-title').textContent = queueTitle({ blocked: needs.length });
   document.getElementById('queue-sub').textContent = queueSub(counts);
   quiet.className = 'quiet';
-  quiet.hidden = counts.blocked > 0 || live.length === 0;
+  quiet.hidden = needs.length > 0 || live.length === 0;
   if (!quiet.hidden) quietBlock(quiet, counts, opts.askLine);
 }
 
 // drawn is the list the rail last drew into and what it drew, so a draw
 // with nothing new keeps the rows, their focus and a click in progress.
-const drawn = { list: null, sig: '' };
+const drawn = { list: null, sig: '', items: new Map() };
 
 // needsDrawn is the same for the phone's queue.
-const needsDrawn = { list: null, sig: '' };
+const needsDrawn = { list: null, items: new Map() };
 
-// renderNeeds draws the phone's queue: one ask card per agent that needs
-// you, with Deny, Look and Allow or the name field. A draw with nothing new
-// keeps the cards, so a name typed in a field keeps its focus.
+// ageSpan is the age text inside a card, or null.
+function ageSpan(el) {
+  if (!el) return null;
+  if (String(el.className).split(' ').includes('age')) return el;
+  for (const c of Array.from(el.children || [])) {
+    const f = ageSpan(c);
+    if (f) return f;
+  }
+  return null;
+}
+
+// renderNeeds draws the queue, on a phone and on the wide floor: one card
+// per agent that needs you. A permission ask has Deny, Look and Allow or the
+// name field; a trust screen has Trust and Not now; a question has a field.
+// A card that reads the same keeps its node, so an answer typed in one
+// field keeps its text and its focus when another card comes or goes. The
+// age is not in a card's signature, because it moves with every poll, and only
+// its text follows.
 function renderNeeds(rows) {
   const box = document.getElementById('needs');
   if (!box) return;
-  const sig = JSON.stringify(rows.map((r) => [r.id, r.label, r.harness, r.askSummary, r.askId, r.tier, r.askHeld, r.gate, ageText(r)]));
+  const sigOf = (r) => JSON.stringify([r.id, r.label, r.harness, r.state, r.askSummary, r.askId, r.tier, r.askHeld, r.warden, r.trust, r.lastAsk, r.cwd, r.source]);
   box.hidden = rows.length === 0;
-  if (needsDrawn.list === box && needsDrawn.sig === sig) return;
+  const was = needsDrawn.list === box ? needsDrawn.items : new Map();
+  const items = new Map();
+  const cards = rows.map((r) => {
+    const sig = sigOf(r);
+    const prev = was.get(r.id);
+    const el = prev && prev.sig === sig ? prev.el : needCard(r);
+    const age = ageSpan(el);
+    if (age && age.textContent !== ageText(r)) age.textContent = ageText(r);
+    items.set(r.id, { sig, el });
+    return el;
+  });
   needsDrawn.list = box;
-  needsDrawn.sig = sig;
-  box.replaceChildren(...rows.map((r) => askCard(r)));
+  needsDrawn.items = items;
+  const now = Array.from(box.children || []);
+  if (now.length === cards.length && now.every((c, i) => c === cards[i])) return;
+  reconcile(box, cards);
 }
 
 // railSignature is everything a rail draw shows, as one string.
-function railSignature(entries, keepRow) {
+function railSignature(entries, keepRow, phone) {
+  return JSON.stringify([railContext(keepRow), entrySigs(entries, phone)]);
+}
+
+// railContext is what the rail shows that is not one entry's: the
+// selection, a pending kill and a rename.
+function railContext(keepRow) {
   const f = floor;
-  const win = (id) => (f !== null && typeof f.windowOf === 'function' ? f.windowOf(id) : 0);
   const sel = f !== null && typeof f.railSelected === 'function' ? f.railSelected() : '';
   const kill = f !== null && typeof f.killPending === 'function' ? f.killPending() : '';
   const ed = f !== null && typeof f.editing === 'function' ? f.editing() : null;
-  return JSON.stringify([sel, kill, ed, keepRow, entries.map((e) => (e.type === 'group'
+  return [sel, kill, ed, keepRow];
+}
+
+// entrySigs is each entry's own signature: everything its item shows. A
+// row shows no age, because the age moves with every poll and a row drawn
+// again for a number it does not show would flicker and lose its hover.
+// The queue's cards show the age, and renderNeeds keeps their own signature.
+function entrySigs(entries, phone) {
+  const f = floor;
+  const win = (id) => (f !== null && typeof f.windowOf === 'function' ? f.windowOf(id) : 0);
+  const reply = (id) => (f !== null && typeof f.replyWaiting === 'function' && f.replyWaiting(id) ? 1 : 0);
+  return entries.map((e) => (e.type === 'group'
     ? ['g', e.key, e.label, e.depth, e.folded, e.counts]
     : ['r', e.row.id, e.row.label, e.row.state, e.row.harness, e.row.held, e.row.askSummary, e.row.askId,
-      e.row.tier, e.row.askHeld, e.row.gate, ageText(e.row), e.depth, win(e.row.id)]))]);
+      e.row.tier, e.row.askHeld, e.row.warden, e.depth, win(e.row.id), reply(e.row.id)]));
 }
+
+// entryKey names an entry across draws.
+const entryKey = (e) => (e.type === 'group' ? 'g:' + e.key : 'r:' + e.row.id);
 
 // placeItems puts items in list. A row being renamed stays where it is in
 // the page, since a field taken out of the page loses its keys: only the
@@ -570,8 +772,8 @@ function railSignature(entries, keepRow) {
 function placeItems(list, items, keepRow) {
   const kids = Array.from(list.children || []);
   const kept = keepRow ? kids.find((c) => c.dataset && c.dataset.row === keepRow && items.includes(c)) : null;
-  if (!kept || typeof list.insertBefore !== 'function' || typeof list.removeChild !== 'function') {
-    list.replaceChildren(...items);
+  if (!kept) {
+    reconcile(list, items);
     return;
   }
   for (const c of kids) if (c !== kept) list.removeChild(c);
@@ -580,18 +782,40 @@ function placeItems(list, items, keepRow) {
   list.append(...items.slice(at + 1));
 }
 
-// renderRecent fills the Recent fold with the ended agents, newest first:
-// each with its line, Resume and Forget. With none the fold is hidden. The
-// fold's open state is the reader's and is kept. act holds resume and
+// finishedOk is true for an agent that ended well: its process exited 0.
+// One that failed, was killed or ended with no code the server knows stays
+// in Recent until the owner dismisses it.
+export const finishedOk = (rec) => Boolean(rec) && rec.exit_code === 0;
+
+// finishedShown is true while Recent also lists the agents that ended well.
+let finishedShown = false;
+
+// setFinishedShown turns the finished list on or off.
+export function setFinishedShown(on) { finishedShown = Boolean(on); }
+
+// renderRecent fills the Recent fold with the ended agents that need a
+// look, newest first: each with its line, Resume and Forget. An agent that
+// ended well tidies itself out of the list, and a "Show finished" control
+// brings the recent ones back. With none ended at all the fold is hidden.
+// The fold's open state is the reader's and is kept. act holds resume and
 // forget for one record.
 export function renderRecent(ended, act, nowSeconds) {
   const box = document.getElementById('recent');
   const list = document.getElementById('recent-list');
   const count = document.getElementById('recent-count');
+  const toggle = document.getElementById('recent-finished');
   if (!box || !list) return;
-  const recs = Array.isArray(ended) ? ended.filter((r) => r && r.id) : [];
-  box.hidden = recs.length === 0;
-  if (count) count.textContent = String(recs.length);
+  const all = Array.isArray(ended) ? ended.filter((r) => r && r.id) : [];
+  const done = all.filter(finishedOk);
+  const kept = all.filter((r) => !finishedOk(r));
+  const recs = finishedShown ? all : kept;
+  box.hidden = all.length === 0;
+  if (count) count.textContent = String(kept.length);
+  if (toggle) {
+    toggle.hidden = done.length === 0;
+    toggle.textContent = finishedShown ? 'Hide finished' : 'Show ' + done.length + ' finished';
+    if (typeof toggle.setAttribute === 'function') toggle.setAttribute('aria-pressed', String(finishedShown));
+  }
   const btn = (text, cls, fn) => {
     const b = make('button', cls, text);
     b.type = 'button';
@@ -615,7 +839,7 @@ export function renderRecent(ended, act, nowSeconds) {
 // paneRows turns a flat pane.list row into what a card needs. The row's ts
 // is the merged event's timestamp. A pane the state store has never seen
 // has none, and its age stays blank rather than reading as zero seconds
-// old. A blocked pane whose ask a foreman holds reads as working, with
+// old. A blocked pane whose ask a steward holds reads as working, with
 // held set to its waiting line, so it sorts and counts as working.
 export function paneRows(raw, nowSeconds) {
   return (raw || []).map((p) => {
@@ -632,10 +856,12 @@ export function paneRows(raw, nowSeconds) {
       askId: askFor(st).askId,
       tier: askFor(st).tier,
       askHeld: askFor(st).held,
-      gate: st.ask && st.ask.gate ? st.ask.gate : null,
+      warden: st.ask && st.ask.warden ? st.ask.warden : null,
       age: st.ts ? Math.max(0, nowSeconds - st.ts) : null,
       task: p.task || '',
       cwd: p.cwd || '',
+      trust: trustFor(st),
+      lastAsk: typeof p.last_ask === 'string' ? p.last_ask : '',
     };
   });
 }
@@ -806,7 +1032,8 @@ export function mountRoster() {
     resuming = true;
     endedDue = true;
     if (ended.length === 0) await readEnded();
-    const list = [...ended];
+    // An agent that ended well is not brought back by Resume all.
+    const list = ended.filter((r) => !finishedOk(r));
     let done = 0;
     let why = '';
     try {
@@ -866,6 +1093,10 @@ export function mountRoster() {
     });
   };
   onClick('recent-resume-all', resumeAll);
+  onClick('recent-finished', () => {
+    setFinishedShown(!finishedShown);
+    paintRecent();
+  });
   // The restart line's buttons come through app.js as events.
   window.addEventListener('coppice:resume-all', resumeAll);
   window.addEventListener('coppice:show-recent', () => {
@@ -943,6 +1174,9 @@ export function mountRoster() {
       const row = raw.find((p) => p && p.id === msg.pane);
       if (row) {
         Object.assign(row, rowFromEvent(row, msg));
+        // A new state may end the question. The next list says what it is.
+        delete row.last_ask;
+        if (msg.state === 'working') forgetAnswered(msg.pane);
         paint();
       }
       if (msg.state === 'done') endedDue = true;

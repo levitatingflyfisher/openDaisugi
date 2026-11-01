@@ -52,5 +52,4 @@ pytest tests/test_mujoco_executor.py tests/test_z3_robotics.py
 
 On a CPU-only machine: `two_joint_arm.xml` loads in <100 ms, rollouts
 run in milliseconds, peak resident memory is a few hundred MB. No GPU
-is required. The kit is explicitly tuned to run on a 12 GB laptop as
-well as the 40 GB / RTX 4080 box.
+is required. The kit is tuned to run on a laptop.

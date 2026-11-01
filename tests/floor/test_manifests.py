@@ -3,7 +3,7 @@
 Manifests are the fallback path (master spec 3.1). A manifest may never
 report ``done``, and a screen nothing matches is ``unknown``, never a
 confident ``idle``. This module's evaluator reads the same TOML files coppice's
-Go evaluator reads, with the same matcher semantics, gates, priority, and
+Go evaluator reads, with the same matcher semantics, conditions, priority, and
 region slicing, so the shared conformance fixtures at the bottom of this
 file must produce the same verdict in both languages.
 """
@@ -335,7 +335,7 @@ def test_an_unknown_rule_key_drops_the_whole_manifest(manifest_dir):
     assert manifests == {}
 
 
-def test_an_unknown_key_inside_a_nested_gate_drops_the_whole_manifest(manifest_dir):
+def test_an_unknown_key_inside_a_nested_condition_drops_the_whole_manifest(manifest_dir):
     manifests = _load_one(
         manifest_dir,
         '[[rules]]\nid = "r"\ncontains = ["a"]\nall = [{ contains = ["b"], vibes = true }]\n',
@@ -426,13 +426,13 @@ def test_a_manifest_may_never_say_done(manifest_dir):
     assert manifests == {}
 
 
-def test_gate_depth_over_eight_drops_the_whole_manifest(manifest_dir):
+def test_condition_depth_over_eight_drops_the_whole_manifest(manifest_dir):
     body = '[[rules]]\nid = "r"\ncontains = ["top"]\nall = [' + "{ all = [" * 9
     body += '{ contains = ["a"] }' + " ] }" * 9 + "]\n"
     assert _load_one(manifest_dir, body) == {}
 
 
-def test_gate_depth_exactly_eight_is_accepted(manifest_dir):
+def test_condition_depth_exactly_eight_is_accepted(manifest_dir):
     body = '[[rules]]\nid = "r"\ncontains = ["top"]\nall = [' + "{ all = [" * 7
     body += '{ contains = ["a"] }' + " ] }" * 7 + "]\n"
     manifests = _load_one(manifest_dir, body)
@@ -624,14 +624,14 @@ def test_no_vendored_contains_needle_uses_a_codepoint_where_lowering_diverges():
 
     divergent = {0x0130}
 
-    def walk(gate_dict: dict) -> None:
-        for needle in gate_dict.get("contains") or []:
+    def walk(condition_dict: dict) -> None:
+        for needle in condition_dict.get("contains") or []:
             for ch in needle:
                 assert ord(ch) not in divergent, (
                     f"{needle!r} uses a codepoint where str.lower and Go's strings.ToLower disagree"
                 )
         for key in ("all", "any", "not"):
-            for sub in gate_dict.get(key) or []:
+            for sub in condition_dict.get(key) or []:
                 walk(sub)
 
     for path in sorted(hostfacts.MANIFEST_DIR.glob("*.toml")):

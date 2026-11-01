@@ -13,12 +13,12 @@ coworker wants for "safe subagents made from local models":
    default (pass ``live=True`` to use real executors).
 3. **Local model = cheap tokens.** ``tier1`` records the local model this
    subagent is configured to reason with (a free-ish local provider). Your agent
-   loop uses it to *propose* plans; SafeSubagent's job is the safety gate
+   loop uses it to *propose* plans; SafeSubagent's job is the safety check
    (delegation + per-plan verification), not the generation. It is carried here
    so the subagent's model is part of its identity, and is also threaded into any
    envelope generation you route through this subagent's facade.
 
-This is PLAN-LEVEL runtime assurance — a Python-level gate over structured
+This is PLAN-LEVEL runtime assurance — a Python-level warden over structured
 plans. It is NOT an OS sandbox; pair it with OS isolation for untrusted code.
 """
 

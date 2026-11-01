@@ -1,7 +1,7 @@
 # examples/council-kit/post_council.envelope.yaml
-# Final structural gate before a council-approved contribution commits to KB.
+# Final structural warden before a council-approved contribution commits to KB.
 generated_by: council-kit-post
-task: "Final structural gate before KB commit"
+task: "Final structural warden before KB commit"
 stakes: medium
 permissions:
   shell: false

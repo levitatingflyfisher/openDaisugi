@@ -1,7 +1,7 @@
 """Supervisor — composition root for runtime-supervised execution.
 
 Owns the RunSession lifecycle: re-verifies the plan, runs each step under
-an approval gate, hands results to an executor, and logs the final session
+an approval check, hands results to an executor, and logs the final session
 to the journal. Per-step verification feeds rejected steps to a
 ``FallbackHandler`` (default: halt). A failed step aborts the run.
 
@@ -292,7 +292,7 @@ class Supervisor:
                             )
                             step = record.recomputed_step
                             # The recomputed replacement is LLM-authored and must
-                            # pass the same per-step gate as any other step before
+                            # pass the same per-step warden as any other step before
                             # it can reach the executor — RecomputeHandler verified a
                             # bare singleton without the supervisor's strict setting.
                             # If the replacement is itself out of policy, halt (don't
@@ -578,7 +578,7 @@ class Supervisor:
     def _execute_one(self, step, step_started, decision, prefetched=None):
         # ``prefetched`` is an ExecutorResult already produced concurrently for this
         # exact step (parallel mode). Using it skips a redundant re-run; the step's
-        # verify + approval gates were applied before it was prefetched.
+        # verify + approval checks were applied before it was prefetched.
         if prefetched is not None:
             result = prefetched
         else:
@@ -738,7 +738,7 @@ class Supervisor:
     def _write_step_receipt(self, step, outcome, run_id: str) -> None:
         """Append a Receipt for an executed step (v0.18).
 
-        Evidence carries execution output; postcondition (if any) gates
+        Evidence carries execution output; postcondition (if any) checks
         verify_result. When no journal is attached (pure in-memory supervision)
         this is a no-op. When no postcondition is declared, the receipt's
         verify_result defaults to True (execution-happened-is-enough), but the

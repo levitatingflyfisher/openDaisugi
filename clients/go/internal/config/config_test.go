@@ -49,60 +49,60 @@ func TestFieldsMatchPython(t *testing.T) {
 	}
 }
 
-// The expected modes are what Python's resolve_gate_mode printed for the
+// The expected modes are what Python's resolve_warden_mode printed for the
 // same files (clients/fixtures/cli, the "status cfg" cases); "?" is a
 // file this package hands to Python.
-func TestGateMode(t *testing.T) {
+func TestWardenMode(t *testing.T) {
 	cases := []struct{ name, text, want string }{
-		{"enforce", "gate_mode: enforce\n", "enforce"},
-		{"audit", "gate_mode: audit\n", "audit"},
-		{"quoted", "gate_mode: 'enforce'\n", "enforce"},
-		{"dquoted", "gate_mode: \"enforce\"  # on\n", "enforce"},
-		{"comment", "# my config\n\ngate_mode: enforce # yes\nmodel: x\n", "enforce"},
-		{"bogus mode", "gate_mode: strict\n", "audit"},
-		{"bool mode", "gate_mode: yes\n", "audit"},
-		{"int mode", "gate_mode: 5\n", "audit"},
+		{"enforce", "warden_mode: enforce\n", "enforce"},
+		{"audit", "warden_mode: audit\n", "audit"},
+		{"quoted", "warden_mode: 'enforce'\n", "enforce"},
+		{"dquoted", "warden_mode: \"enforce\"  # on\n", "enforce"},
+		{"comment", "# my config\n\nwarden_mode: enforce # yes\nmodel: x\n", "enforce"},
+		{"bogus mode", "warden_mode: strict\n", "audit"},
+		{"bool mode", "warden_mode: yes\n", "audit"},
+		{"int mode", "warden_mode: 5\n", "audit"},
 		{"empty", "", "audit"},
 		{"comments only", "# x\n\n", "audit"},
 		{"list", "- a\n- b\n", "audit"},
 		{"scalar", "hello\n", "audit"},
-		{"bad yaml", "gate_mode: [enforce\n", "audit"},
-		{"bad other field", "gate_mode: enforce\nz3_timeout_ms: lots\n", "audit"},
-		{"float for int", "gate_mode: enforce\nz3_timeout_ms: 1.5\n", "audit"},
-		{"null for int", "gate_mode: enforce\nz3_timeout_ms: null\n", "audit"},
-		{"str for bool", "gate_mode: enforce\nauto_tend: maybe\n", "audit"},
-		{"int 2 for bool", "gate_mode: enforce\ngate_ask: 2\n", "audit"},
-		{"yes bool", "gate_mode: enforce\nauto_tend: yes\nshell_allow_decomposition: off\n", "enforce"},
-		{"null opt", "gate_mode: enforce\nllm_backend: null\ngateway_local_model: ~\n", "enforce"},
-		{"unknown flow", "gate_mode: enforce\nnot_a_key: [1, 2]\n", "enforce"},
-		{"unknown map", "gate_mode: enforce\nfoo:\n  bar: 1\n", "enforce"},
-		{"floor", "gate_mode: enforce\nfloor:\n  backend: coppice\n  notify_cmd: null\n", "enforce"},
-		{"floor null", "gate_mode: enforce\nfloor: null\n", "audit"},
-		{"floor empty", "gate_mode: enforce\nfloor:\n", "audit"},
-		{"floor int backend", "gate_mode: enforce\nfloor:\n  backend: 3\n", "audit"},
-		{"dup key", "gate_mode: enforce\ngate_mode: audit\n", "audit"},
-		{"anchor", "gate_mode: &m enforce\n", "enforce"},
-		{"tab", "gate_mode:\tenforce\n", "audit"},
-		{"crlf", "gate_mode: enforce\r\n", "enforce"},
-		{"data dir", "gate_mode: enforce\ndata_dir: /somewhere/else\n", "enforce"},
-		{"key on", "on: 1\ngate_mode: enforce\n", "enforce"},
-		{"str for str", "gate_mode: enforce\nmodel: 12\n", "audit"},
-		{"timestamp", "gate_mode: enforce\nmodel: 2001-12-14\n", "audit"},
-		{"url", "gate_mode: enforce\nvoice_server_url: http://127.0.0.1:7477\n", "enforce"},
-		{"doc marker", "---\ngate_mode: enforce\n", "enforce"},
-		{"nested under scalar", "gate_mode: enforce\n  x: 1\n", "audit"},
-		{"indented top", "  gate_mode: enforce\n", "enforce"},
-		{"multi plain", "gate_mode: enforce\nnotify: aaa\n  bbb\nmodel: x\n", "enforce"},
-		{"floor seq", "gate_mode: enforce\nfloor:\n- a\n", "audit"},
-		{"seq same indent", "gate_mode: enforce\nextra:\n- a\n- b: 1\n  c: 2\n", "enforce"},
-		{"float int ok", "gate_mode: enforce\nz3_timeout_ms: 800.0\n", "enforce"},
-		{"str int ok", "gate_mode: enforce\nz3_timeout_ms: ' 1_000 '\n", "enforce"},
-		{"str bool ok", "gate_mode: enforce\ngate_ask: 'T'\n", "enforce"},
-		{"dquote esc", "gate_mode: \"enf\\x6frce\"\n", "enforce"},
+		{"bad yaml", "warden_mode: [enforce\n", "audit"},
+		{"bad other field", "warden_mode: enforce\nz3_timeout_ms: lots\n", "audit"},
+		{"float for int", "warden_mode: enforce\nz3_timeout_ms: 1.5\n", "audit"},
+		{"null for int", "warden_mode: enforce\nz3_timeout_ms: null\n", "audit"},
+		{"str for bool", "warden_mode: enforce\nauto_tend: maybe\n", "audit"},
+		{"int 2 for bool", "warden_mode: enforce\nwarden_ask: 2\n", "audit"},
+		{"yes bool", "warden_mode: enforce\nauto_tend: yes\nshell_allow_decomposition: off\n", "enforce"},
+		{"null opt", "warden_mode: enforce\nllm_backend: null\nrouter_local_model: ~\n", "enforce"},
+		{"unknown flow", "warden_mode: enforce\nnot_a_key: [1, 2]\n", "enforce"},
+		{"unknown map", "warden_mode: enforce\nfoo:\n  bar: 1\n", "enforce"},
+		{"floor", "warden_mode: enforce\nfloor:\n  backend: coppice\n  notify_cmd: null\n", "enforce"},
+		{"floor null", "warden_mode: enforce\nfloor: null\n", "audit"},
+		{"floor empty", "warden_mode: enforce\nfloor:\n", "audit"},
+		{"floor int backend", "warden_mode: enforce\nfloor:\n  backend: 3\n", "audit"},
+		{"dup key", "warden_mode: enforce\nwarden_mode: audit\n", "audit"},
+		{"anchor", "warden_mode: &m enforce\n", "enforce"},
+		{"tab", "warden_mode:\tenforce\n", "audit"},
+		{"crlf", "warden_mode: enforce\r\n", "enforce"},
+		{"data dir", "warden_mode: enforce\ndata_dir: /somewhere/else\n", "enforce"},
+		{"key on", "on: 1\nwarden_mode: enforce\n", "enforce"},
+		{"str for str", "warden_mode: enforce\nmodel: 12\n", "audit"},
+		{"timestamp", "warden_mode: enforce\nmodel: 2001-12-14\n", "audit"},
+		{"url", "warden_mode: enforce\nvoice_server_url: http://127.0.0.1:7477\n", "enforce"},
+		{"doc marker", "---\nwarden_mode: enforce\n", "enforce"},
+		{"nested under scalar", "warden_mode: enforce\n  x: 1\n", "audit"},
+		{"indented top", "  warden_mode: enforce\n", "enforce"},
+		{"multi plain", "warden_mode: enforce\nnotify: aaa\n  bbb\nmodel: x\n", "enforce"},
+		{"floor seq", "warden_mode: enforce\nfloor:\n- a\n", "audit"},
+		{"seq same indent", "warden_mode: enforce\nextra:\n- a\n- b: 1\n  c: 2\n", "enforce"},
+		{"float int ok", "warden_mode: enforce\nz3_timeout_ms: 800.0\n", "enforce"},
+		{"str int ok", "warden_mode: enforce\nz3_timeout_ms: ' 1_000 '\n", "enforce"},
+		{"str bool ok", "warden_mode: enforce\nwarden_ask: 'T'\n", "enforce"},
+		{"dquote esc", "warden_mode: \"enf\\x6frce\"\n", "enforce"},
 		{"falsy top", "0\n", "audit"},
 		{"false top", "false\n", "audit"},
-		{"flow map", "gate_mode: enforce\nfloor: {backend: tmux, notify_cmd: null}\n", "enforce"},
-		{"flow map bad", "gate_mode: enforce\nfloor: {backend: [1]}\n", "audit"},
+		{"flow map", "warden_mode: enforce\nfloor: {backend: tmux, notify_cmd: null}\n", "enforce"},
+		{"flow map bad", "warden_mode: enforce\nfloor: {backend: [1]}\n", "audit"},
 		{"empty flow", "{}\n", "audit"},
 	}
 	dir := t.TempDir()
@@ -111,7 +111,7 @@ func TestGateMode(t *testing.T) {
 		if err := os.WriteFile(p, []byte(c.text), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got, err := GateMode(p)
+		got, err := WardenMode(p)
 		if err != nil {
 			got = "?"
 		}
@@ -119,22 +119,22 @@ func TestGateMode(t *testing.T) {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
 	}
-	if got, err := GateMode(filepath.Join(dir, "absent.yaml")); err != nil || got != "audit" {
+	if got, err := WardenMode(filepath.Join(dir, "absent.yaml")); err != nil || got != "audit" {
 		t.Errorf("absent: %q %v", got, err)
 	}
 }
 
 func TestInstalledHookMode(t *testing.T) {
 	cases := []struct{ name, text, want string }{
-		{"enforce", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate_client --mode enforce --root /x"}]}]}}`, "enforce"},
-		{"go form", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "DAISUGI_GATE_HOOK=opendaisugi.gate '/o p/daisugi' gate check --mode enforce || exit 2"}]}]}}`, "enforce"},
+		{"enforce", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden_client --mode enforce --root /x"}]}]}}`, "enforce"},
+		{"go form", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "DAISUGI_WARDEN_HOOK=opendaisugi.warden '/o p/daisugi' warden check --mode enforce || exit 2"}]}]}}`, "enforce"},
 		{"record hook", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "daisugi hook record --mode enforce"}]}]}}`, ""},
-		{"foreign", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "/opt/opendaisugi.gateway-watch --mode enforce"}]}]}}`, ""},
-		{"bad value", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate --mode enforced"}]}]}}`, ""},
-		{"last wins", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate --mode enforce --mode\taudit"}]}]}}`, "audit"},
-		{"quoted path", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "'/x --mode enforce/py' -m opendaisugi.gate --root /r"}]}]}}`, ""},
-		{"first hook wins", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate --mode audit"}]}, {"hooks": [{"command": "python3 -m opendaisugi.gate --mode enforce"}]}]}}`, "audit"},
-		{"no mode then mode", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate"}, {"command": "python3 -m opendaisugi.gate --mode=enforce"}]}]}}`, "enforce"},
+		{"foreign", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "/opt/opendaisugi.router-watch --mode enforce"}]}]}}`, ""},
+		{"bad value", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden --mode enforced"}]}]}}`, ""},
+		{"last wins", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden --mode enforce --mode\taudit"}]}]}}`, "audit"},
+		{"quoted path", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "'/x --mode enforce/py' -m opendaisugi.warden --root /r"}]}]}}`, ""},
+		{"first hook wins", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden --mode audit"}]}, {"hooks": [{"command": "python3 -m opendaisugi.warden --mode enforce"}]}]}}`, "audit"},
+		{"no mode then mode", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden"}, {"command": "python3 -m opendaisugi.warden --mode=enforce"}]}]}}`, "enforce"},
 		{"hooks null", `{"hooks": null}`, ""},
 		{"pre empty dict", `{"hooks": {"PreToolUse": {}}}`, ""},
 		{"bad json", `{nope`, ""},
@@ -144,8 +144,8 @@ func TestInstalledHookMode(t *testing.T) {
 		{"pre dict", `{"hooks": {"PreToolUse": {"a": 1}}}`, "?"},
 		{"entry str", `{"hooks": {"PreToolUse": ["x"]}}`, "?"},
 		{"command int", `{"hooks": {"PreToolUse": [{"hooks": [{"command": 5}]}]}}`, ""},
-		{"command list", `{"hooks": {"PreToolUse": [{"hooks": [{"command": ["python3 -m opendaisugi.gate --mode enforce"]}]}]}}`, ""},
-		{"unclosed quote", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate --mode enforce 'x"}]}]}}`, "unknown"},
+		{"command list", `{"hooks": {"PreToolUse": [{"hooks": [{"command": ["python3 -m opendaisugi.warden --mode enforce"]}]}]}}`, ""},
+		{"unclosed quote", `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden --mode enforce 'x"}]}]}}`, "unknown"},
 	}
 	dir := t.TempDir()
 	for _, c := range cases {
@@ -176,7 +176,7 @@ func TestEffectiveHookMode(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		body := `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.gate --mode ` + mode + `"}]}]}}`
+		body := `{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3 -m opendaisugi.warden --mode ` + mode + `"}]}]}}`
 		if err := os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -14,7 +14,7 @@ import (
 )
 
 // KeyNames are the environment variables that can hold a provider key.
-// No process sprig starts (a bash call, the claude backend, the gate)
+// No process sprig starts (a bash call, the claude backend, the warden)
 // gets them, so a key in the operator's shell never reaches a tool, a
 // session file or an answer.
 var KeyNames = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "SPRIG_API_KEY"}

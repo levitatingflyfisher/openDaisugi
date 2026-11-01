@@ -96,7 +96,9 @@ async def test_verify_plan_roundtrip(tmp_path):
     env = Envelope(
         generated_by="test",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="echo hi")])
 
@@ -118,7 +120,9 @@ async def test_verify_completed_step_rejects_impersonation(tmp_path):
     env = Envelope(
         generated_by="test",
         task="send email",
-        permissions=Permission(shell=True, shell_allowlist=["send_email"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["send_email"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[
             Postcondition(
                 type="body_no_impersonation",
@@ -160,7 +164,9 @@ async def test_verify_completed_step_accepts_clean(tmp_path):
     env = Envelope(
         generated_by="test",
         task="send email",
-        permissions=Permission(shell=True, shell_allowlist=["send_email"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["send_email"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[
             Postcondition(
                 type="body_no_impersonation",
@@ -258,7 +264,9 @@ async def test_run_plan_executes_and_returns_receipts(tmp_path):
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -390,7 +398,9 @@ async def test_run_plan_propagates_verify_rejection(tmp_path):
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["cat"]),  # echo not allowed
+        permissions=Permission(
+            shell=True, shell_allowlist=["cat"], file_read=["**"], file_write=["**"]
+        ),  # echo not allowed
     )
     plan = ActionPlan(
         source="t",
@@ -429,7 +439,9 @@ async def test_receipts_for_run_returns_real_receipts_after_run_plan(tmp_path):
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -465,7 +477,9 @@ async def test_recent_runs_returns_journaled_runs(tmp_path):
     env = Envelope(
         generated_by="t",
         task="audit-test",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -515,16 +529,24 @@ def test_cli_mcp_serve_fails_gracefully_without_extra(monkeypatch):
     assert "opendaisugi[mcp]" in result.output
 
 
-# ----- the delegate tool -----
+# ----- the spawn tool -----
 
 
 @pytest.mark.asyncio
-async def test_delegate_tool_refuses_with_no_worker(tmp_path):
+async def test_spawn_tool_refuses_with_no_worker(tmp_path):
     server = build_server(_daisugi(tmp_path))
     f = tmp_path / "big.txt"
     f.write_text("a\n" * 10)
     names = [t.name for t in await server.list_tools()]
-    assert names[-1] == "delegate"
-    _, out = await server.call_tool("delegate", {"path": str(f), "question": "what?"})
+    assert names[-1] == "spawn"
+    _, out = await server.call_tool("spawn", {"path": str(f), "question": "what?"})
     assert out["ok"] is False and out["reason"].startswith("no worker")
     assert out["mode"] == "bulk_read" and out["lines"] == 10
+
+
+@pytest.mark.asyncio
+async def test_tool_list_names_spawn_not_delegate(tmp_path):
+    server = build_server(_daisugi(tmp_path))
+    names = [t.name for t in await server.list_tools()]
+    assert "spawn" in names and "delegate" not in names  # names-ok: the old tool is gone
+    assert len(names) == 12

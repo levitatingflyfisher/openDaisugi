@@ -94,6 +94,9 @@ func peerHello(r *http.Request) map[string]any {
 	return map[string]any{"peer_pids": others}
 }
 
+// peerOf is peerHello. A test replaces it to place a request as a pane.
+var peerOf = peerHello
+
 // placeAllows asks the coppice server whether the peer a hello names may
 // answer an ask. Any failure is a no.
 func placeAllows(ctx context.Context, d Dialer, hello map[string]any) bool {

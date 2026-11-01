@@ -432,7 +432,7 @@ def test_subscribe_yields_state_events_and_frames(tmp_path, server_factory):
             "session_id": "s",
             "harness": "claude-code",
             "state": "blocked",
-            "source": "gate",
+            "source": "warden",
             "harness_session_id": None,
             "ask": {"id": "a1", "tool": "Bash", "summary": "rm -rf", "deadline": 9999.0},
             "detail": "",
@@ -591,7 +591,7 @@ def test_list_reassembles_a_reported_state_from_the_flat_row(tmp_path, server_fa
                             cmd=["claude"],
                             harness="claude-code",
                             state="blocked",
-                            source="gate",
+                            source="warden",
                             detail="needs an answer",
                             ts=1234.5,
                             session_id="s1",
@@ -608,7 +608,7 @@ def test_list_reassembles_a_reported_state_from_the_flat_row(tmp_path, server_fa
         }
     )
     info = CoppiceBackend(sock_path=tmp_path / "server.sock").list()[0]
-    assert info.state.state == "blocked" and info.state.source == "gate"
+    assert info.state.state == "blocked" and info.state.source == "warden"
     assert info.state.session_id == "s1" and info.state.ts == 1234.5
     assert info.state.detail == "needs an answer"
     assert info.state.ask is not None and info.state.ask.tool == "Bash"
@@ -1398,7 +1398,7 @@ def _fake_pane_list_row_with_state(**overrides) -> dict:
     too, the shape _fake_pane_list_row alone does not cover."""
     defaults = {
         "state": "blocked",
-        "source": "gate",
+        "source": "warden",
         "detail": "needs an answer",
         "ts": 1234.5,
         "session_id": "s1",

@@ -23,7 +23,7 @@ fn a_refused_brief_removes_the_new_agent() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     s.start_detection();
     let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();

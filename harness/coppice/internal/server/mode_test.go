@@ -12,7 +12,7 @@ import (
 	"github.com/opendaisugi/coppice/internal/layout"
 )
 
-// agent.set_mode writes the per-agent marker the gate reads (F11): only
+// agent.set_mode writes the per-agent marker the warden reads (F11): only
 // the operator sets it, only enforcing or watching, only for a live
 // harness agent, and the marker goes when the agent ends.
 
@@ -31,7 +31,7 @@ func modeServer(t *testing.T) *Server {
 
 func markerPath(s *Server, id string) string {
 	sum := sha256.Sum256([]byte(s.cfg.SocketPath))
-	return filepath.Join(s.cfg.GateRoot, "agents", hex.EncodeToString(sum[:])[:16], id+".mode")
+	return filepath.Join(s.cfg.WardenRoot, "agents", hex.EncodeToString(sum[:])[:16], id+".mode")
 }
 
 func TestSetModeWatchingWritesTheMarkerAndEnforcingRemovesIt(t *testing.T) {
@@ -68,7 +68,7 @@ func TestSetModeRefusesOffAndOtherWords(t *testing.T) {
 	s := modeServer(t)
 	for _, m := range []string{"off", "audit", "enforce", "", "WATCHING"} {
 		got := roundTrip(t, s, `{"id":"1","cmd":"agent.set_mode","pane":"w1:p1","mode":"`+m+`"}`)
-		if got[0].OK || got[0].Error.Code != "bad_request" || !strings.Contains(got[0].Error.Message, "daisugi gate disarm") {
+		if got[0].OK || got[0].Error.Code != "bad_request" || !strings.Contains(got[0].Error.Message, "daisugi warden disarm") {
 			t.Fatalf("mode %q: %+v", m, got[0])
 		}
 	}
@@ -150,7 +150,7 @@ func TestTheMarkerGoesWhenTheAgentEnds(t *testing.T) {
 func TestAStartClearsThisFloorsMarkersOnly(t *testing.T) {
 	s := newTestServer(t)
 	dir := filepath.Dir(markerPath(s, "w1:p1"))
-	other := filepath.Join(s.cfg.GateRoot, "agents", "0123456789abcdef")
+	other := filepath.Join(s.cfg.WardenRoot, "agents", "0123456789abcdef")
 	for _, d := range []string{dir, other} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -239,12 +239,12 @@ func TestAStartDeletesNothingThroughASymlinkedFloorDir(t *testing.T) {
 }
 
 // F11-R-9 (M2), GR-R-11: the stack shows "watching" only when the marker
-// reads as the gate reads it, by fd from the gate root down, through no
+// reads as the warden reads it, by fd from the warden root down, through no
 // link, each directory owned by this user and writable by no one else, the
 // file owned by this user with one link and writable by no one else. When
-// the gate would refuse a path on the way, the stack shows "refused" with
-// the gate's one line and the fix, never "watching".
-func TestTheStackShowsOnlyAMarkerTheGateWouldRead(t *testing.T) {
+// the warden would refuse a path on the way, the stack shows "refused" with
+// the warden's one line and the fix, never "watching".
+func TestTheStackShowsOnlyAMarkerTheWardenWouldRead(t *testing.T) {
 	marker := func(s *Server) (string, string) {
 		p, _ := s.tree.Pane("w1:p1")
 		d, _ := s.stackOf(p, s.viewFacts(p))["daisugi"].(map[string]any)
@@ -276,7 +276,7 @@ func TestTheStackShowsOnlyAMarkerTheGateWouldRead(t *testing.T) {
 	marker1 := func(s *Server, p string) string { return p }
 	floor := func(s *Server, p string) string { return filepath.Dir(p) }
 	agents := func(s *Server, p string) string { return filepath.Dir(filepath.Dir(p)) }
-	root := func(s *Server, p string) string { return s.cfg.GateRoot }
+	root := func(s *Server, p string) string { return s.cfg.WardenRoot }
 	for name, sp := range map[string]spoil{
 		"symlink":             {marker1, swapForLink, "is a symbolic link"},
 		"hard link":           {marker1, func(t *testing.T, p string) { os.Link(p, p+".second") }, "has more than one hard link"},
@@ -320,10 +320,10 @@ func TestTheStackShowsNoMarkerAndNoNoteWhenNothingIsThere(t *testing.T) {
 	}
 }
 
-// F11-R-15 (M4): floor.facts names the hook's gate root when an installed
+// F11-R-15 (M4): floor.facts names the hook's warden root when an installed
 // hook names another one with --root, since a marker here then does
 // nothing.
-func TestFloorFactsNamesAHookGateRootThatDiffers(t *testing.T) {
+func TestFloorFactsNamesAHookWardenRootThatDiffers(t *testing.T) {
 	s := newTestServer(t)
 	hookRoot := func() any {
 		got := roundTrip(t, s, `{"id":"1","cmd":"floor.facts"}`)
@@ -343,16 +343,16 @@ func TestFloorFactsNamesAHookGateRootThatDiffers(t *testing.T) {
 	if got := hookRoot(); got != nil {
 		t.Fatalf("no hook, hook_root %v", got)
 	}
-	write("python -m opendaisugi.gate --mode enforce --root " + s.cfg.GateRoot)
+	write("python -m opendaisugi.warden --mode enforce --root " + s.cfg.WardenRoot)
 	if got := hookRoot(); got != nil {
 		t.Fatalf("the same root, hook_root %v", got)
 	}
-	write("python -m opendaisugi.gate --mode enforce --root /elsewhere/gate")
-	if got := hookRoot(); got != "/elsewhere/gate" {
+	write("python -m opendaisugi.warden --mode enforce --root /elsewhere/warden")
+	if got := hookRoot(); got != "/elsewhere/warden" {
 		t.Fatalf("another root, hook_root %v", got)
 	}
-	write("python -m opendaisugi.gate --root=/elsewhere/gate --mode enforce")
-	if got := hookRoot(); got != "/elsewhere/gate" {
+	write("python -m opendaisugi.warden --root=/elsewhere/warden --mode enforce")
+	if got := hookRoot(); got != "/elsewhere/warden" {
 		t.Fatalf("--root=, hook_root %v", got)
 	}
 }

@@ -56,7 +56,7 @@ func refusedWith(t *testing.T, r map[string]any) {
 	}
 }
 
-// plantAsk writes one pending ask the way the gate does.
+// plantAsk writes one pending ask the way the warden does.
 func plantAsk(t *testing.T, root, id string) {
 	t.Helper()
 	dir := filepath.Join(root, "asks")
@@ -71,7 +71,7 @@ func plantAsk(t *testing.T, root, id string) {
 
 func TestAConnectionThatSaysItIsAPaneCannotAllowOrDeny(t *testing.T) {
 	s := newTestServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	send, next, stop := stream(t, s)
 	defer stop()
 	send(`{"id":"0","cmd":"hello","role":"pane","pane":"w1:p1"}`)
@@ -85,7 +85,7 @@ func TestAConnectionThatSaysItIsAPaneCannotAllowOrDeny(t *testing.T) {
 	send(`{"id":"3","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"ts":1,"session_id":"s",` +
 		`"harness":"claude","pane":"w1:p1","state":"idle","source":"operator"}}`)
 	refusedWith(t, next())
-	if _, err := os.Stat(filepath.Join(s.cfg.GateRoot, "answers", "ask-3.json")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(s.cfg.WardenRoot, "answers", "ask-3.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused allow wrote an answer: %v", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestAConnectionThatSaysItIsAPaneCannotAllowOrDeny(t *testing.T) {
 // is still a pane.
 func TestAKernelPaneCannotAllowWhateverItSays(t *testing.T) {
 	s := newTestServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	send, next, stop := streamFacts(t, s, &peerFacts{checked: true, pane: true, paneID: "w1:p1"})
 	defer stop()
 	send(`{"id":"0","cmd":"hello","role":"operator"}`)
@@ -116,20 +116,20 @@ func TestAnUnreadablePeerCannotAllowButCanList(t *testing.T) {
 	}
 }
 
-// The operator answers an ask through the same file the gate reads.
-func TestTheOperatorAllowsThroughTheGateFile(t *testing.T) {
+// The operator answers an ask through the same file the warden reads.
+func TestTheOperatorAllowsThroughTheWardenFile(t *testing.T) {
 	s := newAgentServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
 		`{"id":"2","cmd":"agent.allow","pane":"w1:p1","ask":"ask-3","confirm":"auth fix"}`,
 		`{"id":"3","cmd":"agent.deny","pane":"w1:p1","ask":"ask-9"}`)
 	got = got[1:]
 	if !got[1].OK {
 		t.Fatalf("agent.allow: %+v", got[1].Error)
 	}
-	b, err := os.ReadFile(filepath.Join(s.cfg.GateRoot, "answers", "ask-3.json"))
+	b, err := os.ReadFile(filepath.Join(s.cfg.WardenRoot, "answers", "ask-3.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestHelloPeerPIDsPlaceTheWebClient(t *testing.T) {
 // The operator can.
 func TestAPaneCannotTypeIntoABlockedPane(t *testing.T) {
 	s := newAgentServer(t)
-	roundTrip(t, s, strings.Replace(paneCreate, "%s", t.TempDir(), 1), gateBlockedLine("w1:p1"))
+	roundTrip(t, s, strings.Replace(paneCreate, "%s", t.TempDir(), 1), wardenBlockedLine("w1:p1"))
 	send, next, stop := streamFacts(t, s, &peerFacts{checked: true, pane: true, paneID: "w1:p2"})
 	defer stop()
 	for _, line := range []string{
@@ -304,18 +304,18 @@ func TestAPaneCanTypeIntoAWorkingPane(t *testing.T) {
 // An ask answers only through the pane that holds it.
 func TestAnAllowNamesThePaneThatHoldsTheAsk(t *testing.T) {
 	s := newAgentServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 	dir := t.TempDir()
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", dir, 1),
 		strings.Replace(strings.Replace(paneCreate, "%s", dir, 1), `"id":"1"`, `"id":"2"`, 1),
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
 		`{"id":"4","cmd":"agent.allow","pane":"w1:p2","ask":"ask-3"}`)
 	last := got[3]
 	if last.OK || last.Error.Code != "bad_request" || !strings.Contains(last.Error.Message, "w1:p2") {
 		t.Fatalf("an allow on the wrong pane answered %+v", last)
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.GateRoot, "answers", "ask-3.json")); err == nil {
+	if _, err := os.Stat(filepath.Join(s.cfg.WardenRoot, "answers", "ask-3.json")); err == nil {
 		t.Fatal("an allow on the wrong pane wrote an answer")
 	}
 }
@@ -365,11 +365,11 @@ func TestAPaneReportsStateOnlyForItself(t *testing.T) {
 	roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", dir, 1),
 		strings.Replace(strings.Replace(paneCreate, "%s", dir, 1), `"id":"1"`, `"id":"2"`, 1),
-		gateBlockedLine("w1:p1"))
+		wardenBlockedLine("w1:p1"))
 	send, next, stop := streamFacts(t, s, &peerFacts{checked: true, pane: true, paneID: "w1:p2"})
 	defer stop()
 	clear := `{"id":"1","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"ts":1,"session_id":"s",` +
-		`"harness":"claude","pane":"w1:p1","state":"idle","source":"gate"}}`
+		`"harness":"claude","pane":"w1:p1","state":"idle","source":"warden"}}`
 	send(clear)
 	refusedWith(t, next())
 	send(`{"id":"2","cmd":"pane.send_keys","pane":"w1:p1","keys":["1","enter"]}`)
@@ -395,7 +395,7 @@ func TestAHelloPaneReportsStateOnlyForItsPane(t *testing.T) {
 	send(`{"id":"0","cmd":"hello","role":"pane","pane":"w1:p2"}`)
 	next()
 	send(`{"id":"1","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"ts":1,"session_id":"s",` +
-		`"harness":"claude","pane":"w1:p1","state":"idle","source":"gate"}}`)
+		`"harness":"claude","pane":"w1:p1","state":"idle","source":"warden"}}`)
 	refusedWith(t, next())
 }
 
@@ -403,18 +403,18 @@ func TestAHelloPaneReportsStateOnlyForItsPane(t *testing.T) {
 // on the pane that holds it, while it is live.
 func TestAnAllowAnswersAnyLiveAskOfThePane(t *testing.T) {
 	s := newAgentServer(t)
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
-	plantAsk(t, s.cfg.GateRoot, "ask-4")
-	plantAsk(t, s.cfg.GateRoot, "ask-5")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-4")
+	plantAsk(t, s.cfg.WardenRoot, "ask-5")
 	dir := t.TempDir()
-	expired := strings.Replace(strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-5", 1),
+	expired := strings.Replace(strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-5", 1),
 		"9999999999.0", "1.0", 1)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", dir, 1),
 		strings.Replace(strings.Replace(paneCreate, "%s", dir, 1), `"id":"1"`, `"id":"2"`, 1),
 		expired,
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
-		strings.Replace(gateBlockedLine("w1:p1"), "toolu_1", "ask-4", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-3", 1),
+		strings.Replace(wardenBlockedLine("w1:p1"), "toolu_1", "ask-4", 1),
 		`{"id":"5","cmd":"agent.allow","pane":"w1:p1","ask":"ask-3","confirm":"auth fix"}`,
 		`{"id":"6","cmd":"agent.deny","pane":"w1:p2","ask":"ask-4"}`,
 		`{"id":"7","cmd":"agent.deny","pane":"w1:p1","ask":"ask-4"}`,

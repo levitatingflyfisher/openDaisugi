@@ -22,7 +22,7 @@ def _ev(**over):
         "session_id": "s1",
         "harness": "claude-code",
         "state": "working",
-        "source": "gate",
+        "source": "warden",
         "detail": "",
     }
     base.update(over)
@@ -165,7 +165,7 @@ def test_report_state_returns_none_for_a_non_object_payload(tmp_path, bad_json):
 def test_herdr_kill_reap_uses_a_short_timeout_not_the_full_budget(monkeypatch, tmp_path):
     """Whole-branch review, minor 3: after kill(), the reap wait() must be
     bounded to a short cap (0.05 s), not the old 1.0 s — this module also
-    runs inside the long-lived resident gate, not just the ~200ms hot
+    runs inside the long-lived resident warden, not just the ~200ms hot
     path, so a herdr stuck past its deadline must not cost the caller a
     full extra second on top of that.
 
@@ -208,7 +208,7 @@ def test_herdr_kill_reap_uses_a_short_timeout_not_the_full_budget(monkeypatch, t
     assert elapsed < 0.3
 
 
-# --- explicit sock/pane/herdr_pane: the resident-gate-forwarded path ------
+# --- explicit sock/pane/herdr_pane: the resident-warden-forwarded path ------
 
 
 def _fake_coppice(sock_path, replies=None):
@@ -262,7 +262,7 @@ def test_explicit_pane_sends_hello_before_pane_report_state(tmp_path):
 
 
 def test_hello_carries_peer_pid_as_peer_pids(tmp_path):
-    """peer_pid is the caller's real OS pid, read by gate_server.py with
+    """peer_pid is the caller's real OS pid, read by warden_server.py with
     SO_PEERCRED on the connection that reached it, and it rides on the
     hello as peer_pids so coppice's own kernel-pid placement (not this
     module's say-so) decides which pane, if any, that pid belongs to."""

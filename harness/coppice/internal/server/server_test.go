@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	s, err := New(Config{SocketPath: filepath.Join(dir, "server.sock"), DataDir: dir,
-		ForemanDir: filepath.Join(dir, "state", "coppice", "foreman"), HookHome: dir})
+		StewardDir: filepath.Join(dir, "state", "coppice", "steward"), HookHome: dir})
 	if err != nil {
 		t.Fatal(err)
 	}

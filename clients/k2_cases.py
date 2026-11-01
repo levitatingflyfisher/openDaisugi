@@ -1764,12 +1764,15 @@ def build_orchestrate_cases() -> list[dict[str, Any]]:
                 P,
                 envelope=none,
                 flags=flags,
+                # The steps of a level run at once, so the first request to
+                # arrive gets the first reply. Every step gets the same reply,
+                # so the journal does not depend on which one came first.
                 replies=[
                     {"http": wide},
-                    {"http": "r1"},
-                    {"http": "r2"},
-                    {"http": "r3"},
-                    {"http": "r4"},
+                    {"http": "r"},
+                    {"http": "r"},
+                    {"http": "r"},
+                    {"http": "r"},
                     {"http": answer("A.")},
                 ],
                 unordered=True,

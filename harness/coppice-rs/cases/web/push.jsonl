@@ -26,18 +26,18 @@
 {"id": "$id", "ok": true, "result": {"status": 200}}
 {"id": "z0", "sleep": 500}
 {"id": "$id", "ok": true, "result": {"slept": true}}
-{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p1", "tool": "Bash", "summary": "git push\norigin main", "deadline": 4102444800, "tier": "undoable", "gate": {"verdict": "ask", "rule": 3}}, "detail": "verdict=ask"}}
-{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
+{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "warden", "ask": {"id": "toolu_p1", "tool": "Bash", "summary": "git push\norigin main", "deadline": 4102444800, "tier": "undoable", "warden": {"verdict": "ask", "rule": 3}}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "warden"}}
 #!retry 5000
 {"id": "c2", "file": "{WORK}/ntfy.log", "count": "\n"}
 {"id": "$id", "ok": true, "result": {"count": 2}}
 # Within five seconds the same pane blocks again: no second card.
-{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "working", "source": "gate"}}
+{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "working", "source": "warden"}}
 {"id": "$id", "ok": true, "result": "*"}
-{"id": "s3", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 3, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p2", "tool": "Write", "summary": "a.txt", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
+{"id": "s3", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 3, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "warden", "ask": {"id": "toolu_p2", "tool": "Write", "summary": "a.txt", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
 {"id": "$id", "ok": true, "result": "*"}
 # A pane with no label, and an ask with no summary: the card says the detail.
-{"id": "s4", "cmd": "pane.report_state", "pane": "$b", "event": {"v": 1, "ts": 4, "session_id": "s", "harness": "claude-code", "pane": "$b", "state": "blocked", "source": "gate", "ask": {"id": "toolu_p3", "tool": "Bash", "summary": "", "deadline": 4102444800}, "detail": "verdict=ask"}}
+{"id": "s4", "cmd": "pane.report_state", "pane": "$b", "event": {"v": 1, "ts": 4, "session_id": "s", "harness": "claude-code", "pane": "$b", "state": "blocked", "source": "warden", "ask": {"id": "toolu_p3", "tool": "Bash", "summary": "", "deadline": 4102444800}, "detail": "verdict=ask"}}
 {"id": "$id", "ok": true, "result": "*"}
 #!retry 5000
 {"id": "c3", "file": "{WORK}/ntfy.log", "count": "\n"}

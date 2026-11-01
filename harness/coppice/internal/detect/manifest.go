@@ -18,14 +18,14 @@ import (
 const EngineVersion = 3
 
 const (
-	maxRules           = 128
-	maxGateDepth       = 8
-	maxTotalGates      = 512
-	maxMatchersPerGate = 32
-	maxTotalMatchers   = 1024
-	maxMatcherChars    = 512
-	topRegionMinVer    = 3
-	maxTopRegionLines  = 65535
+	maxRules                = 128
+	maxConditionDepth       = 8
+	maxTotalConditions      = 512
+	maxMatchersPerCondition = 32
+	maxTotalMatchers        = 1024
+	maxMatcherChars         = 512
+	topRegionMinVer         = 3
+	maxTopRegionLines       = 65535
 )
 
 type State string
@@ -37,34 +37,34 @@ const (
 	StateUnknown State = "unknown"
 )
 
-type Gate struct {
-	All       []Gate   `toml:"all"`
-	Any       []Gate   `toml:"any"`
-	Not       []Gate   `toml:"not"`
-	Contains  []string `toml:"contains"`
-	Regex     []string `toml:"regex"`
-	LineRegex []string `toml:"line_regex"`
+type Condition struct {
+	All       []Condition `toml:"all"`
+	Any       []Condition `toml:"any"`
+	Not       []Condition `toml:"not"`
+	Contains  []string    `toml:"contains"`
+	Regex     []string    `toml:"regex"`
+	LineRegex []string    `toml:"line_regex"`
 }
 
 type Rule struct {
-	ID              string   `toml:"id"`
-	State           *State   `toml:"state"`
-	Priority        int      `toml:"priority"`
-	Region          string   `toml:"region"`
-	VisibleIdle     bool     `toml:"visible_idle"`
-	VisibleBlocker  bool     `toml:"visible_blocker"`
-	VisibleWorking  bool     `toml:"visible_working"`
-	SkipStateUpdate bool     `toml:"skip_state_update"`
-	All             []Gate   `toml:"all"`
-	Any             []Gate   `toml:"any"`
-	Not             []Gate   `toml:"not"`
-	Contains        []string `toml:"contains"`
-	Regex           []string `toml:"regex"`
-	LineRegex       []string `toml:"line_regex"`
+	ID              string      `toml:"id"`
+	State           *State      `toml:"state"`
+	Priority        int         `toml:"priority"`
+	Region          string      `toml:"region"`
+	VisibleIdle     bool        `toml:"visible_idle"`
+	VisibleBlocker  bool        `toml:"visible_blocker"`
+	VisibleWorking  bool        `toml:"visible_working"`
+	SkipStateUpdate bool        `toml:"skip_state_update"`
+	All             []Condition `toml:"all"`
+	Any             []Condition `toml:"any"`
+	Not             []Condition `toml:"not"`
+	Contains        []string    `toml:"contains"`
+	Regex           []string    `toml:"regex"`
+	LineRegex       []string    `toml:"line_regex"`
 }
 
-func (r Rule) gate() Gate {
-	return Gate{All: r.All, Any: r.Any, Not: r.Not,
+func (r Rule) condition() Condition {
+	return Condition{All: r.All, Any: r.Any, Not: r.Not,
 		Contains: r.Contains, Regex: r.Regex, LineRegex: r.LineRegex}
 }
 
@@ -85,11 +85,11 @@ type Manifest struct {
 	Rules            []Rule   `toml:"rules"`
 }
 
-// compiledGate holds the regexes already built, so evaluation never compiles.
-type compiledGate struct {
-	all       []compiledGate
-	any       []compiledGate
-	not       []compiledGate
+// compiledCondition holds the regexes already built, so evaluation never compiles.
+type compiledCondition struct {
+	all       []compiledCondition
+	any       []compiledCondition
+	not       []compiledCondition
 	contains  []string // already lowercased
 	regex     []*regexp.Regexp
 	lineRegex []*regexp.Regexp
@@ -97,14 +97,14 @@ type compiledGate struct {
 
 // Compiled is a manifest ready to evaluate.
 type Compiled struct {
-	Manifest *Manifest
-	gates    []compiledGate // one per rule, in file order
+	Manifest   *Manifest
+	conditions []compiledCondition // one per rule, in file order
 }
 
-// gateTotals tracks manifest-wide counters across the whole compile pass.
-type gateTotals struct {
-	gates    int
-	matchers int
+// conditionTotals tracks manifest-wide counters across the whole compile pass.
+type conditionTotals struct {
+	conditions int
+	matchers   int
 }
 
 // Parse reads one manifest and validates it fully. Every failure is a load
@@ -144,7 +144,7 @@ func Parse(name string, data []byte) (*Manifest, *Compiled, error) {
 	}
 
 	c := &Compiled{Manifest: &m}
-	var totals gateTotals
+	var totals conditionTotals
 	for _, r := range m.Rules {
 		if strings.TrimSpace(r.ID) == "" {
 			return nil, nil, fmt.Errorf("%s: a rule has an empty id", name)
@@ -172,28 +172,28 @@ func Parse(name string, data []byte) (*Manifest, *Compiled, error) {
 				"%s: rule %s uses top_non_empty_lines but min_engine_version is %d, need %d",
 				name, r.ID, m.MinEngineVersion, topRegionMinVer)
 		}
-		cg, err := compileGate(r.gate(), "rule "+r.ID, 0, &totals)
+		cg, err := compileCondition(r.condition(), "rule "+r.ID, 0, &totals)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
-		c.gates = append(c.gates, cg)
+		c.conditions = append(c.conditions, cg)
 	}
 	return &m, c, nil
 }
 
-func compileGate(g Gate, ctx string, depth int, totals *gateTotals) (compiledGate, error) {
-	var out compiledGate
-	if depth > maxGateDepth {
-		return out, fmt.Errorf("%s exceeds max gate depth %d", ctx, maxGateDepth)
+func compileCondition(g Condition, ctx string, depth int, totals *conditionTotals) (compiledCondition, error) {
+	var out compiledCondition
+	if depth > maxConditionDepth {
+		return out, fmt.Errorf("%s exceeds max condition depth %d", ctx, maxConditionDepth)
 	}
-	totals.gates++
-	if totals.gates > maxTotalGates {
-		return out, fmt.Errorf("manifest exceeds max gate count %d", maxTotalGates)
+	totals.conditions++
+	if totals.conditions > maxTotalConditions {
+		return out, fmt.Errorf("manifest exceeds max condition count %d", maxTotalConditions)
 	}
 	direct := len(g.Contains) + len(g.Regex) + len(g.LineRegex)
-	if direct > maxMatchersPerGate {
+	if direct > maxMatchersPerCondition {
 		return out, fmt.Errorf("%s has %d direct matchers, max is %d",
-			ctx, direct, maxMatchersPerGate)
+			ctx, direct, maxMatchersPerCondition)
 	}
 	totals.matchers += direct
 	if totals.matchers > maxTotalMatchers {
@@ -232,21 +232,21 @@ func compileGate(g Gate, ctx string, depth int, totals *gateTotals) (compiledGat
 	// Nested calls extend ctx rather than replacing it, so a load error at any
 	// depth still names the rule it came from.
 	for _, n := range g.All {
-		c, err := compileGate(n, ctx+" > all", depth+1, totals)
+		c, err := compileCondition(n, ctx+" > all", depth+1, totals)
 		if err != nil {
 			return out, err
 		}
 		out.all = append(out.all, c)
 	}
 	for _, n := range g.Any {
-		c, err := compileGate(n, ctx+" > any", depth+1, totals)
+		c, err := compileCondition(n, ctx+" > any", depth+1, totals)
 		if err != nil {
 			return out, err
 		}
 		out.any = append(out.any, c)
 	}
 	for _, n := range g.Not {
-		c, err := compileGate(n, ctx+" > not", depth+1, totals)
+		c, err := compileCondition(n, ctx+" > not", depth+1, totals)
 		if err != nil {
 			return out, err
 		}

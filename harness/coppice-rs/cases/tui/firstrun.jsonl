@@ -41,5 +41,17 @@
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "one-vocabulary", "screen": "w1:p3", "alt": true, "until": "EXIT=0"}
 {"id": "$id", "ok": true, "result": {"rows": "*"}}
+# A harness whose binary on PATH is a mise wrapper: the note says so, and the
+# file names the real binary, which mise which answers. The wrapper is never run.
+{"id": "f4", "cli": ["pane", "create", "--json", "--kind", "pty", "--cols", "80", "--rows", "30", "--cwd", "{START}", "--", "/bin/sh", "-c", "env -u COPPICE_PANE XDG_CONFIG_HOME=\"$1\" PATH=\"$2\" \"$3\" --socket \"$4\" --data-dir \"$5\"; echo EXIT=$?; exec sleep 600", "floor", "{WORK}/fr4", "{FIXTURES}/tui/mise/bin:/usr/bin:/bin", "{BIN}", "{SOCK}", "{DATA}"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "wrapped", "screen": "w1:p4", "alt": true, "until": "Nothing running. Enter opens claude."}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
+{"id": "f4c", "file": "{WORK}/fr4/coppice/coppice.toml"}
+{"id": "$id", "ok": true, "result": {"mode": "0o600"}}
+{"id": "f4q", "cli": ["pane", "send-keys", "w1:p4", "ctrl+c"], "alt": true}
+{"id": "$id", "ok": true, "result": {"code": 0}}
+{"id": "wrapped-vocabulary", "screen": "w1:p4", "alt": true, "until": "EXIT=0"}
+{"id": "$id", "ok": true, "result": {"rows": "*"}}
 {"id": "z", "cli": ["server", "stop"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}

@@ -18,7 +18,7 @@ _NODE = pytest.mark.skipif(not _ok, reason=_reason)
 _ENV_BASE = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
-class _FakeGateHandler(socketserver.StreamRequestHandler):
+class _FakeWardenHandler(socketserver.StreamRequestHandler):
     reply: dict = {"v": 1, "stdout": "", "stderr": "", "exit_code": 0}
 
     def handle(self) -> None:
@@ -33,9 +33,9 @@ def _serve(sock_path: Path, handler, mode: int = 0o600) -> None:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 
-def _fake_gate(tmp_path: Path, reply: dict, mode: int = 0o600) -> Path:
+def _fake_warden(tmp_path: Path, reply: dict, mode: int = 0o600) -> Path:
     sock_path = tmp_path / "g.sock"
-    handler = type("H", (_FakeGateHandler,), {"reply": reply})
+    handler = type("H", (_FakeWardenHandler,), {"reply": reply})
     _serve(sock_path, handler, mode)
     return sock_path
 
@@ -57,7 +57,7 @@ def _ask(
             cwd,
         ],
         cwd=HERE,
-        env={"OPENDAISUGI_GATE_SOCK": str(sock_path), **(extra_env or {}), **_ENV_BASE},
+        env={"OPENDAISUGI_WARDEN_SOCK": str(sock_path), **(extra_env or {}), **_ENV_BASE},
         capture_output=True,
         text=True,
         timeout=10,
@@ -89,7 +89,7 @@ def test_allow_and_argv_has_no_mode_but_has_verify_timeout(tmp_path):
     import base64
 
     payload = json.loads(base64.b64decode(captured[0]["stdin_b64"]))
-    assert "session_id" not in payload  # unset: the gate falls back to the default envelope
+    assert "session_id" not in payload  # unset: the warden falls back to the default envelope
 
 
 @_NODE
@@ -114,8 +114,9 @@ def test_session_id_travels_when_the_env_names_one(tmp_path):
 
 @_NODE
 def test_deny_carries_stderr_reason(tmp_path):
-    sock = _fake_gate(
-        tmp_path, {"v": 1, "stdout": "", "stderr": "openDaisugi gate: DENIED - no", "exit_code": 2}
+    sock = _fake_warden(
+        tmp_path,
+        {"v": 1, "stdout": "", "stderr": "openDaisugi warden: DENIED - no", "exit_code": 2},
     )
     verdict = _ask(sock, "bash", {"command": "rm -rf /"})
     assert verdict["allow"] is False
@@ -125,15 +126,15 @@ def test_deny_carries_stderr_reason(tmp_path):
 @_NODE
 def test_extension_blocks_on_an_exit_code_it_does_not_recognise(tmp_path):
     """Neither 0 (allow) nor 2 (deny) is a verdict this extension knows how
-    to read. A crashed gate, or a future gate.py bug, must not default to
+    to read. A crashed warden, or a future warden.py bug, must not default to
     allow just because it is not exit 2."""
-    sock = _fake_gate(tmp_path, {"v": 1, "stdout": "", "stderr": "crashed", "exit_code": 1})
+    sock = _fake_warden(tmp_path, {"v": 1, "stdout": "", "stderr": "crashed", "exit_code": 1})
     verdict = _ask(sock, "read", {})
     assert verdict["allow"] is False
 
 
 @_NODE
-def test_extension_blocks_on_a_malformed_gate_reply(tmp_path):
+def test_extension_blocks_on_a_malformed_warden_reply(tmp_path):
     sock_path = tmp_path / "g.sock"
 
     class _GarbageHandler(socketserver.StreamRequestHandler):
@@ -145,7 +146,7 @@ def test_extension_blocks_on_a_malformed_gate_reply(tmp_path):
     verdict = _ask(sock_path, "read", {})
     assert verdict == {
         "allow": False,
-        "reason": "openDaisugi gate unreachable: run `daisugi start`, or `daisugi gate serve`",
+        "reason": "openDaisugi warden unreachable: run `daisugi start`, or `daisugi warden serve`",
     }
 
 
@@ -154,7 +155,7 @@ def test_socket_absent_blocks_with_teaching_reason(tmp_path):
     verdict = _ask(tmp_path / "nope.sock", "read", {"path": "/x"})
     assert verdict == {
         "allow": False,
-        "reason": "openDaisugi gate unreachable: run `daisugi start`, or `daisugi gate serve`",
+        "reason": "openDaisugi warden unreachable: run `daisugi start`, or `daisugi warden serve`",
     }
 
 
@@ -162,12 +163,12 @@ def test_socket_absent_blocks_with_teaching_reason(tmp_path):
 def test_extension_blocks_when_the_socket_is_not_a_private_socket_we_own(tmp_path):
     """A world-writable socket that answers exit_code 0 must still block:
     a local process that wins the path must not be able to grant an allow.
-    Mirrors gate_client.py's _socket_is_trustworthy."""
-    sock = _fake_gate(tmp_path, {"v": 1, "stdout": "", "stderr": "", "exit_code": 0}, mode=0o666)
+    Mirrors warden_client.py's _socket_is_trustworthy."""
+    sock = _fake_warden(tmp_path, {"v": 1, "stdout": "", "stderr": "", "exit_code": 0}, mode=0o666)
     verdict = _ask(sock, "read", {"path": "/x"})
     assert verdict == {
         "allow": False,
-        "reason": "openDaisugi gate unreachable: run `daisugi start`, or `daisugi gate serve`",
+        "reason": "openDaisugi warden unreachable: run `daisugi start`, or `daisugi warden serve`",
     }
 
 
@@ -217,7 +218,7 @@ def _report(sock_path: Path, state: str, extra_env: dict | None = None):
     return subprocess.run(
         ["node", "--experimental-strip-types", str(HERE / "run_report_state.mjs"), state],
         cwd=HERE,
-        env={"OPENDAISUGI_GATE_SOCK": str(sock_path), **(extra_env or {}), **_ENV_BASE},
+        env={"OPENDAISUGI_WARDEN_SOCK": str(sock_path), **(extra_env or {}), **_ENV_BASE},
         capture_output=True,
         text=True,
         timeout=10,
@@ -245,9 +246,9 @@ def test_report_state_sends_hook_report_shape_with_session_id_pane_split(tmp_pat
 
 @_NODE
 def test_report_state_carries_the_callers_coppice_sock_and_pane_on_the_request(tmp_path):
-    """The resident gate's own environment names no pane at all (it drops
+    """The resident warden's own environment names no pane at all (it drops
     COPPICE_SOCK/COPPICE_PANE at start). Without these explicit request
-    fields the gate has no way back to THIS pane's coppice socket."""
+    fields the warden has no way back to THIS pane's coppice socket."""
     handler = type("H", (_CapturingReportHandler,), {"captured": []})
     sock_path = tmp_path / "g.sock"
     _serve(sock_path, handler)
@@ -278,7 +279,7 @@ def test_report_state_carries_no_coppice_sock_field_with_only_the_pane_set(tmp_p
 
 
 @_NODE
-def test_ask_gate_carries_the_callers_coppice_sock_and_pane_on_the_request(tmp_path):
+def test_ask_warden_carries_the_callers_coppice_sock_and_pane_on_the_request(tmp_path):
     captured: list = []
 
     class _CapturingHandler(socketserver.StreamRequestHandler):
@@ -306,7 +307,7 @@ def test_ask_gate_carries_the_callers_coppice_sock_and_pane_on_the_request(tmp_p
 
 
 @_NODE
-def test_report_state_never_raises_when_gate_unreachable(tmp_path):
+def test_report_state_never_raises_when_warden_unreachable(tmp_path):
     result = _report(tmp_path / "nope.sock", "idle")
     assert result.returncode == 0, result.stderr
     assert "done" in result.stdout
@@ -314,7 +315,7 @@ def test_report_state_never_raises_when_gate_unreachable(tmp_path):
 
 @_NODE
 def test_report_state_never_raises_on_a_malformed_reply(tmp_path):
-    """A gate socket that exists but answers garbage must not throw or retry."""
+    """A warden socket that exists but answers garbage must not throw or retry."""
 
     class _MalformedHandler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
@@ -331,14 +332,14 @@ def test_report_state_never_raises_on_a_malformed_reply(tmp_path):
 
 @_NODE
 def test_report_state_skips_an_untrustworthy_socket_without_raising(tmp_path):
-    sock = _fake_gate(tmp_path, {"v": 1, "stdout": "", "stderr": "", "exit_code": 0}, mode=0o666)
+    sock = _fake_warden(tmp_path, {"v": 1, "stdout": "", "stderr": "", "exit_code": 0}, mode=0o666)
     result = _report(sock, "idle")
     assert result.returncode == 0, result.stderr
     assert "done" in result.stdout
 
 
 @_NODE
-def test_ask_gate_carries_the_callers_coppice_data_dir_on_the_request(tmp_path):
+def test_ask_warden_carries_the_callers_coppice_data_dir_on_the_request(tmp_path):
     captured: list = []
 
     class _CapturingHandler(socketserver.StreamRequestHandler):
@@ -359,12 +360,12 @@ def test_ask_gate_carries_the_callers_coppice_data_dir_on_the_request(tmp_path):
 @_NODE
 @pytest.mark.parametrize("var", ["OPENDAISUGI_HOME", "XDG_DATA_HOME"])
 def test_the_socket_is_found_under_a_moved_data_home(tmp_path, var):
-    """With no OPENDAISUGI_GATE_SOCK, the extension finds the gate where the
-    data home rule puts it (opendaisugi.datahome), as daisugi gate serve does."""
+    """With no OPENDAISUGI_WARDEN_SOCK, the extension finds the warden where the
+    data home rule puts it (opendaisugi.datahome), as daisugi warden serve does."""
     data = tmp_path / "moved" if var == "OPENDAISUGI_HOME" else tmp_path / "moved" / "opendaisugi"
-    (data / "gate").mkdir(parents=True)
+    (data / "warden").mkdir(parents=True)
     (tmp_path / "home").mkdir()
-    _serve(data / "gate" / "gate.sock", _FakeGateHandler)
+    _serve(data / "warden" / "warden.sock", _FakeWardenHandler)
     result = subprocess.run(
         [
             "node",

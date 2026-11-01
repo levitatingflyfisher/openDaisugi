@@ -8,8 +8,8 @@ Messages wire. It reports exactly what it found, and it reports when it
 found nothing. :func:`record` persists the result. This module never
 guesses a fact it did not check.
 
-The probe needs the ``[gateway]`` extra, which provides httpx. The token
-saving gateway needs the same extra. httpx is imported inside
+The probe needs the ``[router]`` extra, which provides httpx. The token
+saving router needs the same extra. httpx is imported inside
 :func:`probe`, so a bare ``pip install opendaisugi`` still imports this
 module. Only a call to ``probe()`` without the extra raises a teaching
 ``ImportError``.
@@ -296,7 +296,7 @@ def endpoint_context(
     """The window an OpenAI compatible ``/v1`` endpoint serves, else None.
 
     One best-effort read of ``/v1/models`` (then ``/props``) at the server root
-    of ``endpoint``. Any failure is None: the number is a report, not a gate.
+    of ``endpoint``. Any failure is None: the number is a report, not a warden.
     """
     try:
         import httpx
@@ -308,6 +308,36 @@ def endpoint_context(
     except Exception:  # noqa: BLE001 - a probe that fails reports nothing
         return None
     return result.context_window if result is not None else None
+
+
+def endpoint_kind(
+    endpoint: str, *, timeout_s: float = 3.0, client: "httpx.Client | None" = None
+) -> str:
+    """Ask a ``/v1`` endpoint once whether it is Ollama: ``ollama`` or ``openai``.
+
+    One ``GET {root}/api/tags``, with ``root`` cut as ``endpoint_context`` cuts
+    it. Only a 200 with a JSON object whose ``models`` is a list means
+    ``ollama``. Any other answer, or none, means ``openai``. It never raises.
+    """
+    base = endpoint.rstrip("/").removesuffix("/v1")
+    try:
+        import httpx
+
+        def ask(cl: "httpx.Client") -> str:
+            resp = _send(cl, _Reach(), "GET", f"{base}/api/tags", timeout=timeout_s)
+            if resp is None or resp.status_code != 200:
+                return "openai"
+            data = resp.json()
+            if isinstance(data, dict) and isinstance(data.get("models"), list):
+                return "ollama"
+            return "openai"
+
+        if client is not None:
+            return ask(client)
+        with httpx.Client() as cl:
+            return ask(cl)
+    except Exception:  # noqa: BLE001 - a question that fails answers openai
+        return "openai"
 
 
 def probe(
@@ -332,8 +362,8 @@ def probe(
         import httpx
     except ImportError as exc:
         raise ImportError(
-            "the model-host probe needs the [gateway] extra: uv add 'opendaisugi[gateway]' "
-            "or pip install 'opendaisugi[gateway]'"
+            "the model-host probe needs the [router] extra: uv add 'opendaisugi[router]' "
+            "or pip install 'opendaisugi[router]'"
         ) from exc
 
     if kind != "auto" and kind not in _PROBERS:
@@ -397,14 +427,14 @@ _KIND_TO_BACKEND = {
 }
 
 
-# Every value `daisugi gateway --upstream-kind` accepts. "anthropic" is the
+# Every value `daisugi router serve --upstream-kind` accepts. "anthropic" is the
 # real API and turns the count-tokens shim off. The other three are
 # self-hosted wires and turn it on.
 UPSTREAM_KINDS = ("anthropic", "ollama", "openai-compatible", "anthropic-compatible")
 
 
 def upstream_kind_for_recorded_host(host_kind: str) -> str:
-    """Map a recorded ``llm_host_kind`` onto the gateway's ``upstream_kind`` vocabulary.
+    """Map a recorded ``llm_host_kind`` onto the router's ``upstream_kind`` vocabulary.
 
     A recorded host is self-hosted whatever wire it speaks. The result is
     never ``"anthropic"``, the value that stands for the real API and turns
@@ -455,7 +485,7 @@ def harness_env(info: HostInfo) -> dict[str, str]:
 
     Claude Code is such a harness. The result is empty when the host does
     not speak that wire. An ``openai`` host needs an OpenAI wire harness
-    instead, or the gateway's OpenAI wire path.
+    instead, or the router's OpenAI wire path.
     """
     if info.kind == "ollama":
         # docs.ollama.com/api/anthropic-compatibility: base_url WITHOUT /v1,
@@ -492,12 +522,12 @@ def describe_host(info: HostInfo, config: Config) -> list[str]:
         for k, v in env.items():
             lines.append(f"  {k}={v}")
         lines.append(
-            f"or run: daisugi gateway --upstream {info.base_url} and point the harness "
-            "at the gateway. The gateway answers count_tokens itself. Most self-hosted servers do not."
+            f"or run: daisugi router serve --upstream {info.base_url} and point the harness "
+            "at the router. The router answers count_tokens itself. Most self-hosted servers do not."
         )
     else:
         lines.append(
             "this host speaks the OpenAI wire only. Point an OpenAI wire harness at it "
-            "directly, or route it through `daisugi gateway --openai-upstream`."
+            "directly, or route it through `daisugi router serve --openai-upstream`."
         )
     return lines

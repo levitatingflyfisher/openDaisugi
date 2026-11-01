@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/opendaisugi/coppice/internal/layout"
 	"github.com/opendaisugi/coppice/internal/proto"
@@ -16,17 +19,17 @@ func (s *Server) RegisterTaskCommands() {
 	_ = s.Handle("task.list", s.handleTaskList)
 	_ = s.Handle("task.close", s.handleTaskClose)
 	_ = s.Handle("task.move", s.handleTaskMove)
-	_ = s.Handle("task.set_foreman", s.handleSetForeman)
+	_ = s.Handle("task.set_steward", s.handleSetSteward)
 }
 
-// handleSetForeman names the pane that hears a task's asks first, for the
+// handleSetSteward names the pane that hears a task's asks first, for the
 // task and every descendant that names no nearer one. An empty pane clears
 // it. guard lets only the operator run it.
-func (s *Server) handleSetForeman(_ *Client, r *proto.Request) proto.Response {
+func (s *Server) handleSetSteward(_ *Client, r *proto.Request) proto.Response {
 	id, _ := r.Str("task")
 	if id == "" {
 		return proto.ErrResp(r.ID, proto.ErrBadRequest,
-			"task.set_foreman needs task. Run: coppice task list")
+			"task.set_steward needs task. Run: coppice task list")
 	}
 	if _, ok := s.tree.Task(id); !ok {
 		return noTask(r.ID, id)
@@ -40,15 +43,15 @@ func (s *Server) handleSetForeman(_ *Client, r *proto.Request) proto.Response {
 		}
 		if p.Closed {
 			return proto.ErrResp(r.ID, proto.ErrBadRequest,
-				fmt.Sprintf("pane %s is closed. A foreman must be open.", pane))
+				fmt.Sprintf("pane %s is closed. A steward must be open.", pane))
 		}
 	}
-	if err := s.tree.SetForeman(id, pane); err != nil {
+	if err := s.tree.SetSteward(id, pane); err != nil {
 		return noTask(r.ID, id)
 	}
 	s.markLayoutDirty()
 	s.recheckHolds()
-	return proto.OKResp(r.ID, map[string]any{"task": id, "foreman": pane})
+	return proto.OKResp(r.ID, map[string]any{"task": id, "steward": pane})
 }
 
 // keepWorktreeHint is the sentence every refusal about a worktree ends
@@ -64,7 +67,7 @@ func noTask(reqID, id string) proto.Response {
 // handleTaskCreate records a task. With worktree true it first finds the
 // repo that holds cwd and adds a worktree named after the label beside it.
 // The worktree is made before the record, so a failed add leaves nothing.
-func (s *Server) handleTaskCreate(_ *Client, r *proto.Request) proto.Response {
+func (s *Server) handleTaskCreate(c *Client, r *proto.Request) proto.Response {
 	label, _ := r.Str("label")
 	label = cleanLabel(label)
 	if label == "" {
@@ -76,6 +79,10 @@ func (s *Server) handleTaskCreate(_ *Client, r *proto.Request) proto.Response {
 		if _, ok := s.tree.Task(parent); !ok {
 			return noTask(r.ID, parent)
 		}
+	}
+	envelope, errResp := s.taskEnvelopeParam(c, r, parent)
+	if errResp != nil {
+		return *errResp
 	}
 	cwd, _ := r.Str("cwd")
 	model, _ := r.Str("model")
@@ -99,7 +106,7 @@ func (s *Server) handleTaskCreate(_ *Client, r *proto.Request) proto.Response {
 		}
 	}
 	rec, err := s.tree.CreateTask(layout.Task{
-		Label: label, Parent: parent, Cwd: cwd, Worktree: path, Model: model,
+		Label: label, Parent: parent, Cwd: cwd, Worktree: path, Model: model, Envelope: envelope,
 	})
 	if err != nil {
 		if path != "" {
@@ -125,7 +132,7 @@ func (s *Server) taskRow(tk layout.Task, paneState func(string) string) map[stri
 	}
 	row := map[string]any{
 		"id": tk.ID, "label": tk.Label, "parent": tk.Parent, "cwd": tk.Cwd,
-		"worktree": tk.Worktree, "model": tk.Model, "foreman": tk.Foreman,
+		"worktree": tk.Worktree, "model": tk.Model, "steward": tk.Steward,
 		"state": layout.TaskState(tk, s.tree, paneState),
 		"panes": panes,
 	}
@@ -133,6 +140,14 @@ func (s *Server) taskRow(tk layout.Task, paneState func(string) string) map[stri
 		if ahead, _, _, err := worktree.Status(tk.Worktree); err == nil {
 			row["ahead"] = ahead
 		}
+	}
+	// The session a task's envelope is registered under, once a pane has
+	// started in it. The tree view matches its nodes to tasks by it.
+	if tk.Session != "" {
+		row["session"] = tk.Session
+	}
+	if len(tk.Envelope) > 0 {
+		row["envelope"] = true
 	}
 	return row
 }
@@ -179,8 +194,8 @@ func (s *Server) scopeOf(r *proto.Request) (keep map[string]bool, path []string,
 }
 
 // handleTaskList lists the tasks with their folded state. A blocked pane
-// whose ask a foreman holds folds as working: the task waits on its
-// foreman, not on the operator.
+// whose ask a steward holds folds as working: the task waits on its
+// steward, not on the operator.
 func (s *Server) handleTaskList(_ *Client, r *proto.Request) proto.Response {
 	keep, path, bad := s.scopeOf(r)
 	if bad != nil {
@@ -306,4 +321,78 @@ func (s *Server) handleTaskMove(_ *Client, r *proto.Request) proto.Response {
 	s.markLayoutDirty()
 	s.recheckHolds()
 	return proto.OKResp(r.ID, map[string]any{"task": id, "parent": parent})
+}
+
+// taskEnvelopeParam reads the envelope a task.create asks for: envelope (a
+// JSON object) or project (a name, read from <config dir>/envelopes as the
+// steward's spawn reads it). With a parent that carries an envelope, the
+// child's is proved to fit inside it; a refusal is bad_request with the
+// reasons. With no envelope above, only the operator may give one (W3K-12). nil
+// envelope and nil response mean the task has none.
+func (s *Server) taskEnvelopeParam(c *Client, r *proto.Request, parent string) (json.RawMessage, *proto.Response) {
+	raw, hasEnv := r.Raw("envelope")
+	project, _ := r.Str("project")
+	if hasEnv && (len(raw) == 0 || string(raw) == "null") {
+		hasEnv = false
+	}
+	if !hasEnv && project == "" {
+		return nil, nil
+	}
+	fail := func(code proto.ErrCode, msg string) (json.RawMessage, *proto.Response) {
+		resp := proto.ErrResp(r.ID, code, msg)
+		return nil, &resp
+	}
+	if hasEnv && project != "" {
+		return fail(proto.ErrBadRequest, "task.create takes envelope or project, not both.")
+	}
+	// An envelope that has none above it is a root: it has nothing to be
+	// proved against. A call with no client is the server's own, the
+	// operator's; a pane may not make a root, under a task or not.
+	var up layout.Task
+	pinned := false
+	if parent != "" {
+		up, pinned = s.pinnedTask(parent)
+	}
+	if !pinned {
+		if c != nil && c.roleOf().noAllow {
+			return fail(proto.ErrUnauthorized, TaskRefusal)
+		}
+	}
+	var env json.RawMessage
+	if hasEnv {
+		env = raw
+	} else {
+		if !validProjectName(project) {
+			return fail(proto.ErrBadRequest, fmt.Sprintf("%q is not a project name.", project))
+		}
+		pe, err := readProjectEnvelope(filepath.Join(envelopeDir(), project+".json"), project)
+		if err != nil {
+			return fail(proto.ErrBadRequest, err.Error())
+		}
+		env = pe.Envelope
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(env, &obj) != nil || obj == nil {
+		return fail(proto.ErrBadRequest, "the envelope must be a JSON object.")
+	}
+	if pinned {
+		if err := s.proveEdge(up, env); err != nil {
+			return fail(proto.ErrBadRequest, "the envelope does not fit inside its parent's: "+err.Error())
+		}
+	}
+	return env, nil
+}
+
+// validProjectName is a project's file stem: letters, digits, dot, dash and
+// underscore, never starting with a dot or a dash.
+func validProjectName(name string) bool {
+	if name == "" || len(name) > 64 || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "-") {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }

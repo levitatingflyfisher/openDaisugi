@@ -3,9 +3,9 @@
 
 use std::time::Duration;
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
-use crate::gateway::pyops;
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
+use crate::router::pyops;
 
 use super::coppice::py_str;
 use super::wav::write_wav_pcm;
@@ -15,8 +15,16 @@ use super::wav::write_wav_pcm;
 #[derive(Debug)]
 pub enum ClientErr {
     Server(String),
+    /// A VoiceServerError from a server that is still turning an earlier
+    /// clip into text (409): the clip is good and can go out again later.
+    Busy(String),
     Other(String),
 }
+
+/// The two replies a clip meets when the server is slow or sends no JSON. Both
+/// are server errors, so a push-to-talk clip that meets them is kept.
+const NO_ANSWER: &str = "The voice server did not answer in time.";
+const NOT_JSON: &str = "The voice server sent an answer that is not JSON.";
 
 pub trait Stream {
     fn start(&mut self) -> Result<(), String>;
@@ -98,12 +106,17 @@ pub fn run_ptt(
     let mut recording = false;
     let mut stream: Option<Box<dyn Stream>> = None;
     let mut frames: Vec<Vec<u8>> = vec![];
+    // A clip the busy server refused. It goes out with the next one.
+    let mut kept: Vec<Vec<u8>> = vec![];
     while let Some(ch) = keys() {
         if ch == 'q' {
             if recording {
                 if let Some(s) = stream.as_mut() {
                     s.stop()?;
                 }
+            }
+            if !kept.is_empty() {
+                print("A kept recording was not sent.".into());
             }
             break;
         }
@@ -125,9 +138,16 @@ pub fn run_ptt(
                 }
             }
             s.stop()?;
+            let mut all = std::mem::take(&mut kept);
+            all.append(&mut frames);
+            frames = all;
             match record_and_send(&frames, pane, client, 16000, print) {
                 Ok(r) => results.push(r),
-                Err(ClientErr::Server(m)) => print(m),
+                Err(ClientErr::Server(m)) | Err(ClientErr::Busy(m)) => {
+                    print(m);
+                    kept = frames.clone();
+                    print("Your recording is kept and goes out with the next one.".into());
+                }
                 Err(ClientErr::Other(m)) => return Err(m),
             }
         }
@@ -187,14 +207,14 @@ impl HttpClient {
         let url = format!("{}{path}", self.url);
         let ans = match crate::llm::http::post(&url, &headers, body, self.timeout.as_secs_f64(), &crate::netproxy::Httpx::none()) {
             Ok(a) => a,
-            Err(crate::llm::http::Fail::Timeout) => return Err(ClientErr::Other("timed out".into())),
+            Err(crate::llm::http::Fail::Timeout) => return Err(ClientErr::Server(NO_ANSWER.into())),
             Err(crate::llm::http::Fail::Unported(w)) => return Err(ClientErr::Other(w)),
             Err(_) => return Err(self.unreachable()),
         };
         let status = ans.status;
         let parsed = pyops::loads_text(&ans.text);
         if (200..300).contains(&status) {
-            return parsed.map_err(|_| ClientErr::Other("the answer is not JSON".into()));
+            return parsed.map_err(|_| ClientErr::Server(NOT_JSON.into()));
         }
         let obj = match parsed {
             Ok(Value::Obj(o)) => Some(o),
@@ -207,6 +227,7 @@ impl HttpClient {
                 }
             }
         }
+        let obj_error_is_busy = obj.as_ref().and_then(|o| o.get("error")).is_some_and(|v| matches!(v, Value::Str(s) if s == "busy"));
         let mut msg = format!("The voice server answered {status}.");
         if let Some(o) = obj {
             let m = o.get("message").filter(|v| v.truthy()).or_else(|| o.get("error").filter(|v| v.truthy()));
@@ -214,7 +235,12 @@ impl HttpClient {
                 msg = py_str(m);
             }
         }
-        Err(ClientErr::Server(msg))
+        let busy = status == 409 && obj_error_is_busy;
+        if busy {
+            Err(ClientErr::Busy(msg))
+        } else {
+            Err(ClientErr::Server(msg))
+        }
     }
 }
 
@@ -229,5 +255,146 @@ impl VoiceClient for HttpClient {
         o.set("text", text_);
         o.set("mode", mode);
         self.post("/deliver", "application/json", pyjson::dumps(&Value::Obj(o), true).as_bytes(), true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct OneChunk(Option<Vec<u8>>);
+    impl Stream for OneChunk {
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn read(&mut self, _frames: usize) -> Result<(Vec<u8>, bool), String> {
+            Ok((self.0.take().unwrap_or_default(), false))
+        }
+    }
+
+    /// Refuses its first transcribe, as busy or with a plain error.
+    struct Refuses {
+        busy: bool,
+        calls: Vec<Vec<u8>>,
+    }
+    impl VoiceClient for Refuses {
+        fn transcribe(&mut self, wav: &[u8]) -> Result<Value, ClientErr> {
+            self.calls.push(wav.to_vec());
+            if self.calls.len() == 1 {
+                let m = "still working".to_string();
+                return Err(if self.busy { ClientErr::Busy(m) } else { ClientErr::Server(m) });
+            }
+            Ok(Value::Obj(Object::new()))
+        }
+        fn deliver(&mut self, _p: &str, _t: &str, _m: &str) -> Result<Value, ClientErr> {
+            Ok(Value::Obj(Object::new()))
+        }
+    }
+
+    fn two_clips(c: &mut Refuses) -> Vec<String> {
+        let mut streams = vec![vec![2u8, 0].repeat(400), vec![1u8, 0].repeat(400)];
+        let mut keys = vec!['q', ' ', ' ', ' ', ' '];
+        let mut said = vec![];
+        run_ptt(
+            "w1:p1",
+            c,
+            &mut || keys.pop(),
+            &mut || Ok(Box::new(OneChunk(streams.pop())) as Box<dyn Stream>),
+            1600,
+            &mut |s| said.push(s),
+        )
+        .unwrap();
+        said
+    }
+
+    #[test]
+    fn a_clip_the_busy_server_refused_is_kept_and_goes_out_with_the_next() {
+        let mut c = Refuses { busy: true, calls: vec![] };
+        let said = two_clips(&mut c);
+        assert_eq!(c.calls.len(), 2);
+        assert!(c.calls[1].len() > c.calls[0].len());
+        let first = &c.calls[0][44..];
+        assert!(c.calls[1].windows(first.len()).any(|w| w == first), "the first audio is in the second post");
+        assert!(said.iter().any(|s| s == "Your recording is kept and goes out with the next one."), "{said:?}");
+    }
+
+    /// Serves one canned HTTP reply on a loopback port, after `delay`.
+    fn serve_once(body: &'static str, delay: std::time::Duration) -> String {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut c, _)) = l.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                std::thread::sleep(delay);
+                let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        url
+    }
+
+    fn client_for(url: String, wait_ms: u64) -> HttpClient {
+        HttpClient { url, token: "tok".into(), timeout: Duration::from_millis(wait_ms) }
+    }
+
+    #[test]
+    fn a_reply_that_is_not_json_is_a_server_error() {
+        let mut c = client_for(serve_once("<html>oops", Duration::ZERO), 2000);
+        match c.transcribe(b"x") {
+            Err(ClientErr::Server(m)) => assert_eq!(m, "The voice server sent an answer that is not JSON."),
+            other => panic!("{:?}", other.err().map(|_| "wrong error")),
+        }
+    }
+
+    #[test]
+    fn a_timeout_is_a_server_error() {
+        let mut c = client_for(serve_once("{}", Duration::from_millis(1500)), 200);
+        match c.transcribe(b"x") {
+            Err(ClientErr::Server(m)) => assert_eq!(m, "The voice server did not answer in time."),
+            other => panic!("{:?}", other.err().map(|_| "wrong error")),
+        }
+    }
+
+    #[test]
+    fn a_joined_clip_after_a_plain_error_stays_kept_and_quit_names_it() {
+        struct BusyThenFails(Vec<Vec<u8>>);
+        impl VoiceClient for BusyThenFails {
+            fn transcribe(&mut self, wav: &[u8]) -> Result<Value, ClientErr> {
+                self.0.push(wav.to_vec());
+                let m = "x".to_string();
+                Err(if self.0.len() == 1 { ClientErr::Busy(m) } else { ClientErr::Server(m) })
+            }
+            fn deliver(&mut self, _p: &str, _t: &str, _m: &str) -> Result<Value, ClientErr> {
+                Ok(Value::Obj(Object::new()))
+            }
+        }
+        let mut streams = vec![vec![2u8, 0].repeat(400), vec![1u8, 0].repeat(400)];
+        let mut keys = vec!['q', ' ', ' ', ' ', ' '];
+        let mut said: Vec<String> = vec![];
+        let mut c = BusyThenFails(vec![]);
+        run_ptt(
+            "w1:p1",
+            &mut c,
+            &mut || keys.pop(),
+            &mut || Ok(Box::new(OneChunk(streams.pop())) as Box<dyn Stream>),
+            1600,
+            &mut |s| said.push(s),
+        )
+        .unwrap();
+        let kept = said.iter().filter(|s| *s == "Your recording is kept and goes out with the next one.").count();
+        assert_eq!(kept, 2, "{said:?}");
+        assert!(said.iter().any(|s| s == "A kept recording was not sent."), "{said:?}");
+    }
+
+    #[test]
+    fn a_clip_after_an_error_that_is_not_busy_is_kept_too() {
+        let mut c = Refuses { busy: false, calls: vec![] };
+        let said = two_clips(&mut c);
+        assert!(c.calls[1].len() > c.calls[0].len());
+        assert!(said.iter().any(|s| s == "Your recording is kept and goes out with the next one."), "{said:?}");
     }
 }

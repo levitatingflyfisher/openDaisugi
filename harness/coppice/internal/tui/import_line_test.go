@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// FM-R-85: the bar says "importing done/total" while the foreman imports.
+// FM-R-85: the bar says "importing done/total" while the steward imports.
 func TestTheBarShowsTheImportProgress(t *testing.T) {
 	m := chatModel()
 	if bar := barLine(m, 120); strings.Contains(bar, "import") {

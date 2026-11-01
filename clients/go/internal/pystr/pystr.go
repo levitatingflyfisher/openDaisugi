@@ -1,4 +1,4 @@
-// Package pystr models the parts of Python's str the gate's oracle relies
+// Package pystr models the parts of Python's str the warden's oracle relies
 // on: code-point indexing, repr, UTF-8 encoding and decoding, and the
 // exceptions they raise.
 //

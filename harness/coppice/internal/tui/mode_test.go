@@ -57,11 +57,11 @@ func fakeModeServer(t *testing.T) (sock string, got func() []map[string]any) {
 func TestTheFooterNamesMOnlyOnAGatedAgent(t *testing.T) {
 	plain := &Model{Rows: []Row{{ID: "a", State: "working"}}}
 	if strings.Contains(footerText(plain), "m mode") {
-		t.Fatalf("a row with no gate names m: %q", footerText(plain))
+		t.Fatalf("a row with no warden names m: %q", footerText(plain))
 	}
-	gated := &Model{Rows: []Row{{ID: "a", State: "working", Mode: "enforcing"}}}
-	if !strings.Contains(footerText(gated), "ctrl-w stop  m mode") {
-		t.Fatalf("a gated row does not name m: %q", footerText(gated))
+	checked := &Model{Rows: []Row{{ID: "a", State: "working", Mode: "enforcing"}}}
+	if !strings.Contains(footerText(checked), "ctrl-w stop  m mode") {
+		t.Fatalf("a checked row does not name m: %q", footerText(checked))
 	}
 }
 
@@ -83,11 +83,11 @@ func TestStackLineShowsTheMarkerTheOwnerSet(t *testing.T) {
 	}
 }
 
-func TestStackLineSaysWhenTheGateRefusesItsState(t *testing.T) {
+func TestStackLineSaysWhenTheWardenRefusesItsState(t *testing.T) {
 	p := map[string]any{"stack": map[string]any{"loop": "claude",
 		"daisugi": map[string]any{"mode": "enforcing", "armed": true, "marker": "refused",
 			"markerNote": "/g: is writable by group or others (fix: chmod 700 '/g')"}}}
-	if got := stackText(p); got != "claude · daisugi enforcing (gate state refused)" {
+	if got := stackText(p); got != "claude · daisugi enforcing (warden state refused)" {
 		t.Fatalf("stack line %q", got)
 	}
 }
@@ -101,7 +101,7 @@ func TestMAsksOnceThenEnterLowersTheAgentToWatching(t *testing.T) {
 	if m.Confirm != "w1:p1" || !m.ConfirmMode {
 		t.Fatalf("m did not ask: confirm %q mode %v", m.Confirm, m.ConfirmMode)
 	}
-	if want := "Watch only? The gate will log the calls of auth and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no."; m.PromptLine() != want {
+	if want := "Watch only? The warden will log the calls of auth and stop none. While it watches, it can also change the warden for other agents. Enter yes, Esc no."; m.PromptLine() != want {
 		t.Fatalf("prompt %q, want %q", m.PromptLine(), want)
 	}
 	if len(got()) != 0 {
@@ -143,21 +143,21 @@ func TestMOnAWatchingAgentEnforcesAtOnceAndOffIsNeverOffered(t *testing.T) {
 	if len(sets) != 1 || sets[0]["mode"] != "enforcing" || m.Confirm != "" {
 		t.Fatalf("set_mode requests %v, confirm %q", sets, m.Confirm)
 	}
-	if m.Message != "auth goes back to the gate's own mode from its next tool call." {
+	if m.Message != "auth goes back to the warden's own mode from its next tool call." {
 		t.Fatalf("status %q", m.Message)
 	}
 	off := &Model{Rows: []Row{{ID: "w1:p2", Label: "plain", State: "idle", Mode: "off"}}}
 	fo := testFloor(off, 120)
 	fo.o.Socket = sock
 	handleAll(t, fo, key{kind: keyByte, b: 'm'})
-	if off.Confirm != "" || off.Message != ModeNoGate("plain") || len(got()) != 1 {
-		t.Fatalf("m on an agent with no gate: confirm %q message %q", off.Confirm, off.Message)
+	if off.Confirm != "" || off.Message != ModeNoWarden("plain") || len(got()) != 1 {
+		t.Fatalf("m on an agent with no warden: confirm %q message %q", off.Confirm, off.Message)
 	}
 }
 
-// F11-R-14: when the whole gate watches (the hook runs in audit), m offers
+// F11-R-14: when the whole warden watches (the hook runs in audit), m offers
 // nothing to lower and the footer does not name it.
-func TestMOnAnAgentTheWholeGateWatchesLowersNothing(t *testing.T) {
+func TestMOnAnAgentTheWholeWardenWatchesLowersNothing(t *testing.T) {
 	sock, got := fakeModeServer(t)
 	m := &Model{Rows: []Row{{ID: "w1:p1", Label: "auth", State: "idle", Mode: "watching"}}}
 	f := testFloor(m, 120)
@@ -169,21 +169,21 @@ func TestMOnAnAgentTheWholeGateWatchesLowersNothing(t *testing.T) {
 	if m.Confirm != "" || len(got()) != 0 {
 		t.Fatalf("m acted: confirm %q requests %v", m.Confirm, got())
 	}
-	if m.Message != GateWatches("auth") {
+	if m.Message != WardenWatches("auth") {
 		t.Fatalf("message %q", m.Message)
 	}
 }
 
-// F11-R-15: when the installed hook names another gate root, m says so and
+// F11-R-15: when the installed hook names another warden root, m says so and
 // sets nothing.
 func TestMSetsNothingWhenTheHookReadsAnotherRoot(t *testing.T) {
 	sock, got := fakeModeServer(t)
 	m := &Model{Rows: []Row{{ID: "w1:p1", Label: "auth", State: "idle", Mode: "enforcing"}},
-		Facts: decodeFacts(map[string]any{"daisugi": map[string]any{"hook_root": "/elsewhere/gate"}})}
+		Facts: decodeFacts(map[string]any{"daisugi": map[string]any{"hook_root": "/elsewhere/warden"}})}
 	f := testFloor(m, 120)
 	f.o.Socket = sock
 	handleAll(t, f, key{kind: keyByte, b: 'm'})
-	if m.Confirm != "" || len(got()) != 0 || m.Message != HookRootLine("/elsewhere/gate") {
+	if m.Confirm != "" || len(got()) != 0 || m.Message != HookRootLine("/elsewhere/warden") {
 		t.Fatalf("confirm %q requests %v message %q", m.Confirm, got(), m.Message)
 	}
 }

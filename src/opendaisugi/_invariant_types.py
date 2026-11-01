@@ -21,7 +21,7 @@ RECOGNIZED_OPAQUE_TYPES = frozenset(
 # v0.28.3: opaque postcondition types discharged at Stage 2 by
 # ``stage2._OPAQUE_POSTCONDITION_HANDLERS``. Stage 1 strict-mode must not
 # reject these as "no verifiable expr" — they ARE verifiable, just at the
-# post-execution gate. Keep in sync with stage2._OPAQUE_POSTCONDITION_HANDLERS.
+# post-execution check. Keep in sync with stage2._OPAQUE_POSTCONDITION_HANDLERS.
 RECOGNIZED_STAGE2_POSTCONDITION_TYPES = frozenset(
     {
         "exit_code",

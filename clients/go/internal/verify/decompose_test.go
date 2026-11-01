@@ -6,7 +6,7 @@ import (
 )
 
 // TestDecomposeCommand is a committed regression table for the decompose
-// port. The real gate is the (never-committed) corpus — see
+// port. The real warden is the (never-committed) corpus — see
 // docs/spec/conformance.md — but the corpus isn't always available (a
 // fresh checkout, CI without .opendaisugi/), so this locks in every shape
 // that was hand-derived from the live oracle while porting, including

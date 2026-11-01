@@ -1,5 +1,5 @@
 // The session tree on path E: sprig owns the loop, so it writes the same
-// JSONL shape daisugi's gate writes on path D (docs/plans/2026-08-27-cockpit-spec.md
+// JSONL shape daisugi's warden writes on path D (docs/plans/2026-08-27-cockpit-spec.md
 // §6.1) — one append-only file per session, id/parentId on every entry, the
 // head persisted as the last write wins.
 //
@@ -34,7 +34,7 @@ type ToolUse struct{ ID, Name string }
 // Implementations must be cheap and must not block the loop for long — a
 // SessionWriter's own writes are the only I/O it does, and a write failure
 // there is swallowed (best-effort: a session-tree failure must never abort
-// the agent's actual work, the same contract daisugi's gate holds for
+// the agent's actual work, the same contract daisugi's warden holds for
 // _log_tree on path D).
 type SessionObserver interface {
 	OnPrompt(text string)
@@ -220,7 +220,7 @@ func truncateRunes(s string, n int) string {
 }
 
 // detailOf picks the one input field worth showing at a glance — the same
-// "command, then path" preference the gate's own detail extraction uses.
+// "command, then path" preference the warden's own detail extraction uses.
 func detailOf(name string, input map[string]any) string {
 	for _, k := range []string{"command", "cmd", "path", "file_path", "url"} {
 		if v, ok := input[k].(string); ok {

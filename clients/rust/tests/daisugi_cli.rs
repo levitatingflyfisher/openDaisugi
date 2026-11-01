@@ -1,5 +1,5 @@
-//! The `daisugi` binary: `gate check` decides in a child it starts as
-//! `daisugi gate check`, and the other commands keep the Python CLI's
+//! The `daisugi` binary: `warden check` decides in a child it starts as
+//! `daisugi warden check`, and the other commands keep the Python CLI's
 //! contract. clients/cli_compare.py holds the full differential cases.
 
 use std::io::Write;
@@ -76,8 +76,8 @@ fn put_exe(path: &std::path::Path, src: Option<&std::path::Path>, text: &str) {
     assert!(child.wait().unwrap().success(), "could not make {}", path.display());
 }
 
-fn gate_root(home: &PathBuf) -> PathBuf {
-    let root = home.join("gate");
+fn warden_root(home: &PathBuf) -> PathBuf {
+    let root = home.join("warden");
     std::fs::create_dir_all(root.join("envelopes")).unwrap();
     std::fs::write(
         root.join("envelopes/default.json"),
@@ -91,15 +91,15 @@ const READ: &str = r#"{"session_id":"s","tool_name":"Read","tool_input":{"file_p
 const RM: &str = r#"{"session_id":"s","tool_name":"Bash","tool_input":{"command":"rm x"},"cwd":"/work","tool_use_id":"t1"}"#;
 
 #[test]
-fn gate_check_answers_and_its_child_runs_gate_check() {
+fn warden_check_answers_and_its_child_runs_warden_check() {
     let home = scratch("check");
-    let root = gate_root(&home);
+    let root = warden_root(&home);
     let r = root.to_str().unwrap();
-    let (code, out, err) = run(daisugi(&home, &["gate", "check", "--mode", "enforce", "--root", r]), READ);
+    let (code, out, err) = run(daisugi(&home, &["warden", "check", "--mode", "enforce", "--root", r]), READ);
     assert_eq!((code, out.as_str(), err.as_str()), (0, "{\"continue\": true}\n", ""));
     // A child killed while it waits for an operator is a deny.
     std::fs::write(root.join("operator.json"), format!(r#"{{"pid": {}, "at": 0}}"#, std::process::id())).unwrap();
-    let mut p = daisugi(&home, &["gate", "check", "--mode", "enforce", "--root", r, "--ask", "--ask-timeout", "20"])
+    let mut p = daisugi(&home, &["warden", "check", "--mode", "enforce", "--root", r, "--ask", "--ask-timeout", "20"])
         .spawn()
         .unwrap();
     p.stdin.take().unwrap().write_all(RM.as_bytes()).unwrap();
@@ -110,7 +110,7 @@ fn gate_check_answers_and_its_child_runs_gate_check() {
             let kids = std::fs::read_to_string(format!("/proc/{0}/task/{0}/children", p.id())).unwrap_or_default();
             for k in kids.split_whitespace() {
                 let argv = std::fs::read(format!("/proc/{k}/cmdline")).unwrap_or_default();
-                assert!(argv.windows(12).any(|w| w == b"gate\0check\0-"), "the child is not `daisugi gate check`");
+                assert!(argv.windows(14).any(|w| w == b"warden\0check\0-"), "the child is not `daisugi warden check`");
                 unsafe { libc::kill(k.parse().unwrap(), libc::SIGKILL) };
                 seen = true;
             }
@@ -127,9 +127,9 @@ fn gate_check_answers_and_its_child_runs_gate_check() {
 #[test]
 fn the_child_variable_alone_makes_no_child() {
     let home = scratch("worker");
-    let root = gate_root(&home);
-    let mut c = daisugi(&home, &["gate", "check", "--mode", "enforce", "--root", root.to_str().unwrap()]);
-    c.env("DAISUGI_GATE_WORKER", "set-by-someone");
+    let root = warden_root(&home);
+    let mut c = daisugi(&home, &["warden", "check", "--mode", "enforce", "--root", root.to_str().unwrap()]);
+    c.env("DAISUGI_WARDEN_WORKER", "set-by-someone");
     assert_eq!(run(c, READ), (0, "{\"continue\": true}\n".to_string(), String::new()));
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -137,8 +137,8 @@ fn the_child_variable_alone_makes_no_child() {
 #[test]
 fn a_command_not_carried_says_so_in_one_line() {
     let home = scratch("notyet");
-    let (code, out, err) = run(daisugi(&home, &["gate", "audit"]), "");
-    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi gate audit is not in this binary yet.\n"));
+    let (code, out, err) = run(daisugi(&home, &["warden", "audit"]), "");
+    assert_eq!((code, out.as_str(), err.as_str()), (2, "", "daisugi warden audit is not in this binary yet.\n"));
     // The version is the build's: DAISUGI_VERSION, or the checkout's git
     // describe, never a fixed number.
     let (code, out, _) = run(daisugi(&home, &["--version"]), "");
@@ -152,7 +152,7 @@ fn the_everyday_commands_answer_on_a_fresh_home() {
     let home = scratch("everyday");
     let (code, out, _) = run(daisugi(&home, &["config", "--json"]), "");
     assert_eq!(code, 0);
-    assert!(out.contains("\"gate_mode (resolved)\": {\n    \"value\": \"audit\""), "{out}");
+    assert!(out.contains("\"warden_mode (resolved)\": {\n    \"value\": \"audit\""), "{out}");
     let (code, out, _) = run(daisugi(&home, &["journal", "stats", "--json"]), "");
     assert_eq!((code, out.as_str()), (0, "{\n  \"total\": 0,\n  \"passed\": 0,\n  \"failed\": 0,\n  \"avg_duration_ms\": 0.0\n}\n"));
     // The journal is made, as Journal() makes it.
@@ -164,13 +164,13 @@ fn the_everyday_commands_answer_on_a_fresh_home() {
     // No claude on PATH: the harness step fails and nothing is written.
     let (code, out, _) = run(daisugi(&home, &["start", "--dry-run"]), "");
     assert_eq!(code, 1);
-    assert!(out.starts_with("  harness      failed   Tried to find the agent harness."), "{out}");
+    assert!(out.starts_with("  harness        failed   Tried to find the agent harness."), "{out}");
     assert!(!home.join(".claude").exists());
     // Without --no-ui the failed harness step still ends start before the
     // view opens.
     let (code, out, _) = run(daisugi(&home, &["start"]), "");
     assert_eq!(code, 1);
-    assert!(out.contains("  view         would    open the live view (daisugi dashboard)"), "{out}");
+    assert!(out.contains("  view           would    open the live view (daisugi dashboard)"), "{out}");
     let _ = std::fs::remove_dir_all(&home);
 }
 
@@ -207,25 +207,25 @@ fn journal_parse_and_ingest_journal_a_transcript() {
 fn install_writes_a_hook_status_reads_back() {
     let home = scratch("install");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
-    let (code, out, err) = run(daisugi(&home, &["install", "--gate", "--runtime", "claude", "--yes"]), "");
+    let (code, out, err) = run(daisugi(&home, &["install", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 0, "{out}{err}");
     let settings = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
-    assert!(settings.contains("DAISUGI_GATE_HOOK=opendaisugi.gate "), "{settings}");
-    assert!(settings.contains(" gate check --mode audit "), "{settings}");
-    let (code, out, _) = run(daisugi(&home, &["gate", "status", "--json"]), "");
+    assert!(settings.contains("DAISUGI_WARDEN_HOOK=opendaisugi.warden "), "{settings}");
+    assert!(settings.contains(" warden check --mode audit "), "{settings}");
+    let (code, out, _) = run(daisugi(&home, &["warden", "status", "--json"]), "");
     assert_eq!(code, 0);
     assert_eq!(
         out,
         format!(
             "{{\"armed\": true, \"mode\": \"audit\", \"mode_source\": \"global\", \"envelopes\": [], \
-             \"dialect\": {{\"hash\": \"{}\", \"pin\": null, \"mode\": \"audit\", \"word_would_deny\": 0}}}}\n",
+             \"dialect\": {{\"hash\": \"{}\", \"pin\": null, \"mode\": \"audit\", \"source\": \"none\", \"word_would_deny\": 0}}}}\n",
             daisugi_verify::dialect::DIALECT_HASH
         )
     );
     // A second install finds the same hooks and writes nothing; as the
     // oracle does, it still lists the skill it links (IN-1).
     let before = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
-    let (code, out, _) = run(daisugi(&home, &["install", "--gate", "--runtime", "claude", "--yes"]), "");
+    let (code, out, _) = run(daisugi(&home, &["install", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 0);
     assert!(out.contains("Done. Files modified:\n  ") && out.contains("opendaisugi-checklist\n\nRestart"), "{out}");
     assert_eq!(std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(), before);
@@ -236,14 +236,14 @@ fn install_writes_a_hook_status_reads_back() {
 fn enforce_install_needs_a_policy_first() {
     let home = scratch("enforce-policy");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
-    let (code, out, err) = run(daisugi(&home, &["install", "--gate", "--enforce", "--runtime", "claude", "--yes"]), "");
+    let (code, out, err) = run(daisugi(&home, &["install", "--enforce", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 1, "{out}{err}");
-    assert!(err.starts_with("Enforce needs a policy first. Run: daisugi gate init --workspace DIR"), "{err}");
+    assert!(err.starts_with("Enforce needs a policy first. Run: daisugi warden init --workspace DIR"), "{err}");
     assert!(!home.join(".claude/settings.json").exists());
-    let envs = home.join(".opendaisugi/gate/envelopes");
+    let envs = home.join(".opendaisugi/warden/envelopes");
     std::fs::create_dir_all(&envs).unwrap();
     std::fs::write(envs.join("default.json"), "{}").unwrap();
-    let (code, out, err) = run(daisugi(&home, &["install", "--gate", "--enforce", "--runtime", "claude", "--yes"]), "");
+    let (code, out, err) = run(daisugi(&home, &["install", "--enforce", "--runtime", "claude", "--yes"]), "");
     assert_eq!(code, 0, "{out}{err}");
     let _ = std::fs::remove_dir_all(&home);
 }
@@ -269,7 +269,7 @@ fn a_mise_install_hooks_the_shim_and_status_warns_on_a_gone_binary() {
     // Run the installed copy, as a mise stub would, not the cargo one.
     let installed_cmd = || {
         let mut d = Command::new(&installed);
-        d.args(["install", "--gate", "--runtime", "claude", "--yes"])
+        d.args(["install", "--runtime", "claude", "--yes"])
             .env_clear()
             .env("HOME", &home)
             .env("PATH", &path)
@@ -284,7 +284,7 @@ fn a_mise_install_hooks_the_shim_and_status_warns_on_a_gone_binary() {
     let (code, out, err) = run(c, "");
     assert_eq!(code, 0, "{out}{err}");
     let settings = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
-    assert!(settings.contains(&format!("{} gate check", shim.display())), "{settings}");
+    assert!(settings.contains(&format!("{} warden check", shim.display())), "{settings}");
     assert!(!err.contains("versioned mise install"), "{err}");
 
     // With no shim, an Omarchy stub on PATH in ~/.local/bin is next. This
@@ -306,7 +306,7 @@ fn a_mise_install_hooks_the_shim_and_status_warns_on_a_gone_binary() {
     let (code, out, err) = run(d, "");
     assert_eq!(code, 0, "{out}{err}");
     let settings = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
-    assert!(settings.contains(&format!("{} gate check", stub.display())), "{settings}");
+    assert!(settings.contains(&format!("{} warden check", stub.display())), "{settings}");
     assert!(!err.contains("versioned mise install"), "{err}");
 
     // With neither, the hook keeps the versioned path and says so.
@@ -315,14 +315,14 @@ fn a_mise_install_hooks_the_shim_and_status_warns_on_a_gone_binary() {
     let d = installed_cmd();
     let (code, out, err) = run(d, "");
     assert_eq!(code, 0, "{out}{err}");
-    assert!(err.contains("is a versioned mise install. Run daisugi install --gate again"), "{err}");
+    assert!(err.contains("is a versioned mise install. Run daisugi install again"), "{err}");
 
     // The upgrade removes the versioned binary: status warns.
     std::fs::remove_file(&installed).unwrap();
-    let (code, _, err) = run(daisugi(&home, &["gate", "status"]), "");
+    let (code, _, err) = run(daisugi(&home, &["warden", "status"]), "");
     assert_eq!(code, 0);
     assert!(
-        err.contains(&format!("runs {}, which does not exist, so the gate sees no call", installed.display())),
+        err.contains(&format!("runs {}, which does not exist, so the warden sees no call", installed.display())),
         "{err}"
     );
     let _ = std::fs::remove_dir_all(&home);
@@ -396,7 +396,7 @@ fn install_hands_over_to_the_port_daisugi_port_names() {
     put_exe(&bin.join("daisugi-rs"), Some(std::path::Path::new(env!("CARGO_BIN_EXE_daisugi"))), "");
     put_exe(&bin.join("daisugi"), None, "#!/bin/sh\necho \"go port: $* hop=$DAISUGI_PORT_HOP\"\n");
     let mut c = Command::new(bin.join("daisugi-rs"));
-    c.args(["-q", "install", "--gate", "--dry-run"])
+    c.args(["-q", "install", "--dry-run"])
         .env_clear()
         .env("HOME", &home)
         .env("PATH", "/usr/bin:/bin")
@@ -405,7 +405,7 @@ fn install_hands_over_to_the_port_daisugi_port_names() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let (code, out, err) = run(c, "");
-    assert_eq!((code, out.as_str()), (0, "go port: -q install --gate --dry-run hop=1\n"), "{err}");
+    assert_eq!((code, out.as_str()), (0, "go port: -q install --dry-run hop=1\n"), "{err}");
     let mut c = Command::new(bin.join("daisugi-rs"));
     c.args(["install", "--dry-run"])
         .env_clear()
@@ -426,11 +426,10 @@ fn install_hands_over_to_the_port_daisugi_port_names() {
     );
 }
 
-/// install._absolute_gate_root: `start --data-dir ../dd` is a ValueError in
-/// the oracle (exit 1), raised by the hook step after .claude is made. No
-/// data dir is made and no gate server starts.
+/// install._absolute_warden_root: `start --data-dir ../dd` is refused with one
+/// line, exit 2, before any write. No .claude, no data dir, no warden server.
 #[test]
-fn start_refuses_a_relative_gate_root() {
+fn start_refuses_a_relative_warden_root() {
     let home = scratch("start-relative-root");
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -440,12 +439,26 @@ fn start_refuses_a_relative_gate_root() {
     let mut c = daisugi(&home, &["start", "--no-ui", "--data-dir", "../dd"]);
     c.current_dir(&ws).env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
     let (code, out, err) = run(c, "");
-    assert_eq!(code, 1, "{out} {err}");
+    assert_eq!(code, 2, "{out} {err}");
     assert_eq!(
         err,
-        "Traceback (most recent call last): ...\nValueError: the gate root '../dd/gate' is not an absolute path; \
-         set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path\n"
+        "daisugi start: the warden root '../dd/warden' is not an absolute path; \
+         set HOME, OPENDAISUGI_HOME or XDG_DATA_HOME to an absolute path. Nothing was changed.\n"
     );
-    assert!(ws.join(".claude").is_dir());
+    assert!(!ws.join(".claude").exists());
     assert!(!home.join("dd").exists());
+}
+
+/// A hook written before the rename calls the old verb: it stays a refusal
+/// that blocks (exit 2) and says why.
+#[test]
+fn the_old_gate_verb_says_why_it_denies() { // names-ok
+    let home = scratch("old-verb");
+    let out = daisugi(&home, &["gate", "check", "--mode", "enforce"]).output().unwrap(); // names-ok
+    assert_eq!(out.status.code(), Some(2));
+    assert!(out.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "daisugi gate is now daisugi warden; run daisugi install to update the hook\n" // names-ok
+    );
 }

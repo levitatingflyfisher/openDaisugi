@@ -38,12 +38,12 @@ type Model interface {
 
 // Observer receives the agent's state transitions as they happen, so a fleet can
 // fuse status across many agents without scraping. States: "running", "tool:<name>",
-// "blocked" (a gate refusal), "done", "failed". Optional — nil means no reporting.
+// "blocked" (a warden refusal), "done", "failed". Optional — nil means no reporting.
 type Observer interface {
 	OnState(state string)
 }
 
-// Agent is the whole harness: a model, a gated executor, a turn budget. The loop
+// Agent is the whole harness: a model, a checked executor, a turn budget. The loop
 // is deliberately tiny — "an LLM, a loop, and enough tokens."
 type Agent struct {
 	Model    Model
@@ -76,6 +76,11 @@ type Agent struct {
 	// NoTools is a run that offers the model no tool (--tools none): a
 	// reply that calls one fails the run.
 	NoTools bool
+
+	// Help, when set, is the run's help tool. A valid call ends the run
+	// after the calls of that turn: Run returns the text, and Help holds
+	// the kind and the text.
+	Help *HelpTool
 
 	clarified bool // whether the current unclear reply has already been nudged
 }
@@ -126,7 +131,7 @@ func (a *Agent) report(state string) {
 	}
 }
 
-// Run drives the loop: ask the model, run any requested tools THROUGH THE GATE,
+// Run drives the loop: ask the model, run any requested tools THROUGH THE WARDEN,
 // feed results back, until the model finishes with plain text or the turn budget
 // runs out. A denied call comes back as a tool result the model can see and adapt
 // to — fail-closed, but not silent.
@@ -202,6 +207,10 @@ func (a *Agent) Run(task string) (string, error) {
 			}
 			a.History = append(a.History, Message{Role: "tool", Text: resultText(res)})
 		}
+		if a.Help != nil && a.Help.Called {
+			a.report("done")
+			return a.Help.Text, nil
+		}
 	}
 	a.report("failed")
 	return "", fmt.Errorf("sprig: gave up after %d turns without finishing", a.MaxTurns)
@@ -228,11 +237,11 @@ func needsClarification(text string) bool {
 }
 
 // resultText renders a tool Result for the model: the output on success, an
-// explicit REFUSED line (with the reason) when the gate said no, or the error.
+// explicit REFUSED line (with the reason) when the warden said no, or the error.
 func resultText(r Result) string {
 	switch {
 	case !r.Allowed:
-		return "REFUSED by the gate: " + r.Reason
+		return "REFUSED by the warden: " + r.Reason
 	case r.Err != nil:
 		return "error: " + r.Err.Error() + "\n" + r.Output
 	default:

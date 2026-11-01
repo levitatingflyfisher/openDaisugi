@@ -196,7 +196,7 @@ func (s *Server) handleMove(c *Client, r *proto.Request) proto.Response {
 	// "now": the agent has the brief. "typed": a terminal agent with no
 	// screen rule got it typed at once, and nothing says it landed.
 	res["when"] = "now"
-	if kind == "pty" && !s.gated(newID) {
+	if kind == "pty" && !s.checked(newID) {
 		res["when"] = "typed"
 	}
 	if p, ok := sent.Result.(map[string]any); ok {

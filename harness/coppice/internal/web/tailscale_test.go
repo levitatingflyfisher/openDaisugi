@@ -256,7 +256,7 @@ func TestServeTailscaleListensOnTheTailnetAndLoopbackOnly(t *testing.T) {
 	heard := make(chan []string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, cfg, Options{Dial: d, Tokens: store, Gate: AskChannel{Root: dataDir},
+		done <- Serve(ctx, cfg, Options{Dial: d, Tokens: store, Warden: AskChannel{Root: dataDir},
 			Listening: func(addrs []string) { heard <- addrs }})
 	}()
 	select {

@@ -153,7 +153,7 @@ def test_config_ignores_retired_runtime_supervision_fields(tmp_path):
 
 def test_module_selection_knobs_have_current_behaviour_defaults():
     cfg = default_config()
-    assert cfg.gate_mode == "audit"
+    assert cfg.warden_mode == "audit"
     assert cfg.verifier_client == "python"
     assert cfg.matcher_model == "lexical"
     assert cfg.llm_backend is None, "None means auto-detect, so a saved default pins nothing"
@@ -164,11 +164,11 @@ def test_module_selection_knobs_have_current_behaviour_defaults():
 def test_module_selection_knobs_round_trip_through_yaml(tmp_path):
     path = tmp_path / "config.yaml"
     save_config(
-        Config(gate_mode="enforce", verifier_client="go", pathway_store_backend="git"),
+        Config(warden_mode="enforce", verifier_client="go", pathway_store_backend="git"),
         path,
     )
     cfg = load_config(path)
-    assert cfg.gate_mode == "enforce"
+    assert cfg.warden_mode == "enforce"
     assert cfg.verifier_client == "go"
     assert cfg.pathway_store_backend == "git"
     # unspecified knobs keep defaults

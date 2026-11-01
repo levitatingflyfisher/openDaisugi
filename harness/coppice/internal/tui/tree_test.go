@@ -13,7 +13,7 @@ func treeFixture() ([]TaskRow, []Row) {
 	tasks := []TaskRow{
 		{ID: "t1", Label: "review-team", State: "working"},
 		{ID: "t2", Label: "docs", Parent: "t1", State: "working", Panes: []string{"w1:p1", "w1:p2"}},
-		{ID: "t3", Label: "gate-refactor", Worktree: "/repo-worktrees/gate-refactor",
+		{ID: "t3", Label: "gear-refactor", Worktree: "/repo-worktrees/gear-refactor",
 			State: "blocked", Ahead: 3, HasAhead: true, Panes: []string{"w1:p3"}},
 	}
 	panes := []Row{
@@ -29,7 +29,7 @@ func TestRenderTreeDrawsTasksThenPanesWithBoxLines(t *testing.T) {
 	tasks, panes := treeFixture()
 	lines := RenderTree(tasks, panes, 80)
 	text := strings.Join(lines, "\n")
-	for _, want := range []string{"├─", "└─", "review-team", "docs", "gate-refactor",
+	for _, want := range []string{"├─", "└─", "review-team", "docs", "gear-refactor",
 		"writer", "checker", "● needs you", "● working", "○ idle", "+3"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("tree is missing %q:\n%s", want, text)
@@ -39,7 +39,7 @@ func TestRenderTreeDrawsTasksThenPanesWithBoxLines(t *testing.T) {
 	if strings.Contains(text, "/repo-worktrees") {
 		t.Fatalf("tree shows the whole worktree path:\n%s", text)
 	}
-	if strings.Count(text, "gate-refactor") != 2 {
+	if strings.Count(text, "gear-refactor") != 2 {
 		t.Fatalf("want the label and the worktree base name once each:\n%s", text)
 	}
 	// A pane outside every task is not in the tree.

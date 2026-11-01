@@ -33,12 +33,12 @@ from opendaisugi.models import (
 # subsumption.py's two solve sites) builds terms and solves against that
 # shared context — Z3 releases the GIL while it works, so two threads doing
 # that at once is a genuine data race, not merely a crash risk: it can
-# silently produce a wrong, non-crashing verdict. The resident gate server
+# silently produce a wrong, non-crashing verdict. The resident warden server
 # (ADR-0017) runs thread-per-connection, so this lock closes that race.
 # Solves here are 0.6-4ms, so serializing them is free.
 #
 # Scope this tightly around AST-build + solver.check() only — never around
-# I/O. A later plan's operator-ask in the gate/approval layer can block up
+# I/O. A later plan's operator-ask in the warden/approval layer can block up
 # to 90s; that must never sit inside this lock, or it would re-serialize
 # the whole server and reintroduce head-of-line blocking.
 Z3_SOLVE_LOCK = threading.Lock()

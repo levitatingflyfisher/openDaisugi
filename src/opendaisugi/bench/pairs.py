@@ -14,16 +14,16 @@ import itertools
 
 from opendaisugi.bench.corpus import load_json, load_jsonl, resolve_corpus
 from opendaisugi.bench.layers import backend as backend_bench
-from opendaisugi.bench.layers import gate_path as gate_path_bench
 from opendaisugi.bench.layers import loop as loop_bench
 from opendaisugi.bench.layers import matcher as matcher_bench
 from opendaisugi.bench.layers import router as router_bench
 from opendaisugi.bench.layers import verifier as verifier_bench
+from opendaisugi.bench.layers import warden_path as warden_path_bench
 from opendaisugi.bench.options import (
-    GATE_PATHS,
     LOOPS,
     MATCHER_BACKENDS,
     VERIFIER_CLIENTS,
+    WARDEN_PATHS,
     build_hint,
     client_argv,
     client_is_built,
@@ -35,7 +35,7 @@ PAIRS: tuple[str, ...] = (
     "verifier-x-shell",
     "matcher-x-distiller",
     "router-x-models",
-    "loop-x-gate-path",
+    "loop-x-warden-path",
     "backend-x-envelope",
 )
 
@@ -54,9 +54,9 @@ WHY: dict[str, tuple[str, str]] = {
         "router x model set",
         "a router's saving is meaningless without the price of the models it picks",
     ),
-    "loop-x-gate-path": (
-        "loop x gate path",
-        "a loop is only as gated as its path, and the class differs per path",
+    "loop-x-warden-path": (
+        "loop x warden path",
+        "a loop is only as checked as its path, and the class differs per path",
     ),
     "backend-x-envelope": (
         "backend x envelope source",
@@ -308,20 +308,20 @@ def router_x_models(opts: BenchOpts) -> Table:
     )
 
 
-def loop_x_gate_path(opts: BenchOpts) -> Table:
-    """Every loop against its gate path: vocabulary cases, contract, class."""
+def loop_x_warden_path(opts: BenchOpts) -> Table:
+    """Every loop against its warden path: vocabulary cases, contract, class."""
     ref = resolve_corpus(loop_bench.CORPUS, opts.corpus)
     cases = load_jsonl(ref)
     vocab_ref = loop_bench._vocabulary_beside(ref)
     vocab = load_json(vocab_ref)
-    envelope_ref = gate_path_bench.battery_envelope_ref()
-    envelope = gate_path_bench.Envelope.model_validate(load_json(envelope_ref))
-    gate_ref = resolve_corpus(gate_path_bench.CORPUS, None)
-    gate_cases = load_jsonl(gate_ref)
+    envelope_ref = warden_path_bench.battery_envelope_ref()
+    envelope = warden_path_bench.Envelope.model_validate(load_json(envelope_ref))
+    warden_ref = resolve_corpus(warden_path_bench.CORPUS, None)
+    warden_cases = load_jsonl(warden_ref)
     columns = (
         Column("option", "loop"),
-        Column("gate_path", "gate path"),
-        Column("gate_cases", "gate cases"),
+        Column("warden_path", "warden path"),
+        Column("warden_cases", "warden cases"),
         Column("contract", "path contract"),
         Column("fail_open", "fail-open class"),
     )
@@ -332,27 +332,27 @@ def loop_x_gate_path(opts: BenchOpts) -> Table:
             rows.append(Row(name=name, absent=f"{entry.get('note', 'not pinned')}: {spec.install}"))
             continue
         passed, applicable, na = loop_bench.run_vocabulary_cases(name, cases, vocab, envelope)
-        cpassed, ctotal = gate_path_bench.run_contract(spec.gate_path, gate_cases, envelope)
+        cpassed, ctotal = warden_path_bench.run_contract(spec.warden_path, warden_cases, envelope)
         rows.append(
             Row(
-                name=f"{name}/{spec.gate_path}",
+                name=f"{name}/{spec.warden_path}",
                 cells={
                     "option": name,
-                    "gate_path": spec.gate_path,
-                    "gate_cases": f"{passed}/{applicable}" + (f", {na} n/a" if na else ""),
+                    "warden_path": spec.warden_path,
+                    "warden_cases": f"{passed}/{applicable}" + (f", {na} n/a" if na else ""),
                     "contract": f"{cpassed}/{ctotal}",
-                    "fail_open": GATE_PATHS[spec.gate_path].fail_open_class,
+                    "fail_open": WARDEN_PATHS[spec.warden_path].fail_open_class,
                 },
             )
         )
     return Table(
-        "loop-x-gate-path",
+        "loop-x-warden-path",
         columns,
         tuple(rows),
         ref,
         _REPRODUCE,
-        notes=(WHY["loop-x-gate-path"][1],),
-        companions=(vocab_ref, envelope_ref, gate_ref),
+        notes=(WHY["loop-x-warden-path"][1],),
+        companions=(vocab_ref, envelope_ref, warden_ref),
     )
 
 
@@ -439,7 +439,7 @@ _RUNNERS = {
     "verifier-x-shell": verifier_x_shell,
     "matcher-x-distiller": matcher_x_distiller,
     "router-x-models": router_x_models,
-    "loop-x-gate-path": loop_x_gate_path,
+    "loop-x-warden-path": loop_x_warden_path,
     "backend-x-envelope": backend_x_envelope,
 }
 

@@ -1,15 +1,17 @@
 # Design: ranking is a primitive
 
 Status: proposal for the owner, 2026-09-26. Revised 2026-09-28 after the owner's ranking ruling
-(RK-10 in `DECISIONS-PENDING.md`). **Built 2026-09-30, in part**, in Python, Go and Rust (rulings
-RK-R-1 to RK-R-15 in `clients/ADJUDICATIONS.md`): the records, the pure fit (stages 1 and 2 of the
-staged plan), choices and cards with the switch cost and decay (stage 3), the permanent-step join
-in weave (stage 4, through weave's own ask), and weave's attempts (part of stage 10). The commands
-are `daisugi rank fit`, `choose`, `queue`, and the owner's `record pick` and `record drop` (the
-verbs live under `record`, so the gate's existing deny covers them). Not built: the judge step
-(stage 5), `rank show`, the router labels (stage 6), the coppice cards view (stage 7), the pivot
-(stage 8), judge trust (stage 9), and the SQLite index of RK-6. Each part names the code it builds
-on.
+(RK-10 in `DECISIONS-PENDING.md`). **Built 2026-09-30 and 2026-10-31**, in Python, Go and Rust
+(rulings RK-R-1 to RK-R-21 in `clients/ADJUDICATIONS.md`, W3K-1 to W3K-18 in
+`docs/plans/2026-10-30-backlog/w3-ranking-tree-branching.md`): the records, the pure fit (stages
+1 and 2), choices and cards with the switch cost and decay (stage 3, decay 14 days by owner ruling
+A7), the permanent-step join in weave (stage 4), the judge step `rank judge` (stage 5), `rank show`,
+the pivot `rank pivot` (stage 8), judge trust and Thompson-sampled weights `rank judges` (stage 9,
+owner ruling A3), branching's use of the fit (part of stage 10), and coppice's cards view, the
+arena (stage 7, RK-7), with the operator-only answer. Not built: the router labels (stage 6,
+owned by the router plan, W3K-14), the garden A/B consumer (stage 10, W3K-15), and the SQLite
+index of RK-6 (W3K-3; a bound test on the JSONL read stands in). Each part names the code it
+builds on.
 Uses by sprig or a parent sprig are **Proposed**, because sprig is with the owner
 (`design-sprig.md`). weave is a `daisugi weave` command on the supervisor (ADR-0022, accepted in
 part 2026-09-28). grove is retired; coppice replaced it.
@@ -376,7 +378,7 @@ A decayed card records `ignored`, not `confirmed`. Decay is not an owner act.
 
 **Open, the decay time and the "expensive" line.** (a) Time only. (b) Follow-up only, or time,
 whichever is first. (c) Also close when the costly count passes a number of later steps.
-**Recommendation: (b), with 7 days as the starting time.** It is the ruling's own wording, and
+**Ruling A7 (2026-10-30): (b), with 14 days as the time.** It was 7 days; the owner reads cards on weekends. It is the ruling's own wording, and
 the one extra signal it needs (a follow-up-only switch cost) comes straight from the ledger.
 Tune the time from how often the owner answers old cards.
 
@@ -695,7 +697,7 @@ The numbers match the RK rulings in `DECISIONS-PENDING.md`.
 10. **Never block on a choice.** Owner ruling RK-10, 2026-09-28. This design's "Never block,
     except on a permanent step", "The review queue" and "What gets journaled" carry it.
 11. **Open: the decay time and the "expensive" line.** See "Decay". **Recommendation: follow-up
-    only or 7 days, whichever is first.**
+    only or 14 days, whichever is first (owner ruling A7, 2026-10-30).**
 
 ## Conflicts found
 

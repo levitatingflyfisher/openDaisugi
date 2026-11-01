@@ -107,7 +107,7 @@ ways that could go wrong, and the guard for each:
   command slips through unchecked. This one is subtle: on a corpus skewed toward
   one command shape, an incomplete parse can *coincidentally* match.
 
-Both are caught by an executable gate (`clients/gate.py`) that runs after every
+Both are caught by an executable check (`clients/safety_check.py`) that runs after every
 change and refuses to let the count of genuinely-unsafe cases rise above zero.
 It classifies each case where Lean accepts but the oracle rejects:
 
@@ -117,18 +117,18 @@ flowchart TD
     Q -->|un-fused reparse covers them| V[verified divergence · safe]
     Q -->|Go accepts with the exact same heads| V
     Q -->|fusion-class, no reference available| U[fusion-unverified · reported, spot-checked]
-    Q -->|nothing corroborates it| GEN[genuine · GATE FAILS]
+    Q -->|nothing corroborates it| GEN[genuine · WARDEN FAILS]
 ```
 
 A "verified divergence" is a case where the oracle's tree-sitter grammar chokes
 on perfectly valid bash, Lean parses it correctly, and an *independent* parser
 confirms Lean's head list is complete. Those are safe: every executing command's
 head is present for checking. A "genuine" case — Lean accepting something the
-oracle rejects on its merits, with no independent corroboration — fails the gate
+oracle rejects on its merits, with no independent corroboration — fails the warden
 and blocks the change.
 
 The parser was then extended one construct at a time, each landing only when the
-gate stayed green:
+warden stayed green:
 
 | Step | What it added | Decompose match | Genuine-unsafe |
 |---|---|---:|---:|
@@ -160,12 +160,12 @@ force:
   real parsers refuse, Lean fails closed at the pipe, keeping it aligned with the
   reference.
 
-### The gate caught a real over-acceptance
+### The warden caught a real over-acceptance
 
 Extending the `for` parser initially made Lean *too* lenient: it accepted a
 genuinely malformed loop — `for r $items in; do :; done`, where the `in` is in the
 wrong place, a real shell syntax error. tree-sitter correctly rejects it; the
-first cut of Lean's header scan waved it through. The gate flagged it as a genuine
+first cut of Lean's header scan waved it through. The warden flagged it as a genuine
 over-acceptance, and the header parse was tightened to require `in`, a separator,
 or `do` right after the loop variable — nothing else. This is the diversity
 working in the other direction: the strict reference caught the lenient client.
@@ -292,7 +292,7 @@ still refused:
   serves the file at its resolve URL. From huggingface.co it refuses
   every LFS and Xet file, so every GGUF: the Hub redirects those to its
   CDN.
-- **A gateway journal whose token counts are not ints** (GW-8). Python
+- **A router journal whose token counts are not ints** (GW-8). Python
   adds whatever is there with its mixed-type arithmetic, or raises.
 - **An enforced invariant or postcondition whose expr does not parse**
   (K2-8). The oracle raises a traceback out of verify.
@@ -307,7 +307,7 @@ by SX-R-1), on `claude -p` or on sprig.
 
 ```bash
 # Score one client against the oracle, with an independent corroborator.
-uv run python clients/gate.py CORPUS.jsonl \
+uv run python clients/safety_check.py CORPUS.jsonl \
     --client "clients/lean/.lake/build/bin/conform" \
     --corroborate "clients/go/conform" \
     --max-unsafe 0

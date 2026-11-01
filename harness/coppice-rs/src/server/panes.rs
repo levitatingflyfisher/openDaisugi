@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use super::role::{self, clean_label, is_foreman_label, role_or_operator, valid_harness};
+use super::role::{self, clean_label, is_steward_label, role_or_operator, valid_harness};
 use super::{Client, Server};
 use crate::adapters;
 use crate::config;
@@ -24,7 +24,7 @@ use crate::sys;
 pub(super) const PROCESS_QUIET: f64 = 5.0;
 /// How long a burst of output must go on, from its first write (the grid
 /// marks it: the first write after a gap of PROCESS_QUIET), before a
-/// process working fact outranks a gate idle that stands (CP-R-56).
+/// process working fact outranks a warden idle that stands (CP-R-56).
 pub(super) const PROCESS_SUSTAIN: f64 = 1.0;
 /// The process source's last fact for one pane.
 #[derive(Default)]
@@ -58,14 +58,17 @@ pub struct LivePane {
     /// pid and another start time is not this pane's.
     pty_start: u64,
     harness: String,
+    /// Sees every write to the pane. A Hermes pane uses it to learn its
+    /// first prompt. Set once before the pane is put live.
+    input: Option<Box<dyn Fn(&[u8]) + Send + Sync>>,
     tick_stop: Arc<Flag>,
     pub(super) proc_state: Mutex<ProcFact>,
-    /// The server clock, in unix nanoseconds, of the first hook idle (gate
+    /// The server clock, in unix nanoseconds, of the first hook idle (warden
     /// or headless source) of a run; zero when none stands. A non-idle hook
     /// fact, or input that submits a line, clears it. The merged state
     /// forgets a hook idle when a process idle replaces it, so the pane
     /// keeps its own stamp (CP-R-56, CP-R-57).
-    pub(super) gate_idle_since: std::sync::atomic::AtomicI64,
+    pub(super) warden_idle_since: std::sync::atomic::AtomicI64,
     /// Orders the merge and the stamp of one pane's hook events.
     pub(super) stamp_mu: Mutex<()>,
     /// Set when the thread that reports this pane's end (watch_exit for a
@@ -109,9 +112,10 @@ impl LivePane {
             started: SystemTime::now(),
             pty_start: 0,
             harness: "shell".into(),
+            input: None,
             tick_stop: Arc::new(Flag::default()),
             proc_state: Mutex::new(ProcFact::default()),
-            gate_idle_since: std::sync::atomic::AtomicI64::new(0),
+            warden_idle_since: std::sync::atomic::AtomicI64::new(0),
             stamp_mu: Mutex::new(()),
             gone: Arc::new(Flag::default()),
             fenced: true,
@@ -148,12 +152,22 @@ impl LivePane {
     }
 
     pub fn write(&self, b: &[u8]) -> Result<(), String> {
+        if let Some(f) = &self.input {
+            f(b);
+        }
         match (&self.pty, &self.adapter) {
             (Some(p), _) => p.write(b).map(|_| ()),
             (None, Some(a)) => a.write_stdin(b),
             _ => Err("this pane has nothing to write to".into()),
         }
     }
+}
+
+pub(super) fn unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 pub(super) fn unix_secs() -> i64 {
@@ -405,10 +419,17 @@ impl Server {
 
     /// Marks a pane ended on its own and keeps its record.
     pub(super) fn close_pane(&self, id: &str, exit: Option<i64>) -> Result<(), LayoutError> {
+        // A Hermes pane that nobody read yet binds to its session now, while
+        // the session is still the pane's own.
+        if let Some(rec) = self.tree.pane(id) {
+            if super::messages::is_hermes(&rec) {
+                self.hermes_ref(&rec);
+            }
+        }
         self.tree.close_pane(id, exit, unix_secs())?;
         self.forget_children(id);
         self.forget_asks(id);
-        self.tree.drop_foreman(id);
+        self.tree.drop_steward(id);
         if let Some(lp) = self.live(id) {
             if lp.fenced {
                 let cwd = lp.info.lock().unwrap_or_else(|e| e.into_inner()).cwd.clone();
@@ -430,7 +451,7 @@ impl Server {
         }
         self.remove_live(id);
         let _ = self.tree.remove_pane(id);
-        self.tree.drop_foreman(id);
+        self.tree.drop_steward(id);
         self.forget_children(id);
         self.forget_asks(id);
         self.states.forget(id);
@@ -592,18 +613,31 @@ impl Server {
         }
     }
 
-    /// The foreman's own working directory, never a project.
-    pub(super) fn foreman_dir() -> String {
+    /// The steward's own working directory, never a project.
+    ///
+    /// $XDG_STATE_HOME/coppice-steward, else ~/.local/state/coppice-steward.
+    /// It sits beside the coppice state dir, not in it: `daisugi fence`
+    /// treats the coppice config, state and data dirs as secrets, so a
+    /// steward inside one cannot start under the fence.
+    pub(super) fn default_steward_dir() -> String {
         if let Some(st) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
-            return format!("{}/coppice/foreman", st.to_string_lossy());
+            return format!("{}/coppice-steward", st.to_string_lossy());
         }
         match sys::home_dir() {
-            Some(h) => format!("{}/.local/state/coppice/foreman", h.to_string_lossy()),
-            None => ".local/state/coppice/foreman".into(),
+            Some(h) => format!("{}/.local/state/coppice-steward", h.to_string_lossy()),
+            None => ".local/state/coppice-steward".into(),
         }
     }
 
-    fn is_foreman_dir(dir: &str) -> bool {
+    /// This server's steward directory: [steward] dir, else the default.
+    pub(super) fn steward_dir(&self) -> String {
+        if !self.cfg.steward.dir.is_empty() {
+            return self.cfg.steward.dir.clone();
+        }
+        Server::default_steward_dir()
+    }
+
+    fn is_steward_dir(&self, dir: &str) -> bool {
         if dir.is_empty() {
             return false;
         }
@@ -612,7 +646,7 @@ impl Server {
                 .map(|x| x.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| p.to_string())
         };
-        sys::clean(&real(dir)) == sys::clean(&real(&Server::foreman_dir()))
+        sys::clean(&real(dir)) == sys::clean(&real(&self.steward_dir()))
     }
 
     pub(super) fn recent_dirs(&self) -> Vec<String> {
@@ -624,7 +658,7 @@ impl Server {
 
     /// Puts dir at the front of the recent directory list.
     fn record_recent_dir(&self, dir: &str) {
-        if dir.is_empty() || Server::is_foreman_dir(dir) {
+        if dir.is_empty() || self.is_steward_dir(dir) {
             return;
         }
         let dir = std::fs::canonicalize(dir)
@@ -675,7 +709,7 @@ impl Server {
     /// or start. Both are empty when nothing resolves.
     fn default_cwd(&self, near_cwd: &str) -> (String, &'static str) {
         let is_dir = |p: &str| !p.is_empty() && std::fs::metadata(p).is_ok_and(|m| m.is_dir());
-        if is_dir(near_cwd) && !Server::is_foreman_dir(near_cwd) {
+        if is_dir(near_cwd) && !self.is_steward_dir(near_cwd) {
             return (near_cwd.to_string(), "near");
         }
         for d in self.recent_dirs() {
@@ -748,7 +782,7 @@ impl Server {
         let mut base = crate::textwidth::printable(&format!("{h}-{base}"), role::LABEL_MAX - 4)
             .trim()
             .to_string();
-        if is_foreman_label(&base) {
+        if is_steward_label(&base) {
             base.push_str("-agent");
         }
         if !self.live_label_taken(&base) {
@@ -779,6 +813,11 @@ impl Server {
         }
         let mut cwd = r.s("cwd");
         let task_id = r.s("task");
+        // A pane in a task with an envelope starts panes only under its own
+        // task, so a child never holds more than its parent (W3K-12).
+        if self.own_task_only(c.map(|c| c.role()).as_ref(), &task_id) {
+            return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, super::taskenv::OWN_TASK_REFUSAL);
+        }
         if !task_id.is_empty() {
             let Some(tk) = self.tree.task(&task_id) else {
                 return super::tasks::no_task(&r.id, &task_id);
@@ -955,10 +994,26 @@ impl Server {
         };
         let cols = r.int("cols").unwrap_or(120);
         let rows = r.int("rows").unwrap_or(40);
-        let env = r.str_map("env").unwrap_or_default();
+        let mut env = r.str_map("env").unwrap_or_default();
+        // A pane an agent starts is a worker, not the owner's chat, in the
+        // caller's Pando branch; a long-running agent may start another below
+        // its own branch.
+        let fro = role_or_operator(c);
+        if fro.no_allow {
+            if let Err(e) = self.agent_pane_env(&fro, r, &mut env, &mut cwd) {
+                return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, &e);
+            }
+        }
         let mut label = clean_label(&r.s("label"));
         let needs_label = label.is_empty() && !harness.is_empty() && !cwd.is_empty();
         let ro = role_or_operator(c);
+        // A pane another pane's connection creates is agent-made. The floor
+        // answers a routine prompt in it, and never in a pane the operator made.
+        let made_by = if c.is_some_and(|c| c.role().pane) {
+            layout::MADE_BY_AGENT.to_string()
+        } else {
+            String::new()
+        };
         if ro.no_allow && !label.is_empty() && self.live_label_taken(&label) {
             return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, role::LABEL_TAKEN_REFUSAL);
         }
@@ -967,8 +1022,8 @@ impl Server {
         if needs_label {
             label = self.default_label(&harness, &cwd);
         }
-        if ro.no_allow && is_foreman_label(&label) {
-            return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, role::FOREMAN_LABEL_REFUSAL);
+        if ro.no_allow && is_steward_label(&label) {
+            return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, role::STEWARD_LABEL_REFUSAL);
         }
         let created = self.tree.create_pane(
             &ws_id,
@@ -989,6 +1044,8 @@ impl Server {
                 task_id,
                 extra_args,
                 fence: fence_word,
+                started_at: unix_secs(),
+                made_by,
                 ..Default::default()
             },
         );
@@ -1028,6 +1085,20 @@ impl Server {
     /// fork of the session in harness_session_id: the adapter's fork argv
     /// is added for this start only, never saved.
     pub(super) fn start_pane(self: &Arc<Server>, rec: &layout::Pane) -> Result<(), StartError> {
+        // A worker pane's claude gets a session id that is on the skip list
+        // before the process runs.
+        // A long-running agent's claude gets one on the store's session map.
+        let listed = self.listed_claude_argv(rec).or_else(|| self.branch_claude_argv(rec));
+        let mut rec_listed;
+        let (rec, listed_argv) = match listed {
+            Some((argv, sid)) => {
+                rec_listed = rec.clone();
+                rec_listed.harness_session_id = sid.clone();
+                let _ = self.update_pane(&rec.id, |p| p.harness_session_id = sid);
+                (&rec_listed, Some(argv))
+            }
+            None => (rec, None),
+        };
         if !rec.cwd.is_empty() && !std::fs::metadata(&rec.cwd).is_ok_and(|m| m.is_dir()) {
             return Err(StartError::spawn(format!(
                 "the directory {} does not exist. Pick another directory.",
@@ -1044,6 +1115,23 @@ impl Server {
         }
         let tmp = self.fence_tmp(&rec.id);
         let wrap = self.fence_wrap(rec, &tmp).map_err(StartError::spawn)?;
+        // A pane in a task with an envelope is pinned to it: the warden hook
+        // carries the task's session, so the pane never reads the default
+        // envelope. A pane that cannot be pinned does not start (W3K-12).
+        let pin = match self.pane_session(rec) {
+            Ok(p) if !p.is_empty() && (wrap.is_empty() || rec.harness != "claude") => {
+                g.close();
+                return Err(StartError::spawn(format!(
+                    "task {} has an envelope, and only a fenced claude pane can be pinned to one. Start a claude pane with the fence on, or take the envelope off the task.",
+                    rec.task_id
+                )));
+            }
+            Ok(p) => p,
+            Err(e) => {
+                g.close();
+                return Err(StartError::spawn(e));
+            }
+        };
         if !wrap.is_empty() {
             // The fence reads HOME and the data dirs from the env, and the
             // pane chose its env: the server's own values stand (FN-R-15).
@@ -1064,9 +1152,10 @@ impl Server {
             started: SystemTime::now(),
             pty_start: 0,
             harness,
+            input: None,
             tick_stop: Arc::new(Flag::default()),
             proc_state: Mutex::new(ProcFact::default()),
-            gate_idle_since: std::sync::atomic::AtomicI64::new(0),
+            warden_idle_since: std::sync::atomic::AtomicI64::new(0),
             stamp_mu: Mutex::new(()),
             gone: Arc::new(Flag::default()),
             fenced: !wrap.is_empty(),
@@ -1075,6 +1164,14 @@ impl Server {
             ws_seen: Mutex::new(ws_hash),
             fence_tmp: if wrap.is_empty() { String::new() } else { tmp },
         };
+        if super::messages::is_hermes(rec) {
+            let (weak, id) = (Arc::downgrade(self), rec.id.clone());
+            lp.input = Some(Box::new(move |b: &[u8]| {
+                if let Some(s) = weak.upgrade() {
+                    s.note_input(&id, b, unix_millis());
+                }
+            }));
+        }
         if rec.kind == layout::KIND_HEADLESS {
             let Some(a) = adapters::get(&rec.harness) else {
                 g.close();
@@ -1104,7 +1201,7 @@ impl Server {
             let proc = match a.start(adapters::StartOpts {
                 cwd: rec.cwd.clone(),
                 env: env.clone(),
-                argv: self.fenced_claude_argv(rec, &wrap, argv, false),
+                argv: self.fenced_claude_argv(rec, &wrap, argv, false, &pin),
                 resume: rec.harness_session_id.clone(),
                 sock: self.cfg.socket_path.to_string_lossy().into_owned(),
                 pane_id: rec.id.clone(),
@@ -1143,7 +1240,7 @@ impl Server {
                 sys::go_quote(&rec.kind)
             )));
         }
-        let argv = rec.argv.clone().unwrap_or_default();
+        let argv = listed_argv.unwrap_or_else(|| rec.argv.clone().unwrap_or_default());
         if let Some(a0) = argv.first() {
             if !a0.contains('/') && pane::look_path(a0).is_none() {
                 g.close();
@@ -1155,7 +1252,7 @@ impl Server {
         let p = match Pty::start(
             SpawnOpts {
                 cwd: rec.cwd.clone(),
-                argv: self.fenced_claude_argv(rec, &wrap, argv, true),
+                argv: self.fenced_claude_argv(rec, &wrap, argv, true, &pin),
                 env: env.clone(),
                 cols: rec.cols,
                 rows: rec.rows,
@@ -1261,6 +1358,7 @@ impl Server {
                 if !self.is_closed() {
                     if let Some(rec) = self.tree.pane(id) {
                         if rec.harness_session_id != sid {
+                            self.route_pane_session(&rec, &sid);
                             let _ = self.update_pane(id, |x| {
                                 x.harness_session_id = sid.clone();
                                 x.fork_pending = false;
@@ -1326,21 +1424,21 @@ impl Server {
             return;
         }
         if st == state::STATE_WORKING {
-            // A short redraw of a quiet pane is no work while a gate idle
-            // stands (CP-R-56): the gate reports every turn, so output that
+            // A short redraw of a quiet pane is no work while a warden idle
+            // stands (CP-R-56): the warden reports every turn, so output that
             // no turn announced and that stops soon is a clock or a status
             // line. The fact waits until the burst has gone on for
             // PROCESS_SUSTAIN from its first write, which the grid marks.
             let last = last.unwrap_or(0);
             let first = lp.grid.burst_start().unwrap_or(last);
-            let gate_idle = lp.gate_idle_since.load(std::sync::atomic::Ordering::SeqCst) != 0;
-            if gate_idle && ((last - first) as f64 / 1e9) < PROCESS_SUSTAIN {
+            let warden_idle = lp.warden_idle_since.load(std::sync::atomic::Ordering::SeqCst) != 0;
+            if warden_idle && ((last - first) as f64 / 1e9) < PROCESS_SUSTAIN {
                 return;
             }
         }
         if st == state::STATE_IDLE
             && ps.state.is_empty()
-            && lp.gate_idle_since.load(std::sync::atomic::Ordering::SeqCst) != 0
+            && lp.warden_idle_since.load(std::sync::atomic::Ordering::SeqCst) != 0
         {
             // The process source has published nothing yet, so this idle
             // changes nothing anyone saw. A hook idle that stands says
@@ -1443,12 +1541,15 @@ impl Server {
         }
     }
 
-    fn handle_pane_list(self: &Arc<Server>, _c: &Arc<Client>, r: &Request) -> Response {
+    fn handle_pane_list(self: &Arc<Server>, c: &Arc<Client>, r: &Request) -> Response {
         let (keep, path) = match self.scope_of(r) {
             Ok(x) => x,
             Err(resp) => return resp,
         };
         let want_ended = r.bool("ended").unwrap_or(false);
+        // last_ask is the end of an agent's own message, so it goes only where
+        // pane.messages would: not to a pane, a plugin or a named web token.
+        let with_ask = !c.token_named() && !c.role().no_allow;
         self.prune_facts();
         self.refresh_process(&[]);
         let mut matched: Vec<layout::Pane> = self
@@ -1461,14 +1562,15 @@ impl Server {
         if want_ended {
             sort_ended_newest_first(&mut matched);
         }
-        let out: Vec<Value> = matched.iter().map(|p| self.pane_list_row(p)).collect();
-        proto::ok_resp(
-            &r.id,
-            gojson::map(vec![("panes", Value::Array(out)), ("path", json!(path))]),
-        )
+        let out: Vec<Value> = matched.iter().map(|p| self.pane_list_row(p, with_ask)).collect();
+        let mut res = vec![("panes", Value::Array(out)), ("path", json!(path))];
+        if let Some(line) = self.unconfined_notice().filter(|_| !want_ended) {
+            res.push(("unconfined", json!(line)));
+        }
+        proto::ok_resp(&r.id, gojson::map(res))
     }
 
-    fn pane_list_row(&self, p: &layout::Pane) -> Value {
+    fn pane_list_row(&self, p: &layout::Pane, with_ask: bool) -> Value {
         let mut row: Vec<(&'static str, Value)> = vec![
             ("id", json!(p.id)),
             ("label", json!(p.label)),
@@ -1541,6 +1643,11 @@ impl Server {
                     row.push(("held", h));
                 }
             }
+            if with_ask {
+                if let Some(line) = self.last_ask_line(p, &eff.state) {
+                    row.push(("last_ask", json!(line)));
+                }
+            }
         } else if p.closed {
             let detail = match p.exit_code {
                 Some(c) => format!("exit={c}"),
@@ -1577,7 +1684,7 @@ impl Server {
         if c.view_only_on(&id) {
             return role::refuse_view_only(r, &id);
         }
-        if super::ready::is_prompt_request(r) && self.gated(&id) {
+        if super::ready::is_prompt_request(r) && self.checked(&id) {
             return self.prompt_reply(c, r, &id, &text);
         }
         if r.bool("enter").unwrap_or(true) {
@@ -1656,7 +1763,7 @@ impl Server {
         if c.view_only_on(&id) {
             return role::refuse_view_only(r, &id);
         }
-        if self.gated(&id) {
+        if self.checked(&id) {
             return self.prompt_reply(c, r, &id, &line);
         }
         if !id.is_empty() {
@@ -1917,6 +2024,7 @@ impl Server {
                 parent_pane: id.clone(),
                 fork_pending: true,
                 fence: super::fence::fence_or(&info.fence, self.caller_fenced(&c.role())),
+                started_at: unix_secs(),
                 ..Default::default()
             },
         );
@@ -1968,11 +2076,11 @@ impl Server {
             return no_pane(r, &id);
         };
         if role_or_operator(Some(c)).no_allow {
-            if is_foreman_label(&label) {
+            if is_steward_label(&label) {
                 return proto::err_resp(
                     &r.id,
                     proto::ERR_UNAUTHORIZED,
-                    role::FOREMAN_LABEL_REFUSAL,
+                    role::STEWARD_LABEL_REFUSAL,
                 );
             }
             if label != cur.label && self.live_label_taken(&label) {
@@ -2051,4 +2159,73 @@ fn state_of(ev: &adapters::Ev) -> &str {
 /// Ended records newest first, by end time, then id.
 fn sort_ended_newest_first(panes: &mut [layout::Pane]) {
     panes.sort_by(|a, b| b.ended_at.cmp(&a.ended_at).then_with(|| b.id.cmp(&a.id)));
+}
+
+impl Server {
+    /// Starts a long-running agent for the steward (round 8b; the Go
+    /// spawnLead): a claude pane in the project with the brief as its first
+    /// prompt and the branch in its env.
+    pub(super) fn spawn_lead(self: &Arc<Server>, dir: &str, branch: &str, brief: &str) -> Result<String, String> {
+        if self.is_closed() {
+            return Err("the server is closing".into());
+        }
+        pando::branch::reopen_branch(&self.branch_store_dir(), branch, &None)?;
+        let argv = match config::load() {
+            Ok(Some(cfg)) => cfg.harness.get("claude").filter(|h| !h.command.is_empty()).map(|h| {
+                let mut a = vec![h.command.clone()];
+                a.extend(h.args().iter().cloned());
+                a.push(brief.to_string());
+                a
+            }),
+            _ => None,
+        };
+        let Some(argv) = argv else {
+            return Err("a long-running agent starts on claude, and coppice.toml names no claude harness".into());
+        };
+        let label_base = branch.rsplit('/').next().unwrap_or(branch).to_string();
+        let g = self.label_mu.lock().unwrap_or_else(|e| e.into_inner());
+        let mut label = clean_label(&format!("{label_base}-lead"));
+        let mut k = 2;
+        while self.live_label_taken(&label) {
+            label = clean_label(&format!("{label_base}-lead-{k}"));
+            k += 1;
+        }
+        let (cwd, where_) = self.lead_worktree(dir, branch)?;
+        let (ws_id, tab_id) = self.place_for(&Request::default(), &cwd)?;
+        let mut env = std::collections::BTreeMap::new();
+        super::panes_pando::lead_env(&mut env, branch);
+        let created = self.tree.create_pane(
+            &ws_id,
+            &tab_id,
+            layout::Pane {
+                label,
+                cwd: cwd.clone(),
+                argv: Some(argv),
+                env,
+                kind: layout::KIND_PTY.into(),
+                harness: "claude".into(),
+                cols: 120,
+                rows: 40,
+                extra_args: vec![brief.to_string()],
+                started_at: unix_secs(),
+                ..Default::default()
+            },
+        );
+        drop(g);
+        let rec = created.map_err(|e| e.to_string())?;
+        if let Err(e) = self.start_pane(&rec) {
+            let _ = self.tree.remove_pane(&rec.id);
+            self.remove_live(&rec.id);
+            self.states.forget(&rec.id);
+            self.mark_layout_dirty();
+            return Err(e.msg);
+        }
+        self.mark_layout_dirty();
+        Ok(format!(
+            "started a long-running agent in pane {} ({}), {where_}. Its chat is the branch {branch}: recall finds it, and zoom with branch={} reads it.",
+            rec.id,
+            rec.label,
+            sys::go_quote(branch)
+        ))
+    }
 }

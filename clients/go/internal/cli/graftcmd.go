@@ -9,19 +9,19 @@ import (
 	"regexp"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/delegate"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/spawn"
 	"daisugi-verify/internal/statefile"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var graftHelp = `Usage: daisugi graft [OPTIONS] COMMAND [ARGS]...
 
-  Install, show and remove the gate's graft rule for large reads.
+  Install, show and remove the warden's graft rule for large reads.
 
 Commands:
-  install  Write the large-read graft rule into <data-dir>/gate/grafts.
+  install  Write the large-read graft rule into <data-dir>/warden/grafts.
   status   Show the graft rule files, the one in force, and any rival...
   remove   Remove a graft rule file.
 `
@@ -55,10 +55,10 @@ func (e *Env) graftSettingsFiles() []string {
 	cwd := e.cwd()
 	var out []string
 	for _, p := range []string{
-		gateroot.Join(gateroot.Join(e.home, ".claude"), "settings.json"),
-		gateroot.Join(gateroot.Join(cwd, ".claude"), "settings.json"),
-		gateroot.Join(gateroot.Join(cwd, ".claude"), "settings.local.json"),
-		gateroot.Join(gateroot.Join(e.home, ".codex"), "hooks.json"),
+		wardenroot.Join(wardenroot.Join(e.home, ".claude"), "settings.json"),
+		wardenroot.Join(wardenroot.Join(cwd, ".claude"), "settings.json"),
+		wardenroot.Join(wardenroot.Join(cwd, ".claude"), "settings.local.json"),
+		wardenroot.Join(wardenroot.Join(e.home, ".codex"), "hooks.json"),
 	} {
 		seen := false
 		for _, q := range out {
@@ -124,7 +124,7 @@ func (e *Env) graftRivals() ([]rivalHook, error) {
 				ho, _ := h.(*pyjson.Object)
 				if ho != nil {
 					c := ho.Value("command")
-					if config.GateHookKind(c) == config.KindGate || config.IsRecordHook(c, "") {
+					if config.WardenHookKind(c) == config.KindWarden || config.IsRecordHook(c, "") {
 						continue
 					}
 				}
@@ -147,14 +147,14 @@ func (e *Env) graftRivals() ([]rivalHook, error) {
 func graftRefusal(r rivalHook) string {
 	if r.what == "not readable JSON" {
 		return fmt.Sprintf("Refused: %s is not readable JSON, so its PreToolUse hooks cannot be "+
-			"checked. No graft was installed; the gate is not changed.", r.file)
+			"checked. No graft was installed; the warden is not changed.", r.file)
 	}
 	return fmt.Sprintf("Refused: %s has a PreToolUse hook that may rewrite a tool's input: %s. "+
-		"No graft was installed; the gate is not changed.", r.file, r.what)
+		"No graft was installed; the warden is not changed.", r.file, r.what)
 }
 
 func (e *Env) graftDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	return wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 func (e *Env) graftIDOK(p *parsed) (string, error) {
@@ -184,7 +184,7 @@ func graftPriorVersion(path, id string) *big.Int {
 	if err != nil {
 		return new(big.Int)
 	}
-	r, _ := delegate.ParseRule(v, filepath.Base(path))
+	r, _ := spawn.ParseRule(v, filepath.Base(path))
 	if r == nil || r.ID != id {
 		return new(big.Int)
 	}
@@ -210,7 +210,7 @@ func (e *Env) graftInstall(args []string) error {
 		return e.usage(cmd, err)
 	}
 	if p.help {
-		return e.cmdHelp(cmd, "", "Write the large-read graft rule into <data-dir>/gate/grafts.", opts)
+		return e.cmdHelp(cmd, "", "Write the large-read graft rule into <data-dir>/warden/grafts.", opts)
 	}
 	lines, err := clickInt(p, "--file-lines-over", 350)
 	if err != nil {
@@ -250,25 +250,25 @@ func (e *Env) graftInstall(args []string) error {
 		e.echoErr("%s\n", graftRefusal(rivals[0]))
 		return exit(1)
 	}
-	root := gateroot.Join(e.graftDataDir(p), "gate")
-	dir := gateroot.Join(root, "grafts")
-	path := gateroot.Join(dir, id+".json")
+	root := wardenroot.Join(e.graftDataDir(p), "warden")
+	dir := wardenroot.Join(root, "grafts")
+	path := wardenroot.Join(dir, id+".json")
 	version := graftPriorVersion(path, id)
 	version.Add(version, big.NewInt(1))
 	rule := pyjson.NewObject().Set("id", id).Set("version", pyjson.Int{Text: version.String()}).
 		Set("shape", "deny_redirect").Set("state", state).
 		Set("match", pyjson.NewObject().Set("tool", "Read").Set("file_lines_over", pyjson.Int{Text: fmt.Sprint(lines)})).
-		Set("redirect", pyjson.NewObject().Set("tool", "delegate")).
+		Set("redirect", pyjson.NewObject().Set("tool", "spawn")).
 		Set("worker", pyjson.NewObject().Set("choose", "router").Set("allow_remote", p.flag("--allow-remote")))
 	shown := state
 	if state == "trial" {
 		rule.Set("trial", pyjson.NewObject().Set("seed", pyjson.Int{Text: fmt.Sprint(seed)}))
 		shown = fmt.Sprintf("trial, seed %d", seed)
 	}
-	// The gate reads a rule only from a directory and a file no group or
+	// The warden reads a rule only from a directory and a file no group or
 	// other user can write (GR-R-1), whatever the umask, and the rule is
 	// written through the directory fd (GR-R-9): a link at its name is
-	// refused, and the file is read back with the gate's reader.
+	// refused, and the file is read back with the warden's reader.
 	dirs := []string{"grafts"}
 	if _, err := statefile.WriteFile(root, dirs, id+".json", pyjson.DumpsIndent(rule, 2, true)+"\n", false); err != nil {
 		return e.graftNotInstalled(cmd, err)
@@ -303,8 +303,8 @@ func (e *Env) graftStatus(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Show the graft rule files, the one in force, and any rival PreToolUse hook.", opts)
 	}
-	root := gateroot.Join(e.graftDataDir(p), "gate")
-	rules, bad, err := delegate.LoadRules(root)
+	root := wardenroot.Join(e.graftDataDir(p), "warden")
+	rules, bad, err := spawn.LoadRules(root)
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
@@ -312,7 +312,7 @@ func (e *Env) graftStatus(args []string) error {
 	if err != nil {
 		return e.refuse(cmd, err)
 	}
-	var acting *delegate.Rule
+	var acting *spawn.Rule
 	for _, r := range rules {
 		if r.Acting() {
 			acting = r
@@ -341,7 +341,7 @@ func (e *Env) graftStatus(args []string) error {
 	for _, r := range rivals {
 		rh = append(rh, pyjson.NewObject().Set("file", r.file).Set("hook", r.what))
 	}
-	dir := gateroot.Join(root, "grafts")
+	dir := wardenroot.Join(root, "grafts")
 	if p.flag("--json") {
 		doc := pyjson.NewObject().Set("dir", dir).Set("rules", outRules).Set("unused", unused).Set("rival_hooks", rh)
 		e.echo("%s\n", pyjson.DumpsIndent(doc, 2, true))
@@ -386,7 +386,7 @@ func (e *Env) graftStatus(args []string) error {
 
 // trialSeed is a status row's trial_seed: the seed of a trial rule, else
 // null.
-func trialSeed(r *delegate.Rule) any {
+func trialSeed(r *spawn.Rule) any {
 	if r.State != "trial" {
 		return nil
 	}
@@ -404,14 +404,14 @@ func (e *Env) graftRemove(args []string) error {
 		return e.usage(cmd, err)
 	}
 	if p.help {
-		return e.cmdHelp(cmd, "", "Remove a graft rule file. The gate is not changed.", opts)
+		return e.cmdHelp(cmd, "", "Remove a graft rule file. The warden is not changed.", opts)
 	}
 	id, err := e.graftIDOK(p)
 	if err != nil {
 		return err
 	}
-	root := gateroot.Join(e.graftDataDir(p), "gate")
-	path := gateroot.Join(gateroot.Join(root, "grafts"), id+".json")
+	root := wardenroot.Join(e.graftDataDir(p), "warden")
+	path := wardenroot.Join(wardenroot.Join(root, "grafts"), id+".json")
 	removed, err := statefile.UnlinkFile(root, []string{"grafts"}, id+".json")
 	if err != nil {
 		if wr := writeRefused(err); wr != nil {

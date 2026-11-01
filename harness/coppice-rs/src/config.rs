@@ -67,7 +67,7 @@ pub struct Config {
     pub keys: Keys,
     pub plugin: BTreeMap<String, toml::Table>,
     pub projects: Vec<String>,
-    pub gateway: Option<String>,
+    pub router: Option<String>,
     /// How long after the last layout change the server writes layout.json,
     /// as a duration such as "3s". "0s" writes at once.
     pub layout_save_settle: Option<String>,
@@ -75,16 +75,16 @@ pub struct Config {
     pub broken_keep: Option<i64>,
     /// Whether a harness starts under `daisugi fence`: "off" (the
     /// default: the fence is opt-in, FN-R-33) never, "on" always, "auto"
-    /// while the gate is on.
+    /// while the warden is on.
     pub fence: Option<String>,
     pub voice: Voice,
-    pub foreman: Foreman,
+    pub steward: Steward,
 }
 
-/// The [foreman] table. It sets how the floor's foreman runs.
+/// The [steward] table. It sets how the floor's steward runs.
 ///
-/// mode = "pane" (the default) runs the foreman as a harness pane in its
-/// own directory. mode = "chat" keeps the foreman as one chat that never
+/// mode = "pane" (the default) runs the steward as a harness pane in its
+/// own directory. mode = "chat" keeps the steward as one chat that never
 /// ends: each sentence the operator says is logged, and a fresh model call
 /// answers it. compactor_profile and compactor_model say where the chat's
 /// summaries are made. turn_profile is where each turn runs: empty (the
@@ -97,33 +97,42 @@ pub struct Config {
 /// turn_profiles = ["a"]; setting both is an error; an empty name in the list
 /// is Claude Code. turn_model is the model of every entry
 /// (empty means Claude Code's own default, or the profile's own model). A turn may take
-/// FOREMAN_TURN_TIMEOUT; that is not a setting. Keys that are not settings
+/// STEWARD_TURN_TIMEOUT; that is not a setting. Keys that are not settings
 /// any more (calls, turn_timeout_s) still load and say nothing.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
-pub struct Foreman {
+pub struct Steward {
     pub mode: String,
     pub compactor_profile: String,
     pub compactor_model: String,
     pub turn_profile: String,
     pub turn_profiles: Vec<String>,
     pub turn_model: String,
+    /// The Pando R2 store the steward keeps its chat in:
+    /// <data home>/pando/<store>. work is the default; home is the other
+    /// named store. all is refused: no command reads two stores.
+    pub store: String,
+    /// The steward's working dir. Empty means the default
+    /// ($XDG_STATE_HOME/coppice-steward). It must be an absolute path, or
+    /// start with ~/, and sit outside the coppice config, state and data
+    /// dirs, which the fence treats as secrets.
+    pub dir: String,
 }
 
-/// The foreman modes.
-pub const FOREMAN_PANE: &str = "pane";
-pub const FOREMAN_CHAT: &str = "chat";
+/// The steward modes.
+pub const STEWARD_PANE: &str = "pane";
+pub const STEWARD_CHAT: &str = "chat";
 
 /// The compactor's defaults.
 pub const DEFAULT_COMPACTOR_PROFILE: &str = "default";
 pub const DEFAULT_COMPACTOR_MODEL: &str = "haiku";
 
-/// How long one foreman turn may take.
-pub const FOREMAN_TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// How long one steward turn may take.
+pub const STEWARD_TURN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
-/// The [foreman] table with its defaults filled in.
+/// The [steward] table with its defaults filled in.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ForemanSettings {
+pub struct StewardSettings {
     pub mode: String,
     pub compactor_profile: String,
     /// As the file has it. Empty means haiku on the default profile, and
@@ -135,29 +144,67 @@ pub struct ForemanSettings {
     /// reads as [""].
     pub turn_profiles: Vec<String>,
     pub turn_model: String,
+    /// The Pando R2 store name; work when the file names none.
+    pub store: String,
+    /// The steward's working dir, ~ expanded; empty means the default.
+    pub dir: String,
 }
 
 impl Config {
-    /// Reads the [foreman] table. A value that is not allowed is an error
+    /// Reads the [steward] table. A value that is not allowed is an error
     /// that names the key and the file.
-    pub fn foreman_settings(&self) -> Result<ForemanSettings, String> {
-        let f = &self.foreman;
-        let mut s = ForemanSettings {
-            mode: FOREMAN_PANE.into(),
+    pub fn steward_settings(&self) -> Result<StewardSettings, String> {
+        let f = &self.steward;
+        let mut s = StewardSettings {
+            mode: STEWARD_PANE.into(),
             compactor_profile: DEFAULT_COMPACTOR_PROFILE.into(),
             compactor_model: f.compactor_model.clone(),
             turn_profiles: Vec::new(),
             turn_model: f.turn_model.clone(),
+            store: pando::store::DEFAULT_STORE.into(),
+            dir: String::new(),
         };
+        if !f.dir.is_empty() {
+            let mut d = f.dir.clone();
+            if d == "~" || d.starts_with("~/") {
+                let Some(home) = sys::home_dir() else {
+                    return Err(format!(
+                        "[steward] dir is {} in {}, and the home dir is unknown",
+                        sys::go_quote(&f.dir),
+                        path().display()
+                    ));
+                };
+                d = format!("{}{}", home.to_string_lossy().trim_end_matches('/'), &d[1..]);
+            }
+            if !d.starts_with('/') {
+                return Err(format!(
+                    "[steward] dir is {} in {}. Use an absolute path, or one that starts with ~/",
+                    sys::go_quote(&f.dir),
+                    path().display()
+                ));
+            }
+            s.dir = sys::clean(&d);
+        }
+        if !f.store.is_empty() {
+            if let Err(e) = pando::store::store_dir(Path::new(""), &f.store) {
+                return Err(format!(
+                    "[steward] store is {} in {}: {}",
+                    sys::go_quote(&f.store),
+                    path().display(),
+                    e
+                ));
+            }
+            s.store = f.store.clone();
+        }
         if !f.turn_profile.is_empty() && !f.turn_profiles.is_empty() {
             return Err(format!(
-                "[foreman] sets both turn_profile and turn_profiles in {}. Keep turn_profiles and delete turn_profile",
+                "[steward] sets both turn_profile and turn_profiles in {}. Keep turn_profiles and delete turn_profile",
                 path().display()
             ));
         }
         if f.turn_profiles.len() > 1 && f.turn_model.is_empty() {
             return Err(format!(
-                "[foreman] turn_profiles lists {} accounts in {}, so turn_model must name the one model they all serve",
+                "[steward] turn_profiles lists {} accounts in {}, so turn_model must name the one model they all serve",
                 f.turn_profiles.len(),
                 path().display()
             ));
@@ -168,7 +215,7 @@ impl Config {
             if !seen.insert(name.to_string()) {
                 let shown = if p.is_empty() { "\"\" (Claude Code)".to_string() } else { p.clone() };
                 return Err(format!(
-                    "[foreman] turn_profiles lists the account {} twice in {}. Each account may appear once in the turn chain (\"\" and \"default\" are the same login)",
+                    "[steward] turn_profiles lists the account {} twice in {}. Each account may appear once in the turn chain (\"\" and \"default\" are the same login)",
                     shown,
                     path().display()
                 ));
@@ -180,9 +227,9 @@ impl Config {
             f.turn_profiles.clone()
         };
         if !f.mode.is_empty() {
-            if f.mode != FOREMAN_PANE && f.mode != FOREMAN_CHAT {
+            if f.mode != STEWARD_PANE && f.mode != STEWARD_CHAT {
                 return Err(format!(
-                    "[foreman] mode is {} in {}. Use \"pane\" or \"chat\"",
+                    "[steward] mode is {} in {}. Use \"pane\" or \"chat\"",
                     sys::go_quote(&f.mode),
                     path().display()
                 ));
@@ -196,7 +243,7 @@ impl Config {
     }
 }
 
-impl ForemanSettings {
+impl StewardSettings {
     /// The model the compactor asks for, given the model the compactor's
     /// profile names ("" for none).
     pub fn compactor_model_for(&self, profile_model: &str) -> String {
@@ -255,13 +302,14 @@ fn parse_duration(s: &str) -> Option<std::time::Duration> {
     std::time::Duration::try_from_secs_f64(total).ok()
 }
 
-/// Where daisugi's gateway listens with no --host or --port.
-pub const DEFAULT_GATEWAY: &str = "http://127.0.0.1:8787";
+/// Where daisugi's router listens with no --host or --port.
+pub const DEFAULT_ROUTER: &str = "http://127.0.0.1:8787";
 
 /// The plugin list of a file with no plugins key.
 pub fn default_plugins() -> Vec<String> {
     [
         "tree",
+        "cards",
         "minimap",
         "kanban",
         "colony",
@@ -276,11 +324,11 @@ pub fn default_plugins() -> Vec<String> {
 }
 
 impl Config {
-    /// The gateway base URL the floor compares with: the gateway key, else
-    /// the default. Empty when the file says gateway = "".
-    pub fn gateway_url(&self) -> String {
-        match &self.gateway {
-            None => DEFAULT_GATEWAY.to_string(),
+    /// The router base URL the floor compares with: the router key, else
+    /// the default. Empty when the file says router = "".
+    pub fn router_url(&self) -> String {
+        match &self.router {
+            None => DEFAULT_ROUTER.to_string(),
             Some(g) => g.clone(),
         }
     }
@@ -293,12 +341,13 @@ impl Config {
         }
     }
 
-    /// The fence setting: "auto", "on" or "off". Unset is "off": the fence
-    /// is opt-in (FN-R-33). parse refuses an unknown value.
+    /// The fence setting: "auto", "on" or "off". Unset is "auto": agent work
+    /// runs under the fence while the warden is on, and a plain shell pane
+    /// stays bare (ADR-0028). parse refuses an unknown value.
     pub fn fence_mode(&self) -> String {
         match self.fence.as_deref() {
             Some(m @ ("on" | "off" | "auto")) => m.to_string(),
-            _ => "off".to_string(),
+            _ => "auto".to_string(),
         }
     }
 
@@ -444,8 +493,32 @@ pub fn load() -> Result<Option<Config>, String> {
     parse(&text).map(Some)
 }
 
+/// The top-level key and the table header from before the rename. The loader
+/// does not accept either: a key it does not know would be dropped, and the
+/// floor would run with a router or a steward the owner did not choose. The
+/// owner edits the file once.
+fn stale_names(text: &str) -> Result<(), String> {
+    let mut top = true;
+    for ln in text.split('\n') {
+        let ln = ln.trim_end_matches('\r');
+        let t = ln.trim();
+        let compact: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact == "[foreman]" { // names-ok: the old table
+            return Err("coppice.toml: [foreman] is now [steward]".to_string()); // names-ok: the old table
+        }
+        if t.starts_with('[') {
+            top = false;
+        }
+        if top && ln.trim_start().strip_prefix("gateway").is_some_and(|r| r.trim_start().starts_with('=')) { // names-ok: the old key
+            return Err("coppice.toml: gateway is now router".to_string()); // names-ok: the old key
+        }
+    }
+    Ok(())
+}
+
 /// Reads the text of a config file.
 pub fn parse(text: &str) -> Result<Config, String> {
+    stale_names(text)?;
     // The fence key is checked on the text first, so a bare word or a
     // boolean gives the fence error, not a parse error (FN-R-37).
     let fence = fence_raw(text);
@@ -537,11 +610,15 @@ pub fn fence_refusal(loaded: &Result<Option<Config>, String>, path: &Path) -> Op
     }
 }
 
-/// One harness Discover found on PATH.
+/// One harness Discover found on PATH. `command` is what the config runs:
+/// the harness name, or the real binary when the one on PATH is a mise
+/// wrapper script (see `resolve_mise`). `note` says so, or is empty.
 pub struct Found {
     pub name: String,
     pub path: String,
     pub state: String,
+    pub command: String,
+    pub note: String,
 }
 
 /// The harnesses coppice knows how to own, in the order Discover looks.
@@ -556,19 +633,137 @@ const PROBES: &[(&str, &str)] = &[
 /// What Discover teaches when PATH holds no harness.
 pub const APP_ONLY_NOTE: &str = "No harness on PATH. Codex Desktop, Cursor, and Antigravity are apps, and coppice cannot own their panes. Install claude, codex, pi, sprig, or opencode.";
 
-/// The known harnesses found on PATH, in probe order.
-pub fn discover() -> Vec<Found> {
-    let mut out = Vec::new();
-    for (name, state) in PROBES {
-        if let Some(path) = crate::pane::look_path(name) {
-            out.push(Found {
-                name: name.to_string(),
-                path,
-                state: state.to_string(),
-            });
+/// The largest file taken for a wrapper script. Real binaries are larger;
+/// wrappers are three lines.
+const MAX_WRAPPER_SIZE: u64 = 2048;
+
+/// Why `mise which` was not asked or did not answer.
+pub enum MiseErr {
+    /// The home dir is unknown: mise would run in the caller's folder,
+    /// where a mise.toml could change the answer.
+    NoHome,
+    Failed,
+}
+
+/// `mise which NAME`, run in the home dir.
+pub fn mise_which(name: &str) -> Result<String, MiseErr> {
+    let Some(home) = sys::home_dir().filter(|h| !h.as_os_str().is_empty()) else {
+        return Err(MiseErr::NoHome);
+    };
+    let out = std::process::Command::new("mise")
+        .arg("which")
+        .arg(name)
+        .current_dir(home)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|_| MiseErr::Failed)?;
+    if !out.status.success() {
+        return Err(MiseErr::Failed);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The real binary behind `path` when it is a small shell script that
+/// execs `mise x ... -- NAME`. The fence leaves mise no place to write its
+/// state, so such a wrapper dies at once in a fenced pane. Detection reads
+/// the file and never runs it; the one command run is `mise which NAME`,
+/// and its answer must be an absolute path to a regular file that is not
+/// the wrapper itself. The second value is true when the wrapper was left
+/// as it is because the home dir is unknown.
+pub fn resolve_mise(path: &str, which: &dyn Fn(&str) -> Result<String, MiseErr>) -> (Option<String>, bool) {
+    use std::sync::OnceLock;
+    static SHEBANG: OnceLock<regex::Regex> = OnceLock::new();
+    static EXEC: OnceLock<regex::Regex> = OnceLock::new();
+    let shebang = SHEBANG.get_or_init(|| {
+        regex::Regex::new(r"^#![\t\n\f\r ]*(?:/usr/bin/env[\t\n\f\r ]+)?(?:[^\t\n\f\r ]*/)?(?:ba|da|z)?sh(?-u:\b)").unwrap()
+    });
+    let exec = EXEC.get_or_init(|| {
+        regex::Regex::new(r#"^exec[\t\n\f\r ]+mise[\t\n\f\r ]+(?:x|exec)[\t\n\f\r ]+(?:[^\t\n\f\r ]+[\t\n\f\r ]+)*?--[\t\n\f\r ]+([A-Za-z0-9._-]+)(?:[\t\n\f\r ]+"\$@")?[\t\n\f\r ]*$"#).unwrap()
+    });
+    let Ok(m) = std::fs::metadata(path) else { return (None, false) };
+    if !m.is_file() || m.len() > MAX_WRAPPER_SIZE {
+        return (None, false);
+    }
+    let Ok(raw) = std::fs::read(path) else { return (None, false) };
+    let text = String::from_utf8_lossy(&raw);
+    let mut lines = text.lines();
+    if !lines.next().is_some_and(|l| shebang.is_match(l)) {
+        return (None, false);
+    }
+    let mut tool = String::new();
+    for l in lines {
+        if let Some(c) = exec.captures(l.trim()) {
+            tool = c[1].to_string();
         }
     }
+    let base = Path::new(path).file_name().map(|b| b.to_string_lossy().into_owned()).unwrap_or_default();
+    if tool.is_empty() || tool != base {
+        return (None, false);
+    }
+    let out = match which(&tool) {
+        Err(MiseErr::NoHome) => return (None, true),
+        Err(MiseErr::Failed) => return (None, false),
+        Ok(o) => o,
+    };
+    if !out.starts_with('/') {
+        return (None, false);
+    }
+    match std::fs::metadata(&out) {
+        Ok(m) if m.is_file() => {}
+        _ => return (None, false),
+    }
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(&out), std::fs::canonicalize(path)) {
+        if a == b {
+            return (None, false);
+        }
+    }
+    (Some(out), false)
+}
+
+/// The known harnesses found on PATH, in probe order.
+pub fn discover() -> Vec<Found> {
+    discover_with(&|n| crate::pane::look_path(n), &mise_which)
+}
+
+/// `discover` with the PATH lookup and the `mise which` call named.
+pub fn discover_with(
+    look: &dyn Fn(&str) -> Option<String>,
+    which: &dyn Fn(&str) -> Result<String, MiseErr>,
+) -> Vec<Found> {
+    let mut out = Vec::new();
+    for (name, state) in PROBES {
+        let Some(path) = look(name).filter(|p| !p.is_empty()) else { continue };
+        let mut f = Found {
+            name: name.to_string(),
+            path: path.clone(),
+            state: state.to_string(),
+            command: String::new(),
+            note: String::new(),
+        };
+        match resolve_mise(&path, which) {
+            (Some(real), _) => {
+                f.note = format!(
+                    "{name} on PATH is a mise wrapper ({path}). The config runs {real} instead, because mise cannot write its state under the fence."
+                );
+                f.command = real;
+            }
+            (None, true) => {
+                f.note = format!(
+                    "{name} on PATH is a mise wrapper ({path}), and the home dir is unknown, so mise was not asked for the real binary. The config runs {name} as it is; under the fence mise may not start."
+                );
+            }
+            _ => {}
+        }
+        out.push(f);
+    }
     out
+}
+
+/// The lines to print for the harnesses whose command differs from their
+/// name.
+pub fn found_notes(found: &[Found]) -> Vec<String> {
+    found.iter().filter(|f| !f.note.is_empty()).map(|f| f.note.clone()).collect()
 }
 
 /// A config with one harness table per found harness and def as the
@@ -581,7 +776,7 @@ pub fn from_found(found: &[Found], def: &str) -> Config {
     };
     for f in found {
         let mut h = Harness {
-            command: f.name.clone(),
+            command: if f.command.is_empty() { f.name.clone() } else { f.command.clone() },
             state: f.state.clone(),
             ..Default::default()
         };
@@ -656,8 +851,8 @@ pub fn encode(c: &Config) -> String {
     if !c.projects.is_empty() {
         e.key_eq(0, "projects", &Elem::Strs(&c.projects));
     }
-    if let Some(g) = &c.gateway {
-        e.key_eq(0, "gateway", &Elem::Str(g));
+    if let Some(g) = &c.router {
+        e.key_eq(0, "router", &Elem::Str(g));
     }
     if let Some(s) = &c.layout_save_settle {
         e.key_eq(0, "layout_save_settle", &Elem::Str(s));
@@ -715,9 +910,9 @@ pub fn encode(c: &Config) -> String {
             e.key_eq(key.len(), "args", &Elem::Strs(&v.args));
         }
     }
-    let f = &c.foreman;
-    if *f != Foreman::default() {
-        let key = ["foreman"];
+    let f = &c.steward;
+    if *f != Steward::default() {
+        let key = ["steward"];
         e.table_head(&key);
         for (k, v) in [
             ("mode", &f.mode),
@@ -734,6 +929,12 @@ pub fn encode(c: &Config) -> String {
         }
         if !f.turn_model.is_empty() {
             e.key_eq(key.len(), "turn_model", &Elem::Str(&f.turn_model));
+        }
+        if !f.store.is_empty() {
+            e.key_eq(key.len(), "store", &Elem::Str(&f.store));
+        }
+        if !f.dir.is_empty() {
+            e.key_eq(key.len(), "dir", &Elem::Str(&f.dir));
         }
     }
     e.out
@@ -915,6 +1116,13 @@ impl Enc {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_old_foreman_table_and_gateway_key_are_refused() { // names-ok
+        assert_eq!(parse("[foreman]\nmode = \"chat\"\n").unwrap_err(), "coppice.toml: [foreman] is now [steward]"); // names-ok
+        assert_eq!(parse("gateway = \"http://127.0.0.1:8787\"\n").unwrap_err(), "coppice.toml: gateway is now router"); // names-ok
+        assert!(parse("[plugin.x]\ngateway = \"y\"\n").is_ok()); // names-ok: a key in a table is that table's own
+    }
     use super::*;
 
     /// FN-R-33: an unknown fence value is a config error naming the value
@@ -947,11 +1155,11 @@ mod tests {
         assert_eq!(fence_refusal(&Ok(None), std::path::Path::new("/c")), None);
     }
 
-    /// FN-R-33: the fence is opt-in. With no fence key a harness starts
-    /// with no fence; "on" and "auto" still turn it on.
+    /// ADR-0028: with no fence key the mode is "auto"; "on" and "off" are
+    /// the operator's own choice.
     #[test]
-    fn the_fence_is_off_unless_the_config_turns_it_on() {
-        assert_eq!(Config::default().fence_mode(), "off");
+    fn the_fence_is_auto_unless_the_config_says_otherwise() {
+        assert_eq!(Config::default().fence_mode(), "auto");
         for v in ["on", "auto", "off"] {
             let c = Config { fence: Some(v.into()), ..Default::default() };
             assert_eq!(c.fence_mode(), v);
@@ -977,15 +1185,15 @@ mod tests {
         let h = &c.harness["claude"];
         assert_eq!(h.command, "claude");
         assert_eq!(h.args(), ["-x"]);
-        assert_eq!(c.gateway_url(), DEFAULT_GATEWAY);
+        assert_eq!(c.router_url(), DEFAULT_ROUTER);
         assert!(c.harness_set);
     }
 
     #[test]
     fn a_wrong_type_refuses_the_file() {
         assert!(parse("default = 3\n").is_err());
-        let c = parse("gateway = \"\"\nunknown = 1\n").unwrap();
-        assert_eq!(c.gateway_url(), "");
+        let c = parse("router = \"\"\nunknown = 1\n").unwrap();
+        assert_eq!(c.router_url(), "");
     }
 
     #[test]
@@ -1011,46 +1219,138 @@ mod tests {
     }
 
     #[test]
-    fn the_foreman_table_defaults_to_pane_mode() {
-        let s = Config::default().foreman_settings().unwrap();
+    fn the_steward_table_defaults_to_pane_mode() {
+        let s = Config::default().steward_settings().unwrap();
         assert_eq!(
             s,
-            ForemanSettings {
+            StewardSettings {
                 mode: "pane".into(),
                 compactor_profile: "default".into(),
                 turn_profiles: vec![String::new()],
+                store: "work".into(),
                 ..Default::default()
             }
         );
         assert_eq!(s.compactor_model_for("x"), "haiku");
     }
 
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("coppice-disc-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn put(p: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(p, body).unwrap();
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     #[test]
-    fn the_foreman_table_reads_and_stays_out_when_empty() {
+    fn a_mise_wrapper_resolves_to_the_real_binary() {
+        let dir = scratch("wrap");
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        let real = dir.join("real/claude");
+        put(&real, "\x7fELF");
+        let wrap = dir.join("claude");
+        put(&wrap, "#!/usr/bin/env bash\nmise use -g node@lts claude\nexec mise x claude -- claude \"$@\"\n");
+        let asked = std::cell::RefCell::new(Vec::new());
+        let real_s = real.to_string_lossy().into_owned();
+        let wrap_s = wrap.to_string_lossy().into_owned();
+        let found = discover_with(
+            &|n| (n == "claude").then(|| wrap_s.clone()),
+            &|n| {
+                asked.borrow_mut().push(n.to_string());
+                Ok(real_s.clone())
+            },
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].command, real_s);
+        assert!(found[0].note.contains("mise wrapper"), "{}", found[0].note);
+        assert_eq!(*asked.borrow(), vec!["claude".to_string()]);
+        assert_eq!(from_found(&found, "claude").harness["claude"].command, real_s);
+        assert_eq!(found_notes(&found).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_narrow_mise_wrapper_is_resolved() {
+        let dir = scratch("narrow");
+        let never = |n: &str| -> Result<String, MiseErr> { panic!("mise asked about {n}") };
+        let pad = "# pad\n".repeat(500);
+        for (n, body) in [
+            ("codex", "\x7fELF binary".to_string()),
+            ("pi", "#!/bin/sh\nexec mise x other -- other \"$@\"\n".to_string()),
+            ("sprig", "#!/bin/sh\necho hi\n".to_string()),
+            ("opencode", format!("#!/bin/sh\n{pad}exec mise x opencode -- opencode \"$@\"\n")),
+        ] {
+            let p = dir.join(n);
+            put(&p, &body);
+            assert!(resolve_mise(&p.to_string_lossy(), &never).0.is_none(), "{n} resolved");
+        }
+        let c = dir.join("claude");
+        put(&c, "#!/bin/bash\nexec mise x claude -- claude \"$@\"\n");
+        let rel = |_: &str| -> Result<String, MiseErr> { Ok("claude".into()) };
+        assert!(resolve_mise(&c.to_string_lossy(), &rel).0.is_none(), "a relative answer was taken");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_no_home_dir_mise_is_not_asked_and_the_note_says_so() {
+        let dir = scratch("nohome");
+        let w = dir.join("claude");
+        put(&w, "#!/bin/bash\nexec mise x claude -- claude \"$@\"\n");
+        let ws = w.to_string_lossy().into_owned();
+        let found = discover_with(&|n| (n == "claude").then(|| ws.clone()), &|_| Err(MiseErr::NoHome));
+        assert_eq!(found.len(), 1);
+        assert!(found[0].command.is_empty());
+        let notes = found_notes(&found);
+        assert!(notes.len() == 1 && notes[0].contains("home dir is unknown") && notes[0].contains("mise was not asked"), "{notes:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_steward_dir_is_absolute_or_home_relative() {
+        let c = parse("[steward]\ndir = \"/srv/st/../steward\"\n").unwrap();
+        assert_eq!(c.steward_settings().unwrap().dir, "/srv/steward");
+        assert!(encode(&c).contains("dir = \"/srv/st/../steward\""));
+        let e = parse("[steward]\ndir = \"rel/dir\"\n").unwrap().steward_settings().unwrap_err();
+        assert!(e.starts_with("[steward] dir is \"rel/dir\" in ") && e.ends_with("Use an absolute path, or one that starts with ~/"), "{e}");
+        let c = parse("[steward]\ndir = \"~/st\"\n").unwrap();
+        if let Some(h) = sys::home_dir() {
+            assert_eq!(c.steward_settings().unwrap().dir, format!("{}/st", h.to_string_lossy().trim_end_matches('/')));
+        }
+    }
+
+    #[test]
+    fn the_steward_table_reads_and_stays_out_when_empty() {
         let c = parse("default = \"claude\"\n").unwrap();
-        assert!(!encode(&c).contains("foreman"));
-        let text = "[foreman]\nmode = \"chat\"\ncompactor_profile = \"desk\"\ncompactor_model = \"m1\"\nturn_profile = \"desk\"\nturn_model = \"sonnet\"\n";
+        assert!(!encode(&c).contains("steward"));
+        let text = "[steward]\nmode = \"chat\"\ncompactor_profile = \"desk\"\ncompactor_model = \"m1\"\nturn_profile = \"desk\"\nturn_model = \"sonnet\"\n";
         let c = parse(text).unwrap();
         assert_eq!(
-            c.foreman_settings().unwrap(),
-            ForemanSettings {
+            c.steward_settings().unwrap(),
+            StewardSettings {
                 mode: "chat".into(),
                 compactor_profile: "desk".into(),
                 compactor_model: "m1".into(),
                 turn_profiles: vec!["desk".into()],
                 turn_model: "sonnet".into(),
+                store: "work".into(),
+                dir: String::new(),
             }
         );
         // A save keeps the table, in the layout Go writes.
         assert_eq!(
             encode(&c),
-            "default = \"\"\n\n[foreman]\n  mode = \"chat\"\n  compactor_profile = \"desk\"\n  compactor_model = \"m1\"\n  turn_profile = \"desk\"\n  turn_model = \"sonnet\"\n"
+            "default = \"\"\n\n[steward]\n  mode = \"chat\"\n  compactor_profile = \"desk\"\n  compactor_model = \"m1\"\n  turn_profile = \"desk\"\n  turn_model = \"sonnet\"\n"
         );
     }
 
     #[test]
     fn a_compactor_model_on_another_profile_follows_the_profile() {
-        let mut s = ForemanSettings {
+        let mut s = StewardSettings {
             compactor_profile: "desk".into(),
             ..Default::default()
         };
@@ -1060,60 +1360,60 @@ mod tests {
     }
 
     #[test]
-    fn a_foreman_mode_that_is_not_allowed_names_the_key() {
-        let c = parse("[foreman]\nmode = \"wide\"\n").unwrap();
-        let e = c.foreman_settings().unwrap_err();
-        assert!(e.starts_with("[foreman] mode is \"wide\" in "), "{e}");
+    fn a_steward_mode_that_is_not_allowed_names_the_key() {
+        let c = parse("[steward]\nmode = \"wide\"\n").unwrap();
+        let e = c.steward_settings().unwrap_err();
+        assert!(e.starts_with("[steward] mode is \"wide\" in "), "{e}");
         assert!(e.ends_with(". Use \"pane\" or \"chat\""), "{e}");
     }
 
     #[test]
     fn turn_profiles_is_an_ordered_chain_and_turn_profile_a_one_entry_chain() {
-        let c = parse("[foreman]\nturn_profiles = [\"\", \"desk\", \"grok\"]\nturn_model = \"opus\"\n").unwrap();
+        let c = parse("[steward]\nturn_profiles = [\"\", \"desk\", \"grok\"]\nturn_model = \"opus\"\n").unwrap();
         assert_eq!(
-            c.foreman_settings().unwrap().turn_profiles,
+            c.steward_settings().unwrap().turn_profiles,
             vec!["", "desk", "grok"]
         );
-        let c = parse("[foreman]\nturn_profile = \"desk\"\n").unwrap();
-        assert_eq!(c.foreman_settings().unwrap().turn_profiles, vec!["desk"]);
+        let c = parse("[steward]\nturn_profile = \"desk\"\n").unwrap();
+        assert_eq!(c.steward_settings().unwrap().turn_profiles, vec!["desk"]);
     }
 
     #[test]
     fn several_accounts_need_the_one_model_named() {
-        let c = parse("[foreman]\nturn_profiles = [\"\", \"desk\"]\n").unwrap();
-        let e = c.foreman_settings().unwrap_err();
+        let c = parse("[steward]\nturn_profiles = [\"\", \"desk\"]\n").unwrap();
+        let e = c.steward_settings().unwrap_err();
         assert!(e.contains("turn_model") && e.contains("turn_profiles"), "{e}");
-        let c = parse("[foreman]\nturn_profiles = [\"desk\"]\n").unwrap();
-        assert!(c.foreman_settings().is_ok());
+        let c = parse("[steward]\nturn_profiles = [\"desk\"]\n").unwrap();
+        assert!(c.steward_settings().is_ok());
     }
 
     #[test]
     fn setting_both_turn_keys_names_both() {
-        let c = parse("[foreman]\nturn_profile = \"a\"\nturn_profiles = [\"b\"]\n").unwrap();
-        let e = c.foreman_settings().unwrap_err();
+        let c = parse("[steward]\nturn_profile = \"a\"\nturn_profiles = [\"b\"]\n").unwrap();
+        let e = c.steward_settings().unwrap_err();
         assert!(e.contains("turn_profile") && e.contains("turn_profiles"), "{e}");
     }
 
     #[test]
     fn turn_profiles_refuse_the_same_account_twice() {
         for list in ["[\"\", \"default\"]", "[\"\", \"\"]", "[\"a\", \"b\", \"a\"]"] {
-            let c = parse(&format!("[foreman]\nturn_profiles = {list}\nturn_model = \"m\"\n")).unwrap();
-            let e = c.foreman_settings().unwrap_err();
+            let c = parse(&format!("[steward]\nturn_profiles = {list}\nturn_model = \"m\"\n")).unwrap();
+            let e = c.steward_settings().unwrap_err();
             assert!(e.contains("twice"), "{list}: {e}");
         }
-        let c = parse("[foreman]\nturn_profiles = [\"\", \"a\"]\nturn_model = \"m\"\n").unwrap();
-        assert!(c.foreman_settings().is_ok());
+        let c = parse("[steward]\nturn_profiles = [\"\", \"a\"]\nturn_model = \"m\"\n").unwrap();
+        assert!(c.steward_settings().is_ok());
     }
 
     #[test]
     fn turn_profiles_write_back_in_the_layout_go_writes() {
-        let c = parse("[foreman]\nmode = \"chat\"\nturn_profiles = [\"\", \"desk\"]\nturn_model = \"opus\"\n").unwrap();
+        let c = parse("[steward]\nmode = \"chat\"\nturn_profiles = [\"\", \"desk\"]\nturn_model = \"opus\"\n").unwrap();
         assert!(encode(&c).contains("turn_profiles"), "{}", encode(&c));
     }
 
     #[test]
-    fn an_old_foreman_table_with_cut_keys_still_loads() {
-        let c = parse("[foreman]\nmode = \"chat\"\ncalls = 3\nturn_timeout_s = 60\n").unwrap();
-        assert_eq!(c.foreman_settings().unwrap().mode, "chat");
+    fn an_old_steward_table_with_cut_keys_still_loads() {
+        let c = parse("[steward]\nmode = \"chat\"\ncalls = 3\nturn_timeout_s = 60\n").unwrap();
+        assert_eq!(c.steward_settings().unwrap().mode, "chat");
     }
 }

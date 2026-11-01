@@ -159,13 +159,13 @@ def test_subsumption_blocks_command_substitution_substring():
     # an attacker could construct command strings like `cat $(rm -rf /)`
     # that pass the head check, fail concrete verify on $(, and the
     # subsumption proof would falsely approve. We assert subsumption
-    # rejects when the metachar gate disagrees with verify.
+    # rejects when the metachar warden disagrees with verify.
     import z3
 
     from opendaisugi.subsumption import _encode_shell_admission
 
     s = z3.String("cmd")
-    perms = Permission(shell=True, shell_allowlist=["cat"])
+    perms = Permission(shell=True, shell_allowlist=["cat"], file_read=["**"], file_write=["**"])
     admission = _encode_shell_admission(perms, s)
     solver = z3.Solver()
     solver.add(admission)
@@ -182,7 +182,7 @@ def test_subsumption_blocks_redirect_substring():
     from opendaisugi.subsumption import _encode_shell_admission
 
     s = z3.String("cmd")
-    perms = Permission(shell=True, shell_allowlist=["cat"])
+    perms = Permission(shell=True, shell_allowlist=["cat"], file_read=["**"], file_write=["**"])
     admission = _encode_shell_admission(perms, s)
     for ch in (">", "<", "\n"):
         solver = z3.Solver()

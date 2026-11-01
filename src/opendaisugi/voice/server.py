@@ -51,7 +51,7 @@ import wave
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from opendaisugi.config import Config
@@ -59,17 +59,29 @@ from opendaisugi.exceptions import FloorNotAvailable
 from opendaisugi.floor.backend import PaneRef
 from opendaisugi.floor.registry import pick_backend, prompt_pane
 from opendaisugi.voice import deliver as deliver_mod
-from opendaisugi.voice.audio import AudioFormatUnsupported, to_wav_16k_mono, wav_duration_s
-from opendaisugi.voice.cleanup import clean_transcript
-from opendaisugi.voice.engines import EngineLoading, EngineUnavailable, pick_engine
+from opendaisugi.voice.audio import (
+    AudioFormatUnsupported,
+    split_wav,
+    to_wav_16k_mono,
+    truncate_wav,
+    wav_duration_s,
+)
+from opendaisugi.voice.cleanup import clean_parts, clean_transcript
+from opendaisugi.voice.engines import (
+    GAP_MARKER,
+    EngineLoading,
+    EngineUnavailable,
+    Transcript,
+    pick_engine,
+)
 
 if TYPE_CHECKING:
     from opendaisugi.floor.backend import PaneBackend
 
 _log = logging.getLogger("opendaisugi.voice.server")
 
-MAX_AUDIO_SECONDS = 60.0
-MAX_CONTENT_LENGTH_BYTES = 30_000_000  # a wire size ceiling, checked before any decode
+MAX_AUDIO_SECONDS = 1200.0  # the owner dictates long prompts: cut into windows below
+MAX_CONTENT_LENGTH_BYTES = 64_000_000  # a wire size ceiling, checked before any decode
 MAX_DELIVER_BYTES = 65536  # a wire size ceiling for /deliver, checked before any read
 MAX_DELIVER_TEXT_CHARS = 20000  # a ceiling on the parsed text field itself
 _BAN_WINDOW_S = 60.0
@@ -91,6 +103,53 @@ def _read_token(token_file: Path) -> str | None:
         return token_file.read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
+
+
+def _transcribe_long(engine: Any, wav_bytes: bytes) -> Transcript:
+    """Transcribe a clip of any length up to the ceiling: the windows from
+    split_wav in order, the texts joined by one space. The duration is the
+    clip's; the real-time factor is all the engine time over all the audio.
+    whisper.cpp reads all windows in one run, so its model loads once. A
+    window that fails does not cost the others: its place in the text is
+    GAP_MARKER. The call fails only when no window could be read."""
+    pieces = split_wav(wav_bytes)
+    if len(pieces) == 1:
+        t = engine.transcribe(pieces[0])
+        return Transcript(
+            text=t.text,
+            segments=t.segments,
+            duration_s=t.duration_s,
+            rtf=t.rtf,
+            parts=(t.text,),
+        )
+    start = time.monotonic()
+    total = wav_duration_s(wav_bytes)
+    failure: Exception | None = None
+    if hasattr(engine, "transcribe_batch"):
+        texts, read, failure = engine.transcribe_batch(pieces, None)
+    else:
+        texts, read = [], []
+        for piece in pieces:
+            try:
+                texts.append(engine.transcribe(piece).text)
+                read.append(True)
+            except Exception as exc:  # one bad window must not cost the others
+                failure = failure or exc
+                texts.append("")
+                read.append(False)
+    parts = [t if ok else GAP_MARKER for t, ok in zip(texts, read, strict=True)]
+    if not any(read):
+        raise failure or RuntimeError("the engine read no window")
+    text = " ".join(p.strip() for p in parts if p.strip())
+    rtf = (time.monotonic() - start) / total if total > 0 else 0.0
+    return Transcript(
+        text=text,
+        segments=[],
+        duration_s=total,
+        rtf=rtf,
+        parts=tuple(parts),
+        gaps=read.count(False),
+    )
 
 
 def _content_length(headers) -> int | None:
@@ -198,7 +257,7 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if urlsplit(self.path).path == "/health":
-            self._send_json(200, {"ok": True})
+            self._send_json(200, {"ok": True, "max_seconds": MAX_AUDIO_SECONDS})
             return
         self._send_json(
             404,
@@ -309,34 +368,41 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        duration_s = wav_duration_s(wav_bytes)
-        if duration_s > MAX_AUDIO_SECONDS:
+        # A clip a little over the cap is read up to the cap and the reply
+        # says how much was left out. The page stops a few seconds early, but
+        # a clip it recorded must never be refused for a few seconds.
+        wav_bytes, cut_s = truncate_wav(wav_bytes, MAX_AUDIO_SECONDS)
+        # One job at a time: only this server can see a job that outlives
+        # the request that started it.
+        if not server.busy.acquire(blocking=False):
             self._send_json(
-                413,
+                409,
                 {
-                    "error": "audio_too_long",
-                    "max_seconds": MAX_AUDIO_SECONDS,
-                    "message": f"The clip is longer than {MAX_AUDIO_SECONDS:.0f} seconds. "
-                    "Send a shorter clip.",
+                    "error": "busy",
+                    "message": "The voice server is still turning an earlier clip into "
+                    "text. Wait for it to finish, then send this one again.",
                 },
             )
             return
         try:
-            transcript = server.engine.transcribe(wav_bytes)
-        except EngineLoading as exc:
-            self._send_json(503, {"error": "engine_loading", "message": str(exc)})
-            return
-        except EngineUnavailable as exc:
-            self._send_json(503, {"error": "engine_unavailable", "message": str(exc)})
-            return
-        text = transcript.text
-        cleaned = False
-        reason: str | None = None
-        if want_cleanup:
-            result = clean_transcript(text, config=server.config)
-            text = result.text
-            cleaned = result.cleaned
-            reason = result.reason
+            try:
+                transcript = _transcribe_long(server.engine, wav_bytes)
+            except EngineLoading as exc:
+                self._send_json(503, {"error": "engine_loading", "message": str(exc)})
+                return
+            except EngineUnavailable as exc:
+                self._send_json(503, {"error": "engine_unavailable", "message": str(exc)})
+                return
+            text = transcript.text
+            cleaned = False
+            reason: str | None = None
+            if want_cleanup:
+                result = clean_parts(transcript, config=server.config, clean=clean_transcript)
+                text = result.text
+                cleaned = result.cleaned
+                reason = result.reason
+        finally:
+            server.busy.release()
         payload = {
             "text": text,
             "raw_text": transcript.text,
@@ -347,6 +413,10 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
         }
         if reason is not None:
             payload["reason"] = reason
+        if transcript.gaps:
+            payload["gaps"] = transcript.gaps
+        if cut_s:
+            payload["cut_s"] = cut_s
         self._send_json(200, payload)
 
     def _handle_deliver(self, server: "VoiceServer") -> None:
@@ -468,6 +538,7 @@ class VoiceServer(ThreadingHTTPServer):
         self.send = send if send is not None else prompt_pane
         self._auth_failures: dict[str, list[float]] = {}
         self._auth_lock = threading.Lock()
+        self.busy = threading.Lock()
         if tls_cert is not None or tls_key is not None:
             if tls_cert is None or tls_key is None:
                 # super().__init__ above already bound and listened on the

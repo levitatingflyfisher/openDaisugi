@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A stand-in for sprig in a chat-mode foreman turn on an operator profile.
+"""A stand-in for sprig in a chat-mode steward turn on an operator profile.
 It never calls a model.
 
 coppice starts sprig with an allowlist environment, so this fake finds its
@@ -45,7 +45,7 @@ def main():
         json.dump(rec, f, indent=1)
     # A key that starts sk-out is an account out of quota (HTTP 429); one that
     # starts sk-401 is a refused key. Both fail as sprig does: one line on
-    # stderr and exit 1 (foreman failover cases).
+    # stderr and exit 1 (steward failover cases).
     for prefix, line in (
         ("sk-out", "anthropic api 429: slow down"),
         ("sk-401", "anthropic api 401: invalid x-api-key"),
@@ -55,10 +55,14 @@ def main():
             sys.exit(1)
     # The compactor runs sprig with no tools. A text with REFUSE-ME gets an
     # empty answer and the stop reason refusal; a text with BALK-ME gets a
-    # non-zero exit with a complaint that is no outage (foreman clip cases).
+    # non-zero exit with a complaint that is no outage (steward clip cases).
     tools_none = "--tools" in args and args[args.index("--tools") + 1] == "none"
     if tools_none and "REFUSE-ME" in stdin:
-        print(json.dumps({"answer": "", "stop": "refusal", "usage": {"input_tokens": 3, "output_tokens": 0}}))
+        print(
+            json.dumps(
+                {"answer": "", "stop": "refusal", "usage": {"input_tokens": 3, "output_tokens": 0}}
+            )
+        )
         return
     if tools_none and "BALK-ME" in stdin:
         sys.stderr.write("I can't summarize this.\n")
@@ -67,7 +71,7 @@ def main():
     msg = m.group(1) if m else ""
     answer = "sprig heard: " + msg
     if msg == "status":
-        mcp = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["foreman"]
+        mcp = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["steward"]
         lines = [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
             {

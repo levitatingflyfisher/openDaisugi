@@ -16,21 +16,21 @@ import (
 // ManifestTick is how often a pty pane with no better source is scanned.
 const ManifestTick = 500 * time.Millisecond
 
-// GateQuiet is the hold state.Merge's rule 6 gives an incoming manifest
+// WardenQuiet is the hold state.Merge's rule 6 gives an incoming manifest
 // event against a fresher, higher-rank current state (internal/state/state.go).
-// It is NOT the only hold a gate can place, and the two are not symmetric: a
-// gate blocked report carrying an unexpired ask is Merge's rule 4, and that
-// hold lasts until the gate itself clears it or the ask's own deadline
+// It is NOT the only hold a warden can place, and the two are not symmetric: a
+// warden blocked report carrying an unexpired ask is Merge's rule 4, and that
+// hold lasts until the warden itself clears it or the ask's own deadline
 // passes - which can be far longer than two seconds. scanOnce checks for
-// that hold separately (tickSkipReason), rather than assuming GateQuiet
-// covers every case a gate can hold a pane back.
+// that hold separately (tickSkipReason), rather than assuming WardenQuiet
+// covers every case a warden can hold a pane back.
 //
 // For an ordinary (non-ask) higher-rank source, the hold does release after
-// GateQuiet - scanOnce's own skip and Merge's rule 6 both measure the
+// WardenQuiet - scanOnce's own skip and Merge's rule 6 both measure the
 // identical receive-clock window - which is what makes a harness that
-// stopped calling the gate recoverable instead of frozen on its last gate
+// stopped calling the warden recoverable instead of frozen on its last warden
 // report for the rest of the session.
-const GateQuiet = 2 * time.Second
+const WardenQuiet = 2 * time.Second
 
 // detectionInput reads a pane's detection window plus its OSC state, and
 // hands back the raw text too: scanOnce needs only the detect.Input, but
@@ -57,8 +57,8 @@ func detectionInput(lp *LivePane) (detect.Input, string, error) {
 
 // StartManifestTick scans pty panes that have no better source, once every
 // ManifestTick. It is the fallback of last resort: a pane held back by
-// tickSkipReason (done, a gate ask hold, or an ordinary source that spoke
-// within GateQuiet) is skipped entirely. set is loaded once by the caller
+// tickSkipReason (done, a warden ask hold, or an ordinary source that spoke
+// within WardenQuiet) is skipped entirely. set is loaded once by the caller
 // (registerAll in cmd/coppice) and handed in here - this never loads its
 // own, so a broken override file fails once, at startup, with one named
 // warning, not silently every 500 ms forever.
@@ -150,24 +150,24 @@ func (s *Server) tickSkipReason(paneID string, now float64) string {
 	if ev.State == proto.StateDone {
 		return "skipped: done"
 	}
-	// Merge rule 4: a gate blocked hold carrying an unexpired ask outranks
+	// Merge rule 4: a warden blocked hold carrying an unexpired ask outranks
 	// every other source, INCLUDING a manifest event that has already
-	// cleared GateQuiet - the ask's answer arrives through the gate, not
-	// through the screen. This hold is not bounded by GateQuiet at all; it
-	// lasts until the gate clears it or the ask's own deadline passes, which
-	// can be far longer than two seconds. See GateQuiet's own doc comment.
-	if ev.State == proto.StateBlocked && ev.Source == proto.SrcGate &&
+	// cleared WardenQuiet - the ask's answer arrives through the warden, not
+	// through the screen. This hold is not bounded by WardenQuiet at all; it
+	// lasts until the warden clears it or the ask's own deadline passes, which
+	// can be far longer than two seconds. See WardenQuiet's own doc comment.
+	if ev.State == proto.StateBlocked && ev.Source == proto.SrcWarden &&
 		ev.Ask != nil && now < ev.Ask.Deadline {
-		return fmt.Sprintf("skipped: gate blocked on an ask until %s",
+		return fmt.Sprintf("skipped: warden blocked on an ask until %s",
 			time.Unix(int64(ev.Ask.Deadline), 0).UTC().Format(time.RFC3339))
 	}
 	// Merge rule 6: an ordinary (non-ask) hold on a higher-rank source
-	// releases after GateQuiet, measured on the store's own receive clock
+	// releases after WardenQuiet, measured on the store's own receive clock
 	// (s.states.Received), never on ev.TS, which is whatever the reporter's
 	// own clock said. A hook with a clock a year ahead must not be able to
 	// keep the scanner away forever.
 	if ev.Source != proto.SrcManifest {
-		if received, ok := s.states.Received(paneID); ok && now-received < GateQuiet.Seconds() {
+		if received, ok := s.states.Received(paneID); ok && now-received < WardenQuiet.Seconds() {
 			return fmt.Sprintf("skipped: %s spoke %ds ago", ev.Source, int(now-received))
 		}
 	}
@@ -180,7 +180,7 @@ func (s *Server) tickSkipReason(paneID string, now float64) string {
 // They exist for tests: a merged state that never changed proves nothing
 // about which of the two happened, because state.Merge's own precedence
 // rules can produce that identical net effect whether or not scanOnce's own
-// up-front skip ever fired - see TestAPaneWithAFreshGateSourceIsNotScanned's
+// up-front skip ever fired - see TestAPaneWithAFreshWardenSourceIsNotScanned's
 // doc comment for the concrete case this covers.
 func (s *Server) recordTickScanned() {
 	s.mu.Lock()
@@ -272,7 +272,7 @@ func (s *Server) scanOnce(set *detect.Set) {
 // halves of a pane's state: the merged fact a reader actually sees
 // (effective_state/effective_source, EffectiveState of the current event)
 // and the manifest's own opinion of the screen alone (manifest_state), which
-// are very often different - a gate hold or an unmatched screen is exactly
+// are very often different - a warden hold or an unmatched screen is exactly
 // when an operator reaches for this command. It runs the identical
 // evaluation scanOnce does, against the identical detection text
 // pane.read --source detection returns, shows every rule the evaluator
@@ -343,7 +343,7 @@ func (s *Server) RegisterExplainCommand(set *detect.Set) {
 		// actually sees - pane.list, agent.get, a cockpit roster - via
 		// state.EffectiveState of the current event. manifest_state, set
 		// further down, is the manifest's own opinion of the screen ALONE:
-		// the two can legitimately disagree (a gate hold, or a screen mid-
+		// the two can legitimately disagree (a warden hold, or a screen mid-
 		// transition), and that disagreement is exactly what this command
 		// exists to show side by side rather than collapse into one verdict.
 		if cur, ok := s.states.Current(id); ok {

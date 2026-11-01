@@ -2,7 +2,7 @@
 //! pathway store healthy, with the decisions, reasons and store writes of
 //! the Python oracle. The Go client's `internal/garden` is the reference.
 
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::pyjson::{Object, Value};
 use crate::pathways::importer::py_row;
 use crate::pathways::pathway::Pathway;
 use crate::pathways::pmodel::{validate_model, Id, Mode};
@@ -248,7 +248,7 @@ fn cmp_int_text(a: &Value, b: &Value) -> std::cmp::Ordering {
 /// Python's `==` on `model_dump()` values: bool, int and float by value,
 /// NaN equal to nothing.
 pub fn py_equal(a: &Value, b: &Value) -> bool {
-    crate::gate::predicate::py_eq(a, b)
+    crate::warden::predicate::py_eq(a, b)
 }
 
 fn permissions_compatible(a: &Object, b: &Object) -> bool {

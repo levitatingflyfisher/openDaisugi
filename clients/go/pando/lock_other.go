@@ -1,0 +1,23 @@
+//go:build !unix
+
+package pando
+
+import "os"
+
+// noFollow is 0 here: this platform has no O_NOFOLLOW.
+const noFollow = 0
+
+// lockDir opens the lock file. This platform has no flock, so the one
+// writer rule is not enforced here.
+func lockDir(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE, fileMode)
+}
+
+// lockImport has no lock on this platform.
+func lockImport(path string) (unlock func(), err error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, fileMode)
+	if err != nil {
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}

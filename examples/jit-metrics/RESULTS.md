@@ -27,7 +27,7 @@ The envelope is LLM-authored **once** (the "compile"), then guarded cheaply per 
 
 ## 2. Compilable fraction — how much of the corpus could compile?
 
-Over **all** interactions (the pessimistic denominator — failures and gate-rejections included). A trace is compilable when it lands in a cluster of ≥3 similar successes (the distiller's own hotness precondition) **and** its plan still verifies against its envelope.
+Over **all** interactions (the pessimistic denominator — failures and warden-rejections included). A trace is compilable when it lands in a cluster of ≥3 similar successes (the distiller's own hotness precondition) **and** its plan still verifies against its envelope.
 
 | Metric | Value |
 |---|---|
@@ -41,4 +41,4 @@ Over **all** interactions (the pessimistic denominator — failures and gate-rej
 
 > **Oracle:** hit × guard_pass — UPPER BOUND: proves authorized + structurally distillable, NOT that the reused plan is correct (no correctness oracle)
 
-The headline is an **upper bound**: it proves each counted interaction is *authorized* (guard passes) and *structurally distillable* (clears the hotness gate), not that a reused plan would be *correct*. A real correctness oracle is a separate research problem; naming the gap is the honest move, and the Stage-4 fidelity benchmark is where the correctness question is attacked empirically.
+The headline is an **upper bound**: it proves each counted interaction is *authorized* (guard passes) and *structurally distillable* (clears the hotness warden), not that a reused plan would be *correct*. A real correctness oracle is a separate research problem; naming the gap is the honest move, and the Stage-4 fidelity benchmark is where the correctness question is attacked empirically.

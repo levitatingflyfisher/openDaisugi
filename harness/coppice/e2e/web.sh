@@ -10,7 +10,7 @@ cop() { "$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" "$@"; }
 token=$(cop web token --qr=false | awk '$1 == "token" {print $2; exit}')
 [ -n "$token" ] || { echo "web.sh: no web token" >&2; exit 1; }
 
-"$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" web serve --tls off --listen "127.0.0.1:$port" --gate-root "$E2E_DIR/gate" --qr=false \
+"$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" web serve --tls off --listen "127.0.0.1:$port" --warden-root "$E2E_DIR/warden" --qr=false \
   > "$E2E_DIR/web.log" 2>&1 < /dev/null &
 web=$!
 # The binary is started directly, not through cop(), so $! is its own pid

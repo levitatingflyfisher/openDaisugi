@@ -15,6 +15,7 @@ supported subset — lower to free Z3 ``Bool`` variables and are reported in
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -47,6 +48,7 @@ from opendaisugi.predicate import (
     NotMatches,
     NumericRange,
     Or,
+    PathIn,
 )
 from opendaisugi.regex_to_z3 import UnsupportedRegexError
 from opendaisugi.regex_to_z3 import translate as translate_regex
@@ -89,36 +91,108 @@ def _scope_writes(scope: dict[str, Any] | None, base: str | None = None) -> list
     return step_write_paths(scope, base)
 
 
+def _same_kind(a: Any, b: Any) -> bool:
+    """False when exactly one side is a bool (MP-9): ``True`` is not ``1``."""
+    return isinstance(a, bool) == isinstance(b, bool)
+
+
+def _kind_eq(a: Any, b: Any) -> bool:
+    return _same_kind(a, b) and a == b
+
+
+def _eval_path_in(expr: PathIn, scope: Any) -> bool:
+    """MP-6: place the string (or each string of a list) and match the
+    envelope's globs of ``expr.scope``. No permissions in scope: false."""
+    perms = getattr(scope, "perms", None)
+    if perms is None:
+        return False
+    val = _resolve_path(scope, expr.path)
+    if val is _MISSING:
+        return False
+    items = val if isinstance(val, list) else [val]
+    if not items:
+        return False
+    from opendaisugi.mcp_rules import PATH_IN_ABSOLUTE, place_arg_path
+    from opendaisugi.verify import _path_matches_any
+
+    globs = getattr(perms, expr.scope)
+    for item in items:
+        if not isinstance(item, str):
+            return False
+        if not item.startswith("/"):
+            # Refused, not false: under a "not" a false would admit it.
+            raise RuleRefused(
+                f"{PATH_IN_ABSOLUTE}: argument '{expr.path}' is {json.dumps(item)}, "
+                "which is not an absolute path; give the tool an absolute path"
+            )
+        placed = place_arg_path(item, getattr(scope, "cwd", None))
+        if placed is None or not _path_matches_any(placed, globs):
+            return False
+    return True
+
+
+class RuleRefused(Exception):
+    """An MCP argument rule that cannot be run on this input. The message is
+    the deny reason."""
+
+
+#: Longest string an MCP argument rule's regex reads (characters).
+MAX_RULE_STRING_CHARS = 4096
+
+
+def _regex_hit(regex: str, val: str, scope: Any, path: str = "") -> bool:
+    """A regex test. An MCP argument rule (``ArgScope``) must match the whole
+    string; every other predicate searches."""
+    if getattr(scope, "full_match", False):
+        if len(val) > MAX_RULE_STRING_CHARS:
+            raise RuleRefused(
+                f"argument rule refused: argument '{path}' is longer than "
+                f"{MAX_RULE_STRING_CHARS} characters"
+            )
+        from opendaisugi import rule_regex  # noqa: PLC0415
+
+        if not rule_regex.compiles(regex):
+            raise RuleRefused(f"argument rule refused: {rule_regex.invalid_reason(regex)}")
+        if any("\ud800" <= ch <= "\udfff" for ch in val):
+            # The engines read bytes; text that cannot be written as UTF-8
+            # has no bytes to match, so it is refused before matching.
+            raise RuleRefused(f"argument rule refused: argument '{path}' is not valid UTF-8 text")
+        return rule_regex.fullmatch(regex, val)
+    return re.search(regex, val) is not None
+
+
 def _eval_scalar(expr: Any, scope: dict[str, Any]) -> bool:
+    if isinstance(expr, PathIn):
+        return _eval_path_in(expr, scope)
     if isinstance(expr, ForallWrites):
         writes = _scope_writes(scope, expr._base)
         if writes is None:
             return False
         return all(_eval_scalar(expr.pred, {"path": p}) for p in writes)
     if isinstance(expr, Equals):
-        return _resolve_path(scope, expr.path) == expr.value
+        return _kind_eq(_resolve_path(scope, expr.path), expr.value)
     if isinstance(expr, NotEquals):
         val = _resolve_path(scope, expr.path)
-        return val is not _MISSING and val != expr.value
+        return val is not _MISSING and not _kind_eq(val, expr.value)
     if isinstance(expr, InSet):
         val = _resolve_path(scope, expr.path)
-        return val is not _MISSING and val in expr.values
+        return val is not _MISSING and any(_kind_eq(val, v) for v in expr.values)
     if isinstance(expr, NotInSet):
         val = _resolve_path(scope, expr.path)
-        return val is not _MISSING and val not in expr.values
+        return val is not _MISSING and not any(_kind_eq(val, v) for v in expr.values)
     if isinstance(expr, Matches):
         val = _resolve_path(scope, expr.path)
         if val is _MISSING or not isinstance(val, str):
             return False
-        return re.search(expr.regex, val) is not None
+        return _regex_hit(expr.regex, val, scope, expr.path)
     if isinstance(expr, NotMatches):
         val = _resolve_path(scope, expr.path)
         if val is _MISSING or not isinstance(val, str):
             return True
-        return re.search(expr.regex, val) is None
+        return not _regex_hit(expr.regex, val, scope, expr.path)
     if isinstance(expr, NumericRange):
         val = _resolve_path(scope, expr.path)
-        if val is _MISSING or not isinstance(val, (int, float)):
+        if val is _MISSING or isinstance(val, bool) or not isinstance(val, (int, float)):
             return False
         return expr.min <= float(val) <= expr.max
     if isinstance(expr, LengthRange):
@@ -255,6 +329,10 @@ class _Scope:
         self.concrete = concrete  # None => fully symbolic
         self.vars: dict[str, z3.ExprRef] = {}
         self.assumptions: list[z3.BoolRef] = []
+        # The permissions a ``path_in`` reads its globs from, and the call's
+        # cwd. Set only by the mcp_rules subsumption check.
+        self.perms: Any = None
+        self.cwd: str | None = None
 
     def resolve_string(self, path: str) -> tuple[z3.ExprRef, bool]:
         """Returns (z3_var, present_in_concrete).
@@ -286,13 +364,13 @@ class _Scope:
             present = True
             if self.concrete is not None:
                 val = _resolve_path(self.concrete, path)
-                present = isinstance(val, (int, float))
+                present = isinstance(val, (int, float)) and not isinstance(val, bool)
             return self.vars[key], present
         v = z3.Real(name)
         self.vars[key] = v
         if self.concrete is not None:
             val = _resolve_path(self.concrete, path)
-            if not isinstance(val, (int, float)):
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
                 return v, False
             self.assumptions.append(v == z3.RealVal(float(val)))
         return v, True
@@ -306,6 +384,8 @@ def _compile_scalar(
 ) -> z3.BoolRef:
     if isinstance(expr, ForallWrites):
         return _compile_forall_writes(expr, scope, soft)
+    if isinstance(expr, PathIn):
+        return _compile_path_in(expr, scope)
     if isinstance(expr, Equals):
         if isinstance(expr.value, (int, float)) and not isinstance(expr.value, bool):
             var, present = scope.resolve_numeric(expr.path)
@@ -441,6 +521,38 @@ def _compile_scalar(
             f"unresolved alias reference '{expr.name}'; resolve aliases before compilation"
         )
     raise ValueError(f"unknown scalar predicate op: {type(expr).__name__}")
+
+
+def _compile_path_in(expr: PathIn, scope: _Scope) -> z3.BoolRef:
+    """``path_in`` as the disjunction of the scope's glob terms over the
+    placed string. A relative placed string does not match. Without
+    permissions it is false; a glob the encoder cannot take raises, so a
+    subsumption check never reads an unencodable inner rule as narrower."""
+    perms = scope.perms
+    if perms is None:
+        return z3.BoolVal(False)
+    if scope.concrete is not None:
+        arg_scope = _arg_scope_for(scope.concrete, perms, scope.cwd)
+        return z3.BoolVal(_eval_path_in(expr, arg_scope))
+    from opendaisugi.subsumption import _glob_to_z3, _glob_unsupported
+
+    globs = getattr(perms, expr.scope)
+    bad = [g for g in globs if _glob_unsupported(g)]
+    if bad:
+        raise ValueError(f"path_in: glob shape cannot be soundly encoded: {bad}")
+    var, _present = scope.resolve_string(expr.path)
+    if not globs:
+        return z3.BoolVal(False)
+    return z3.And(z3.PrefixOf(z3.StringVal("/"), var), z3.Or(*[_glob_to_z3(var, g) for g in globs]))
+
+
+def _arg_scope_for(arguments: dict[str, Any], perms: Any, cwd: str | None) -> Any:
+    from opendaisugi.mcp_rules import ArgScope
+
+    scope = ArgScope(arguments)
+    scope.perms = perms
+    scope.cwd = cwd
+    return scope
 
 
 def _compile_forall_writes(expr: ForallWrites, scope: _Scope, soft: list[str]) -> z3.BoolRef:
@@ -616,7 +728,7 @@ def verify_predicate_z3(
     # Shared with z3_checks.check_envelope_self_consistency and
     # check_plan_against_envelope — see Z3_SOLVE_LOCK's docstring in
     # z3_checks.py for why concurrent solves on Z3's global context need
-    # serializing under the threaded resident gate server. compile_to_z3
+    # serializing under the threaded resident warden server. compile_to_z3
     # itself builds Z3 terms (Bool/String/Real vars, regex InRe nodes) on
     # that same global context, so it has to be inside the lock too: built
     # standalone it's provably safe, but interleaved with another thread's

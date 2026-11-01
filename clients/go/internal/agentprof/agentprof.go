@@ -15,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -28,7 +29,14 @@ const Default = "default"
 // Wires are the wires a profile may name.
 var Wires = []string{"claude-code", "anthropic", "openai"}
 
-var fields = []string{"wire", "base_url", "model", "key_env"}
+var fields = []string{"wire", "base_url", "model", "key_env", "max_tokens", "timeout_s", "thinking"}
+
+// MaxTokensLimit is agent_profiles.MAX_TOKENS_LIMIT.
+const MaxTokensLimit = 1_000_000
+
+// TimeoutLimit is agent_profiles.TIMEOUT_LIMIT: the most seconds a profile
+// may let one pando summary call take.
+const TimeoutLimit = 86_400
 
 // DefaultBase is the server a wire talks to when the profile names none.
 var DefaultBase = map[string]string{"anthropic": "https://api.anthropic.com", "openai": "https://api.openai.com/v1"}
@@ -50,6 +58,37 @@ func ValidName(name string) bool { return nameRe.MatchString(name) }
 type Profile struct {
 	Name, Wire                  string
 	BaseURL, Model, KeyEnv, Key *string
+	// MaxTokens is the most tokens one pando summary call may produce; nil
+	// for the summarizer's default. Only pando reads it, and the bundle does
+	// not carry it.
+	MaxTokens *int
+	// TimeoutS is the most seconds one pando summary call may take; nil for
+	// the summarizer's default (120). Only pando reads it, and the bundle
+	// does not carry it.
+	TimeoutS *int
+	// Thinking is off, low, medium or high; nil leaves the server's
+	// default. Only pando reads it, and the bundle does not carry it.
+	Thinking *string
+}
+
+// Thinking values, agent_profiles.THINKING.
+var ThinkingValues = []string{"off", "low", "medium", "high"}
+
+// thinking reads a thinking value: one of ThinkingValues, as text.
+// YAML 1.1 reads a bare off as false, so a false counts as off.
+func thinking(v config.Value) (string, bool) {
+	if v.Kind == config.Bool && !v.B {
+		return "off", true
+	}
+	if v.Kind != config.Str {
+		return "", false
+	}
+	for _, x := range ThinkingValues {
+		if v.Text == x {
+			return x, true
+		}
+	}
+	return "", false
 }
 
 // Builtin is the built-in profile.
@@ -182,6 +221,31 @@ func ListRows(ps Profiles) []any {
 	return rows
 }
 
+// maxTokens reads a max_tokens value: a whole number from 1 to
+// MaxTokensLimit. A bool, a float and text are not one.
+func maxTokens(v config.Value) (int, bool) {
+	if v.Kind != config.Int {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v.Text)
+	if err != nil || n < 1 || n > MaxTokensLimit {
+		return 0, false
+	}
+	return n, true
+}
+
+// timeoutS reads a timeout_s value: a whole number from 1 to TimeoutLimit.
+func timeoutS(v config.Value) (int, bool) {
+	if v.Kind != config.Int {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v.Text)
+	if err != nil || n < 1 || n > TimeoutLimit {
+		return 0, false
+	}
+	return n, true
+}
+
 func strVal(v config.Value) (*string, bool) {
 	switch v.Kind {
 	case config.Null:
@@ -238,12 +302,37 @@ func check(name string, doc config.Value) string {
 	if v, has := doc.Map["key_env"]; has && v.Kind == config.Str && !varRe.MatchString(v.Text) {
 		return "key_env must be a variable name"
 	}
+	mt, hasMT := doc.Map["max_tokens"]
+	hasMT = hasMT && mt.Kind != config.Null
+	if hasMT {
+		if _, ok := maxTokens(mt); !ok {
+			return "max_tokens must be a whole number from 1 to " + strconv.Itoa(MaxTokensLimit)
+		}
+	}
+	if ts, has := doc.Map["timeout_s"]; has && ts.Kind != config.Null {
+		if _, ok := timeoutS(ts); !ok {
+			return "timeout_s must be a whole number from 1 to " + strconv.Itoa(TimeoutLimit)
+		}
+	}
+	th, hasTh := doc.Map["thinking"]
+	hasTh = hasTh && th.Kind != config.Null
+	if hasTh {
+		if _, ok := thinking(th); !ok {
+			return "thinking must be off, low, medium or high"
+		}
+	}
 	if w.Text == "claude-code" {
+		if hasTh {
+			return "the claude-code wire takes no thinking"
+		}
 		if v, has := doc.Map["base_url"]; has && v.Kind != config.Null {
 			return "the claude-code wire takes no base_url"
 		}
 		if v, has := doc.Map["key_env"]; has && v.Kind != config.Null {
 			return "the claude-code wire takes no key_env"
+		}
+		if hasMT {
+			return "the claude-code wire takes no max_tokens"
 		}
 	}
 	return ""
@@ -266,6 +355,15 @@ func Resolve(raw *config.Value, lookup func(string) (string, bool)) Profiles {
 		p.BaseURL, _ = strVal(doc.Map["base_url"])
 		p.Model, _ = strVal(doc.Map["model"])
 		p.KeyEnv, _ = strVal(doc.Map["key_env"])
+		if n, ok := maxTokens(doc.Map["max_tokens"]); ok {
+			p.MaxTokens = &n
+		}
+		if n, ok := timeoutS(doc.Map["timeout_s"]); ok {
+			p.TimeoutS = &n
+		}
+		if th, ok := thinking(doc.Map["thinking"]); ok {
+			p.Thinking = &th
+		}
 		if p.KeyEnv != nil && *p.KeyEnv != "" {
 			if k, ok := lookup(*p.KeyEnv); ok && k != "" {
 				p.Key = &k

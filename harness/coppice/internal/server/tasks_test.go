@@ -78,18 +78,18 @@ func TestTaskCreateWithWorktreeAnswersThePath(t *testing.T) {
 	if err := os.Mkdir(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	id, wt := createTask(t, s, `"label":"gate-refactor","cwd":"`+sub+`","worktree":true`)
+	id, wt := createTask(t, s, `"label":"gear-refactor","cwd":"`+sub+`","worktree":true`)
 	if id != "t1" {
 		t.Fatalf("task id = %q, want t1", id)
 	}
-	if want := filepath.Join(repo+"-worktrees", "gate-refactor"); wt != want {
+	if want := filepath.Join(repo+"-worktrees", "gear-refactor"); wt != want {
 		t.Fatalf("worktree = %q, want %q", wt, want)
 	}
 	if _, err := os.Stat(filepath.Join(wt, ".git")); err != nil {
 		t.Fatal("no worktree on disk")
 	}
 	rows := listTasks(t, s)
-	if rows[id]["worktree"] != wt || rows[id]["label"] != "gate-refactor" || rows[id]["state"] != "" {
+	if rows[id]["worktree"] != wt || rows[id]["label"] != "gear-refactor" || rows[id]["state"] != "" {
 		t.Fatalf("task.list row = %v", rows[id])
 	}
 	if _, ok := rows[id]["ahead"]; !ok {
@@ -228,7 +228,7 @@ func TestTaskStateBubblesFromItsPanes(t *testing.T) {
 	}
 	deadline := nowSeconds() + 60
 	got = roundTrip(t, s, `{"id":"2","cmd":"pane.report_state","pane":"`+paneID+`","event":{`+
-		`"state":"blocked","source":"gate","harness":"shell","session_id":"`+paneID+`",`+
+		`"state":"blocked","source":"warden","harness":"shell","session_id":"`+paneID+`",`+
 		`"ts":1,"v":1,"detail":"","ask":{"id":"a1","tool":"Bash","summary":"rm","deadline":`+
 		fmt.Sprintf("%f", deadline)+`}}}`)
 	if !got[0].OK {

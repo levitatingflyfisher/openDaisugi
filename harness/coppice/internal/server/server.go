@@ -91,17 +91,17 @@ const peerCloseHandlerWait = 130 * time.Second
 type Config struct {
 	SocketPath string
 	DataDir    string
-	// ForemanDir is where the floor's foreman works. Empty means
-	// ForemanDir(), under XDG_STATE_HOME.
-	ForemanDir string
-	// ForemanWait is how long the talk queue waits on the foreman before
-	// it writes a note. Zero means DefaultForemanWait.
-	ForemanWait time.Duration
-	// GateRoot is the gate directory agent.allow and agent.deny answer
-	// in. Empty means the gate directory beside DataDir.
-	GateRoot string
+	// StewardDir is where the floor's steward works. Empty means
+	// StewardDir(), under XDG_STATE_HOME.
+	StewardDir string
+	// StewardWait is how long the talk queue waits on the steward before
+	// it writes a note. Zero means DefaultStewardWait.
+	StewardWait time.Duration
+	// WardenRoot is the warden directory agent.allow and agent.deny answer
+	// in. Empty means the warden directory beside DataDir.
+	WardenRoot string
 	// HookHome is the home whose harness settings floor.facts reads to
-	// tell whether a daisugi gate hook is installed. Empty means the
+	// tell whether a daisugi warden hook is installed. Empty means the
 	// user's home directory.
 	HookHome string
 	// StartDir is where a pane.create with no cwd of its own falls back to
@@ -112,8 +112,8 @@ type Config struct {
 	// Voice says whether the server runs a voice server of its own. The
 	// zero value starts none until voice.start asks.
 	Voice VoiceConfig
-	// Foreman is the [foreman] table. The zero value is pane mode.
-	Foreman ForemanConfig
+	// Steward is the [steward] table. The zero value is pane mode.
+	Steward StewardConfig
 	// LayoutSaveSettle is how long after the last layout change the server
 	// writes layout.json. Zero or less writes at once on every change. The
 	// coppice config setting layout_save_settle sets it, 3s by default.
@@ -126,7 +126,7 @@ type Config struct {
 
 // EventQueue is how many unsent events one client may fall behind by. A PWA on
 // a stalled tailnet must not be able to hold up ApplyState for every pane,
-// including the pane.report_state response a gate hook is blocking on.
+// including the pane.report_state response a warden hook is blocking on.
 const EventQueue = 256
 
 // Client is one connection. Attached holds the per-client frame baselines, and
@@ -370,14 +370,17 @@ type Server struct {
 	asksMu sync.Mutex
 	asks   map[string]map[string]notedAsk
 
-	// holds maps each pane whose ask a foreman hears first to that hold.
+	// holds maps each pane whose ask a steward hears first to that hold.
 	// surfaced holds, per pane, the ask ids that went to the operator, so
 	// none is held twice. holdFor is how long a hold lasts; a test
 	// shortens it. All three are under holdsMu.
-	holdsMu  sync.Mutex
-	holds    map[string]*hold
-	surfaced map[string][]string
-	holdFor  time.Duration
+	holdsMu sync.Mutex
+	// hermesLine is the line being typed into each unprompted Hermes pane.
+	hermesInMu sync.Mutex
+	hermesLine map[string]*lineIn
+	holds      map[string]*hold
+	surfaced   map[string][]string
+	holdFor    time.Duration
 	// nextHold numbers the holds. typed marks each pane someone typed into
 	// since it last went idle. Both are under holdsMu.
 	nextHold int
@@ -456,9 +459,9 @@ type Server struct {
 	// for good. It is loaded from the data dir on first use.
 	claims       map[string]claimRec
 	claimsLoaded bool
-	// journal is the last verdicts a gate told the server. See journal.go.
+	// journal is the last verdicts a warden told the server. See journal.go.
 	journal verdictJournal
-	// saved caches what floor.facts read from the gateway turn journal.
+	// saved caches what floor.facts read from the router turn journal.
 	saved        savedCache
 	claimsBroken bool
 	// factsEvery is the shortest time between two reads of one pane's
@@ -478,12 +481,12 @@ type Server struct {
 	// startVeto, when a test sets it, can refuse a pane's start before it
 	// runs, so a failed start can be tested without a broken machine.
 	startVeto func(layout.Pane) error
-	// outside caches the gateway address, its router and whether it
+	// outside caches the router address, its route and whether it
 	// answers, under outsideMu. See facts_stack.go.
 	outsideMu sync.Mutex
 	outside   outsideCache
-	// caps is what each gateway address said about the pane prefix, under
-	// outsideMu. See gatewayStamps.
+	// caps is what each router address said about the pane prefix, under
+	// outsideMu. See routerStamps.
 	caps map[string]capsAnswer
 
 	mu       sync.Mutex
@@ -513,11 +516,11 @@ type Server struct {
 	voice *voiceSup
 
 	// talkFields holds the owner's words on their way to the floor's
-	// foreman. See foreman.go.
+	// steward. See steward.go.
 	talkFields
-	foremanChatFields
+	stewardChatFields
 	workerFields
-	// standingFields holds the pane foreman's tool socket.
+	// standingFields holds the pane steward's tool socket.
 	standingFields
 	// chatFields holds the chat files and the watch for new messages.
 	chatFields
@@ -525,6 +528,8 @@ type Server struct {
 	// promptFields holds the prompts that wait for a pane to be ready.
 	// See ready.go.
 	promptFields
+	// askFields holds the last asks read from transcripts.
+	askFields
 
 	// tickScanned and tickSkipped (detect.go) count, since this Server
 	// started, how many pane-visits the manifest tick actually read the
@@ -644,18 +649,18 @@ func New(cfg Config) (*Server, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = DataDir()
 	}
-	// Every pane is told this directory in COPPICE_DATA_DIR, and the gate
+	// Every pane is told this directory in COPPICE_DATA_DIR, and the warden
 	// takes only an absolute path there, so make a relative one absolute
 	// once, here.
 	if abs, err := filepath.Abs(cfg.DataDir); err == nil {
 		cfg.DataDir = abs
 	}
-	if cfg.ForemanWait <= 0 {
-		cfg.ForemanWait = DefaultForemanWait
+	if cfg.StewardWait <= 0 {
+		cfg.StewardWait = DefaultStewardWait
 	}
-	cfg.Foreman.fill()
-	if cfg.GateRoot == "" {
-		cfg.GateRoot = web.GateRoot(cfg.DataDir)
+	cfg.Steward.fill()
+	if cfg.WardenRoot == "" {
+		cfg.WardenRoot = web.WardenRoot(cfg.DataDir)
 	}
 	if cfg.HookHome == "" {
 		cfg.HookHome, _ = os.UserHomeDir()
@@ -690,8 +695,8 @@ func New(cfg Config) (*Server, error) {
 		openTranscript:    openRegular,
 		getenv:            os.Getenv,
 		closeDone:         make(chan struct{}),
-		talkFields:        talkFields{talkStop: make(chan struct{}), foremanWait: cfg.ForemanWait},
-		foremanChatFields: foremanChatFields{compactRetry: time.Minute},
+		talkFields:        talkFields{talkStop: make(chan struct{}), stewardWait: cfg.StewardWait},
+		stewardChatFields: stewardChatFields{compactRetry: time.Minute},
 		promptFields:      promptFields{prompts: map[string]*promptQueue{}, promptSending: map[string]bool{}, trusted: map[string]trustAnswer{}, trusting: map[string]bool{}},
 		// Notes starts as [] rather than nil, so server.status reports
 		// "notes": [] for a server that has not restored anything yet -
@@ -700,8 +705,8 @@ func New(cfg Config) (*Server, error) {
 		restore: RestoreReport{Notes: []string{}},
 		voice:   newVoiceSup(cfg.Voice, cfg.DataDir),
 	}
-	if cfg.Foreman.Problem != "" {
-		s.Note(cfg.Foreman.Problem, "")
+	if cfg.Steward.Problem != "" {
+		s.Note(cfg.Steward.Problem, "")
 	}
 	_ = s.Handle("server.status", s.handleStatus)
 	// Every handler must be registered before Serve starts (Handle refuses
@@ -716,10 +721,11 @@ func New(cfg Config) (*Server, error) {
 	s.RegisterFloorCommands()
 	s.RegisterEndedCommands()
 	s.RegisterProjectCommands()
+	s.RegisterEnvelopeCommands()
 	s.RegisterVoiceCommands()
 	s.RegisterMachinesCommands()
 	s.RegisterSpeechCommands()
-	s.RegisterForemanCommands()
+	s.RegisterStewardCommands()
 	s.RegisterMessageCommands()
 	return s, nil
 }
@@ -1225,14 +1231,14 @@ func (s *Server) Close() error {
 	// too, before the lock goes away.
 	s.teardownLivePanes()
 
-	// The foreman's compactor stops and its chat closes before the data
+	// The steward's compactor stops and its chat closes before the data
 	// dir is shut.
 	// The turn loop ends before the chat closes: its last records are
 	// written, then nothing writes the log again.
 	s.turns.wg.Wait()
 	s.closeWorkers()
 	s.closeStanding()
-	s.closeForemanChat()
+	s.closeStewardChat()
 
 	// The voice process goes before the lock, so a server started right
 	// after this one never finds the old voice server still running.

@@ -99,7 +99,9 @@ def test_never_impersonates_rejects_signed_email():
     envelope = Envelope(
         generated_by="t",
         task="email",
-        permissions=Permission(shell=True, shell_allowlist=["send_email"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["send_email"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[Postcondition(type="no_impersonation", description="", expr=postcond_expr)],
     )
     plan = ActionPlan(
@@ -131,7 +133,9 @@ def test_never_impersonates_accepts_signed_as_agent():
     envelope = Envelope(
         generated_by="t",
         task="email",
-        permissions=Permission(shell=True, shell_allowlist=["send_email"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["send_email"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[Postcondition(type="no_impersonation", description="", expr=postcond_expr)],
     )
     plan = ActionPlan(

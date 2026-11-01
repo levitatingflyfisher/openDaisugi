@@ -1,6 +1,6 @@
-"""The gate's view of an OpenCode tool call.
+"""The warden's view of an OpenCode tool call.
 
-The OpenCode plugin maps each built-in tool id to the gate's own tool name
+The OpenCode plugin maps each built-in tool id to the warden's own tool name
 and every other id to mcp__opencode__<id>, and sends --format opencode. So
 under this format a record looks like a Claude record, except that
 OpenCode's file tools name their path filePath.
@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 
-from opendaisugi.gate import GateDecision, evaluate_call, gate_and_contract, register_envelope
 from opendaisugi.hook import EXIT_CODE_FORMATS, _payload_to_record
 from opendaisugi.models import Envelope, Permission
+from opendaisugi.warden import WardenDecision, evaluate_call, register_envelope, warden_and_contract
 
 
 def _envelope(**perm_kwargs) -> Envelope:
@@ -22,8 +22,8 @@ def _envelope(**perm_kwargs) -> Envelope:
     )
 
 
-def _gate_root(tmp_path, envelope=None):
-    root = tmp_path / "gate"
+def _warden_root(tmp_path, envelope=None):
+    root = tmp_path / "warden"
     register_envelope(envelope or _envelope(), root=root)
     return root
 
@@ -72,7 +72,7 @@ def test_an_opencode_extra_tool_is_mcp_style_under_the_opencode_server():
 def test_an_opencode_extra_tool_is_denied_until_the_envelope_names_it():
     payload = {"tool_name": "mcp__opencode__todowrite", "tool_input": {"todos": []}}
     d = evaluate_call(payload, _envelope(), mode="enforce", fmt="opencode")
-    assert isinstance(d, GateDecision)
+    assert isinstance(d, WardenDecision)
     assert d.allow is False
     env = _envelope(mcp_allowlist=["opencode/todowrite"])
     assert evaluate_call(payload, env, mode="enforce", fmt="opencode").allow is True
@@ -83,8 +83,8 @@ def test_opencode_is_an_exit_code_format():
 
 
 def test_opencode_format_denies_with_exit_code_2(tmp_path):
-    root = _gate_root(tmp_path, _envelope(shell=False))
-    out = gate_and_contract(
+    root = _warden_root(tmp_path, _envelope(shell=False))
+    out = warden_and_contract(
         _payload("Bash", {"command": "rm -rf /"}), root=root, fmt="opencode", mode="enforce"
     )
     assert out.exit_code == 2
@@ -92,16 +92,16 @@ def test_opencode_format_denies_with_exit_code_2(tmp_path):
 
 
 def test_opencode_format_allows_a_filepath_read_with_exit_code_0(tmp_path):
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("Read", {"filePath": "/allowed/a.txt"}), root=root, fmt="opencode", mode="enforce"
     )
     assert out.exit_code == 0, out.stderr
 
 
 def test_opencode_format_denies_a_filepath_read_outside_the_envelope(tmp_path):
-    root = _gate_root(tmp_path)
-    out = gate_and_contract(
+    root = _warden_root(tmp_path)
+    out = warden_and_contract(
         _payload("Read", {"filePath": "/etc/shadow"}), root=root, fmt="opencode", mode="enforce"
     )
     assert out.exit_code == 2

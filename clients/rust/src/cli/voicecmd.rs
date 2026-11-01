@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::config;
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Value};
 use crate::voice::{arm, audio, cleanup, coppice, engine, ptt, pynum, server};
 
 const VOICE_HELP: &str = "Usage: daisugi voice [OPTIONS] COMMAND [ARGS]...
@@ -232,7 +232,7 @@ impl Env {
         }
         let mut client = match ptt::HttpClient::new(&url, &data_dir, std::time::Duration::from_secs(30)) {
             Ok(c) => c,
-            Err(ptt::ClientErr::Server(m)) => {
+            Err(ptt::ClientErr::Server(m) | ptt::ClientErr::Busy(m)) => {
                 self.out(&format!("{m}\n"));
                 return Ok(());
             }
@@ -431,13 +431,23 @@ struct Recorder {
 
 impl ptt::Stream for Recorder {
     fn start(&mut self) -> Result<(), String> {
-        let child = std::process::Command::new(&self.bin)
-            .args(["-q", "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1"])
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(&self.bin);
+        cmd.args(["-q", "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
+            .stderr(std::process::Stdio::null());
+        // `read` ends the press with SIGINT. A parent started as a background
+        // job has SIGINT ignored, and a child inherits that, so the recorder
+        // would never stop and `read` would wait for it for ever. The child
+        // gets the default action back.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().map_err(|e| e.to_string())?;
         self.child = Some(child);
         Ok(())
     }

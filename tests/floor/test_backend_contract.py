@@ -451,7 +451,7 @@ def test_report_state_accepts_an_event_and_never_raises(backend, tmp_path):
                 session_id="contract",
                 harness="shell",
                 state="working",
-                source="gate",
+                source="warden",
                 ts=time.time(),
                 pane=ref.id,
                 detail="verdict=allow",
@@ -558,11 +558,11 @@ def test_list_read_and_close_never_raise_when_the_host_is_gone(backend, tmp_path
         dead.send_keys(PaneRef(dead.name, "gone"), ["enter"])
 
 
-def test_report_state_downgrades_an_unattached_operator_claim_to_gate(tmp_path, coppice_server):
+def test_report_state_downgrades_an_unattached_operator_claim_to_warden(tmp_path, coppice_server):
     """`internal/server/agents.go`'s handleReportState: only a client
     watching the pane may speak for the operator. report_state opens a
     fresh connection per call, so it is never attached, and the server
-    downgrades the claim to gate rather than trusting it.
+    downgrades the claim to warden rather than trusting it.
     """
     backend = CoppiceBackend(sock_path=coppice_server.socket_path, data_dir=coppice_server.data_dir)
     ref = backend.spawn(
@@ -583,16 +583,16 @@ def test_report_state_downgrades_an_unattached_operator_claim_to_gate(tmp_path, 
         )
         info = next(i for i in backend.list() if i.ref.id == ref.id)
         assert info.state is not None
-        assert info.state.source == "gate", "an unattached operator claim must be downgraded"
+        assert info.state.source == "warden", "an unattached operator claim must be downgraded"
     finally:
         backend.close(ref)
 
 
-def test_report_state_of_a_downgraded_gate_blocked_claim_with_no_ask_is_refused(
+def test_report_state_of_a_downgraded_warden_blocked_claim_with_no_ask_is_refused(
     tmp_path, coppice_server
 ):
     """A human operator may say blocked with no ask. The same claim,
-    downgraded to gate because nothing is attached, may not: a gate's
+    downgraded to warden because nothing is attached, may not: a warden's
     blocked claim always carries the ask it is holding.
     """
     backend = CoppiceBackend(sock_path=coppice_server.socket_path, data_dir=coppice_server.data_dir)
@@ -618,10 +618,10 @@ def test_report_state_of_a_downgraded_gate_blocked_claim_with_no_ask_is_refused(
         backend.close(ref)
 
 
-def test_a_gate_blocked_claim_with_no_ask_is_refused_before_a_backend_sees_it():
+def test_a_warden_blocked_claim_with_no_ask_is_refused_before_a_backend_sees_it():
     """coppice refuses this shape over its own wire, through the downgrade
     path above. tmux and herdr have no such wire: PaneStateEvent refuses a
-    gate source blocked state with no ask at construction, before either
+    warden source blocked state with no ask at construction, before either
     backend's report_state ever sees it. No host needed.
     """
     with pytest.raises(ValueError):
@@ -629,7 +629,7 @@ def test_a_gate_blocked_claim_with_no_ask_is_refused_before_a_backend_sees_it():
             session_id="c1",
             harness="shell",
             state="blocked",
-            source="gate",
+            source="warden",
             ts=time.time(),
             pane="p1",
         )
@@ -655,7 +655,7 @@ def test_a_whole_number_ask_deadline_round_trips_as_a_float(tmp_path, coppice_se
                 session_id="c1",
                 harness="claude-code",
                 state="blocked",
-                source="gate",
+                source="warden",
                 ts=time.time(),
                 pane=ref.id,
                 detail="needs an answer",
@@ -670,15 +670,15 @@ def test_a_whole_number_ask_deadline_round_trips_as_a_float(tmp_path, coppice_se
         backend.close(ref)
 
 
-def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tmp_path):
-    """A gate 'blocked' fact must show up as blocked, source gate, on the
+def test_a_warden_blocked_fact_reaches_the_backend_the_registry_builds(backend, tmp_path):
+    """A warden 'blocked' fact must show up as blocked, source warden, on the
     backend an operator actually gets from build_backend.
 
     coppice already carries this over its own wire, through report_state.
     This proves it once more through the same registry path the other two
     parameters use, for one comparable row across all three. tmux and
-    herdr never hear from the gate directly: the fact lives in the
-    session tree, and build_backend wires gate_states_reader over that
+    herdr never hear from the warden directly: the fact lives in the
+    session tree, and build_backend wires warden_states_reader over that
     store into the backend it constructs.
     """
     deadline = time.time() + 3600
@@ -690,10 +690,10 @@ def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tm
             backend.report_state(
                 ref,
                 PaneStateEvent(
-                    session_id="gate-s1",
+                    session_id="warden-s1",
                     harness="claude-code",
                     state="blocked",
-                    source="gate",
+                    source="warden",
                     ts=time.time(),
                     pane=ref.id,
                     detail="needs an answer",
@@ -702,8 +702,8 @@ def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tm
             )
             info = next(i for i in backend.list() if i.ref.id == ref.id)
             assert info.state is not None
-            assert info.state.state == "blocked" and info.state.source == "gate"
-            assert info.state.session_id == "gate-s1"
+            assert info.state.state == "blocked" and info.state.source == "warden"
+            assert info.state.session_id == "warden-s1"
         finally:
             backend.close(ref)
         return
@@ -718,10 +718,10 @@ def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tm
     try:
         assert ref.id in _ids(backend), f"{backend.name}: the spawned pane never listed"
         ev = PaneStateEvent(
-            session_id="gate-s1",
+            session_id="warden-s1",
             harness="claude-code",
             state="blocked",
-            source="gate",
+            source="warden",
             ts=time.time(),
             pane=ref.id,
             detail="needs an answer",
@@ -729,7 +729,7 @@ def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tm
         )
         tree = SessionTree.open_or_create(
             tmp_path / "sessions",
-            session_id="gate-s1",
+            session_id="warden-s1",
             harness="claude-code",
             cwd=str(tmp_path),
         )
@@ -744,8 +744,8 @@ def test_a_gate_blocked_fact_reaches_the_backend_the_registry_builds(backend, tm
             info = next((i for i in wired.list() if i.ref.id == ref.id), None)
             assert info is not None, f"{backend.name}: the wired backend never listed the pane"
             assert info.state is not None
-            assert info.state.state == "blocked" and info.state.source == "gate"
-            assert info.state.session_id == "gate-s1"
+            assert info.state.state == "blocked" and info.state.source == "warden"
+            assert info.state.session_id == "warden-s1"
         finally:
             close_connection = getattr(wired, "close_connection", None)
             if callable(close_connection):

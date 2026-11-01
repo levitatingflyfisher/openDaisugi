@@ -80,6 +80,11 @@ impl Ctx {
     /// `z3.Context()`: a reference-counted context with no global options.
     pub fn new() -> Z3Result<Ctx> {
         unsafe {
+            // A check would swap in Z3's own SIGINT handler and then put the
+            // old one back, so a Ctrl-C inside it is eaten and the check
+            // reports "unknown". With the parameter off, Ctrl-C keeps its
+            // meaning: the process stops.
+            Z3_global_param_set(c"ctrl_c".as_ptr(), c"false".as_ptr());
             let conf = Z3_mk_config().ok_or_else(|| Z3Error("Z3 could not make a config".into()))?;
             let c = Z3_mk_context_rc(conf);
             Z3_del_config(conf);
@@ -453,6 +458,39 @@ mod tests {
         let b = c.eq(x, f).unwrap();
         assert_eq!(c.check(500, &[a]).unwrap(), Check::Sat);
         assert_eq!(c.check(500, &[a, b]).unwrap(), Check::Unsat);
+    }
+
+    /// Z3 would put its own SIGINT handler in for the length of a check.
+    /// The process keeps the default one, so Ctrl-C stops it.
+    #[test]
+    fn a_slow_check_leaves_the_sigint_disposition_alone() {
+        fn sigint_is_default() -> bool {
+            // SAFETY: reads the disposition; a null new action changes nothing.
+            unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(libc::SIGINT, std::ptr::null(), &mut old);
+                old.sa_sigaction == libc::SIG_DFL
+            }
+        }
+        assert!(sigint_is_default(), "SIGINT is not default before the check");
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let d = done.clone();
+        let t = std::thread::spawn(move || {
+            let out = eval_smtlib2(
+                "(set-option :timeout 400)(declare-const x Int)\
+                 (assert (= (* x x x x x) 123456789012345678901234567))(check-sat)",
+            );
+            d.store(true, std::sync::atomic::Ordering::SeqCst);
+            out
+        });
+        let mut polls = 0;
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
+            polls += 1;
+            assert!(sigint_is_default(), "Z3 put its SIGINT handler in (poll {polls})");
+            std::thread::sleep(std::time::Duration::from_micros(50));
+        }
+        t.join().unwrap().unwrap();
+        assert!(polls >= 20, "the check ended after {polls} polls: too fast to prove anything");
     }
 
     #[test]

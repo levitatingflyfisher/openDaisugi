@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openDaisugi: White Paper | openDaisugi</title>
+<meta name="description" content="Runtime assurance for the outputs of unverifiable models: separating what is allowed from what is decided.">
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.className+=" js"</script>
+</head>
+<body>
+<div class="vert" lang="ja" aria-hidden="true">台杉</div>
+<header class="top"><div class="col">
+  <a class="mark" href="index.html" style="text-decoration:none;color:inherit"><span class="seal" lang="ja" aria-hidden="true">台杉</span><span>openDaisugi</span></a>
+  <nav class="sc" aria-label="Site pages">
+    <a href="index.html">Home</a>
+    <a href="whitepaper.html" aria-current="page">Whitepaper</a>
+    <a href="yellow-paper.html">Yellow paper</a>
+    <a href="start-here.html">Start here</a>
+    <a href="index.html#try">Install</a>
+  </nav>
+</div></header>
+<main class="paper">
+<nav class="toc" aria-label="Contents">
+<p class="cap sc">Contents</p>
+<ol>
+<li><a href="#abstract">Abstract</a></li>
+<li><a href="#1-the-problem">1. The problem</a></li>
+<li><a href="#2-the-idea">2. The idea</a></li>
+<li><a href="#3-the-lineage-runtime-assurance">3. The lineage: Runtime Assurance</a></li>
+<li><a href="#4-the-architecture">4. The architecture</a></li>
+<li><a href="#5-positioning-daisugi-is-not-a-harness">5. Positioning: daisugi is not a harness</a></li>
+<li><a href="#6-two-domains-one-core">6. Two domains, one core</a></li>
+<li><a href="#7-what-is-built-and-what-is-not">7. What is built, and what is not</a></li>
+<li><a href="#8-why-it-s-worth-doing">8. Why it's worth doing</a></li>
+<li><a href="#9-direction-one-kernel-many-dialects">9. Direction: one kernel, many dialects</a></li>
+<li><a href="#10-related-work">10. Related work</a></li>
+<li><a href="#references">References</a></li>
+</ol>
+</nav>
+<article>
+<p class="srcline"><a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/whitepaper.md">Source on GitHub</a></p>
+<h1 id="opendaisugi-white-paper">openDaisugi: White Paper</h1>
+<p><em>Runtime assurance for the outputs of unverifiable models: separating what is
+allowed from what is decided.</em></p>
+<p><strong>Status:</strong> conceptual/strategic overview, refreshed 2026-09-26 for v0.43.0. For the
+invariants see <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/VISION.md">VISION.md</a>; for the mechanics,
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/architecture/OVERVIEW.md">architecture/OVERVIEW.md</a>; for the formal semantics, the
+<a href="yellow-paper.html">yellow paper</a>; for our terms in other fields' words,
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/correspondence.md">correspondence.md</a>. This document is honest about the line between
+what is built and what is aspirational (§7). §9 gives the direction (dialects) and §10
+the related work.</p>
+<hr />
+<h2 id="abstract">Abstract</h2>
+<p>Capable AI systems (LLM agents, robot foundation models) are <em>unverifiable</em> in the
+formal sense: stochastic, opaque, with undefined behavior outside their training
+distribution. Formal systems are <em>verifiable</em> but limited. This is the verification
+gap. openDaisugi is a runtime-assurance layer that bridges it not by verifying the
+model, but by having the model <strong>generate a verifiable specification</strong> (a safety
+<em>envelope</em>) and then checking proposed actions against that envelope, with an SMT
+solver, before anything executes. The generated spec is checkable even though the
+generation process is not. The architecture is Runtime Assurance (RTA) from
+aerospace control; the novelty is applying it to LLM agents and robot policies,
+which today deploy with no such layer.</p>
+<h2 id="1-the-problem">1. The problem</h2>
+<p>Every agent framework treats a model's output as trustworthy-enough to act on. It
+is not. An LLM agent that decides to <code>rm -rf</code> the wrong directory just does it. A
+vision-language-action (VLA) model that grips at the wrong angle just does it. There
+is no warden between &quot;the model decided X&quot; and &quot;X happens to the world.&quot; The two
+honest options have each been unsatisfying:</p>
+<ul>
+<li><strong>Verify the model.</strong> Intractable. You cannot prove properties of a 100B-parameter
+black box, and its most useful behavior is precisely the un-prespecified kind.</li>
+<li><strong>Constrain the model so tightly it can't surprise you.</strong> Then you didn't need a
+model. This is the tension at the heart of every &quot;DSL for agents&quot;: the more you can
+pre-specify, the less you need the agent.</li>
+</ul>
+<h2 id="2-the-idea">2. The idea</h2>
+<p><strong>Separate what is <em>allowed</em> from what is <em>decided.</em></strong></p>
+<ul>
+<li><em>Decided</em> comes from the black box. Keep it a black box. Let it be as capable as it is.</li>
+<li><em>Allowed</em> comes from a space of verifiable calculations: a specification.</li>
+</ul>
+<p>The load-bearing move: <strong>the black box generates the specification, and a
+deterministic layer enforces it.</strong> An LLM can't be verified, but a <em>safety envelope
+an LLM writes</em> can be. So can the claim that a proposed plan stays inside it.
+We shift the burden of trust off the model and onto a checkable artifact.</p>
+<p>This resolves the DSL tension. The specification isn't pre-written by a human
+anticipating every case (impossible) nor is it the model's raw output (untrusted).
+It's model-generated <em>and</em> independently checkable, with a human-set ceiling it can
+only tighten.</p>
+<p>The unit of proof is small on purpose. Deciding whether every program written in some
+language stays inside a policy is undecidable, by Rice's theorem: any non-trivial
+property of what a program does has no general decision procedure. The warden does not
+try. It asks one question about one plan and one envelope: does this plan stay inside
+this envelope? That question is decidable for the fragments of the kernel we use, and Z3
+usually answers it in milliseconds. Where it cannot, it says unknown and the warden
+denies (§9). The schema is fixed, so the set of things an envelope can say
+is fixed. The content is new for each task. We do not define a general language for models
+to write programs in.</p>
+<p>The boundary also carries a cost story, and it is worth stating precisely because it
+is easy to get backwards. The envelope is not itself a token-saving trick. It is the
+<strong>trust substrate</strong> that makes token-saving <em>safe</em>: once an action is proven
+in-bounds, you can compile a batch you would never run unverified, route to a smaller
+model you would not otherwise trust, and compact context that no longer needs to hold
+the policy. So openDaisugi is a verifiable-execution substrate plus a small family of
+cost <em>levers</em> it underwrites. Five blind
+architects reached this framing independently in a <a href="https://github.com/levitatingflyfisher/openDaisugi/tree/master/docs/exploration/2026-08-blind-design-gauntlet">convergence experiment</a>
+and it is recorded as <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0011-verifiable-execution-substrate.md">ADR-0011</a>. All three
+levers are now built to the mechanism line: the deed ledger (v0.41), within-instance
+batch compilation with a net-token meter (v0.42), and the rationale store (v0.43)
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/roadmap.md">roadmap.md</a>, Stages 8 to 10). Their savings at scale are not yet
+measured (§7).</p>
+<h2 id="3-the-lineage-runtime-assurance">3. The lineage: Runtime Assurance</h2>
+<p>This is not a new architecture. It is a 30-year-old one from a new angle. Runtime
+Assurance (RTA) is the discipline of deploying an unverified advanced system safely
+by monitoring and constraining it at runtime. Four established patterns:</p>
+<ol>
+<li><strong>Simplex</strong> (Sha, 2001, building on early work from 1996): an advanced (unverified) controller plus a
+conservative (verified) baseline, with a decision module that switches to the
+baseline when a safety boundary is approached.</li>
+<li><strong>NN-tuned classical control</strong>: a neural net adjusts a PID/MPC's parameters; the
+system inherits the classical controller's guarantees within bounds.</li>
+<li><strong>Verified envelope</strong>: define the permitted action space; reject anything
+outside it. Verify <em>actions</em>, not perception.</li>
+<li><strong>Compiled policy / live DSL</strong>: high-level reasoning generates a constraint spec
+dynamically; a simpler system executes within it. The generated constraints are
+verifiable even though generation isn't.</li>
+</ol>
+<p>RTA is deployed in F-16 collision avoidance, spacecraft, and autonomous vehicles.
+Few published LLM-agent systems name the Simplex lineage. Robotics work such as
+RoboGuard is the closest, and solver-checked agent policies such as Progent and ActGov
+are near neighbours (§10). We found no system that applies one RTA warden to both
+software agents and robot foundation models. &quot;Not found&quot; is not &quot;does not exist&quot;. That
+gap is the opportunity. openDaisugi maps each pattern onto AI action: the compiled pathway is
+the advanced controller, full-model reasoning is the baseline, the supervisor is the
+decision module, and the envelope is the verified action space.</p>
+<h2 id="4-the-architecture">4. The architecture</h2>
+<p>One pipeline carries the whole system:</p>
+<pre><code>task ─▶ generate envelope ─┐
+                           ▼
+        plan ─▶ verify(plan ⊆ envelope) ─▶ supervise each step ─▶ journal ─▶ distill
+                    │ fail → reject           │ receipts, integrity        │
+                    └ (fail closed)           └ per-step re-check          └ reusable pathway
+</code></pre>
+<ul>
+<li><strong>Envelope</strong>: a <code>Permission</code> spec (allowed file/network/shell/MCP/robot
+capabilities) + invariants + postconditions + stakes. A checkable artifact.</li>
+<li><strong>Verify</strong>: a staged check (permissions → skill-subsumption → Z3 → predicate
+algebra → DAG). The proofs are SMT (Z3), not string matching; an unprovable or
+unknown result is treated as a <em>violation</em>. Delegation safety is the same proof
+applied to two envelopes: <code>envelope_subsumes(caller, contract)</code>.</li>
+<li><strong>Supervise</strong>: execute step-by-step; re-verify each step; write a tamper-evident
+receipt; check run-end integrity so a silently-skipped step is detectable.</li>
+<li><strong>Journal → distill</strong>: successful runs become traces; repeated traces distill
+into signed, reusable <em>pathways</em> (a plan template + the envelope that provably
+covers it), so recurring work skips the expensive model. The same
+verification stack supervises it.</li>
+</ul>
+<p>The pipeline above checks a declared plan. Most agents today declare no plan; they
+emit tool calls one at a time inside a host harness. For them, the <strong>warden</strong>
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0007-call-time-gate.md">ADR-0007</a>, <code>src/opendaisugi/warden.py</code>) checks each call
+against a registered envelope before it runs, and answers allow, deny or ask. It runs
+in audit mode by default: it logs what it would deny and allows. The yellow paper §8
+states what a per-call check can and cannot promise.</p>
+<p>Two cost parts sit beside the spine:</p>
+<ul>
+<li><strong>The router</strong> (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0012-gateway-reuse-and-answer-store.md">ADR-0012</a>,
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0015-cache-aware-sticky-routing.md">ADR-0015</a>, <code>src/opendaisugi/router.py</code>) is
+a <code>base_url</code> proxy. It routes whole turns to a model tier, meters each turn, and
+offers reuse of stored answers and pathways. It can hand the model choice to NVIDIA
+NeMo Switchyard and stay the meter (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/routing-mode-switchyard.md">how-to</a>). The
+honest ceiling for routing is about 3× on a blended day, not 100×
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/router.md">how-to</a>).</li>
+<li><strong>Pathways</strong> serve recurring work at Tier 0, with no model call. A reused pathway
+is re-verified against the <strong>caller's</strong> envelope, never its own (yellow paper §5).
+A router that learns from verified results is designed, not built
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-router.md">design-router.md</a>).</li>
+</ul>
+<h3 id="4-1-the-jit-analogy">4.1 The JIT analogy</h3>
+<p>A just-in-time compiler interprets first, profiles, and compiles the hot paths.
+openDaisugi does the same with agent work:</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Table"><table>
+<thead>
+<tr>
+<th>JIT part</th>
+<th>openDaisugi part</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Interpreter (slow, general, always works)</td>
+<td>the frontier model, reasoning from scratch</td>
+<td>rented</td>
+</tr>
+<tr>
+<td>Profiler</td>
+<td>the journal: every action, verdict and token</td>
+<td>Built (<code>journal.py</code>)</td>
+</tr>
+<tr>
+<td>Tiered compilation</td>
+<td>the routing ladder: pathway (0 tokens), local model, warm cache, cheap model, frontier</td>
+<td>Built in part (<code>routing.py</code>, the router); the learned router is Designed</td>
+</tr>
+<tr>
+<td>Profile-guided optimizer</td>
+<td>the garden, which compiles repeated work into pathways</td>
+<td>Built (<code>distiller.py</code>, <code>gardener/</code>)</td>
+</tr>
+<tr>
+<td>Type checker</td>
+<td>Z3 and the envelope, before anything runs</td>
+<td>Built (<code>verify.py</code>)</td>
+</tr>
+<tr>
+<td>Deoptimization</td>
+<td>fail closed: a failed proof falls back to the frontier or to a human</td>
+<td>Built as re-verification plus deny or ask; no explicit pathway guards yet (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/correspondence.md">correspondence.md</a>, Part C, gap 8)</td>
+</tr>
+<tr>
+<td>The runtime's sandbox</td>
+<td>the warden</td>
+<td>Built (<code>warden.py</code>)</td>
+</tr>
+<tr>
+<td>Debugger and console</td>
+<td>coppice</td>
+<td>Built (<code>harness/coppice/</code>)</td>
+</tr>
+</tbody>
+</table>
+</div><p>The pitch in one breath: <em>the first time, a frontier model does the work and a formal
+proof checks every action before it runs. The tenth time, it runs as a verified script
+for free.</em> The second sentence is a mechanism, not a measurement. How much real work
+recurs, and how much reuse saves, is not measured yet (roadmap Stage 4; §7).</p>
+<h3 id="4-2-the-same-idea-under-older-names">4.2 The same idea under older names</h3>
+<p>The JIT compiler is the picture we use. The idea that work done once by a general,
+slow method can be kept as a fast, special one is older than that picture, and several
+fields have their own exact term for it:</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Table"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Term</th>
+<th>What it means there</th>
+<th>The part of openDaisugi it resembles</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Programming languages</td>
+<td>Partial evaluation (Futamura, 1971; Jones, Gomard and Sestoft, 1993)</td>
+<td>A general program is specialized to the inputs that are already known, which leaves a smaller, faster residual program</td>
+<td>A pathway is what is left of a task once its fixed parts are settled, with slots for the parts that vary</td>
+</tr>
+<tr>
+<td>Cognitive architectures</td>
+<td>Chunking in Soar (Laird, Rosenbloom and Newell, 1986)</td>
+<td>When problem solving in a subgoal reaches a result, a rule is stored that gives that result directly the next time</td>
+<td>The garden distils a group of like runs into a pathway that is served without planning again</td>
+</tr>
+<tr>
+<td>Cognitive architectures</td>
+<td>Production compilation in ACT-R (Taatgen and Lee, 2003)</td>
+<td>Two rules that fire one after the other are merged into one rule, with the fact they looked up built in</td>
+<td>Steps that always follow each other become one stored step sequence</td>
+</tr>
+<tr>
+<td>AI planning</td>
+<td>Macro-operators (Fikes, Hart and Nilsson, 1972; Korf, 1985)</td>
+<td>A sequence of operators that solved a problem is stored and reused as a single operator</td>
+<td>A pathway is a stored sequence of steps reused as one unit</td>
+</tr>
+<tr>
+<td>Program synthesis</td>
+<td>Library learning in DreamCoder (Ellis and others, 2021)</td>
+<td>Solved programs are refactored to find the parts they share, and those parts join a library</td>
+<td>Dialect words that a model grows from the journal, which are designed and not built</td>
+</tr>
+</tbody>
+</table>
+</div><p>One thing is not in those older systems and is the point of this one: every reuse is
+checked again. A pathway served from the store is verified against the caller's own
+envelope before it runs, so a stored shortcut can never carry more permission than the
+task in hand allows. The table compares ideas. It claims none of those systems' measured
+results for openDaisugi.</p>
+<h2 id="5-positioning-daisugi-is-not-a-harness">5. Positioning: daisugi is not a harness</h2>
+<p>openDaisugi is three parts (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0020-layer-floor-loop.md">ADR-0020</a>). <strong>daisugi</strong> is
+the warden, the verifier, the journal and the garden: a library that imports nothing
+above it and runs alone in any harness. <strong>coppice</strong> is the floor: a Go daemon that
+supervises panes of agents and takes every state it shows from the warden. The <strong>loop</strong>
+is whatever harness runs in a pane; sprig is ours and is on hold with the owner, and
+the rest are rented. The rule below applies to daisugi.</p>
+<p>The gravity in this space pulls every tool toward <em>becoming the agent</em>. daisugi
+deliberately doesn't. It plugs into whatever drives the model. sprig, our own loop,
+sits above daisugi and uses it like any other harness; it is on hold with the owner.</p>
+<ul>
+<li><strong>vs. harnesses (Claude Code, Codex, OpenClaw, Hermes, Gas Town)</strong>: they own the
+driving loop and the messaging/skills. daisugi is the assurance + budget +
+memory substrate they <em>lack</em>. It integrates mainly through the warden hook
+(<code>daisugi install</code> for Claude Code and Codex, an extension for pi), and also
+through an MCP server and per-harness install adapters. The honest overlap: harnesses
+can already generate their own skills from usage, and they offer permission
+rules and hooks. What we did not find in them is <em>runtime assurance</em>: checkable
+envelopes, proved delegation, fail-closed checks. Policy engines such as AWS
+AgentCore on Cedar come closer (§10).</li>
+<li><strong>vs. prompt caching</strong>: caching cuts the cost of <em>context</em>; distillation cuts the
+cost of <em>reasoning</em> by removing calls entirely. Complementary.</li>
+</ul>
+<p>If daisugi became a harness, it would rebuild those tools, badly, and abandon the one
+defensible position: the shared verification substrate.</p>
+<h2 id="6-two-domains-one-core">6. Two domains, one core</h2>
+<p>The same domain-agnostic core (envelope, verify, supervisor, journal, distiller)
+serves two applications of very different magnitude:</p>
+<ul>
+<li><strong>LLM agents (real but incremental).</strong> Makes something that exists cheaper and
+safer. Genuine value; not, on its own, a novel contribution.</li>
+<li><strong>Robot foundation models (novel).</strong> We found no Simplex-style RTA warden for
+VLA models; RoboGuard, the nearest, repairs LLM plans against temporal-logic
+rules (§10). π0 and its kin output motor commands from pixels with no quality
+warden, no fallback controller, no safety envelope. The same architecture applies. The VLA
+proposes a trajectory, a constraint layer checks joint/velocity/force/collision
+bounds and deconflicts a swarm's airspace, a conservative baseline takes over when
+the envelope is violated. It is straightforward to describe, maps directly onto
+published aerospace patterns, and we found no build of it for robot foundation models.</li>
+</ul>
+<h2 id="7-what-is-built-and-what-is-not">7. What is built, and what is not</h2>
+<p>A white paper that overclaims is marketing. Honestly, as of v0.43.0 (2026-09-26):</p>
+<p><strong>Built and tested.</strong></p>
+<ul>
+<li>The spine: envelope → verify → supervise → journal → distill. Z3-backed checks
+cover shell, file, network, MCP and robot capabilities. Delegation subsumption,
+inheritance tightening, the supervisor with receipts and run integrity, pathway
+distillation with signing, the forward orchestrator, and swarm airspace
+deconfliction (analytic geometry, plan level). It runs as a library, as an MCP
+server, or from the CLI, with no API key.</li>
+<li>The call-time warden (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0007-call-time-gate.md">ADR-0007</a>), audit mode by
+default, with ask tiers and a resident process.</li>
+<li>Security campaigns keep closing fail-opens. On 2026-09-26 alone: subsumption now
+also checks stakes, custom step types and budgets, and a Z3 timeout there denies in
+every mode; a hook payload's session id never selects an envelope; definition arguments
+are substituted in one pass and escaped in regex fields, and no definition can shadow a
+system word (commits <code>f9e202e7</code>, <code>31871c4d</code>, <code>92f87edf</code>).</li>
+<li>The router: whole-turn routing by rules or by NeMo Switchyard, a per-turn meter,
+and reuse of answers and pathways (ADR-0012, ADR-0015).</li>
+<li>The three cost levers of ADR-0011, to the mechanism line: the deed ledger (v0.41),
+batch compilation with a net-token meter (v0.42), and the rationale store with
+constraint promotion (v0.43). The within-instance meter already reports the honest
+finding: the win is the proven blast radius, not tokens (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/roadmap.md">roadmap.md</a>,
+Stage 9).</li>
+<li><strong>Three implementations.</strong> Python is the oracle. Go and Rust each ship a
+standalone <code>daisugi</code> binary that never calls Python at run time. Both link a real
+Z3 (5.1.0, built from pinned source, linked statically) and parse shell with the
+same tree-sitter-bash grammar as the oracle (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/clients/go/README.md">clients/go/README.md</a>,
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/clients/rust/README.md">clients/rust/README.md</a>). The binaries are compared with
+the oracle on committed golden cases: 1,310 warden cases, 472 CLI cases, 223 router
+cases, 215 garden cases and 158 pathway command cases (the manifests in
+<code>clients/fixtures/</code>), plus a local verifier corpus of 11,450 cases that is never
+published because it holds real paths. The Rust README records 1,310 of 1,310 warden
+cases and 11,450 of 11,450 corpus cases in agreement. Where a binary may differ from
+the oracle, the ruling is in <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/clients/ADJUDICATIONS.md">clients/ADJUDICATIONS.md</a>.
+Full parity is the goal (owner ruling, 2026-09-26), not yet the state: a few CLI
+commands, and the parts that use pathways at run time and generate envelopes
+(stage K of the port plan), still need Python.</li>
+<li><strong>Install.</strong> One script (<code>scripts/install.sh</code>) builds and installs <code>daisugi</code>,
+coppice and sprig. A floor then takes two commands: <code>daisugi install</code>, then
+<code>coppice</code> (or <code>coppice web</code> for a browser or a phone).</li>
+</ul>
+<p>These case counts come from synthetic cases. They show that the three
+implementations agree and that the checks are correct on those cases. They do not
+show that the warden is useful on real work: its false-deny rate, the router's savings
+on real traffic, and coppice across many projects are the next measurements (the
+&quot;dogfood week&quot; in the <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/strategy-2026-09-26.md">strategy notes</a>).</p>
+<p><strong>Designed, not built.</strong> A router that learns from verified results
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-router.md">design-router.md</a>). Grafts, a rewrite
+verdict proved at install (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-grafts.md">design-grafts.md</a>).
+Ranking of N attempts as a primitive (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-ranking.md">design-ranking.md</a>).
+Dialects (§9). The full edge rule for the delegation tree
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-delegation-tree.md">design-delegation-tree.md</a>; part of it is
+built, see yellow paper §5.5). sprig and weave are on hold with the owner
+(<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/adr/0022-weave-runner-for-verified-plan-trees.md">ADR-0022</a> is Proposed).</p>
+<p><strong>Aspirational.</strong> The <em>empirical</em> claim (what fraction of real usage is compilable,
+and how much compilation actually saves) has never been measured, though the
+machinery to measure it exists (roadmap Stage 4). Robotics is <strong>sim-only and plan-level</strong> (no 100Hz CBF-QP, no hardware, no π0
+in the loop). That needs a collaborator with an arm. Papers, defense/SBIR revenue, and
+a pathway marketplace are optionality with nothing built toward them.</p>
+<p>The honest boundary matters: swarm deconfliction is analytic geometry, not a
+flight-safety certificate (waypoint-in-box ≠ path-in-box; set margins accordingly).
+The verification is <em>sound for what it checks</em>; it verifies <strong>actions, not
+understanding</strong>. An envelope can prove the arm stayed under 5N, never that the model
+understood the task. That gap is bounded, not closed.</p>
+<h2 id="8-why-it-s-worth-doing">8. Why it's worth doing</h2>
+<p>Because the alternative (deploying capable, unverifiable models with no warden between
+decision and effect) is what everyone does now, and it doesn't scale to physical
+stakes or to agents with real permissions. The contribution is not a new model or a
+new solver. It is the architecture that lets a capable black box operate under a
+formal safety bound <em>that the black box itself helped write</em>, and the demonstration
+that this same architecture spans LLM agents and robot policies, which are the same
+problem wearing different clothes.</p>
+<p>There is a second reason, quieter but real: the architecture appears to be the
+<em>convergent</em> one. Five independent architects, each given a neutral statement of the
+problem and told nothing about openDaisugi, rebuilt its spine: enforcement outside
+the context window, fail-closed pre-execution checking, a human floor a model may only
+tighten. Two of the pieces they reinvented were never hinted at in their brief
+(the monotone-narrowing subsumption law and within-instance compilation). Convergence
+that was not planted is the cheapest strong evidence a design is right. The
+<a href="https://github.com/levitatingflyfisher/openDaisugi/tree/master/docs/exploration/2026-08-blind-design-gauntlet">record</a> is public, adversarial critiques
+and sober scores included.</p>
+<h2 id="9-direction-one-kernel-many-dialects">9. Direction: one kernel, many dialects</h2>
+<p><em>Status: Designed (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/plans/2026-09-24-omarchy/design-dialects.md">design-dialects.md</a>),
+not built, except the definitions it grows from.</em></p>
+<p>RTA pattern 4 (§3) was the early dream: a model writes a small language for one
+situation, and a simple checked system runs inside it. The envelope and the predicate
+algebra are that language, and Z3 is the checker under it. But the language is fixed:
+one grammar for a coding task and for a drone. The direction is to let models write
+the <strong>vocabulary</strong> for a domain, while the grammar and the proofs stay fixed.</p>
+<ul>
+<li><strong>One kernel.</strong> The <code>Permission</code> record and the predicate algebra stay small and
+fixed. The guarantees live there.</li>
+<li><strong>Many dialects.</strong> A dialect is a list of named words, each defined only in kernel
+terms: <code>read_only_inspection</code> or <code>must_not_modify(target)</code> for a software team;
+<code>within_geofence(zone)</code> or <code>keep_separation(d)</code> for a swarm, once the kernel can say
+them. The checker never trusts a word. It <strong>unfolds</strong> each word to its kernel
+definition and checks the kernel term with the same code as today.</li>
+<li><strong>A definitional extension.</strong> Because every word is an abbreviation that can be
+eliminated, a dialect proves nothing new about the kernel. Every soundness property
+of the verifier carries over unchanged. Only the unfolding function joins the
+trusted code (yellow paper §2.4).</li>
+<li><strong>Learned from the journal.</strong> No person writes a dialect (owner ruling: the bots
+write the policy). The garden mines the journal for repeated sub-policies, a model
+names them, and Z3 proves two words equal so the vocabulary does not grow
+duplicates. This is library learning (§10) applied to the policy that governs
+actions. A word is promoted only when it is reused on held-out envelopes, the bar
+the library-learning sceptics set.</li>
+<li><strong>Checked names.</strong> A name carries no meaning for the checker, but a misleading
+name misleads the human who reads a deny. A second model sees only the name and
+writes the claims it implies; Z3 proves each claim from the definition or returns a
+counterexample.</li>
+<li><strong>Dialects meet at the kernel.</strong> Two dialects unfold to the same kernel, so their
+words can be compared by the relations that exist today: equivalence, subsumption
+and disjointness.</li>
+</ul>
+<p>The honest limits:</p>
+<ul>
+<li><strong>The kernel is not decidable as a whole.</strong> Set and glob membership over finite
+allowlists and linear arithmetic are decidable. String constraints with regular
+expressions and lengths are decidable only in restricted fragments, and our
+encoding is not shown to lie in one. Z3 can answer &quot;unknown&quot; on legal input, and
+unknown means deny. Unfolding adds no theory, so a question in a dialect is exactly as
+hard as the same question in the kernel.</li>
+<li><strong>Robot words need kernel work first.</strong> Today the kernel has one bounding box per
+envelope, no force field on gripper steps, and no cross-agent predicate. Nonlinear
+dynamics may make Z3 answer unknown, and the warden then denies.</li>
+<li><strong>Shell writes are not visible to predicates.</strong> <code>must_not_modify</code> can cover
+<code>file_write</code> steps only, until each shell step's decomposed write paths become a
+field the algebra can read.</li>
+</ul>
+<p><strong>Evidence so far (in-sample, small).</strong> A greedy pass over 294 real envelopes from
+the owner's journal cut their permission sets from 2,769 atoms to 2,284, word
+definitions included: 17.5% with 15 words that read like a dialect (read-only
+inspection, build and test, code forges, config files). A second count found that
+the models already write a dialect with no definitions: 0 of 322 invariants in those
+envelopes carry a checkable expression, and <code>file_unchanged</code> alone appears 75 times.
+Today such an invariant is not enforced at low or medium stakes: with no expression
+and no handler, it is documentation, and strict mode (on by default only at high and
+physical stakes) is what would refuse it. So the first payoff of dialects is not
+compression. It is to give the invariants the
+models already write one kernel definition, so they are enforced.</p>
+<h2 id="10-related-work">10. Related work</h2>
+<p>This section draws on two surveys made on 2026-09-26:
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/research/prior-art-2026-09-26.md">research/prior-art-2026-09-26.md</a> and
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/correspondence.md">correspondence.md</a>, plus the router and grafts notes named below.
+Most rows rest on abstracts; a claim here is no deeper than the survey that read it.
+Where the survey marked a source &quot;search listing&quot;, so does this section. For each
+neighbour we say what we borrow and what differs.</p>
+<h3 id="10-1-runtime-assurance-and-shields">10.1 Runtime assurance and shields</h3>
+<ul>
+<li><strong>Simplex</strong> (Sha, <em>Using Simplicity to Control Complexity</em>, IEEE Software
+2001; early work 1996, <a href="https://engineering.purdue.edu/dcsl/reading/2007/foob-using_simplicity_to_control_complexity.pdf">slides</a>;
+<a href="https://arxiv.org/abs/2102.12981">Black-Box Simplex</a>). We borrow the split: an
+untrusted, capable controller beside a simple, trusted check. What differs: Simplex
+keeps the plant where a safe controller can recover it over time. Our warden only
+prevents single actions and makes no recoverable-state promise (yellow paper §8.6).</li>
+<li><strong>ASTM F3269</strong> (<a href="https://store.astm.org/f3269-21.html">store page</a>, search listing),
+the aviation RTA standard. We borrow the frame of bounding a function that cannot be
+certified by design. We have no certification claim.</li>
+<li><strong>Shields</strong> (Alshiekh et al. 2017, <a href="https://arxiv.org/abs/1708.08611">arXiv 1708.08611</a>).
+A shield enforces a temporal-logic specification on a learning agent, by listing safe
+actions first or by correcting an unsafe one. Our warden is a blocking shield, and a
+graft (designed) would be a correcting one. Our specification is per step, not
+temporal.</li>
+<li><strong>RoboGuard</strong> (<a href="https://arxiv.org/abs/2503.07885">arXiv 2503.07885</a>) grounds fixed
+safety rules into temporal logic for the current scene and repairs unsafe plans by
+control synthesis; unsafe plan execution fell from over 92% to below 3%. It is the
+closest robotics neighbour. We borrow the idea of grounding rules per scene. What
+differs: one warden for software agents and robots, and model-written envelopes.
+Reachability checks of LLM commands (<a href="https://arxiv.org/abs/2503.03911">arXiv 2503.03911</a>)
+compute reachable sets; our swarm check is a static box check, not reachability.</li>
+</ul>
+<h3 id="10-2-reference-monitors-and-capabilities">10.2 Reference monitors and capabilities</h3>
+<ul>
+<li><strong>Reference monitor</strong> (<a href="https://en.wikipedia.org/wiki/Reference_monitor">Wikipedia</a>)
+and <strong>execution monitors</strong> (Schneider 2000,
+<a href="https://www.cs.cornell.edu/fbs/publications/EnfSecPols.pdf">PDF</a>). The warden is a
+reference monitor, and Schneider's result tells us exactly what it can enforce:
+safety properties (yellow paper §8.1). &quot;Always invoked&quot; holds only while the host
+fires the hook (yellow paper §8.5).</li>
+<li><strong>Fail-safe defaults</strong> (Saltzer and Schroeder,
+<a href="https://www.cs.virginia.edu/~evans/cs551/saltzer/">text</a>). &quot;Fail closed&quot; is this
+principle: base access on permission, not exclusion.</li>
+<li><strong>Capabilities and attenuation</strong> (Macaroons,
+<a href="https://research.google/pubs/macaroons-cookies-with-contextual-caveats-for-decentralized-authorization-in-the-cloud/">Google Research</a>;
+<a href="https://github.com/ucan-wg/spec">UCAN spec</a>). Each delegation must restate or
+narrow its authority. We borrow the rule for skills and for a tree of agents. What
+differs: containment is proved by Z3 over envelope languages (globs, shell heads,
+predicates, robot bounds), not checked by string match on a token list.</li>
+</ul>
+<h3 id="10-3-skill-libraries">10.3 Skill libraries</h3>
+<ul>
+<li><strong>Voyager</strong> (<a href="https://arxiv.org/abs/2305.16291">arXiv 2305.16291</a>) keeps a growing
+library of code skills that compose. <strong>Agent Workflow Memory</strong>
+(<a href="https://arxiv.org/abs/2409.07429">arXiv 2409.07429</a>) and <strong>Memp</strong>
+(<a href="https://arxiv.org/abs/2508.06433">arXiv 2508.06433</a>) induce reusable workflows and
+retire stale ones. We borrow online induction and deprecation. What differs: a
+pathway must fit an envelope before reuse, and the warden re-checks every step.</li>
+<li><strong>Newer learners.</strong> SkillGen (<a href="https://arxiv.org/html/2605.10999v1">arXiv 2605.10999</a>)
+counts repairs against regressions on identical inputs before a skill goes live;
+SkillForge (<a href="https://arxiv.org/html/2608.24747">arXiv 2608.24747</a>) and SkillOps
+(<a href="https://arxiv.org/html/2605.13716v1">arXiv 2605.13716</a>) score and maintain skill
+banks. Their &quot;verified&quot; means &quot;it helped the task succeed&quot;. We borrow SkillGen's
+paired count as a stronger test for the garden. What differs: our check is a
+safety check, not only a success check.</li>
+<li><strong>Anthropic Agent Skills</strong>
+(<a href="https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills">engineering post</a>)
+load a skill by progressive disclosure: name first, body on demand. We borrow that
+for listing dialect words in a prompt. What differs: the warden, not a skill's own
+metadata, decides what a skill may do. The need is measured: one study found a
+vulnerability in 26.1% of 31,132 marketplace skills
+(<a href="https://arxiv.org/abs/2601.10338">arXiv 2601.10338</a>).</li>
+</ul>
+<h3 id="10-4-library-learning">10.4 Library learning</h3>
+<ul>
+<li><strong>DreamCoder</strong> (<a href="https://arxiv.org/abs/2006.08381">arXiv 2006.08381</a>) and <strong>Stitch</strong>
+(<a href="https://arxiv.org/abs/2211.16605">arXiv 2211.16605</a>) compress a corpus of programs
+into named abstractions; Stitch is 3 to 4 orders of magnitude faster than DreamCoder's
+compressor. We plan to use the Stitch CLI, offline, for mining words over predicate
+and plan trees. What differs: our terms are policy, and Z3 proves two words equal.</li>
+<li><strong>LILO</strong> (<a href="https://arxiv.org/abs/2310.19791">arXiv 2310.19791</a>) has a model write
+names and docstrings for learned abstractions. We borrow that. What differs: we add
+a check of each name against its definition, which LILO does not have.</li>
+<li><strong>babble</strong> (<a href="https://arxiv.org/abs/2212.04596">arXiv 2212.04596</a>) learns libraries
+modulo an equational theory with e-graphs. We use Z3 equivalence over the kernel in
+place of a hand-written theory; babble is a later option for mining.</li>
+<li><strong>The sceptics.</strong> &quot;Library Learning Doesn't&quot; (<a href="https://arxiv.org/abs/2410.20274">arXiv 2410.20274</a>)
+finds function reuse &quot;extremely infrequent&quot;; a LEGO-Prover study
+(<a href="https://arxiv.org/abs/2504.03048">arXiv 2504.03048</a>) finds gains vanish once compute
+is counted; an EACL 2026 paper (<a href="https://aclanthology.org/2026.eacl-long.163/">ACL Anthology</a>)
+asks for equal budgets and behavioural checks. We adopt their bar: a word must be
+reused on held-out envelopes, with its cost counted, before we claim anything.</li>
+</ul>
+<h3 id="10-5-model-written-policies-checked-by-a-solver">10.5 Model-written policies checked by a solver</h3>
+<ul>
+<li><strong>Cedar and SymCC</strong> (<a href="https://arxiv.org/abs/2403.04651">arXiv 2403.04651</a>;
+<a href="https://github.com/cedar-policy/cedar/tree/main/cedar-policy-symcc">cedar-policy-symcc</a>).
+Cedar is designed for a sound and complete SMT encoding; SymCC checks always-allows,
+always-denies, subsumption, equivalence and disjointness with counterexamples, and
+its encoder is verified in Lean. AWS AgentCore uses Cedar for agent tool calls
+(finding 4 of <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/research/formal-methods-2026-09-23.md">formal-methods-2026-09-23.md</a>). We
+borrow the lint set and the small, analysable kernel. What differs: per-action
+proofs, model-written envelopes, learned pathways. Cedar is ahead on a verified
+encoder.</li>
+<li><strong>Progent</strong> (<a href="https://arxiv.org/abs/2504.11703">arXiv 2504.11703</a>). An LLM writes and
+updates policies; Z3 decides whether an update narrows (automatic) or widens (needs
+approval). We have the same narrowing law (<code>src/opendaisugi/subsumption.py</code>) and
+borrow the approval rule for dialect changes. What differs: shell effects, a journal,
+a garden.</li>
+<li><strong>ActGov</strong> (<a href="https://arxiv.org/html/2609.24446v2">arXiv 2609.24446</a>). An LLM drafts
+rules from tool specs, benign traces and attack failures; Z3 searches offline for a
+record that satisfies the policy and breaks a safety assertion. Attack success is at
+or below 0.007 on AgentDyn. We borrow learning rules from failures. What differs: its
+named rules are hand-organized over finite values; our words would be mined, named by
+a model, deduplicated by proof, and checked per action.</li>
+<li><strong>Others.</strong> A solver-aided compliance checker runs Z3 per planned call and returns the
+unsat core as the reason (<a href="https://arxiv.org/html/2603.20449v1">arXiv 2603.20449</a>);
+VeriGuard proves the policy code itself (<a href="https://arxiv.org/html/2510.05156">arXiv 2510.05156</a>);
+Agent-C checks order constraints during decoding (<a href="https://arxiv.org/abs/2512.23738">arXiv 2512.23738</a>);
+C-Trace checks predicates over the event stream (<a href="https://arxiv.org/html/2606.19242v1">arXiv 2606.19242</a>);
+AgentSpec uses Python predicates, no solver (<a href="https://arxiv.org/abs/2503.18666">arXiv 2503.18666</a>);
+CaMeL tracks data flow against prompt injection (<a href="https://arxiv.org/abs/2503.18813">arXiv 2503.18813</a>).
+We borrow the unsat core as a deny reason (not built). The others cover order,
+history and data flow, which our per-step envelope does not.</li>
+</ul>
+<h3 id="10-6-token-saving-routers">10.6 Token-saving routers</h3>
+<ul>
+<li><strong>RouteLLM</strong> (<a href="https://arxiv.org/abs/2406.18665">arXiv 2406.18665</a>) and <strong>FrugalGPT</strong>
+(<a href="https://arxiv.org/abs/2305.05176">arXiv 2305.05176</a>) route or cascade across model
+tiers. The designed router borrows &quot;cheap first, escalate&quot;. What differs: it would
+escalate on external signals (a warden deny, a failed postcondition), never on the
+cheap model's own report.</li>
+<li><strong>NVIDIA NeMo Switchyard</strong> (<a href="https://github.com/NVIDIA-NeMo/Switchyard">GitHub</a>, read
+at tag v0.3.0) is a trained chooser. We do not compete with it: the router can run
+Switchyard behind it and stay the meter, so each saving is tied to the model that
+served the turn (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/routing-mode-switchyard.md">how-to</a>).</li>
+<li><strong>Spotify's shunt</strong> (<a href="https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90">post</a>;
+<a href="https://github.com/spotify/portal-ai-plugins/tree/main/plugins/shunt">code</a>, Apache-2.0)
+blocks large file reads in Claude Code with a hook and redirects the model to a skill
+that asks a cheaper model. It denies and redirects; it does not rewrite the call. Its
+82% to 94% savings are the author's own, count tokens rather than billed cost, and
+report no task success rate (<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/research/grafts-inputs-2026-09-26.md">grafts inputs</a>).
+We borrow the pattern for grafts (designed): a rewrite verdict, proved against the
+envelope at install and learned from the journal.</li>
+</ul>
+<h3 id="10-7-where-neighbours-are-ahead">10.7 Where neighbours are ahead</h3>
+<ul>
+<li><strong>Envelope lint.</strong> Cedar SymCC lints whole policies and has a Lean-verified encoder.
+We check one predicate at a time for vacuity (<code>src/opendaisugi/vacuity.py</code>), and our
+SMT encoders are trusted code, checked only by differential tests across three
+implementations.</li>
+<li><strong>Temporal properties.</strong> Agent-C, C-Trace and ContrAgent (see
+<a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/research/formal-methods-2026-09-23.md">formal-methods-2026-09-23.md</a>) check order
+and history.
+Our envelope is per step.</li>
+<li><strong>Benchmarks.</strong> The neighbours report AgentDojo, AgentDyn and tau2-bench numbers. We
+report none; our numbers come from synthetic cases.</li>
+<li><strong>Adversarial skills.</strong> We have not tested the warden against a corpus of malicious
+skills.</li>
+</ul>
+<h3 id="10-8-where-we-may-be-first">10.8 Where we may be first</h3>
+<p>We did not find these in the surveys. &quot;Not found&quot; is not &quot;does not exist&quot;.</p>
+<ol>
+<li>Learned, proved dialects for the policy that governs agent actions (§9).</li>
+<li>Skills that must fit an envelope before reuse, with every step re-checked.</li>
+<li>One verifier that checks both software agents and robots.</li>
+<li>Per-action SMT proof across harnesses, with a journal that feeds a distiller.</li>
+</ol>
+<hr />
+<h2 id="references">References</h2>
+<ul>
+<li>Sha, L. (2001). <em>Using Simplicity to Control Complexity.</em> IEEE Software 18(4). It is the canonical Simplex Architecture paper. Earlier Simplex work from the same group dates to 1996.</li>
+<li>Schierman, J. et al. (2015). <em>Runtime Assurance for aerospace systems.</em></li>
+<li>Wood, G. <em>Ethereum Yellow Paper</em>. It is the formal-specification register this project's <a href="yellow-paper.html">yellow paper</a> borrows.</li>
+<li>Black, K. et al. (2024). <em>π0: A Vision-Language-Action Flow Model for General Robot Control.</em> Physical Intelligence.</li>
+<li>de Moura, L. &amp; Bjørner, N. (2008). <em>Z3: An Efficient SMT Solver.</em> It is the solver behind the verification core.</li>
+<li>Diátaxis (Procida, D.): the documentation framework this project's <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/README.md">docs</a> follow.</li>
+<li>Schneider, F. B. (2000). <em>Enforceable Security Policies.</em> ACM TISSEC 3(1). What an execution monitor can enforce.</li>
+<li>Alshiekh, M. et al. (2017). <em>Safe Reinforcement Learning via Shielding.</em> <a href="https://arxiv.org/abs/1708.08611">arXiv 1708.08611</a>.</li>
+<li>Cutler, J. W. et al. (2024). <em>Cedar: A New Language for Expressive, Fast, Safe, and Analyzable Authorization.</em> <a href="https://arxiv.org/abs/2403.04651">arXiv 2403.04651</a>.</li>
+<li>Bowers, M. et al. (2023). <em>Top-Down Synthesis for Library Learning</em> (Stitch). <a href="https://arxiv.org/abs/2211.16605">arXiv 2211.16605</a>.</li>
+<li>The other works in §10 are cited inline, with the URL each survey read.</li>
+</ul>
+<p><em>The code and comments referenced here were authored by an AI assistant and describe
+what currently exists. Take them with gratitude and a grain of salt, and verify
+before relying.</em></p>
+</article>
+</main>
+<footer><div class="col">MIT license. This page loads only its own files. <a href="index.html">Back to the overview</a>.</div></footer>
+</body>
+</html>

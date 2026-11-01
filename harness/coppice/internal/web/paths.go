@@ -40,10 +40,10 @@ func ConfigPath(dataDir string) string {
 	return filepath.Join(dataDir, "web", "web.json")
 }
 
-// GateRoot is the openDaisugi gate directory beside the coppice data
-// directory. The gate and the coppice data directory are both children of
-// the same openDaisugi home by default, so the gate root is the data
-// directory's own parent, plus "gate", cleaned of the ".." this produces.
-func GateRoot(dataDir string) string {
-	return filepath.Join(dataDir, "..", "gate")
+// WardenRoot is the openDaisugi warden directory beside the coppice data
+// directory. The warden and the coppice data directory are both children of
+// the same openDaisugi home by default, so the warden root is the data
+// directory's own parent, plus "warden", cleaned of the ".." this produces.
+func WardenRoot(dataDir string) string {
+	return filepath.Join(dataDir, "..", "warden")
 }

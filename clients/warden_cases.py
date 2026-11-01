@@ -1,0 +1,5540 @@
+"""Synthetic warden cases: hook payloads run through the Python warden, the oracle.
+
+    uv run --no-sync python clients/warden_cases.py [--out clients/fixtures/warden]
+
+Each case is one call of ``python -m opendaisugi.warden``: the argv, the raw
+stdin, the warden root it starts from (registered envelopes, a disarm marker,
+a config.yaml, an existing session tree), the environment, and what the
+oracle did: exit code, stdout, stderr, and every line it wrote to the
+audit log, the session tree, the captures mirror and the coppice socket.
+Volatile values (times, latencies, random ids) are normalized so a case is
+a pure function of its inputs; ``clients/warden_compare.py`` runs any other
+warden binary against the same cases and compares structurally.
+
+Every path in a case is fake (/work, /home/user) except the run's own
+scratch directory, written as ``{ROOT}``. HOME is /home/user for every run,
+so the floor and credential rules see the same home on every machine. The
+cases hold no content from any real session and may be committed.
+
+The file is content-addressed like the conformance corpus
+(docs/spec/conformance.md): each case's ``id`` is the first 16 hex digits
+of the SHA-256 of its canonical JSON without the ``id`` key, lines are
+sorted by id, and a manifest pins the file's bytes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from fixture_paths import fixed_root
+
+REPO = Path(__file__).resolve().parent.parent
+FIXTURE_DIR = REPO / "clients" / "fixtures" / "warden"
+# DAISUGI_WARDEN_SCRATCH lets two runs on one box keep apart: each run
+# empties its own work directories as it goes.
+SCRATCH = Path(
+    os.environ.get("DAISUGI_WARDEN_SCRATCH") or Path.home() / "opendaisugi-scratch" / "2b" / "runs"
+)
+FAKE_HOME = "/home/user"
+CASE_VERSION = 1
+
+
+def python_warden_cmd() -> list[str]:
+    return [sys.executable, "-m", "opendaisugi.warden"]
+
+
+def base_env() -> dict[str, str]:
+    """The environment every warden run starts from: a fake HOME, and the
+    repo's own src first on the import path so the oracle is this tree's."""
+    return {
+        "HOME": FAKE_HOME,
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "PYTHONPATH": str(REPO / "src"),
+        "CUDA_VISIBLE_DEVICES": "",
+    }
+
+
+def canonical_json(obj: Any) -> str:
+    """Sorted keys, compact separators, and every non-ASCII character
+    escaped: a warden case can hold a lone surrogate (it tests one), which
+    raw UTF-8 cannot carry."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def case_id(body: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(body).encode("utf-8")).hexdigest()[:16]
+
+
+# ---------------------------------------------------------------------------
+# Running one case
+# ---------------------------------------------------------------------------
+
+
+class FakeCoppice:
+    """A unix socket that records each line a warden sends and answers ok."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.lines: list[str] = []
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(str(path))
+        self.sock.listen(8)
+        self.sock.settimeout(0.1)
+        self._stop = False
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self) -> None:
+        while not self._stop:
+            try:
+                conn, _ = self.sock.accept()
+            except (TimeoutError, OSError):
+                continue
+            with conn:
+                conn.settimeout(1.0)
+                buf = b""
+                try:
+                    while not buf.endswith(b"\n"):
+                        chunk = conn.recv(65536)
+                        if not chunk:
+                            break
+                        buf += chunk
+                    conn.sendall(b'{"id": "r", "ok": true}\n')
+                except OSError:
+                    pass
+                if buf:
+                    self.lines.append(buf.decode("utf-8", "replace"))
+
+    def close(self) -> list[str]:
+        time.sleep(0.05)
+        self._stop = True
+        self.thread.join(1.0)
+        self.sock.close()
+        return self.lines
+
+
+def floor_key(sock: str) -> str:
+    """warden.agent_mode_floor: a floor's directory name under agents/."""
+    return hashlib.sha256(os.fsencode(sock)).hexdigest()[:16]
+
+
+def floor_paths(rel: str, case: dict[str, Any], root: str) -> str:
+    """rel with {FLOOR} written as the floor key of the call's own socket
+    (the case's COPPICE_SOCK, or the fake coppice socket), and
+    {FLOOR=<sock>} as the key of that socket."""
+    if "{FLOOR" not in rel:
+        return rel
+    own = (case.get("env") or {}).get("COPPICE_SOCK")
+    if case.get("coppice"):
+        own = str(Path(root) / "c.sock")
+    own = (own or "").replace("{ROOT}", root)
+    return re.sub(
+        r"\{FLOOR(?:=([^}]*))?\}", lambda m: floor_key(m.group(1) if m.group(1) else own), rel
+    )
+
+
+def private_modes(warden_root: Path, keep: set[Path] | None = None) -> None:
+    """Make the state under the warden root pass the warden's own-state check
+    (GR-R-1) whatever the umask: directories 0700, regular files 0600. A
+    path in ``keep`` has its mode set by the case, and stays. Links are
+    left alone."""
+    keep = keep or set()
+    warden_root.chmod(0o700)
+    for dirpath, dirnames, filenames in os.walk(warden_root):
+        for name in dirnames:
+            d = Path(dirpath) / name
+            if not d.is_symlink() and d not in keep:
+                d.chmod(0o700)
+        for name in filenames:
+            f = Path(dirpath) / name
+            if f.is_symlink() or f in keep or not stat.S_ISREG(f.lstat().st_mode):
+                continue
+            f.chmod(0o600)
+
+
+def init_repo(path: Path) -> None:
+    """``path`` made a git repository with one commit, whatever the host's
+    git configuration says."""
+    path.mkdir(parents=True, exist_ok=True)
+    env = {
+        "PATH": base_env()["PATH"],
+        "HOME": str(path.parent),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+
+    def git(*args: str) -> None:
+        subprocess.run(  # noqa: S603, S607 - a fixture repository
+            ["git", "-C", str(path), *args], env=env, check=True, capture_output=True
+        )
+
+    git("init", "-q")
+    (path / "a.txt").write_text("one\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
+
+
+def prepare(case: dict[str, Any], workdir: Path) -> tuple[list[str], bytes, dict[str, str]]:
+    """Lay out the case's warden root under workdir and return argv, stdin
+    and the environment for one run."""
+    if workdir.exists():
+        shutil.rmtree(workdir)
+    root = str(workdir)
+    data = workdir / "data"
+    warden_root = data / "warden"
+    warden_root.mkdir(parents=True)
+    st = case["state"]
+    if st.get("envelopes"):
+        envd = warden_root / "envelopes"
+        envd.mkdir()
+        for name, body in st["envelopes"].items():
+            (envd / f"{name}.json").write_text(body.replace("{ROOT}", root), encoding="utf-8")
+    if st.get("disarmed"):
+        (warden_root / "DISARMED").write_text("disarmed by operator\n", encoding="utf-8")
+    if st.get("config") is not None:
+        (data / "config.yaml").write_text(st["config"], encoding="utf-8")
+    if st.get("operator"):
+        # A present operator: this runner's own pid is alive for the run.
+        (warden_root / "operator.json").write_text(
+            json.dumps({"pid": os.getpid(), "at": 0}), encoding="utf-8"
+        )
+    explicit: set[Path] = set()
+    for rel, spec in sorted((st.get("files") or {}).items()):
+        # Files the call reads, under the run's own directory.
+        f = workdir / floor_paths(rel, case, root)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        if spec.get("dir"):
+            f.mkdir(exist_ok=True)
+        elif spec.get("fifo"):
+            os.mkfifo(f)
+        elif "symlink" in spec:
+            os.symlink(spec["symlink"].replace("{ROOT}", root), f)
+        elif "hardlink" in spec:
+            # A second name for a file an earlier (sorted) entry made.
+            os.link(workdir / floor_paths(spec["hardlink"], case, root), f)
+        elif "hex" in spec:
+            f.write_bytes(bytes.fromhex(spec["hex"]))
+        elif "repeat" in spec:
+            f.write_text(spec["repeat"] * spec["count"], encoding="utf-8")
+        else:
+            f.write_text(spec["text"], encoding="utf-8")
+        if "mode" in spec:
+            f.chmod(spec["mode"])
+            explicit.add(f)
+    # A work directory that is a git repository, for the cases that take a
+    # checkpoint (--checkpoints needs a repository to snapshot).
+    for rel in st.get("repos") or []:
+        init_repo(workdir / rel)
+    if st.get("grafts"):
+        gd = warden_root / "grafts"
+        gd.mkdir()
+        for name, text in st["grafts"].items():
+            (gd / name).parent.mkdir(parents=True, exist_ok=True)
+            (gd / name).write_text(text, encoding="utf-8")
+    if st.get("tier1") is not None:
+        (data / "local_tier1.json").write_text(st["tier1"], encoding="utf-8")
+    for sid, text in (st.get("sessions") or {}).items():
+        sd = data / "sessions"
+        sd.mkdir(exist_ok=True)
+        (sd / f"{sid}.jsonl").write_text(text, encoding="utf-8")
+    private_modes(warden_root, explicit)
+    # Modes a case sets after the state is made private, by path under the run.
+    for rel, mode in sorted((st.get("modes") or {}).items()):
+        (workdir / rel).chmod(mode)
+    # GR-R-1: the warden's own state behind a link. "root" puts the warden root
+    # behind a symlink, "envelopes" does that to envelopes/, and "parent"
+    # puts the whole data directory behind one (a link ABOVE the root,
+    # which the warden follows).
+    links = st.get("links") or {}
+    if links.get("envelopes"):
+        warden_root.joinpath("envelopes").rename(workdir / "real-envelopes")
+        os.symlink(workdir / "real-envelopes", warden_root / "envelopes")
+    # GR-R-10: the ask channel behind a link. "asks" and "answers" make the
+    # directory a symlink to a real one of its own; "operator" does that to
+    # operator.json; "grafts" to grafts/ (GR-R-1).
+    for sub in ("asks", "answers"):
+        if links.get(sub):
+            (workdir / f"real-{sub}").mkdir(mode=0o700)
+            (workdir / f"real-{sub}").chmod(0o700)
+            os.symlink(workdir / f"real-{sub}", warden_root / sub)
+    if links.get("operator"):
+        (warden_root / "operator.json").rename(workdir / "real-operator.json")
+        os.symlink(workdir / "real-operator.json", warden_root / "operator.json")
+    if links.get("grafts"):
+        warden_root.joinpath("grafts").rename(workdir / "real-grafts")
+        os.symlink(workdir / "real-grafts", warden_root / "grafts")
+    if links.get("checkpoint-state"):
+        warden_root.joinpath("checkpoint-state").rename(workdir / "real-checkpoint-state")
+        os.symlink(workdir / "real-checkpoint-state", warden_root / "checkpoint-state")
+    if links.get("root"):
+        warden_root.rename(workdir / "real-warden")
+        os.symlink(workdir / "real-warden", warden_root)
+    if links.get("parent"):
+        data.rename(workdir / "real-data")
+        os.symlink(workdir / "real-data", data)
+    argv = [a.replace("{ROOT}", root) for a in case["argv"]]
+    if case.get("stdin_hex"):
+        stdin = bytes.fromhex(case["stdin_hex"])
+    else:
+        stdin = case["stdin"].replace("{ROOT}", root).encode("utf-8")
+    env = base_env()
+    env.update({k: v.replace("{ROOT}", root) for k, v in (case.get("env") or {}).items()})
+    return argv, stdin, env
+
+
+_HEX8 = re.compile(r"^[0-9a-f]{8}$")
+_PLAN = re.compile(r"^plan_[0-9a-f]{8}$")
+_ENV = re.compile(r"^env_[0-9a-f]{8}$")
+
+
+# The warden cuts a record's detail and its verdict clause at this many
+# characters (_state_report._DETAIL_MAX). A cut can fall inside a copy of
+# the root; that part of a path is written as {ROOT-CUT}.
+DETAIL_MAX = 200
+
+
+def _cut_root(v: str, root: str) -> str:
+    """v with a root cut short at its end written as {ROOT-CUT}. Only a
+    string the warden cut (DETAIL_MAX long) is read so. A lone '/' is the
+    same on every machine and is kept."""
+    if len(v) != DETAIL_MAX or v.endswith(root):
+        return v
+    for k in range(len(root) - 1, 1, -1):
+        if v.endswith(root[:k]):
+            return v[:-k] + "{ROOT-CUT}"
+    return v
+
+
+def _norm_value(v: Any, root: str) -> Any:
+    if isinstance(v, str):
+        v = _cut_root(v, root).replace(root, "{ROOT}")
+        if _PLAN.match(v):
+            return "<plan>"
+        if _ENV.match(v):
+            return "<env>"
+        return v
+    if isinstance(v, list):
+        return [_norm_value(x, root) for x in v]
+    if isinstance(v, dict):
+        return {k: _norm_value(x, root) for k, x in v.items()}
+    return v
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _stamp(row: dict[str, Any], keys: tuple[str, ...]) -> None:
+    """Replace volatile numbers with a marker saying they were numbers."""
+    for k in keys:
+        if k in row:
+            row[k] = "<num>" if _is_number(row[k]) else f"<not a number: {row[k]!r}>"
+
+
+def _read_jsonl(path: Path) -> list[Any]:
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            out.append({"<unparseable line>": line})
+    return out
+
+
+def observe(workdir: Path, proc: subprocess.CompletedProcess, coppice: list[str]) -> dict[str, Any]:
+    """Everything a run did, normalized."""
+    root = str(workdir)
+    data = workdir / "data"
+    audit = []
+    for f in sorted((data / "warden" / "audit").glob("*.jsonl")):
+        for rec in _read_jsonl(f):
+            if isinstance(rec, dict):
+                _stamp(rec, ("at", "elapsed_ms"))
+            audit.append({"file": f.name, "record": _norm_value(rec, root)})
+    tree: dict[str, list[Any]] = {}
+    for f in sorted((data / "sessions").glob("*.jsonl")) if (data / "sessions").exists() else []:
+        ids: dict[str, str] = {}
+        rows = []
+        for row in _read_jsonl(f):
+            if isinstance(row, dict):
+                _stamp(row, ("ts", "latencyMs"))
+                if isinstance(row.get("ask"), dict):
+                    # An answered ask's deadline is a clock time.
+                    _stamp(row["ask"], ("deadline",))
+                for k in ("id", "parentId", "leafId"):
+                    if isinstance(row.get(k), str) and _HEX8.match(row[k]):
+                        row[k] = ids.setdefault(row[k], f"#{len(ids) + 1}")
+            if isinstance(row, dict) and row.get("type") == "checkpoint":
+                # A commit id and the ref's entry id are random per run.
+                row["commit"] = "<commit>"
+                if isinstance(row.get("ref"), str):
+                    row["ref"] = re.sub(r"/[0-9a-f]{8}$", "/<entry>", row["ref"])
+            rows.append(_norm_value(row, root))
+        tree[f.name] = rows
+    captures: dict[str, list[Any]] = {}
+    capd = workdir / "captures"
+    for f in sorted(capd.glob("*.jsonl")) if capd.exists() else []:
+        rows = []
+        for row in _read_jsonl(f):
+            if isinstance(row, dict):
+                _stamp(row, ("captured_at",))
+            rows.append(_norm_value(row, root))
+        captures[f.name] = rows
+    sent = []
+    for line in coppice:
+        try:
+            msg = json.loads(line)
+            if isinstance(msg, dict) and isinstance(msg.get("event"), dict):
+                _stamp(msg["event"], ("ts",))
+            sent.append(_norm_value(msg, root))
+        except json.JSONDecodeError:
+            sent.append({"<unparseable line>": line})
+    out = {
+        "exit": proc.returncode,
+        "stdout": proc.stdout.decode("utf-8", "replace").replace(root, "{ROOT}"),
+        "stderr": proc.stderr.decode("utf-8", "replace").replace(root, "{ROOT}"),
+        "audit": audit,
+        "tree": tree,
+        "captures": captures,
+        "coppice": sent,
+    }
+    # Only a run that has a checkpoint-state directory (GR-R-9), so every
+    # other case is as it was: what the warden left there, link or file.
+    cp = data / "warden" / "checkpoint-state"
+    if cp.exists():
+        state: dict[str, Any] = {"dir_is_link": cp.is_symlink(), "files": {}}
+        for e in sorted(os.scandir(cp), key=lambda x: x.name):
+            lst = os.lstat(e.path)
+            ent: dict[str, Any] = {
+                "link": stat.S_ISLNK(lst.st_mode),
+                "mode": oct(stat.S_IMODE(lst.st_mode)),
+            }
+            if stat.S_ISREG(lst.st_mode):
+                ent["text"] = Path(e.path).read_text(encoding="utf-8")
+            state["files"][e.name] = ent
+        out["checkpoint_state"] = state
+        # What a link at the state file or directory points to must be as
+        # the case left it: nothing was written through the link.
+        for rel in ("real-checkpoint-state", "real-state.json"):
+            real = workdir / rel
+            if real.is_dir():
+                state["real_dir"] = sorted(p.name for p in real.iterdir())
+            elif real.exists():
+                state["real_file"] = real.read_text(encoding="utf-8")
+    return out
+
+
+class FakeOperator:
+    """Answers the ask a warden posts, once, as ask.answer does: the answer
+    echoes the posted ask's nonce, so the warden honors it."""
+
+    def __init__(self, warden_root: Path, spec: dict[str, Any]) -> None:
+        self.warden_root = warden_root
+        self.spec = spec
+        self._stop = False
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        tid = self.spec["tool_use_id"]
+        ask = self.warden_root / "asks" / f"{tid}.json"
+        while not self._stop:
+            try:
+                body = json.loads(ask.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                time.sleep(0.01)
+                continue
+            answer = {"toolUseId": tid, **self.spec["answer"], "nonce": body.get("nonce")}
+            d = self.warden_root / "answers"
+            d.mkdir(mode=0o700, exist_ok=True)
+            # The warden reads only what group and other cannot write
+            # (GR-R-1, GR-R-10), whatever the runner's umask.
+            d.chmod(0o700)
+            plant = self.spec.get("plant")
+            if plant is not None:
+                self._plant(d / f"{tid}.json", json.dumps(answer), plant)
+                return
+            tmp = d / f".{tid}.tmp"
+            tmp.write_text(json.dumps(answer), encoding="utf-8")
+            tmp.chmod(0o600)
+            os.replace(tmp, d / f"{tid}.json")
+            return
+
+    def _plant(self, target: Path, text: str, plant: str) -> None:
+        """The in-place mode: what a workspace write can do to the answer
+        NAME, where os.replace of a temp file would replace the link, the
+        second name or the mode and test nothing. The answer's content is
+        right (the ask's nonce); only what stands at the name differs."""
+        elsewhere = self.warden_root.parent.parent / (
+            "real-answer.json" if plant == "symlink" else "zz-second-name"
+        )
+        if plant == "symlink":
+            elsewhere.write_text(text, encoding="utf-8")
+            elsewhere.chmod(0o600)
+            os.symlink(elsewhere, target)
+        elif plant == "hardlink":
+            elsewhere.write_text(text, encoding="utf-8")
+            elsewhere.chmod(0o600)
+            os.link(elsewhere, target)
+        elif plant == "group_writable":
+            # The mode is set before any content is written: a warden that
+            # reads between a create and a later chmod would see a sound file.
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o664)
+            os.fchmod(fd, 0o664)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+        else:
+            raise ValueError(plant)
+
+    def close(self) -> None:
+        self._stop = True
+        self.thread.join(1.0)
+
+
+def run_case(
+    case: dict[str, Any], cmd: list[str], workdir: Path, extra_env: dict[str, str] | None = None
+) -> tuple[dict[str, Any], float]:
+    """Run one case through one warden command; return (observed, seconds)."""
+    argv, stdin, env = prepare(case, workdir)
+    if extra_env:
+        env.update(extra_env)
+    operator = None
+    if case["state"].get("operator"):
+        operator = FakeOperator(workdir / "data" / "warden", case["state"]["operator"])
+    server = None
+    if case.get("coppice"):
+        sock = workdir / "c.sock"
+        env["COPPICE_SOCK"] = str(sock)
+        # A case that names its own pane keeps it (the agent mode cases).
+        if "COPPICE_PANE" not in (case.get("env") or {}):
+            env["COPPICE_PANE"] = "pane-7"
+        server = FakeCoppice(sock)
+    try:
+        t0 = time.perf_counter()
+        proc = subprocess.run(  # noqa: S603 - the warden under test
+            cmd + argv,
+            input=stdin,
+            capture_output=True,
+            env=env,
+            cwd=workdir,
+            timeout=120,
+            check=False,
+        )
+        elapsed = time.perf_counter() - t0
+    finally:
+        sent = server.close() if server else []
+        if operator is not None:
+            operator.close()
+    return observe(workdir, proc, sent), elapsed
+
+
+def summary(obs: dict[str, Any]) -> dict[str, Any]:
+    """The verdict fields of an observation: what the host was told and
+    what the warden logged it decided."""
+    last = obs["audit"][-1]["record"] if obs["audit"] else {}
+    return {
+        "exit": obs["exit"],
+        "host_verdict": host_verdict(obs),
+        "allow": last.get("allow"),
+        "would_deny": last.get("would_deny"),
+        "tier": last.get("tier"),
+        "reason": last.get("reason"),
+    }
+
+
+def host_verdict(obs: dict[str, Any]) -> str:
+    """allow or deny, as the host reads the contract."""
+    if obs["exit"] != 0:
+        return "deny"
+    out = obs["stdout"].strip()
+    try:
+        body = json.loads(out) if out else {}
+    except json.JSONDecodeError:
+        return "deny"
+    if isinstance(body, dict) and (
+        body.get("decision") == "block"
+        or body.get("action") == "block"
+        or body.get("block") is True
+    ):
+        return "deny"
+    return "allow"
+
+
+# ---------------------------------------------------------------------------
+# The cases
+# ---------------------------------------------------------------------------
+
+ALLOW = ["cat", "cd", "echo", "git", "grep", "head", "ls", "pwd", "wc", "sort"]
+
+
+def envelope(eid: str | None = "env_base", **perms: Any) -> dict[str, Any]:
+    p: dict[str, Any] = {
+        "file_read": ["/work/**"],
+        "file_write": ["/work/**"],
+        "shell": True,
+        "shell_allowlist": ALLOW,
+        "network": False,
+        "mcp_allowlist": ["github/*"],
+        "max_execution_time_s": 60,
+        "max_output_size_mb": 20,
+    }
+    top = {
+        k: perms.pop(k)
+        for k in list(perms)
+        if k in ("stakes", "shell_interpreter_policy", "invariants", "postconditions", "deadline")
+    }
+    p.update(perms)
+    env: dict[str, Any] = {
+        "generated_by": "warden_cases",
+        "task": "synthetic warden case",
+        "permissions": p,
+    }
+    if eid is not None:
+        env["id"] = eid
+    env.update(top)
+    return env
+
+
+BASE = {"default": envelope()}
+
+
+def payload(
+    tool: str | None, inp: Any = None, *, sid: Any = "s1", cwd: Any = "/work", **extra: Any
+) -> str:
+    p: dict[str, Any] = {}
+    if sid is not None:
+        p["session_id"] = sid
+    if tool is not None:
+        p["tool_name"] = tool
+    if inp is not None:
+        p["tool_input"] = inp
+    if cwd is not None:
+        p["cwd"] = cwd
+    p.update(extra)
+    return json.dumps(p)
+
+
+def bash(cmd: str, **kw: Any) -> str:
+    return payload("Bash", {"command": cmd}, **kw)
+
+
+def mk(
+    name: str,
+    stdin: str,
+    *,
+    mode: str | None = "enforce",
+    fmt: str = "claude",
+    envelopes: dict[str, Any] | None = None,
+    disarmed: bool = False,
+    config: str | None = None,
+    sessions: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
+    pin: str | None = None,
+    captures: bool = False,
+    coppice: bool = False,
+    extra_args: list[str] | None = None,
+    tags: list[str] | None = None,
+    operator: dict[str, Any] | None = None,
+    files: dict[str, Any] | None = None,
+    grafts: dict[str, Any] | None = None,
+    tier1: Any = None,
+    links: dict[str, bool] | None = None,
+    modes: dict[str, int] | None = None,
+    repos: list[str] | None = None,
+) -> dict[str, Any]:
+    argv: list[str] = []
+    if mode is not None:
+        argv += ["--mode", mode]
+    argv += ["--root", "{ROOT}/data/warden", "--format", fmt, "--verify-timeout", "5.0"]
+    if pin is not None:
+        argv += ["--session", pin]
+    if captures:
+        argv += ["--captures-root", "{ROOT}/captures"]
+    argv += extra_args or []
+    return {
+        "kind": "warden",
+        "v": CASE_VERSION,
+        "name": name,
+        "tags": tags or [],
+        "argv": argv,
+        "stdin": stdin,
+        "env": env or {},
+        "coppice": coppice,
+        "state": {
+            # Envelope files are kept as text: their key order is part of
+            # what the warden reads, and the case file sorts keys.
+            "envelopes": {
+                k: v if isinstance(v, str) else json.dumps(v, indent=2)
+                for k, v in (BASE if envelopes is None else envelopes).items()
+            },
+            "disarmed": disarmed,
+            "config": config,
+            "sessions": sessions or {},
+            **({"operator": operator} if operator else {}),
+            # Only when a case has them, so every other case's id stays.
+            **({"files": files} if files else {}),
+            **({"links": links} if links else {}),
+            **({"modes": modes} if modes else {}),
+            **({"repos": repos} if repos else {}),
+            **(
+                {
+                    "grafts": {
+                        k: v if isinstance(v, str) else json.dumps(v) for k, v in grafts.items()
+                    }
+                }
+                if grafts
+                else {}
+            ),
+            **(
+                {"tier1": tier1 if isinstance(tier1, str) else json.dumps(tier1)}
+                if tier1 is not None
+                else {}
+            ),
+        },
+    }
+
+
+def build_cases() -> list[dict[str, Any]]:
+    C: list[dict[str, Any]] = []
+    add = C.append
+    WS = {"CLAUDE_PROJECT_DIR": "/work"}
+
+    # -- tool kinds the classifier maps, both modes ------------------------
+    for mode in ("enforce", "audit"):
+        add(
+            mk(
+                f"read inside ({mode})",
+                payload("Read", {"file_path": "/work/a.txt"}),
+                mode=mode,
+                tags=["read"],
+            )
+        )
+        add(
+            mk(
+                f"read outside ({mode})",
+                payload("Read", {"file_path": "/etc/passwd"}),
+                mode=mode,
+                tags=["read"],
+            )
+        )
+        add(
+            mk(
+                f"write outside ({mode})",
+                payload("Write", {"file_path": "/etc/cron.d/x", "content": "x"}),
+                mode=mode,
+                tags=["write"],
+            )
+        )
+        add(
+            mk(
+                f"bash allowlist miss ({mode})",
+                bash("rm -rf /work/build"),
+                mode=mode,
+                tags=["shell"],
+            )
+        )
+        add(
+            mk(
+                f"unknown tool ({mode})",
+                payload("TodoWrite", {"todos": []}),
+                mode=mode,
+                tags=["unknown"],
+            )
+        )
+    add(mk("glob inside", payload("Glob", {"pattern": "/work/**/*.py"}), tags=["read"]))
+    add(mk("grep path", payload("Grep", {"pattern": "x", "path": "/work/src"}), tags=["read"]))
+    add(
+        mk(
+            "edit inside",
+            payload("Edit", {"file_path": "/work/a.py", "old_string": "a", "new_string": "b"}),
+            tags=["edit"],
+        )
+    )
+    add(
+        mk(
+            "multiedit outside",
+            payload("MultiEdit", {"file_path": "/tmp/a.py", "edits": []}),
+            tags=["edit"],
+        )
+    )
+    add(
+        mk(
+            "write inside",
+            payload("Write", {"file_path": "/work/new.txt", "content": "hello"}),
+            tags=["write"],
+        )
+    )
+    add(
+        mk(
+            "write list content",
+            payload("Write", {"file_path": "/work/n.txt", "content": ["a", "b"]}),
+            captures=True,
+            tags=["write"],
+        )
+    )
+    add(
+        mk(
+            "write numeric content",
+            payload("Write", {"file_path": "/work/n.txt", "content": 5}),
+            tags=["write", "malformed"],
+        )
+    )
+    add(mk("bash allowlist hit", bash("git status"), tags=["shell"]))
+    add(mk("bash env prefix", bash("FOO=1 BAR=2 ls -la"), tags=["shell"]))
+    add(mk("bash comment only", bash("# nothing to run"), tags=["shell"]))
+    add(mk("bash empty command", bash("   "), tags=["shell"]))
+    add(mk("bash cmd key", payload("Bash", {"cmd": "ls"}), tags=["shell"]))
+    add(
+        mk(
+            "webfetch denied",
+            payload("WebFetch", {"url": "https://example.com/x"}),
+            tags=["network"],
+        )
+    )
+    add(
+        mk(
+            "webfetch allowed host",
+            payload("WebFetch", {"url": "https://Example.com/x"}),
+            envelopes={"default": envelope(network=True, network_hosts=["example.com"])},
+            tags=["network"],
+        )
+    )
+    add(
+        mk(
+            "webfetch other host",
+            payload("WebFetch", {"url": "https://evil.test/x"}),
+            envelopes={"default": envelope(network=True, network_hosts=["example.com"])},
+            tags=["network"],
+        )
+    )
+    add(
+        mk(
+            "webfetch file scheme",
+            payload("WebFetch", {"url": "file:///etc/passwd"}),
+            envelopes={"default": envelope(network=True)},
+            tags=["network"],
+        )
+    )
+    add(
+        mk(
+            "websearch query",
+            payload("WebSearch", {"query": "openDaisugi warden"}),
+            envelopes={"default": envelope(network=True)},
+            tags=["network"],
+        )
+    )
+    add(
+        mk(
+            "webfetch bracket host",
+            payload("WebFetch", {"url": "http://[::1]:8080/"}),
+            envelopes={"default": envelope(network=True)},
+            tags=["network"],
+        )
+    )
+    add(mk("mcp allowed", payload("mcp__github__get_issue", {"number": 3}), tags=["mcp"]))
+    add(mk("mcp denied", payload("mcp__slack__post", {"text": "hi"}), tags=["mcp"]))
+    add(mk("mcp nested tool name", payload("mcp__github__list__issues", {}), tags=["mcp"]))
+    add(mk("mcp malformed name", payload("mcp__", {}), tags=["mcp", "unknown"]))
+    add(mk("mcp list input", payload("mcp__github__x", ["a"]), tags=["mcp"]))
+
+    # -- argument rules (mcp_rules, MP-1 to MP-10) -------------------------
+    mcp_rules = [
+        {
+            "tool": "github/get_issue",
+            "args": [
+                {"op": "in_set", "path": "repo", "values": ["acme/app"]},
+                {"op": "numeric_range", "path": "number", "min": 1, "max": 100000},
+            ],
+        },
+        {"tool": "fs/read_file", "args": [{"op": "path_in", "path": "path", "scope": "file_read"}]},
+        {
+            "tool": "fs/read_many",
+            "args": [{"op": "path_in", "path": "paths", "scope": "file_read"}],
+        },
+        {
+            "tool": "fs/write_file",
+            "args": [{"op": "path_in", "path": "path", "scope": "file_write"}],
+        },
+        {
+            "tool": "opencode/github_get_issue",
+            "args": [{"op": "in_set", "path": "repo", "values": ["acme/app"]}],
+        },
+        {"tool": "kind/in", "args": [{"op": "in_set", "path": "n", "values": [1]}]},
+        {"tool": "kind/eq", "args": [{"op": "equals", "path": "b", "value": True}]},
+        {"tool": "glob/*", "args": [{"op": "exists", "path": "q"}]},
+        {
+            "tool": "glob/one",
+            "args": [{"op": "equals", "path": "q", "value": "a"}],
+            "known": ["q", "r"],
+        },
+    ]
+    ra = {
+        "default": envelope(
+            mcp_allowlist=["fs/other", "fs/list_dir"],
+            mcp_rules=mcp_rules,
+            file_write=["/work/out/**"],
+        )
+    }
+    ra_empty = {"default": envelope(mcp_allowlist=[], mcp_rules=mcp_rules[:1])}
+
+    def ra_case(name: str, stdin: str, **kw: Any) -> None:
+        kw.setdefault("envelopes", ra)
+        add(mk(name, stdin, tags=["mcp", "mcp-args"], **kw))
+
+    gi = "mcp__github__get_issue"
+    ra_case("mcp rule allowed", payload(gi, {"repo": "acme/app", "number": 3}))
+    ra_case("mcp rule in_set denied", payload(gi, {"repo": "evil/app", "number": 3}))
+    ra_case("mcp rule unknown key", payload(gi, {"repo": "acme/app", "number": 3, "body": "x"}))
+    ra_case(
+        "mcp rule nested smuggle",
+        payload(gi, {"repo": "acme/app", "number": 3, "opts": {"path": "/etc/shadow"}}),
+    )
+    ra_case("mcp rule list input", payload(gi, ["acme/app", 3]))
+    ra_case("mcp rule missing arg", payload(gi, {"number": 3}))
+    ra_case("mcp rule bool as one", payload(gi, {"repo": "acme/app", "number": True}))
+    ra_case("mcp rule in_set bool vs int", payload("mcp__kind__in", {"n": True}))
+    ra_case("mcp rule in_set int", payload("mcp__kind__in", {"n": 1}))
+    ra_case("mcp rule equals int vs bool", payload("mcp__kind__eq", {"b": 1}))
+    ra_case("mcp rule equals bool", payload("mcp__kind__eq", {"b": True}))
+    ra_case("mcp rule numeric string", payload(gi, {"repo": "acme/app", "number": "3"}))
+    ra_case(
+        "mcp rule without allowlist",
+        payload(gi, {"repo": "acme/app", "number": 3}),
+        envelopes=ra_empty,
+    )
+    ra_case(
+        "mcp allowlist name alone many args",
+        payload("mcp__fs__other", {"a": 1, "b": [1, 2], "c": {"d": "e"}, "text": "acme/app"}),
+    )
+    rf = "mcp__fs__read_file"
+    ra_case("mcp path_in inside", payload(rf, {"path": "/work/src/a.py"}))
+    ra_case("mcp path_in relative inside", payload(rf, {"path": "src/a.py"}))
+    ra_case("mcp path_in outside", payload(rf, {"path": "/etc/passwd"}))
+    ra_case("mcp path_in dotdot", payload(rf, {"path": "/work/../etc/passwd"}))
+    ra_case(
+        "mcp path_in relative escape", payload(rf, {"path": "../../etc/passwd"}, cwd="/work/sub")
+    )
+    ra_case("mcp path_in tilde", payload(rf, {"path": "~/.ssh/id_ed25519"}))
+    # Owner, 2026-11-03: path_in takes absolute paths only. A relative value
+    # under "not" is refused too, never admitted by a false.
+    neg = {
+        "default": envelope(
+            mcp_rules=[
+                {
+                    "tool": "fs/read_file",
+                    "args": [
+                        {
+                            "op": "not",
+                            "child": {"op": "path_in", "path": "path", "scope": "file_read"},
+                        }
+                    ],
+                }
+            ]
+        )
+    }
+    ra_case("mcp path_in relative under not", payload(rf, {"path": "src/a.py"}), envelopes=neg)
+    ra_case("mcp path_in dot slash", payload(rf, {"path": "./a.py"}))
+    ra_case("mcp path_in not string", payload(rf, {"path": 5}))
+    ra_case(
+        "mcp path_in list inside",
+        payload("mcp__fs__read_many", {"paths": ["/work/a", "/work/b"]}),
+    )
+    ra_case(
+        "mcp path_in list one outside",
+        payload("mcp__fs__read_many", {"paths": ["/work/a", "/home/user/.aws/credentials"]}),
+    )
+    ra_case(
+        "mcp path_in write scope",
+        payload("mcp__fs__write_file", {"path": "/work/out/a.txt"}),
+    )
+    ra_case(
+        "mcp path_in write scope outside",
+        payload("mcp__fs__write_file", {"path": "/work/a.txt"}),
+    )
+    rroot = {
+        "default": envelope(
+            mcp_allowlist=["fs/list_dir"],
+            file_read=["{ROOT}/work/**"],
+            file_write=["{ROOT}/work/**"],
+        )
+    }
+    rfiles = {
+        "outside/secret": {"text": "x"},
+        "work/a": {"text": "x"},
+        "work/d": {"dir": True},
+        "work/d/f": {"text": "x"},
+        "outside/dir": {"dir": True},
+    }
+
+    def rr_case(name: str, inp: Any, **kw: Any) -> None:
+        kw.setdefault("envelopes", rroot)
+        add(
+            mk(
+                name,
+                payload("mcp__fs__list_dir", inp, cwd="{ROOT}/work"),
+                files=rfiles,
+                tags=["mcp", "mcp-args"],
+                **kw,
+            )
+        )
+
+    rr_case("mcp read existing outside", {"path": "{ROOT}/outside/secret"})
+    rr_case("mcp read existing inside", {"path": "{ROOT}/work/a"})
+    rr_case("mcp read nonexistent abs", {"path": "{ROOT}/outside/nothing-here"})
+    rr_case("mcp read relative is not a path", {"path": "outside/secret"})
+    rr_case("mcp read directory outside", {"path": "{ROOT}/outside/dir"})
+    rr_case("mcp read directory inside", {"path": "{ROOT}/work/d"})
+    rr_case(
+        "mcp read directory one level glob",
+        {"path": "{ROOT}/work/d"},
+        envelopes={
+            "default": envelope(mcp_allowlist=["fs/list_dir"], file_read=["{ROOT}/work/d/*"])
+        },
+    )
+    rr_case("mcp read nested list", {"opts": {"paths": ["{ROOT}/work/a", "{ROOT}/outside/secret"]}})
+    rr_case("mcp read home tilde missing", {"path": "~/nothing-here-w3"})
+    big_args = {"repo": "acme/app", "number": 3, "x": "y" * 262145}
+    ra_case("mcp cap size", payload(gi, big_args))
+    ra_case("mcp cap size allowlist", payload("mcp__fs__other", {"x": "y" * 262145}))
+    deep: Any = "end"
+    for _ in range(65):
+        deep = {"a": deep}
+    ra_case("mcp cap depth", payload("mcp__fs__other", deep))
+    deep_ok: Any = "end"
+    for _ in range(63):
+        deep_ok = {"a": deep_ok}
+    ra_case("mcp cap depth ok", payload("mcp__fs__other", deep_ok))
+    ra_case("mcp two rules conjunction", payload("mcp__glob__one", {"q": "a", "r": 1}))
+    ra_case("mcp two rules conjunction denied", payload("mcp__glob__one", {"q": "b", "r": 1}))
+    ra_case("mcp two rules unknown key", payload("mcp__glob__one", {"q": "a", "z": 1}))
+    ra_case("mcp glob rule", payload("mcp__glob__two", {"q": 1}))
+    ra_case("mcp glob rule denied", payload("mcp__glob__two", {"zz": 1}))
+    ra_case(
+        "mcp tool with slash not matched by glob",
+        payload("mcp__glob__a/b", {"zz": 1}),
+    )
+    # -- review round 1: whole-string regexes, non-object arguments, path_in
+    # values a server could read another way, host-flattened tool names ----
+    rx_rules = [
+        {"tool": "rx/exact", "args": [{"op": "matches", "path": "repo", "regex": "^acme/app$"}]},
+        {"tool": "rx/open", "args": [{"op": "matches", "path": "repo", "regex": "acme/.*"}]},
+        {"tool": "rx/alt", "args": [{"op": "matches", "path": "r", "regex": "^a|.*$"}]},
+        {"tool": "rx/group", "args": [{"op": "matches", "path": "r", "regex": "^(?:a|b)$"}]},
+        {"tool": "rx/not", "args": [{"op": "not_matches", "path": "r", "regex": "evil"}]},
+        {"tool": "rx/flag", "args": [{"op": "matches", "path": "r", "regex": "(?i)acme"}]},
+        {"tool": "none/list", "known": [], "args": []},
+        {"tool": "none/not", "args": [{"op": "not", "child": {"op": "exists", "path": "x"}}]},
+        {
+            "tool": "px/read",
+            "args": [{"op": "path_in", "path": "path", "scope": "file_read"}],
+        },
+        {
+            "tool": "github/get_issue",
+            "args": [{"op": "in_set", "path": "repo", "values": ["acme/app"]}],
+        },
+    ]
+    rx = {
+        "default": envelope(
+            mcp_allowlist=["opencode/*", "pi/*", "fs/open"],
+            mcp_rules=rx_rules,
+            file_read=["/work/**"],
+        )
+    }
+    rx_lit = {
+        "default": envelope(
+            mcp_allowlist=["opencode/github_get_issue"],
+            mcp_rules=rx_rules,
+        )
+    }
+
+    def rx_case(name: str, stdin: str, **kw: Any) -> None:
+        kw.setdefault("envelopes", rx)
+        add(mk(name, stdin, tags=["mcp", "mcp-args", "mcp-round1"], **kw))
+
+    for rname, tool, val in [
+        ("exact", "rx__exact", "acme/app"),
+        ("exact newline", "rx__exact", "acme/app\n"),
+        ("exact prefix", "rx__exact", "xacme/app"),
+        ("open", "rx__open", "acme/app"),
+        ("open evil prefix", "rx__open", "evil/acme/app"),
+        ("open newline", "rx__open", "acme/app\n"),
+        ("open empty", "rx__open", ""),
+    ]:
+        rx_case(f"mcp regex {rname}", payload(f"mcp__{tool}", {"repo": val}))
+    for rname, tool, val in [
+        ("alt any", "rx__alt", "evil"),
+        ("group b", "rx__group", "b"),
+        ("group ab", "rx__group", "ab"),
+        ("group newline", "rx__group", "b\n"),
+        ("not hit", "rx__not", "evil"),
+        ("not inside", "rx__not", "an evil one"),
+        ("flag full", "rx__flag", "ACME"),
+        ("flag partial", "rx__flag", "acme corp"),
+    ]:
+        rx_case(f"mcp regex {rname}", payload(f"mcp__{tool}", {"r": val}))
+
+    for label, inp in [
+        ("list", ["--all"]),
+        ("string", '{"all": 1}'),
+        ("number", 7),
+        ("empty list", []),
+        ("empty string", ""),
+        ("zero", 0),
+        ("false", False),
+    ]:
+        rx_case(f"mcp rule args {label}", payload("mcp__none__list", inp))
+        rx_case(f"mcp rule not-rule args {label}", payload("mcp__none__not", inp))
+    rx_case("mcp rule args null", payload("mcp__none__list", None, tool_input=None))
+    rx_case("mcp rule args null not-rule", payload("mcp__none__not", None, tool_input=None))
+    rx_case("mcp rule args empty object", payload("mcp__none__list", {}))
+    rx_case("mcp rule args absent", payload("mcp__none__list", None))
+    rx_case("mcp rule args object not rule", payload("mcp__none__not", {"y": 1}))
+    rx_case("mcp allowlist args list", payload("mcp__fs__open", ["x"]))
+    rx_case("mcp allowlist args null", payload("mcp__fs__open", None, tool_input=None))
+    for fmt_ in ("hermes", "openclaw"):
+        for label, a in (("list", ["x"]), ("string", "x"), ("null", None)):
+            rx_case(
+                f"mcp rule args {label} {fmt_}",
+                json.dumps({"tool": "mcp__none__list", "args": a, "session_id": "s1"}),
+                fmt=fmt_,
+            )
+    rx_case(
+        "mcp rule args input key list",
+        json.dumps({"tool_name": "mcp__none__list", "input": ["x"], "session_id": "s1"}),
+    )
+    rx_case(
+        "mcp allowlist args list pi",
+        payload("none__list", ["x"]),
+        fmt="pi",
+    )
+
+    pin = "mcp__px__read"
+    for label, val in [
+        ("file uri", "file:///etc/passwd"),
+        ("https uri", "https://x/y"),
+        ("drive", "C:/Windows/x"),
+        ("drive relative", "c:x"),
+        ("backslash dotdot", "..\\..\\etc\\passwd"),
+        ("backslash", "src\\a.py"),
+        ("leading space", " /etc/passwd"),
+        ("leading space inside", " /work/a"),
+        ("trailing newline", "/work/a\n"),
+        ("trailing space relative", "src/a.py "),
+        ("tab", "\t/work/a"),
+        ("nul", "src/a\u0000.py"),
+        ("dotdot relative", "../x"),
+        ("dotdot nested", "src/../../x"),
+        ("dotdot inside", "src/../a.py"),
+        ("dotdot end", "src/.."),
+        ("neighbor relative", "src/a.py"),
+        ("neighbor dots in name", "src/a..b"),
+        ("neighbor absolute", "/work/src/a.py"),
+        ("neighbor absolute dotdot", "/work/src/../a.py"),
+        ("neighbor colon after slash", "src/a:b"),
+    ]:
+        rx_case(f"mcp path_in {label}", payload(pin, {"path": val}))
+    rx_case(
+        "mcp path_in list one bad",
+        payload(pin, {"path": ["/work/a", "file:///etc/passwd"]}),
+    )
+
+    rx_case(
+        "mcp host name opencode wildcard",
+        payload("mcp__opencode__github_get_issue", {"repo": "evil/app"}),
+        fmt="opencode",
+    )
+    rx_case(
+        "mcp host name opencode wildcard good args",
+        payload("mcp__opencode__github_get_issue", {"repo": "acme/app"}),
+        fmt="opencode",
+    )
+    rx_case(
+        "mcp host name opencode other tool",
+        payload("mcp__opencode__slack_post", {"text": "hi"}),
+        fmt="opencode",
+    )
+    rx_case(
+        "mcp host name opencode literal entry",
+        payload("mcp__opencode__github_get_issue", {"repo": "evil/app"}),
+        fmt="opencode",
+        envelopes=rx_lit,
+    )
+    rx_case(
+        "mcp host name pi wildcard",
+        payload("github_get_issue", {"repo": "evil/app"}),
+        fmt="pi",
+    )
+    rx_case(
+        "mcp host name pi other tool",
+        payload("slack_post", {"text": "hi"}),
+        fmt="pi",
+    )
+
+    # -- review round 2: a rule regex runs on RE2 (a pattern RE2 cannot compile
+    # denies; the old backtracking shapes answer at once), the 4096 cap, and the
+    # host-name guard binds wildcard rules and compares loosely -----------------
+    r2_rules = [
+        {"tool": "r2/bal", "args": [{"op": "matches", "path": "r", "regex": "^a)|(b$"}]},
+        {"tool": "r2/bal2", "args": [{"op": "matches", "path": "r", "regex": "x)|(?:.*"}]},
+        {"tool": "r2/alt", "args": [{"op": "matches", "path": "r", "regex": "^(a|aa)+$"}]},
+        {"tool": "r2/nest", "args": [{"op": "matches", "path": "r", "regex": "^(a+)+$"}]},
+        {"tool": "r2/star", "args": [{"op": "not_matches", "path": "r", "regex": "^(.*)*$"}]},
+        {"tool": "r2/ok", "args": [{"op": "matches", "path": "r", "regex": "^[a-z0-9_-]{1,64}$"}]},
+        {"tool": "r2/word", "args": [{"op": "matches", "path": "r", "regex": "^(foo|bar)+$"}]},
+        {"tool": "r2/long", "args": [{"op": "not_matches", "path": "r", "regex": "^evil$"}]},
+        {"tool": "r2/look", "args": [{"op": "matches", "path": "r", "regex": "^(?=a)a$"}]},
+        {
+            "tool": "r2/lookbehind",
+            "args": [{"op": "not_matches", "path": "r", "regex": "^(?<=a)b$"}],
+        },
+        {
+            "tool": "r2/back",
+            "args": [{"op": "matches", "path": "r", "regex": "^(a)" + chr(92) + "1$"}],
+        },
+        {"tool": "r2/rep", "args": [{"op": "matches", "path": "r", "regex": "^a{1001}$"}]},
+        {"tool": "r2/poly", "args": [{"op": "matches", "path": "r", "regex": "^a*a*a*a*b$"}]},
+        {
+            "tool": "r2/digits",
+            "args": [{"op": "matches", "path": "r", "regex": "^" + chr(92) + "d+$"}],
+        },
+        {
+            "tool": "r2/word2",
+            "args": [{"op": "matches", "path": "r", "regex": "^" + chr(92) + "w+$"}],
+        },
+        {
+            "tool": "r2/space",
+            "args": [{"op": "matches", "path": "r", "regex": "^a" + chr(92) + "sb$"}],
+        },
+        {
+            "tool": "r2/endz",
+            "args": [{"op": "matches", "path": "r", "regex": "^a" + chr(92) + "Z"}],
+        },
+        {
+            "tool": "r2/uni",
+            "args": [{"op": "matches", "path": "r", "regex": "^a" + chr(92) + "u0041$"}],
+        },
+        {"tool": "r2/nestclass", "args": [{"op": "matches", "path": "r", "regex": "^[[a]]$"}]},
+        {"tool": "r2/setop", "args": [{"op": "matches", "path": "r", "regex": "^[a&&b]$"}]},
+        {
+            "tool": "r2/boundary",
+            "args": [
+                {"op": "matches", "path": "r", "regex": "^" + chr(92) + "bfoo" + chr(92) + "b$"}
+            ],
+        },
+        {
+            "tool": "r2/ci",
+            "args": [{"op": "matches", "path": "r", "regex": "^(?i)stra" + chr(0xDF) + "e$"}],
+        },
+        {
+            "tool": "github/get_issue",
+            "args": [{"op": "in_set", "path": "repo", "values": ["acme/app"]}],
+        },
+        {"tool": "Cased/Tool", "args": [{"op": "in_set", "path": "repo", "values": ["acme/app"]}]},
+        {
+            "tool": "opencode/*",
+            "args": [{"op": "not_matches", "path": "repo", "regex": "^secret$"}],
+        },
+    ]
+    r2 = {
+        "default": envelope(
+            mcp_allowlist=["opencode/*", "pi/*"],
+            mcp_rules=r2_rules,
+        )
+    }
+
+    def r2_case(name: str, stdin: str, **kw: Any) -> None:
+        kw.setdefault("envelopes", r2)
+        add(mk(name, stdin, tags=["mcp", "mcp-args", "mcp-round2"], **kw))
+
+    for label, tool, val in [
+        ("unbalanced prefix", "r2__bal", "aEVIL"),
+        ("unbalanced exact", "r2__bal", "b"),
+        ("unbalanced stray", "r2__bal2", "evil"),
+        ("alt overlap", "r2__alt", "a" * 40 + "!"),
+        ("alt overlap match", "r2__alt", "aaa"),
+        ("alt overlap 4096", "r2__alt", "a" * 4096),
+        ("alt overlap 4096 miss", "r2__alt", "a" * 4095 + "!"),
+        ("nested", "r2__nest", "a" * 40 + "!"),
+        ("nested match", "r2__nest", "aaa"),
+        ("nested 4096 miss", "r2__nest", "a" * 4095 + "!"),
+        ("star group", "r2__star", "a" * 40 + "!"),
+        ("star group 4096", "r2__star", "a" * 4096),
+        ("poly 4096 miss", "r2__poly", "a" * 4096),
+        ("poly 4096 hit", "r2__poly", "a" * 4095 + "b"),
+        ("lookahead", "r2__look", "a"),
+        ("lookbehind", "r2__lookbehind", "b"),
+        ("backreference", "r2__back", "aa"),
+        ("repeat over 1000", "r2__rep", "a" * 1001),
+        ("digits ascii", "r2__digits", "123"),
+        ("digits arabic", "r2__digits", chr(0x663)),
+        ("word ascii", "r2__word2", "ab_1"),
+        ("word accent", "r2__word2", "caf" + chr(0xE9)),
+        ("space inside", "r2__space", "a b"),
+        ("space nbsp", "r2__space", "a" + chr(0xA0) + "b"),
+        ("end of text hit", "r2__endz", "a"),
+        ("end of text newline", "r2__endz", "a\n"),
+        ("unicode escape hit", "r2__uni", "aA"),
+        ("unicode escape miss", "r2__uni", "ab"),
+        ("nested class literal", "r2__nestclass", "a]"),
+        ("nested class union", "r2__nestclass", "a"),
+        ("set operator literal", "r2__setop", "&"),
+        ("set operator miss", "r2__setop", "b"),
+        ("word boundary", "r2__boundary", "foo"),
+        ("case fold", "r2__ci", "STRA" + chr(0xDF) + "E"),
+        ("benign class", "r2__ok", "ok_name-1"),
+        ("benign class upper", "r2__ok", "UPPER"),
+        ("benign class empty", "r2__ok", ""),
+        ("benign word", "r2__word", "foobar"),
+        ("benign word miss", "r2__word", "foobaz"),
+        ("long 4096", "r2__long", "a" * 4096),
+        ("long 4097", "r2__long", "a" * 4097),
+        ("long 5000", "r2__long", "a" * 5000),
+        ("long multibyte 4096", "r2__long", "\u00e9" * 4096),
+        ("long multibyte 4097", "r2__long", "\u00e9" * 4097),
+    ]:
+        r2_case(f"mcp regex check {label}", payload(f"mcp__{tool}", {"r": val}))
+    for label, tool, a in [
+        ("wildcard finds rule bad", "mcp__opencode__github_get_issue", {"repo": "evil"}),
+        ("wildcard finds rule good", "mcp__opencode__github_get_issue", {"repo": "acme/app"}),
+        ("wildcard secret", "mcp__opencode__github_get_issue", {"repo": "secret"}),
+        ("wildcard other tool", "mcp__opencode__slack_post", {"repo": "x"}),
+        ("wildcard other tool secret", "mcp__opencode__slack_post", {"repo": "secret"}),
+        ("cased flat", "mcp__opencode__cased_Tool", {"repo": "evil"}),
+        ("cased flat good", "mcp__opencode__cased_Tool", {"repo": "acme/app"}),
+        ("upper server part", "mcp__opencode__GITHUB_get_issue", {"repo": "evil"}),
+    ]:
+        r2_case(f"mcp host name {label} opencode", payload(tool, a), fmt="opencode")
+    for label, tool, a in [
+        ("pi cased server", "GitHub_get_issue", {"repo": "evil"}),
+        ("pi dash", "github-get_issue", {"repo": "evil"}),
+        ("pi dash good", "github-get_issue", {"repo": "acme/app"}),
+        ("pi plain", "github_get_issue", {"repo": "evil"}),
+        ("pi plain good", "github_get_issue", {"repo": "acme/app"}),
+        ("pi double underscore", "github__get_issue", {"repo": "evil"}),
+    ]:
+        r2_case(f"mcp host name {label}", payload(tool, a), fmt="pi")
+
+    # -- review round 3: a rule regex is one small subset; anything else
+    # denies with one reason (F1, F2). Each attack has a benign neighbour. ----
+    bs = chr(92)
+    r3_attacks = [
+        ("xflag", "matches", "(?x)a|.*", "evil"),
+        ("bigu", "matches", bs + "U00000061", "a"),
+        ("uflag", "matches", "(?u)a", "a"),
+        ("recursion", "matches", "(?R)a", "a"),
+        ("flagoff", "matches", "(?-u:a)", "a"),
+        ("dashdash", "matches", "[a--b]", "a"),
+        ("rangeset", "not_matches", "[!--/]", "#"),
+        ("rangeset2", "not_matches", "[a-c--b]", "b"),
+        ("wordset", "not_matches", "[" + bs + "w--_]", "_"),
+        ("pascii", "matches", bs + "p{Ascii}", "a"),
+        ("pupper", "matches", bs + "p{ASCII}", "a"),
+        ("pgreek", "matches", bs + "p{greek}", "a"),
+        ("pletter", "matches", bs + "p{Letter}", "a"),
+        ("pcn", "matches", bs + "p{Cn}", "a"),
+        ("pgc", "matches", bs + "p{gc=Lu}", "A"),
+        ("palpha", "matches", bs + "p{Alphabetic}", "a"),
+        ("pshort", "matches", bs + "pL", "a"),
+        ("pgreekcap", "matches", bs + "p{Greek}", "a"),
+        ("ncase", "matches", "(?i:a)", "A"),
+        ("midflag", "matches", "a(?i)b", "aB"),
+        ("named", "matches", "(?P<n>a)", "a"),
+        ("hex", "matches", bs + "x41", "A"),
+        ("quote", "matches", bs + "Qa.b" + bs + "E", "a.b"),
+        ("badrange", "matches", "[z-a]", "m"),
+        ("bareopen", "matches", "a{,5}", "aa"),
+        ("leadzero", "matches", "a{01}", "a"),
+        ("doublequant", "matches", "a**", "a"),
+        ("quantcaret", "matches", "^*a", "a"),
+        ("posix", "matches", "[[:alpha:]]", "a"),
+        ("sizecap", "matches", "a{1000}b{1000}c", "x"),
+    ]
+    r3_benign = [
+        ("class", "matches", "^[a-z0-9_-]{1,64}$", "ok_name-1"),
+        ("prefix", "matches", "^acme/.+$", "acme/app"),
+        ("caseless", "matches", "(?i)^readme" + bs + ".md$", "README.MD"),
+        ("verbs", "matches", "^(get|list)_[a-z_]+$", "list_issues"),
+        ("verbs miss", "matches", "^(get|list)_[a-z_]+$", "delete_all"),
+        ("escaped angle", "matches", "^" + bs + "<a" + bs + ">$", "<a>"),
+        ("ascii digits", "matches", "^" + bs + "d+$", chr(0x663)),
+        ("trailing dash", "matches", "^[a-c-]+$", "a-c"),
+        ("range ok", "matches", "[a-b]", "a"),
+        ("range punct ok", "matches", "[!-/]", "#"),
+        ("range letters ok", "matches", "[a-c]", "b"),
+        ("word dash ok", "matches", "[" + bs + "w-]", "_"),
+        ("caseless ok", "matches", "(?i)a", "A"),
+        ("word ok", "matches", bs + "w", "a"),
+        ("group ok", "matches", "(?:a|b){2}", "ab"),
+        ("lazy ok", "matches", "a+?", "aaa"),
+    ]
+    r3 = {
+        "default": envelope(
+            mcp_allowlist=["opencode/*", "pi/*"],
+            mcp_rules=[
+                {
+                    "tool": f"r3/{name.replace(' ', '_')}",
+                    "args": [{"op": op, "path": "r", "regex": rx}],
+                }
+                for name, op, rx, _ in r3_attacks + r3_benign
+            ],
+        )
+    }
+    for name, _op, _rx, val in r3_attacks + r3_benign:
+        add(
+            mk(
+                f"mcp regex subset {name}",
+                payload(f"mcp__r3__{name.replace(' ', '_')}", {"r": val}),
+                envelopes=r3,
+                tags=["mcp", "mcp-args", "mcp-round3"],
+            )
+        )
+
+    codex = {
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5-codex",
+        "permission_mode": "default",
+        "turn_id": "turn_1",
+        "tool_use_id": "call_1",
+        "transcript_path": "/home/user/.codex/sessions/s1.jsonl",
+    }
+    ra_case("mcp rule codex shape denied", payload(gi, {"repo": "evil/app", "number": 3}, **codex))
+    ra_case("mcp rule codex shape allowed", payload(gi, {"repo": "acme/app", "number": 3}, **codex))
+    bad = {"repo": "evil/app", "number": 3}
+    good = {"repo": "acme/app", "number": 3}
+    ra_case("mcp rule pi denied", payload(gi, bad), fmt="pi")
+    ra_case("mcp rule pi allowed", payload(gi, good), fmt="pi")
+    ra_case(
+        "mcp rule opencode denied",
+        payload("mcp__opencode__github_get_issue", {"repo": "evil/app"}),
+        fmt="opencode",
+    )
+    ra_case(
+        "mcp rule opencode allowed",
+        payload("mcp__opencode__github_get_issue", {"repo": "acme/app"}),
+        fmt="opencode",
+    )
+    for fmt_ in ("hermes", "openclaw"):
+        for label, args_ in (("denied", bad), ("allowed", good)):
+            ra_case(
+                f"mcp rule {fmt_} {label}",
+                json.dumps({"tool": gi, "args": args_, "session_id": "s1", "cwd": "/work"}),
+                fmt=fmt_,
+            )
+
+    def patch(text: Any, **kw: Any) -> str:
+        return payload("mcp__opencode__apply_patch", {"patchText": text}, **kw)
+
+    ap_narrow = {"default": envelope(file_write=["/work/src/**"])}
+    for name, pl in [
+        (
+            "apply_patch add inside",
+            patch("*** Begin Patch\n*** Add File: src/a.txt\n+x\n*** End Patch"),
+        ),
+        (
+            "apply_patch update outside",
+            patch("*** Begin Patch\n*** Update File: ../etc/x\n@@\n-a\n+b\n*** End Patch"),
+        ),
+        (
+            "apply_patch mixed tiers",
+            patch(
+                "*** Begin Patch\n*** Update File: src/a.py\n*** Add File: docs/b.md\n"
+                "*** Delete File: /srv/c\n*** End Patch"
+            ),
+        ),
+        (
+            "apply_patch move",
+            patch(
+                "*** Begin Patch\n*** Update File: src/a.py\n*** Move to: other/a.py\n*** End Patch"
+            ),
+        ),
+        (
+            "apply_patch no cwd",
+            patch("*** Begin Patch\n*** Add File: src/a.txt\n*** End Patch", cwd=None),
+        ),
+        (
+            "apply_patch relative cwd",
+            patch("*** Begin Patch\n*** Add File: src/a.txt\n*** End Patch", cwd="work"),
+        ),
+        ("apply_patch no header", patch("*** Begin Patch\n+x\n*** End Patch")),
+        ("apply_patch no end", patch("*** Begin Patch\n*** Add File: src/a.txt\n")),
+        ("apply_patch not text", patch(["*** Begin Patch"])),
+        (
+            "apply_patch padded",
+            patch("  \n *** Begin Patch \n*** Add File:  src/a.txt  \n *** End Patch\n\n"),
+        ),
+        (
+            "apply_patch heredoc",
+            patch("<<'EOF'\n*** Begin Patch\n*** Add File: src/a.txt\n*** End Patch\nEOF"),
+        ),
+        (
+            "apply_patch floor",
+            patch("*** Begin Patch\n*** Add File: /home/user/.config/coppice/p.py\n*** End Patch"),
+        ),
+        (
+            "apply_patch opencode plugin",
+            patch(
+                "*** Begin Patch\n*** Update File: src/a.py\n"
+                "*** Add File: .opencode/plugin/x.ts\n*** End Patch"
+            ),
+        ),
+    ]:
+        add(mk(name, pl, fmt="opencode", envelopes=ap_narrow, env=WS, tags=["apply_patch"]))
+
+    # -- Codex pins (PK-7): the documented fields; apply_patch under its own
+    # name reads tool_input.command; update_plan stays unrecognized.
+    cx = {
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5-codex",
+        "permission_mode": "default",
+        "turn_id": "turn_1",
+        "tool_use_id": "call_1",
+        "transcript_path": "/home/user/.codex/sessions/s1.jsonl",
+    }
+    cx_patch_in = "*** Begin Patch\n*** Update File: /work/a.py\n@@\n-x\n+y\n*** End Patch\n"
+    cx_patch_out = "*** Begin Patch\n*** Update File: /etc/hosts\n@@\n-x\n+y\n*** End Patch\n"
+    cx_env = {"default": envelope(file_write=["/work/**"])}
+    for name, pl in [
+        ("codex bash", payload("Bash", {"command": "ls"}, **cx)),
+        ("codex apply_patch inside", payload("apply_patch", {"command": cx_patch_in}, **cx)),
+        ("codex apply_patch outside", payload("apply_patch", {"command": cx_patch_out}, **cx)),
+        (
+            "codex apply_patch heredoc",
+            payload(
+                "apply_patch",
+                {"command": "cat <<'EOF'\n" + cx_patch_out.rstrip("\n") + "\nEOF"},
+                **cx,
+            ),
+        ),
+        ("codex apply_patch no text", payload("apply_patch", {}, **cx)),
+        (
+            "codex apply_patch opencode field",
+            payload("apply_patch", {"patchText": cx_patch_in}, **cx),
+        ),
+        ("codex update_plan", payload("update_plan", {"plan": []}, **cx)),
+    ]:
+        add(mk(name, pl, envelopes=cx_env, env=WS, tags=["codex"]))
+    add(
+        mk(
+            "codex join keys in tree",
+            payload("Read", {"file_path": "/work/a"}, **cx),
+            envelopes=cx_env,
+            env=WS,
+            tags=["codex", "tree"],
+        )
+    )
+    add(
+        mk(
+            "codex apply_patch under another format",
+            payload("apply_patch", {"command": cx_patch_in}, **cx),
+            fmt="pi",
+            envelopes=cx_env,
+            env=WS,
+            tags=["codex"],
+        )
+    )
+
+    # -- formats -------------------------------------------------------------
+    deny_bash = bash("rm -rf /")
+    for fmt in ("hermes", "openclaw", "pi", "opencode", "codex", "nosuchhost"):
+        add(mk(f"format {fmt} deny", deny_bash, fmt=fmt, tags=["format"]))
+        add(mk(f"format {fmt} allow", bash("ls"), fmt=fmt, tags=["format"]))
+    add(mk("hermes audit deny", deny_bash, fmt="hermes", mode="audit", tags=["format"]))
+    # The old name of audit mode: argparse refuses it with one line, and
+    # each format denies (the warden fails closed on a bad argv).
+    for f_ in ("claude", "pi", "opencode", "hermes", "openclaw"):
+        add(mk(f"old shadow mode {f_}", deny_bash, fmt=f_, mode="shadow", tags=["argv"]))
+    add(
+        mk(
+            "old shadow mode equals",
+            deny_bash,
+            mode=None,
+            extra_args=["--mode=shadow"],
+            tags=["argv"],
+        )
+    )
+    add(
+        mk(
+            "old shadow mode prefix",
+            deny_bash,
+            mode=None,
+            extra_args=["--mo", "shadow"],
+            tags=["argv"],
+        )
+    )
+    add(
+        mk(
+            "old shadow in config",
+            deny_bash,
+            mode=None,
+            config="warden_mode: shadow\n",
+            tags=["argv"],
+        )
+    )
+    add(
+        mk(
+            "hermes shape",
+            json.dumps(
+                {
+                    "event": "pre_tool_call",
+                    "tool": "shell",
+                    "args": {"command": "ls"},
+                    "session_id": "s1",
+                }
+            ),
+            fmt="hermes",
+            tags=["format", "shell"],
+        )
+    )
+    add(mk("pi read", payload("read", {"path": "/work/a"}), fmt="pi", tags=["format", "read"]))
+    add(mk("pi grep is mcp", payload("grep", {"pattern": "x"}), fmt="pi", tags=["format", "mcp"]))
+    add(
+        mk(
+            "pi lowercase under claude",
+            payload("read", {"path": "/work/a"}),
+            tags=["format", "unknown"],
+        )
+    )
+    add(
+        mk(
+            "opencode filePath",
+            payload("write", {"filePath": "src/x.ts", "content": "x"}),
+            fmt="pi",
+            tags=["format", "write"],
+        )
+    )
+
+    # -- paths ---------------------------------------------------------------
+    add(mk("relative path with cwd", payload("Read", {"file_path": "src/a.py"}), tags=["paths"]))
+    add(
+        mk(
+            "relative path no cwd",
+            payload("Read", {"file_path": "src/a.py"}, cwd=None),
+            tags=["paths"],
+        )
+    )
+    add(
+        mk(
+            "relative path relative cwd",
+            payload("Read", {"file_path": "a.py"}, cwd="work"),
+            tags=["paths"],
+        )
+    )
+    add(mk("dotdot path", payload("Read", {"file_path": "/work/../etc/passwd"}), tags=["paths"]))
+    add(mk("tilde path", payload("Read", {"file_path": "~/notes.txt"}), tags=["paths"]))
+    add(
+        mk(
+            "dollar home path",
+            payload("Write", {"file_path": "$HOME/x.txt", "content": "x"}),
+            tags=["paths"],
+        )
+    )
+    add(mk("tilde user path", payload("Read", {"file_path": "~root/x"}), tags=["paths"]))
+    add(mk("unicode path", payload("Read", {"file_path": "/work/café.txt"}), tags=["paths"]))
+    add(
+        mk(
+            "credential read",
+            payload("Read", {"file_path": "/home/user/.ssh/id_rsa"}),
+            env=WS,
+            tags=["paths", "tier"],
+        )
+    )
+    add(
+        mk(
+            "proc environ read",
+            payload("Read", {"file_path": "/proc/self/environ"}),
+            env=WS,
+            tags=["paths", "tier"],
+        )
+    )
+    add(
+        mk(
+            "pem read",
+            payload("Read", {"file_path": "/work/certs/Server.PEM"}),
+            envelopes={"default": envelope(file_read=["/work/src/**"])},
+            env=WS,
+            tags=["paths", "tier"],
+        )
+    )
+
+    # -- tiers with a workspace ---------------------------------------------
+    narrow = {
+        "default": envelope(
+            file_read=["/work/src/**"], file_write=["/work/allowed/**"], shell_allowlist=["ls"]
+        )
+    }
+    for name, pl in [
+        ("tier write inside", payload("Write", {"file_path": "/work/other.txt", "content": "x"})),
+        (
+            "tier write git dir",
+            payload("Write", {"file_path": "/work/.git/config", "content": "x"}),
+        ),
+        ("tier write outside", payload("Write", {"file_path": "/srv/x", "content": "x"})),
+        ("tier read inside", payload("Read", {"file_path": "/work/README.md"})),
+        ("tier read git dir", payload("Read", {"file_path": "/work/.git/HEAD"})),
+        ("tier env file", payload("Read", {"file_path": "/work/.env.local"})),
+        ("tier config dir", payload("Read", {"file_path": "/home/user/.config/gh/hosts.yml"})),
+        ("tier pytest", bash("pytest -q tests/test_a.py")),
+        ("tier pytest bad flag", bash("pytest --junitxml=out.xml")),
+        ("tier git log", bash("git log --oneline -5")),
+        ("tier git push force", bash("git push --force origin main")),
+        ("tier git push", bash("git push origin main")),
+        ("tier git commit file", bash("git commit -F /work/msg.txt")),
+        ("tier git rev path", bash("git show HEAD:../secret")),
+        ("tier curl get", bash("curl -sL https://example.com/a")),
+        ("tier curl upload", bash("curl -d @/work/data https://example.com")),
+        ("tier curl output", bash("curl -o out.html https://example.com")),
+        ("tier rm", bash("rm -rf build")),
+        ("tier kubectl", bash("kubectl apply -f x.yaml")),
+        ("tier env", bash("env")),
+        ("tier gh auth", bash("gh auth token")),
+        ("tier gh pr", bash("gh pr create")),
+        ("tier npm publish", bash("npm publish")),
+        ("tier npm test", bash("npm test")),
+        ("tier mkdir", bash("mkdir -p /work/newdir")),
+        ("tier touch outside", bash("touch /etc/x")),
+        ("tier cat home", bash("cat /home/user/notes")),
+        ("tier grep home", bash("grep -r token /home/user")),
+        ("tier find", bash("find /work -name '*.py'")),
+        ("tier find exec", bash("find /work -exec rm {} ;")),
+        ("tier jq env", bash("jq -n env")),
+        ("tier head count", bash("head -5 /work/src/a.py")),
+        ("tier dollar word", bash("cat $FILE")),
+        ("tier glob word", bash("cat *.py")),
+        ("tier go test", bash("go test -v ./...")),
+        ("tier cargo test", bash("cargo test --release -- --nocapture")),
+        ("tier uv pytest", bash("uv run --no-sync pytest -q")),
+        ("tier python -m pytest", bash("python3 -m pytest -x")),
+        ("tier ruff", bash("ruff check src")),
+        ("tier stash drop", bash("git stash drop")),
+        ("tier checkout branch", bash("git checkout -b feature")),
+        ("tier checkout file", bash("git checkout -- a.py")),
+        ("tier fetch refspec", bash("git fetch origin +main:main")),
+        ("tier branch list", bash("git branch -a")),
+        ("tier tag", bash("git tag v1")),
+        ("tier unquoted tilde", bash("cat ~root/x")),
+        ("webfetch tier", payload("WebFetch", {"url": "https://example.com"})),
+        ("mcp tier", payload("mcp__slack__post", {"text": "x"})),
+    ]:
+        add(mk(name, pl, envelopes=narrow, env=WS, tags=["tier"]))
+    add(
+        mk(
+            "tier write inside no project dir",
+            payload("Write", {"file_path": "/work/other.txt", "content": "x"}),
+            envelopes=narrow,
+            tags=["tier"],
+        )
+    )
+    add(
+        mk(
+            "tier cwd outside project",
+            payload("Write", {"file_path": "/work/o.txt", "content": "x"}, cwd="/srv"),
+            envelopes=narrow,
+            env=WS,
+            tags=["tier"],
+        )
+    )
+
+    # -- compound shell ------------------------------------------------------
+    dec = {"default": envelope(shell_allow_decomposition=True)}
+    compound = [
+        "ls && rm -rf /work",
+        "ls && git status",
+        "ls | grep x | wc -l",
+        "cat < /etc/passwd",
+        "echo hi > /work/out.txt",
+        "echo hi > /etc/out.txt",
+        "echo hi 2>/dev/null",
+        "echo $(whoami)",
+        "git log `whoami`",
+        "$CMD foo",
+        "echo hi > $OUT",
+        "ls; cd /work && ls",
+        "cd /tmp && cat x",
+        "ls 'a|b' && echo \"c;d\"",
+        "(ls)",
+        "ls &",
+        "ls\ngit status",
+        "cat <<EOF\nhi\nEOF",
+        "grep x <<< 'text'",
+        "if true; then ls; fi",
+        "for f in a b; do cat $f; done",
+        "ls && sh -c 'rm x'",
+    ]
+    for i, cmd in enumerate(compound):
+        add(mk(f"compound {i} no decomposition", bash(cmd), tags=["compound"]))
+        add(
+            mk(
+                f"compound {i} decomposition",
+                bash(cmd),
+                envelopes=dec,
+                env=WS,
+                tags=["compound", "decomposition"],
+            )
+        )
+
+    # -- commands a review found the Go parser accepting and the oracle not --
+    review = {"default": envelope(shell_allowlist=["echo", "ls"], shell_allow_decomposition=True)}
+    for cmd in [
+        "echo @(a|$(rm x)) ; ls",
+        "echo !(a|$(rm x)) ; ls",
+        "echo +($(rm x)) ; ls",
+        "echo *(`rm x`) ; ls",
+        "echo ?(<(rm x)) ; ls",
+        "ls @($(rm x)) | ls",
+        "[ a '<' b ] && ls",
+        '[ a "<" b ] && ls',
+        "[ a \\< b ] && ls",
+        "[ \\( a \\) ] && ls",
+        "[ a \\= b ] && ls",
+        "echo @(a|b) ; ls",
+        "{a,b} ; ls",
+        "x#y 2>&1",
+        # A redirect followed by more words: the oracle refuses it since
+        # 0423900 (tree-sitter files the words as more targets).
+        "ls | FOO=1 </work/i rm x",
+        "rm </dev/null -rf /work",
+        "cat <a b",
+        "echo hi >out more",
+        "ls 2>&1 x",
+        "ls | FOO=1 </x rm",
+        "cat 2>/dev/null <<< c",
+    ]:
+        add(mk(f"review {cmd}", bash(cmd), envelopes=review, tags=["review", "decomposition"]))
+    add(
+        mk(
+            "review glob blowup",
+            payload("Read", {"file_path": "/" + "a/" * 40 + "c"}),
+            envelopes={
+                "default": envelope(file_read=["/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/**/a/b"])
+            },
+            tags=["review"],
+        )
+    )
+
+    # The glob step limit (verify.GLOB_MATCH_STEP_LIMIT): globs with three or
+    # more ** segments just under it (a match, and a miss) and just over it.
+    # A miss of "/" + "**/" * k + "c" against "/" + "a/" * n + "b" takes
+    # 98,771 steps at k=3, n=80 and 102,341 at n=81; 91,391 and 101,271 at
+    # k=4, n=34 and 35; 98,281 and 118,756 at k=5, n=21 and 22.
+    def stars(k: int) -> str:
+        return "/" + "**/" * k + "c"
+
+    def deep(n: int, last: str = "b") -> str:
+        return "/" + "a/" * n + last
+
+    for name, glob, path in [
+        ("glob steps three under", stars(3), deep(80)),
+        ("glob steps three over", stars(3), deep(81)),
+        ("glob steps three match", stars(3), deep(81, "c")),
+        ("glob steps four under", stars(4), deep(34)),
+        ("glob steps four over", stars(4), deep(35)),
+        ("glob steps five under", stars(5), deep(21)),
+        ("glob steps five over", stars(5), deep(22)),
+        ("glob steps write over", stars(4), deep(35)),
+    ]:
+        tool, key = ("Write", "file_write") if "write" in name else ("Read", "file_read")
+        inp = {"file_path": path, "content": ""} if tool == "Write" else {"file_path": path}
+        add(
+            mk(
+                name,
+                payload(tool, inp),
+                envelopes={"default": envelope(**{key: [glob]})},
+                tags=["review", "glob"],
+            )
+        )
+
+    # -- a re-review's redirect enumeration: fds, dups and redirects after
+    # words, under an envelope that allows every head and path, so any
+    # refusal by the oracle shows as a deny ---------------------------------
+    open_env = {
+        "default": envelope(
+            shell_allowlist=["*", "/*/*", "./*"],
+            shell_allow_decomposition=True,
+            file_read=["/**", "./**"],
+            file_write=["/**", "./**"],
+            shell_interpreter_policy="allow",
+        )
+    }
+    enum = (FIXTURE_DIR / "redirects.txt").read_text(encoding="utf-8").splitlines()
+    for cmd in dict.fromkeys(c for c in enum if c.strip()):
+        add(mk(f"redirect {cmd}", bash(cmd), envelopes=open_env, tags=["redirects"]))
+
+    # -- long lines: many redirects, many distinct cds (50684bb caps the
+    # cds followed at 32) -----------------------------------------------------
+    long_env = {
+        "default": envelope(
+            shell_allowlist=["cd", "echo", "cp"],
+            shell_allow_decomposition=True,
+            file_read=["/**"],
+            file_write=["/**"],
+        )
+    }
+    for n in (400, 1000):
+        add(
+            mk(
+                f"long line {n} distinct cds",
+                bash(" ; ".join(f"cd /work/d{i} ; echo {i} > o{i}" for i in range(n))),
+                envelopes=long_env,
+                env=WS,
+                tags=["long"],
+            )
+        )
+    add(
+        mk(
+            "long line 400 redirects",
+            bash(" ; ".join(f"echo {i} > /work/o{i}" for i in range(400))),
+            envelopes=long_env,
+            env=WS,
+            tags=["long"],
+        )
+    )
+    add(
+        mk(
+            "floor word after the cd cap",
+            bash(" ; ".join(f"cd /work/d{i}" for i in range(33)) + " ; cp a .config/coppice/x"),
+            envelopes=long_env,
+            tags=["long", "hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "floor word before the cd cap",
+            bash(" ; ".join(f"cd /work/d{i}" for i in range(31)) + " ; cp a .config/coppice/x"),
+            envelopes=long_env,
+            tags=["long", "hard_deny"],
+        )
+    )
+
+    # -- interpreters --------------------------------------------------------
+    strict = {
+        "default": envelope(
+            shell_allowlist=ALLOW + ["sh", "bash", "xargs", "timeout", "python3", "env", "find"],
+            shell_interpreter_policy="strict",
+        )
+    }
+    surface = {
+        "default": envelope(
+            shell_allowlist=ALLOW + ["sh", "bash", "xargs", "timeout", "python3", "env", "find"]
+        )
+    }
+    for cmd in [
+        "sh -c 'ls -la'",
+        "sh -c 'rm -rf x'",
+        "timeout 30 git fetch",
+        "xargs rm",
+        "python3 -c 'print(1)'",
+        "env FOO=1 ls",
+        'bash -c "sh -c \'sh -c \\"sh -c ls\\"\'"',
+        "find . -exec rm {} +",
+        "sh -c 'ls && rm x'",
+        "timeout 5 sh -c 'git status'",
+    ]:
+        add(mk(f"interp strict {cmd}", bash(cmd), envelopes=strict, tags=["interpreter"]))
+        add(mk(f"interp surface {cmd}", bash(cmd), envelopes=surface, tags=["interpreter"]))
+
+    # -- no agent records a ranking vote --------------------------------------
+    # The rule runs before the envelope, so each line is tried with an
+    # envelope that allows the daisugi, uv, env and sh heads.
+    rank_env = {"default": envelope(shell_allowlist=[*ALLOW, "daisugi", "uv", "env", "sh"])}
+    for cmd in [
+        "daisugi rank record --ranking R --a X --b Y --outcome a --shown ab --judge owner",
+        "daisugi rank record",
+        "/usr/local/bin/daisugi rank record --judge owner",
+        "~/.local/bin/opendaisugi rank record",
+        "env FOO=1 daisugi rank record",
+        "uv run --no-sync python -m opendaisugi rank record",
+        "python -m opendaisugi.cli rank record",
+        "sh -c 'daisugi rank record --judge owner'",
+        "daisugi --data-dir /d rank --x record",
+        "'dai'sugi \"ra\"nk rec\\ord",
+        "ls; daisugi rank record",
+        "daisugi\trank\nrecord",
+        "daisugi\u00a0rank record",
+        "daisugi\udc80rank record",
+        "echo daisugi rank record",
+        "daisugi rank list",
+        "daisugi rank judge --ranking R",
+        "daisugi record rank",
+        "daisugi-helper rank record",
+        "daisugi rank recorder",
+        "grep 'rank record' daisugi.log",
+        "daisugi rank record pick ch_000000000001 b",
+        "daisugi rank record drop ch_000000000001 --json",
+        "daisugi rank queue --json",
+        "daisugi rank choose attempts.json",
+        "daisugi rank fit attempts.json --json",
+        "daisugi rank pivot --choice ch_000000000001 --to b --apply",
+        "sh -c 'daisugi rank pivot --choice c --to b --apply'",
+        "daisugi rank pivot --choice ch_000000000001 --to b",
+        "daisugi rank show --ranking R",
+        "daisugi rank judges --json",
+    ]:
+        add(mk(f"rank rule {cmd!r}", bash(cmd), envelopes=rank_env, tags=["rank"]))
+    add(
+        mk(
+            "rank rule audit",
+            bash("daisugi rank record --judge owner"),
+            mode="audit",
+            envelopes=rank_env,
+            tags=["rank"],
+        )
+    )
+
+    # -- no agent registers an envelope or writes the delegation tree ---------
+    for cmd in [
+        "daisugi warden register env.json",
+        "daisugi warden register env.json --session kid --parent top",
+        "/usr/local/bin/daisugi warden register e.yaml",
+        "uv run --no-sync python -m opendaisugi warden register e.yaml",
+        "daisugi --root /g warden --x register e.json",
+        "daisugi tree root e.json --session top",
+        "daisugi tree spawn e.json --parent top --session kid",
+        "daisugi tree end kid --tokens-used 3",
+        "daisugi tree answer ask_0123456789ab allow",
+        "daisugi tree prune-branches --json",
+        "daisugi tree adopt n-0123456789ab --json",
+        "daisugi tree run --parent top --profile default -",
+        "daisugi agent-profiles bundle --fd 3",
+        "daisugi agent-profiles list --json",
+        "sh -c 'daisugi agent-profiles list'",
+        "/usr/bin/python3 -I -m opendaisugi.cli agent-profiles bundle --fd 4",
+        "sh -c 'daisugi agent-profiles bundle --fd 3'",
+        "daisugi agent-profiles",
+        "daisugi agent-profile bundle",
+        "/usr/bin/python3 -I -m opendaisugi.cli tree run --parent p --profile desk -",
+        "uv run --no-sync python -m opendaisugi tree run -",
+        "daisugi tree runs",
+        "sh -c 'daisugi tree spawn e.json'",
+        "dai\\sugi tr'ee' spa\"wn\"",
+        "daisugi tree status; daisugi warden register e.json",
+        "daisugi\ttree\nend",
+        "daisugi\u00a0tree root",
+        "echo daisugi tree end",
+        "daisugi tree check p.json c.json",
+        "daisugi tree status --json",
+        "daisugi warden status",
+        "daisugi register warden",
+        "daisugi-helper tree spawn",
+        "daisugi trees spawn",
+        "daisugi tree check end.json root.json",
+        "daisugi tree spawned",
+        "daisugi warden init --force",
+        "daisugi warden init --session kid --workspace /w",
+        "daisugi start claude",
+        "uv run daisugi --data-dir /d start",
+        "daisugi status && npm start",
+        "daisugi registry init /r",
+        "npm start",
+    ]:
+        add(mk(f"tree rule {cmd!r}", bash(cmd), envelopes=rank_env, tags=["tree"]))
+    add(
+        mk(
+            "tree rule audit",
+            bash("daisugi tree spawn e.json --parent top --session kid"),
+            mode="audit",
+            envelopes=rank_env,
+            tags=["tree"],
+        )
+    )
+    # The verbs read per simple command, as arguments of a daisugi command.
+    # This envelope reads compound lines, so a line the rules pass is
+    # allowed.
+    dec_env = {
+        "default": envelope(
+            shell_allowlist=[*ALLOW, "daisugi", "uv", "env", "sh", "npm", "yarn", "true"],
+            shell_allow_decomposition=True,
+        )
+    }
+    for cmd in [
+        "daisugi status; yarn start",
+        "npm test && daisugi start",
+        "daisugi-py start",
+        "daisugi status && npm start (",
+        "daisugi weave run start",
+        "daisugi help start",
+        "daisugi --plain start --enforce",
+        "x=$(daisugi tree end kid)",
+        "git commit -m 'daisugi start now'",
+        "daisugi status && npm start",
+    ]:
+        add(mk(f"tree rule compound {cmd!r}", bash(cmd), envelopes=dec_env, tags=["tree"]))
+    for cmd in ["true && daisugi\trank\nrecord", "daisugi status && rank record"]:
+        add(mk(f"rank rule compound {cmd!r}", bash(cmd), envelopes=dec_env, tags=["rank"]))
+    # Forms shlex splits differently from the shell: a line continuation,
+    # $'...' and $"..." quoting. Each is also read by word order.
+    for cmd in [
+        "daisugi \\\nrank record",
+        "daisugi $'rank' record",
+        'daisugi $"rank" record',
+        "dai\\\nsugi start",
+        "daisugi \\\nwarden disarm",
+        "daisugi warden dis\\\narm",
+        "daisugi warden $'disarm'",
+        'daisugi warden $"arm"',
+        "daisugi router $'label' s1 pass",
+        "echo $'x' && npm start",
+        "ls \\\n/work && npm start",
+    ]:
+        add(mk(f"owner rule shlex gap {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+
+    # -- no agent changes how the warden enforces -----------------------------
+    for cmd in [
+        "daisugi warden disarm",
+        "daisugi warden arm",
+        "daisugi warden disarm --root /g",
+        "daisugi warden serve",
+        "daisugi install --warden --enforce",
+        "daisugi install --uninstall",
+        "daisugi install --dry-run",
+        "daisugi graft install --state active",
+        "daisugi graft remove --id big-read",
+        "daisugi recipe apply warden-only --yes",
+        "daisugi recipe revert warden-only --yes",
+        "/usr/local/bin/daisugi warden disarm",
+        "./daisugi warden disarm",
+        "daisugi-py warden disarm",
+        "~/.local/bin/daisugi-py warden arm",
+        "uv run daisugi warden disarm",
+        "uv run --no-sync python -m opendaisugi.cli warden disarm",
+        "python3 -m opendaisugi warden disarm",
+        "env A=1 daisugi warden disarm",
+        "nohup daisugi warden serve &",
+        "daisugi --plain warden disarm",
+        "daisugi warden --x disarm",
+        "daisugi --data-dir /d warden disarm",
+        "ls && daisugi warden disarm",
+        "daisugi status || daisugi warden disarm",
+        "x=$(daisugi warden disarm)",
+        "echo $(daisugi warden disarm)",
+        "sh -c 'daisugi warden disarm'",
+        'bash -lc "cd /w && daisugi warden disarm"',
+        "'daisugi' 'warden' 'disarm'",
+        "dai\\sugi warden dis\\arm",
+        "'dai'sugi warden disarm",
+        "daisugi warden disarm; (",
+        "echo daisugi warden disarm",
+        "daisugi\udc80warden disarm",
+        "daisugi warden status",
+        "daisugi warden check --mode enforce",
+        "daisugi warden settings --enforce",
+        "daisugi graft status",
+        "daisugi status && npm install",
+        "pip install daisugi",
+        "daisugi status; warden disarm",
+        "daisugi-helper warden disarm",
+        "daisugi checks disarm",
+        "daisugi pathways show disarm",
+        "daisugi status warden disarm",
+        "git commit -m 'warden: disarm in tests'",
+        "grep 'warden disarm' daisugi.log",
+        "daisugi\u00a0warden disarm",
+    ]:
+        add(mk(f"warden change rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+    # A pack install, remove or bundle is the operator's (PK-R-12); the
+    # other pack verbs and lora train are the envelope's.
+    for cmd in [
+        "daisugi pack install train",
+        "daisugi pack install train --offline --bundle /b.tar",
+        "daisugi pack remove train",
+        "daisugi pack bundle train --out /x",
+        "npm test && daisugi pack install train",
+        "sh -c 'daisugi pack remove train'",
+        "daisugi pack list",
+        "daisugi pack status train",
+        "daisugi pack run train selftest",
+        "daisugi lora train --jsonl a --output b",
+        "daisugi pack status warden disarm",
+        "daisugi pack install warden disarm",
+    ]:
+        add(mk(f"pack rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+    add(
+        mk(
+            "warden change rule audit",
+            bash("daisugi warden disarm"),
+            mode="audit",
+            envelopes=rank_env,
+            tags=["owner"],
+        )
+    )
+    add(
+        mk(
+            "warden change rule ask",
+            bash("daisugi warden disarm", tool_use_id="tu-1"),
+            envelopes=rank_env,
+            extra_args=["--ask", "--ask-timeout", "10"],
+            operator={
+                "tool_use_id": "tu-1",
+                "answer": {"decision": "allow", "reason": "ok", "updatedInput": None},
+            },
+            tags=["owner", "ask"],
+        )
+    )
+
+    # Long && chains: the rules decompose at frame 13, three deeper than
+    # the permission stage. Near the limit the rules' decomposition raises
+    # and the line is read by word order, so `start` after a daisugi word
+    # is a hit there and not below it.
+    for n in (955, 960, 965, 970, 972, 973, 974, 975, 976, 977, 978, 979, 980):
+        cmd = "daisugi status && " + " && ".join(["ls"] * n) + " && npm start"
+        add(mk(f"owner chain {n}", bash(cmd), envelopes=dec_env, tags=["owner", "depth"]))
+
+    # -- no agent labels a task's outcome (SW-12) -----------------------------
+    for cmd in [
+        "daisugi router label s1 pass",
+        "daisugi router label s1 fail --note x",
+        "uv run daisugi router --x label s1 pass",
+        "sh -c 'daisugi router label s1 pass'",
+        "daisugi router status",
+        "daisugi router stop",
+        "daisugi status && router label s1 pass",
+    ]:
+        add(mk(f"label rule {cmd!r}", bash(cmd), envelopes=dec_env, tags=["owner"]))
+
+    # -- the envelope's deadline holds at call time ---------------------------
+    # DAISUGI_WARDEN_NOW pins the clock; only a later time than the real one
+    # counts, so the deadlines here are far in the future.
+    far = 4000000000
+    dl = {"default": envelope(deadline=far)}
+    for name, now in (
+        ("before", "3999999999"),
+        ("at", "4000000000"),
+        ("after", "4000000000.5"),
+        ("long after", "4100000000"),
+        ("odd pin", "4e9"),
+        ("signed pin", "+4000000001"),
+        ("spaced pin", " 4000000001"),
+    ):
+        add(
+            mk(
+                f"deadline {name}",
+                payload("Read", {"file_path": "/work/a"}),
+                envelopes=dl,
+                env={"DAISUGI_WARDEN_NOW": now},
+                tags=["deadline"],
+            )
+        )
+    add(
+        mk(
+            "deadline after audit",
+            payload("Read", {"file_path": "/work/a"}),
+            mode="audit",
+            envelopes=dl,
+            env={"DAISUGI_WARDEN_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after shell",
+            bash("ls /work"),
+            envelopes=dl,
+            env={"DAISUGI_WARDEN_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after rank record",
+            bash("daisugi rank record"),
+            envelopes={"default": envelope(deadline=far, shell_allowlist=[*ALLOW, "daisugi"])},
+            env={"DAISUGI_WARDEN_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline past no pin",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(deadline=1000000000)},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline float",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(deadline=4000000000.25)},
+            env={"DAISUGI_WARDEN_NOW": "4000000000.5"},
+            tags=["deadline"],
+        )
+    )
+    add(
+        mk(
+            "deadline after pinned session",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(), "kid": envelope("env_kid", deadline=far)},
+            pin="kid",
+            env={"DAISUGI_WARDEN_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+    for name, answer in (
+        ("deadline operator allows", {"decision": "allow", "reason": "ok", "updatedInput": None}),
+        (
+            "deadline operator edit",
+            {"decision": "allow", "reason": "ok", "updatedInput": {"command": "ls"}},
+        ),
+    ):
+        add(
+            mk(
+                name,
+                bash("ls /work", tool_use_id="tu-1"),
+                envelopes=dl,
+                env={"DAISUGI_WARDEN_NOW": "4000000001"},
+                extra_args=["--ask", "--ask-timeout", "10"],
+                operator={"tool_use_id": "tu-1", "answer": answer},
+                tags=["deadline", "ask"],
+            )
+        )
+    add(
+        mk(
+            "deadline after unknown tool",
+            payload("Frobnicate", {}),
+            envelopes=dl,
+            env={"DAISUGI_WARDEN_NOW": "4000000001"},
+            tags=["deadline"],
+        )
+    )
+
+    # -- hard-deny rules -----------------------------------------------------
+    hard = [
+        (
+            "floor write config",
+            payload(
+                "Write", {"file_path": "/home/user/.config/coppice/coppice.toml", "content": "x"}
+            ),
+        ),
+        (
+            "floor write tilde",
+            payload("Write", {"file_path": "~/.config/coppice/plugins/p.py", "content": "x"}),
+        ),
+        (
+            "floor write data",
+            payload("Write", {"file_path": "/home/user/.local/share/coppice/p", "content": "x"}),
+        ),
+        (
+            "floor write opendaisugi coppice",
+            payload("Write", {"file_path": "/home/user/.opendaisugi/coppice/x", "content": "x"}),
+        ),
+        (
+            "floor read config allowed",
+            payload("Read", {"file_path": "/home/user/.config/coppice/coppice.toml"}),
+        ),
+        ("floor bash cat", bash("cat ~/.config/coppice/coppice.toml")),
+        ("floor bash home var", bash("echo x > $HOME/.local/share/coppice/p")),
+        ("floor bash cd relative", bash("cd /home/user/.config && cat coppice/x")),
+        ("floor bash cwd inside", bash("ls", cwd="/home/user/.config/coppice")),
+        ("floor mcp arg", payload("mcp__github__x", {"path": "/home/user/.config/coppice/c.toml"})),
+        (
+            "floor mcp free text",
+            payload("mcp__github__x", {"body": "see ~/.config/coppice for details"}),
+        ),
+        ("floor xdg", payload("Write", {"file_path": "/xdg/cfg/coppice/a", "content": "x"})),
+        (
+            "floor word after unfollowed cd",
+            bash("cd .. && cp a .config/coppice/x", cwd="/home/user/work"),
+        ),
+        (
+            "floor redirect after unfollowed cd",
+            bash("cd .. && echo x > .config/coppice/x", cwd="/home/user/work"),
+        ),
+        ("floor plain word after unfollowed cd", bash("cd .. && cp a b/c", cwd="/home/user/work")),
+        (
+            "opencode word after unfollowed cd",
+            bash("cd .. && cp a .config/opencode/x", cwd="/home/user/work"),
+        ),
+        ("floor word with no cwd", bash("cp a coppice/x", cwd=None)),
+        (
+            "opencode plugin write",
+            payload("Write", {"file_path": "/work/.opencode/plugin/warden.ts", "content": "x"}),
+        ),
+        (
+            "opencode tools write",
+            payload("Write", {"file_path": "/work/.opencode/tools/t.ts", "content": "x"}),
+        ),
+        (
+            "opencode json write",
+            payload("Write", {"file_path": "/work/opencode.json", "content": "{}"}),
+        ),
+        (
+            "opencode global",
+            payload("Write", {"file_path": "/home/user/.config/opencode/x.ts", "content": "x"}),
+        ),
+        ("opencode bash grep", bash("grep plugin opencode.json")),
+        ("opencode bash dir", bash("ls .opencode/")),
+        ("opencode bash dir plain", bash("ls .opencode")),
+        ("opencode bash other dir", bash("ls .opencode-old/x")),
+        ("opencode git message", bash("git commit -m 'update opencode.json docs'")),
+        ("opencode git message flag", bash("git commit --message=opencode.json")),
+        ("opencode read", payload("Read", {"file_path": "/work/opencode.json"})),
+        ("pane coppice allow", bash("coppice agent allow 42")),
+        ("pane coppice allow opts", bash("coppice --socket /x agent allow 42")),
+        ("pane coppice path", bash("/usr/local/bin/coppice agent allow 1")),
+        ("pane text", bash("echo hi && coppice   agent 'allow' 3")),
+        ("pane wire", bash('echo \'{"cmd": "agent.allow"}\' | nc -U s')),
+        ("pane web token", bash("coppice web token")),
+        (
+            "pane web token file",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/token"}),
+        ),
+        (
+            "pane ca key file",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/ca/ca.key"}),
+        ),
+        ("pane ca key cat", bash("cat /home/user/.opendaisugi/coppice/web/ca/ca.key")),
+        (
+            "pane leaf key file",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/ca/leaf.key"}),
+        ),
+        (
+            "pane tailscale key file",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/tls/tailscale.key"}),
+        ),
+        (
+            "pane voice token file",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/voice/token"}),
+        ),
+        ("pane voice token cat", bash("cat /home/user/.opendaisugi/coppice/voice/token")),
+        (
+            "pane secret redirect",
+            bash("python steal.py < /home/user/.opendaisugi/coppice/web/ca/ca.key"),
+        ),
+        (
+            "pane secret cp source",
+            bash("cp /home/user/.opendaisugi/coppice/web/ca/leaf.key /work/out"),
+        ),
+        (
+            "pane secret from data dir",
+            bash("cat web/ca/ca.key", cwd="/home/user/.opendaisugi/coppice"),
+        ),
+        (
+            "pane secret mcp arg",
+            payload("mcp__fs__read_file", {"path": "/home/user/.opendaisugi/coppice/voice/token"}),
+        ),
+        (
+            "pane secret read double slash",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web//ca/ca.key"}),
+        ),
+        (
+            "pane secret read dot segment",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/./ca/ca.key"}),
+        ),
+        (
+            "pane secret read dotdot segment",
+            payload(
+                "Read", {"file_path": "/home/user/.opendaisugi/coppice/web/bogus/../ca/ca.key"}
+            ),
+        ),
+        (
+            "pane secret mcp double slash",
+            payload("mcp__fs__read_file", {"path": "/home/user/.opendaisugi/coppice/voice//token"}),
+        ),
+        (
+            "pane ca cert allowed",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/ca/ca.crt"}),
+        ),
+        (
+            "pane leaf cert allowed",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/ca/leaf.crt"}),
+        ),
+        (
+            "pane ca meta allowed",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/ca/meta.json"}),
+        ),
+        (
+            "pane web config allowed",
+            payload("Read", {"file_path": "/home/user/.opendaisugi/coppice/web/web.json"}),
+        ),
+        ("pane answer route", bash("curl http://127.0.0.1:8080/api/ask/answer")),
+        (
+            "pane ask file",
+            payload("Write", {"file_path": "{ROOT}/data/warden/asks/x.json", "content": "{}"}),
+        ),
+        (
+            "pane default ask file",
+            payload(
+                "Write",
+                {"file_path": "/home/user/.opendaisugi/warden/answers/a.json", "content": "{}"},
+            ),
+        ),
+        ("pane ask text", bash("cat warden/asks/1.json")),
+        ("pane asks from cwd", bash("ls asks", cwd="{ROOT}/data/warden")),
+        ("pane mcp", payload("mcp__github__x", {"cmd": "coppice agent deny 3"})),
+        ("pane mention allowed", bash("grep -r agent.allow src")),
+        ("pane coppice deny passes", bash("coppice agent deny 42 h1")),
+        (
+            "pane deny with a reason passes",
+            bash("coppice agent deny 42 h1 --reason 'not this one'"),
+        ),
+        ("pane deny through a socket", bash("coppice --socket /x agent deny 42 h1")),
+        ("pane deny through remote", bash("coppice --remote ssh://box agent deny 42 h1")),
+        ("pane deny runtime dir", bash("XDG_RUNTIME_DIR=/x coppice agent deny 42 h1")),
+        ("pane deny data home", bash("OPENDAISUGI_HOME=/x coppice agent deny 42 h1")),
+        ("pane deny xdg data home", bash("XDG_DATA_HOME=/x coppice agent deny 42 h1")),
+        ("pane deny home", bash("HOME=/x coppice agent deny 42 h1")),
+        ("pane deny over ssh", bash("ssh box 'coppice agent deny 42 h1'")),
+        ("pane deny setsid", bash("setsid -f coppice agent deny 42 h1")),
+        ("pane deny systemd-run", bash("systemd-run --user coppice agent deny 42 h1")),
+        ("pane deny nohup", bash("nohup coppice agent deny 42 h1")),
+        ("pane deny at", bash("echo 'coppice agent deny 42 h1' | at now")),
+        ("pane deny tmux", bash("tmux send-keys -t o 'coppice agent deny 42 h1' Enter")),
+        ("pane deny env setsid", bash("env -i A=1 setsid coppice agent deny 42 h1")),
+        ("pane wire deny over ssh", bash('echo \'{"cmd": "agent.deny"}\' | ssh box nc -U s')),
+        ("pane wrapper with no deny", bash("ssh box ls")),
+        (
+            "pane grep data dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice"}),
+        ),
+        (
+            "pane grep web dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/web"}),
+        ),
+        (
+            "pane grep ca dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/web/ca"}),
+        ),
+        (
+            "pane grep tls dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/web/tls"}),
+        ),
+        (
+            "pane grep voice dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/voice"}),
+        ),
+        # The chat with the steward and the warden's journal: private, read
+        # by the operator only.
+        ("pane chat file cat", bash("cat /home/user/.opendaisugi/coppice/chat/2026-10-09.jsonl")),
+        ("pane chat glob cat", bash("cat ~/.opendaisugi/coppice/chat/*")),
+        (
+            "pane chat from data dir",
+            bash("cat chat/2026-10-09.jsonl", cwd="/home/user/.opendaisugi/coppice"),
+        ),
+        (
+            "pane journal file read",
+            payload(
+                "Read", {"file_path": "/home/user/.opendaisugi/coppice/journal/verdicts.jsonl"}
+            ),
+        ),
+        (
+            "pane grep chat dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/chat"}),
+        ),
+        ("pane rg journal dir", bash("rg verdict ~/.opendaisugi/coppice/journal")),
+        ("pane chat elsewhere", bash("cat /work/src/chat/notes.md")),
+        ("pane journal elsewhere", bash("cat /work/journal/2026.md")),
+        (
+            "pane grep web dir respelled",
+            payload(
+                "Grep", {"pattern": ".", "path": "/home/user/.opendaisugi/coppice/web/bogus/../"}
+            ),
+        ),
+        (
+            "pane grep from web dir",
+            payload("Grep", {"pattern": "."}, cwd="/home/user/.opendaisugi/coppice/web"),
+        ),
+        (
+            "pane grep relative web dir",
+            payload("Grep", {"pattern": ".", "path": "web"}, cwd="/home/user/.opendaisugi/coppice"),
+        ),
+        ("pane grep unrelated web dir", payload("Grep", {"pattern": ".", "path": "/work/src/web"})),
+        ("pane grep from unrelated web dir", payload("Grep", {"pattern": "."}, cwd="/work/web")),
+        (
+            "pane glob web dir",
+            payload("Glob", {"pattern": "*", "path": "/home/user/.opendaisugi/coppice/web"}),
+        ),
+        (
+            "pane glob from web dir",
+            payload("Glob", {"pattern": "*"}, cwd="/home/user/.opendaisugi/coppice/web"),
+        ),
+        (
+            "pane read from web dir",
+            payload(
+                "Read",
+                {"file_path": "/home/user/.opendaisugi/coppice/web/web.json"},
+                cwd="/home/user/.opendaisugi/coppice/web",
+            ),
+        ),
+        ("pane wire deny passes", bash('echo \'{"cmd": "agent.deny"}\' | nc -U s')),
+    ]
+    for name, pl in hard:
+        add(
+            mk(
+                name,
+                pl,
+                env={"XDG_CONFIG_HOME": "/xdg/cfg"} if "xdg" in name else None,
+                tags=["hard_deny"],
+            )
+        )
+    custom = {"COPPICE_DATA_DIR": "/srv/cdata"}
+    add(
+        mk(
+            "pane custom data dir grep",
+            payload("Grep", {"pattern": ".", "path": "/srv/cdata/web"}),
+            env=custom,
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane custom data dir unnamed grep",
+            payload("Grep", {"pattern": ".", "path": "/srv/cdata/web"}),
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "floor custom data dir respelling",
+            bash("cd /srv/cdata/web && cat ./token"),
+            env=custom,
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "floor custom data dir unnamed respelling",
+            bash("cd /srv/cdata/web && cat ./token"),
+            tags=["hard_deny"],
+        )
+    )
+    # Every pane has COPPICE_DATA_DIR, so a read through the variable is a
+    # read of the data dir, custom or default. OPENDAISUGI_HOME and
+    # XDG_DATA_HOME expand the same way when the pane's env holds them.
+    default = {"COPPICE_DATA_DIR": "/home/user/.opendaisugi/coppice"}
+    for dir_name, env in (("custom", custom), ("default", default)):
+        for name, line in (
+            ("var cat chat", "cat $COPPICE_DATA_DIR/chat/*"),
+            ("braced cat chat", 'cat "${COPPICE_DATA_DIR}"/chat/*'),
+            ("var head chat", "head -n 999 $COPPICE_DATA_DIR/chat/*.jsonl"),
+            ("var cp chat", "cp -r $COPPICE_DATA_DIR/chat /work/x"),
+            ("var cd chat", "cd $COPPICE_DATA_DIR/chat && cat *"),
+            ("var cat journal", "cat $COPPICE_DATA_DIR/journal/*"),
+            ("var cat web", "cat $COPPICE_DATA_DIR/web/*"),
+        ):
+            add(mk(f"pane {dir_name} data dir {name}", bash(line), env=env, tags=["hard_deny"]))
+    for name, line in (
+        ("param default chat", "cat ${COPPICE_DATA_DIR:-x}/chat/*"),
+        ("param unset chat", "cat ${COPPICE_DATA_DIR-x}/chat/*"),
+        ("param assign journal", "cat ${COPPICE_DATA_DIR:=x}/journal/*"),
+        ("param strip web", "cat ${COPPICE_DATA_DIR%/}/web/*"),
+    ):
+        add(mk(f"pane custom data dir {name}", bash(line), env=custom, tags=["hard_deny"]))
+    for name, line in (
+        ("chat wire cmd", """printf '{"cmd":"floor.chat"}\\n' | nc -U $COPPICE_SOCK"""),
+        ("messages wire dict", """python -c 'send({"cmd": "pane.messages", "pane": "w1:p1"})'"""),
+        (
+            "chat wire method",
+            """echo '{"id":"1","method":"floor.chat"}' | socat - UNIX:/run/c.sock""",
+        ),
+        ("chat wire escaped dot", """printf '{"cmd":"floor\\u002echat"}' | nc -U s"""),
+        ("messages wire escaped", """printf '{"cmd":"pane\\.messages"}' | nc -U s"""),
+        ("allow wire escaped dot", """printf '{"cmd":"agent\\u002eallow"}' | nc -U s"""),
+        ("allow wire escaped slash", """printf '{"cmd":"agent\\.allow","by":"a\\/b"}' | nc -U s"""),
+    ):
+        add(mk(f"pane {name}", bash(line), tags=["hard_deny"]))
+    add(mk("pane chat verb mention", bash("grep -rn floor.chat src/"), tags=["pane"]))
+    for name, line in (
+        ("cd chat", "cd /srv/cdata/chat && cat ./2026-10-09.jsonl"),
+        ("cd chat glob", "cd /srv/cdata/chat && cat *"),
+        ("cd journal", "cd /srv/cdata/journal && cat ./verdicts.jsonl"),
+    ):
+        add(mk(f"pane custom data dir {name}", bash(line), env=custom, tags=["hard_deny"]))
+    add(
+        mk(
+            "pane custom data dir cwd chat",
+            bash("cat 2026-10-09.jsonl", cwd="/srv/cdata/chat"),
+            env=custom,
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane opendaisugi home var chat",
+            bash("cat $OPENDAISUGI_HOME/coppice/chat/*"),
+            env={"OPENDAISUGI_HOME": "/home/user/.opendaisugi"},
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane xdg data home var chat",
+            bash("cat ${XDG_DATA_HOME}/opendaisugi/coppice/chat/*"),
+            env={"XDG_DATA_HOME": "/home/user/.local/share"},
+            tags=["hard_deny"],
+        )
+    )
+    # The steward's log dir and its turn dir: private, read by the operator
+    # only. The log dir sits beside the coppice data dir under the data
+    # home; the turn dir sits under the state home.
+    log = "/home/user/.opendaisugi/foreman"  # names-ok: the log dir name on disk until ADR-0023
+    turn = "/home/user/.local/state/coppice/steward"
+    steward_hard = [
+        ("log cat main", bash(f"cat {log}/main/0")),
+        (
+            "log cat tilde",
+            bash("cat ~/.opendaisugi/foreman/view.json"),
+        ),  # names-ok: the log dir name on disk
+        ("log grep -r", bash(f"grep -rn secret {log}")),
+        (
+            "log rg tree",
+            bash("rg secret ~/.opendaisugi/foreman/tree"),
+        ),  # names-ok: the log dir name on disk
+        ("log cd then cat", bash(f"cd {log}/tree && cat ./0")),
+        ("log cat from cwd", bash("cat view.json", cwd=log)),
+        ("log cat work warden", bash(f"cat {log}/work/warden/sessions/s1")),
+        ("log cat turns", bash(f"tail -n 5 {log}/turns.jsonl")),
+        ("log read", payload("Read", {"file_path": f"{log}/view.json"})),
+        ("log read from cwd", payload("Read", {"file_path": "view.json"}, cwd=log)),
+        ("log glob", payload("Glob", {"pattern": "**/*", "path": log})),
+        ("log glob from cwd", payload("Glob", {"pattern": "*"}, cwd=log)),
+        ("log glob pattern path", payload("Glob", {"pattern": f"{log}/main/*"})),
+        ("log grep dir", payload("Grep", {"pattern": ".", "path": log})),
+        ("log grep tree dir", payload("Grep", {"pattern": ".", "path": f"{log}/tree"})),
+        ("log grep from cwd", payload("Grep", {"pattern": "."}, cwd=f"{log}/main")),
+        ("log grep respelled", payload("Grep", {"pattern": ".", "path": f"{log}/tree/x/../"})),
+        ("turn cat mcp", bash(f"cat {turn}/mcp.json")),
+        ("turn cd", bash(f"cd {turn} && ls")),
+        ("turn read", payload("Read", {"file_path": f"{turn}/mcp.json"})),
+        ("turn glob", payload("Glob", {"pattern": "*", "path": turn})),
+        ("turn grep", payload("Grep", {"pattern": ".", "path": turn})),
+        ("turn grep from cwd", payload("Grep", {"pattern": "."}, cwd=turn)),
+        (
+            "search above turn dir",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.local/state"}),
+        ),
+    ]
+    for name, pl in steward_hard:
+        add(mk(f"pane steward {name}", pl, tags=["hard_deny"]))
+    for name, env, line, rd in (
+        (
+            "xdg state",
+            {"XDG_STATE_HOME": "/xdg/state"},
+            "cat /xdg/state/coppice/steward/mcp.json",
+            "/xdg/state/coppice/steward/mcp.json",
+        ),
+        (
+            "opendaisugi home",
+            {"OPENDAISUGI_HOME": "/srv/oh"},
+            "cat /srv/oh/foreman/main/0",  # names-ok: the log dir name on disk
+            "/srv/oh/foreman/view.json",  # names-ok: the log dir name on disk
+        ),
+        (
+            "opendaisugi home var",
+            {"OPENDAISUGI_HOME": "/srv/oh"},
+            "cat $OPENDAISUGI_HOME/foreman/main/0",  # names-ok: the log dir name on disk
+            "/srv/oh/foreman/main/0",  # names-ok: the log dir name on disk
+        ),
+        (
+            "xdg data home",
+            {"XDG_DATA_HOME": "/xdg/data"},
+            "cat /xdg/data/opendaisugi/foreman/view.json",  # names-ok: the log dir name on disk
+            "/xdg/data/opendaisugi/foreman/view.json",  # names-ok: the log dir name on disk
+        ),
+        (
+            "custom data dir",
+            {"COPPICE_DATA_DIR": "/srv/cdata"},
+            "cat /srv/cdata/foreman/view.json",  # names-ok: the log dir name on disk
+            "/srv/cdata/foreman/view.json",  # names-ok: the log dir name on disk
+        ),
+        (
+            "custom data dir var",
+            {"COPPICE_DATA_DIR": "/srv/cdata"},
+            "cat $COPPICE_DATA_DIR/foreman/main/0",  # names-ok: the log dir name on disk
+            "/srv/cdata/foreman/tree/0",  # names-ok: the log dir name on disk
+        ),
+    ):
+        add(mk(f"pane steward env {name} cat", bash(line), env=env, tags=["hard_deny"]))
+        add(
+            mk(
+                f"pane steward env {name} read",
+                payload("Read", {"file_path": rd}),
+                env=env,
+                tags=["hard_deny"],
+            )
+        )
+        add(
+            mk(
+                f"pane steward env {name} glob",
+                payload("Glob", {"pattern": "*", "path": rd.rsplit("/", 1)[0]}),
+                env=env,
+                tags=["hard_deny"],
+            )
+        )
+    # The Pando stores (ADR-0023): the owner's whole conversation memory,
+    # every store and child store under <data home>/pando. A worker's call
+    # comes from sprig with no hook event name and its own session id.
+    pando = "/home/user/.opendaisugi/pando"
+    child = f"{pando}/home/children/w1"
+
+    def worker(tool: str, inp: dict[str, Any], **kw: Any) -> str:
+        return payload(tool, inp, sid="worker-w1", cwd="/work/wt", **kw)
+
+    pando_hard = [
+        ("read", payload("Read", {"file_path": f"{pando}/work/main/2026-10-24.jsonl"})),
+        ("cat", bash(f"cat {pando}/work/view.json")),
+        ("cat tilde", bash("cat ~/.opendaisugi/pando/home/main/2026-10-24.jsonl")),
+        ("grep -r", bash(f"grep -rn secret {pando}")),
+        ("grep tool", payload("Grep", {"pattern": ".", "path": f"{pando}/work"})),
+        ("glob", payload("Glob", {"pattern": "**/*", "path": pando})),
+        ("write", payload("Write", {"file_path": f"{pando}/work/main/x.jsonl", "content": "{}"})),
+        ("append", bash(f"echo x >> {pando}/work/main/x.jsonl")),
+        ("child read", payload("Read", {"file_path": f"{child}/main/x.jsonl"})),
+        ("child cat", bash(f"cat {child}/tree/0.jsonl")),
+        ("child grep", payload("Grep", {"pattern": ".", "path": child})),
+        ("worker read", worker("Read", {"file_path": f"{pando}/work/main/x.jsonl"})),
+        ("worker cat", worker("Bash", {"command": f"cat {child}/main/x.jsonl"})),
+        ("worker grep", worker("Bash", {"command": f"grep -rn x {pando}/home"})),
+        ("worker write", worker("Write", {"file_path": f"{child}/main/x.jsonl", "content": "{}"})),
+    ]
+    for verb, line in (
+        ("zoom", "daisugi pando zoom 0 1 --store home"),
+        ("log", "daisugi pando log --store home"),
+        ("option", "daisugi --data-dir /srv/x pando status"),
+        ("uv", "uv run daisugi pando recall secret"),
+        ("append", "/usr/local/bin/daisugi pando append hi"),
+        ("short quiet", "daisugi -q pando log"),
+        ("short verbose", "daisugi -v pando log"),
+        ("long quiet", "daisugi --quiet pando log"),
+        ("module cli", "python -m opendaisugi.cli pando log --store home"),
+        ("module entry", "python3 -m opendaisugi.cli_entry pando log --store home"),
+        ("module uv", "uv run python -m opendaisugi.cli -q pando log"),
+    ):
+        pando_hard.append((f"cmd {verb}", bash(line)))
+        pando_hard.append((f"worker cmd {verb}", worker("Bash", {"command": line})))
+    for name, pl in pando_hard:
+        add(mk(f"pane pando {name}", pl, tags=["hard_deny"]))
+    for name, env, rd in (
+        ("custom data dir", {"COPPICE_DATA_DIR": "/srv/cdata"}, "/srv/cdata/pando/work/view.json"),
+        (
+            "xdg data home",
+            {"XDG_DATA_HOME": "/xdg/data"},
+            "/xdg/data/opendaisugi/pando/work/view.json",
+        ),
+    ):
+        add(mk(f"pane pando env {name} cat", bash(f"cat {rd}"), env=env, tags=["hard_deny"]))
+        add(
+            mk(
+                f"pane pando env {name} read",
+                payload("Read", {"file_path": rd}),
+                env=env,
+                tags=["hard_deny"],
+            )
+        )
+    for name, pl in (
+        ("source cat", bash("cat /work/src/opendaisugi/pando/store.py")),
+        ("source read", payload("Read", {"file_path": "/work/clients/go/pando/chat.go"})),
+        ("grep the docs", bash('grep -rn "daisugi pando" docs/')),
+        ("other verb", bash("daisugi pathways list")),
+        ("module other verb", bash("python -m opendaisugi.cli -q pathways list")),
+    ):
+        add(mk(f"pane pando control {name}", pl))
+    for name, pl in (
+        ("elsewhere cat", bash("cat /work/src/steward/notes.md")),
+        ("elsewhere read", payload("Read", {"file_path": "/work/steward/notes.md"})),
+        ("source file", bash("cat /work/src/opendaisugi/steward.py")),
+        ("other name", bash("cat /work/foremanager/x")),
+        ("other file", bash("cat /work/src/coppice/steward.md")),
+    ):
+        add(mk(f"pane steward control {name}", pl))
+    above = [
+        ("search grep home", payload("Grep", {"pattern": ".", "path": "/home/user"})),
+        ("search grep tilde", payload("Grep", {"pattern": ".", "path": "~"})),
+        ("search grep root", payload("Grep", {"pattern": ".", "path": "/"})),
+        ("search grep double slash", payload("Grep", {"pattern": ".", "path": "//"})),
+        (
+            "search grep opendaisugi",
+            payload("Grep", {"pattern": ".", "path": "/home/user/.opendaisugi"}),
+        ),
+        ("search grep from home", payload("Grep", {"pattern": "."}, cwd="/home/user")),
+        (
+            "search grep narrow from home",
+            payload("Grep", {"pattern": ".", "path": "/work/src"}, cwd="/home/user"),
+        ),
+        ("search glob home", payload("Glob", {"pattern": "*", "path": "/home/user"})),
+        ("search glob from root", payload("Glob", {"pattern": "*"}, cwd="/")),
+        (
+            "search read in home",
+            payload("Read", {"file_path": "/home/user/notes.txt"}, cwd="/home/user"),
+        ),
+        ("search rg tilde", bash("rg token ~")),
+        ("search rg from home", bash("rg token", cwd="/home/user")),
+        ("search grep -r tilde", bash("grep -r token ~")),
+        ("search grep -rn dot home", bash("grep -rn token .", cwd="/home/user")),
+        ("search cd then rg", bash("cd ~ && rg token")),
+        ("search find exec", bash("find ~ -type f -exec cat")),
+        ("search assign rg", bash("FOO=1 rg token ~/.opendaisugi")),
+        ("search rg narrow", bash("rg token src")),
+        ("search grep one file", bash("grep token ~/notes.txt")),
+        ("search find names", bash("find ~ -name x")),
+    ]
+    home = "/home/user"
+    for i, (cmd, cwd) in enumerate(
+        [
+            # Each reaches the secrets (review round 1).
+            ("grep -r -m 1 token", home),
+            ("rg -t py token", home),
+            ("rg -g '*' token", home),
+            ("grep -r -A 2 token", home),
+            ("rg -e token", home),
+            ("echo $'it\\'s' ; rg token ~", "/work"),
+            ("grep -d recurse token ~", "/work"),
+            ("grep --directories=recurse token ~", "/work"),
+            ("grep --directories recurse token ~", "/work"),
+            ("grep --recur token ~", "/work"),
+            ("grep --deref token ~", "/work"),
+            ("grep -2 token ~", "/work"),
+            ("grep --depth=3 token ~", "/work"),
+            ("zgrep -r token ~", "/work"),
+            ("ugrep token ~", "/work"),
+            ("ug token", home),
+            ("git grep --no-index token", home),
+            ("git -C ~ grep --no-index token", "/work"),
+            ("rg token /*", "/work"),
+            ("rg --hidden token ~/.*", "/work"),
+            ("rg --hidden token ~/.o*", "/work"),
+            ("rg token /hom?/user", "/work"),
+            ("rg token /[h]ome/user", "/work"),
+            ("rg token {/home/user,/x}", "/work"),
+            ("find /* -type f -exec cat", "/work"),
+            ("find -- ~ -type f -exec cat", "/work"),
+            ("find -O3 ~ -type f -exec cat", "/work"),
+            ("find -D stat ~ -type f -exec cat", "/work"),
+            ("cd - && rg token", "/work"),
+            ("cd $HOME/x/.. && rg token", "/work"),
+            ("cd - && rg token src", "/work"),
+            ("rg token $PWD", "/work"),
+            ("H=~; rg token $H", "/work"),
+            ("rg token ~+", "/work"),
+            ("rg token ~user", "/work"),
+            ("rg token $(echo ~)", "/work"),
+            ("for d in ~; do rg token $d; done", "/work"),
+            ("env rg token ~", "/work"),
+            ("timeout 5 rg token ~", "/work"),
+            ("nice rg token ~", "/work"),
+            ("\\rg token ~", "/work"),
+            ("/usr/bin/rg token ~", "/work"),
+            ("echo ~ | xargs rg token", "/work"),
+            ("bash -c 'rg token ~'", "/work"),
+            ("rg token -- ~", "/work"),
+            ("rg --files ~", "/work"),
+            ("grep -r token .", "user"),
+            ("rg token", None),
+            # Left to the envelope.
+            ("rg -t py token src", "/work"),
+            ("grep -r token /work/src", home),
+            ("grep -rn token src lib", home),
+            ("rg -e token /work/src", home),
+            ("rg 'foo$' src", "/work"),
+            ("rg token /work/*", "/work"),
+            ("rg token src/*.py", "/work"),
+            ("ls ~/.opendaisugi/*", "/work"),
+            ("cd /work && rg token", "/"),
+            # A glob that names a secret file is the pane rule's.
+            ("cat ~/.opendaisugi/*/*/*", "/work"),
+            ("cat ~/.opendaisugi/coppice/web/*", "/work"),
+            ("cat ~/.opendaisugi/coppice/web/ca/*.key", "/work"),
+            ("cp ~/.opendaisugi/coppice/voice/tok?n /work/x", "/work"),
+        ]
+    ):
+        above.append((f"search r1 {i:02d} {cmd}", bash(cmd, cwd=cwd)))
+    many = "{" + ",".join(f"/a{i}" for i in range(1, 65)) + ",/home/user}"
+    for i, (cmd, cwd) in enumerate(
+        [
+            ("rg token /home/use{r..r}", "/work"),
+            ("rg token /{a..z}ome/user", "/work"),
+            ("rg token /home/use{01..03}", "/work"),
+            ("rg token /home/{a..1}", "/work"),
+            ("rg token " + many, "/work"),
+            ("rg token /home/us{1..100}", "/work"),
+            ("rg token {1..100}", home),
+            ('sh -c "sh -c \'sh -c \\"rg token ~\\"\'"', "/work"),
+            ("cat ~/.opendaisugi/coppice/web/toke{m..o}", "/work"),
+            ("rg token /work/src{1..3}", "/work"),
+            ("rg token /home/{0..9..2}", "/work"),
+            ("echo {1..100}", "/work"),
+            ("cat /work/f{1..100}", "/work"),
+            ("rg token {/x,{/home/user,/y}}", "/work"),
+        ]
+    ):
+        above.append((f"search r2 {i:02d} {cmd[:60]}", bash(cmd, cwd=cwd)))
+    above += [
+        (
+            "search r1 grep file_path and path home",
+            payload("Grep", {"pattern": ".", "file_path": "/work", "path": "/home/user"}),
+        ),
+        (
+            "search r1 grep file_path and path web",
+            payload(
+                "Grep",
+                {
+                    "pattern": ".",
+                    "file_path": "/work",
+                    "path": "/home/user/.opendaisugi/coppice/web",
+                },
+            ),
+        ),
+        ("search r1 grep no cwd", payload("Grep", {"pattern": "."}, cwd=None)),
+        ("search r1 grep relative cwd", payload("Grep", {"pattern": "."}, cwd="user")),
+        (
+            "search r1 grep path with no cwd",
+            payload("Grep", {"pattern": ".", "path": "/work"}, cwd=None),
+        ),
+    ]
+    for name, pl in above:
+        add(mk(name, pl, tags=["hard_deny"]))
+    add(
+        mk(
+            "search grep above custom data dir",
+            payload("Grep", {"pattern": ".", "path": "/srv"}),
+            env=custom,
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "pane relative custom data dir",
+            payload("Grep", {"pattern": ".", "path": "/work"}),
+            env={"COPPICE_DATA_DIR": "cdata"},
+            tags=["hard_deny"],
+        )
+    )
+    add(
+        mk(
+            "floor audit still denies",
+            payload("Write", {"file_path": "/home/user/.config/coppice/x", "content": "x"}),
+            mode="audit",
+            tags=["hard_deny"],
+        )
+    )
+
+    # -- malformed payloads ------------------------------------------------
+    for name, raw in [
+        ("empty stdin", ""),
+        ("whitespace stdin", "  \n\t "),
+        ("not json", "tool_name=Read"),
+        ("json list", "[1, 2]"),
+        ("json null", "null"),
+        ("json string", '"Read"'),
+        ("no tool name", "{}"),
+        (
+            "empty tool name",
+            json.dumps({"tool_name": "", "tool": "Read", "tool_input": {"file_path": "/work/a"}}),
+        ),
+        ("tool key", json.dumps({"tool": "Read", "args": {"path": "/work/a"}, "session_id": "s1"})),
+        ("numeric tool name", json.dumps({"tool_name": 5})),
+        (
+            "string tool input",
+            json.dumps({"tool_name": "Read", "tool_input": "x", "session_id": "s1"}),
+        ),
+        (
+            "numeric path",
+            json.dumps({"tool_name": "Read", "tool_input": {"file_path": 7}, "session_id": "s1"}),
+        ),
+        (
+            "numeric session",
+            json.dumps(
+                {"tool_name": "Read", "tool_input": {"file_path": "/work/a"}, "session_id": 7}
+            ),
+        ),
+        (
+            "zero session",
+            json.dumps(
+                {"tool_name": "Read", "tool_input": {"file_path": "/work/a"}, "session_id": 0}
+            ),
+        ),
+        (
+            "odd session chars",
+            json.dumps(
+                {
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/work/a"},
+                    "session_id": "../../etc/x y",
+                }
+            ),
+        ),
+        (
+            "numeric cwd",
+            json.dumps({"tool_name": "Read", "tool_input": {"file_path": "a"}, "cwd": 5}),
+        ),
+        ("bom", "﻿" + payload("Read", {"file_path": "/work/a"})),
+        (
+            "nan in payload",
+            '{"tool_name": "Read", "tool_input": {"file_path": "/work/a"}, "x": NaN}',
+        ),
+        (
+            "duplicate keys",
+            '{"tool_name": "Read", "tool_name": "Bash", "tool_input": {"command": "ls"}}',
+        ),
+        ("trailing garbage", payload("Read", {"file_path": "/work/a"}) + " x"),
+        ("lone surrogate", '{"tool_name": "Read", "tool_input": {"file_path": "/work/\\ud800"}}'),
+        ("control char command", bash("ls\x0bx")),
+        (
+            "join keys",
+            payload(
+                "Read",
+                {"file_path": "/work/a"},
+                tool_use_id="toolu_1",
+                agent_id="ag",
+                agent_type="sub",
+                transcript_path="/work/t.jsonl",
+                hook_event_name="PreToolUse",
+                permission_mode="default",
+                extra=1.5,
+            ),
+        ),
+        (
+            "unicode in content",
+            payload("Write", {"file_path": "/work/u.txt", "content": "café — \U0001f600"}),
+        ),
+    ]:
+        add(mk(f"payload {name}", raw, tags=["malformed"]))
+    bad = mk("invalid utf8 stdin", "", tags=["malformed"])
+    bad["stdin_hex"] = b'{"tool_name": "Read", "tool_input": {"file_path": "/work/\xff"}}'.hex()
+    add(bad)
+
+    # -- envelopes ---------------------------------------------------------
+    add(
+        mk(
+            "no envelope",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "no envelope audit",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={},
+            mode="audit",
+            tags=["envelope"],
+        )
+    )
+    bound = {
+        "default": envelope("env_default", shell_allowlist=["ls"]),
+        "s-bound": envelope("env_bound", shell_allowlist=["ls", "make"]),
+    }
+    add(
+        mk(
+            "session bound envelope",
+            bash("make build", sid="s-bound"),
+            envelopes=bound,
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "session falls back to default",
+            bash("make build", sid="s-other"),
+            envelopes=bound,
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "pinned session ignores payload",
+            bash("make build", sid="s-bound"),
+            envelopes=bound,
+            pin="s-other",
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "pin with no envelope never reads default",
+            bash("ls", sid="x"),
+            envelopes={"default": envelope("env_default", shell_allowlist=["ls", "make"])},
+            pin="child",
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "no default and a payload naming a session",
+            bash("ls", sid="s-bound"),
+            envelopes={"s-bound": envelope("env_bound", shell_allowlist=["ls"])},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "pinned session selects bound",
+            bash("make build", sid="x"),
+            envelopes=bound,
+            pin="s-bound",
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "envelope without id",
+            payload("Read", {"file_path": "/etc/x"}),
+            envelopes={"default": envelope(None)},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "inconsistent envelope",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(shell=False)},
+            tags=["envelope", "z3"],
+        )
+    )
+    add(
+        mk(
+            "zero time envelope",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(max_execution_time_s=0)},
+            tags=["envelope", "z3"],
+        )
+    )
+    add(
+        mk(
+            "shell forbidden",
+            bash("ls"),
+            envelopes={"default": envelope(shell=False, shell_allowlist=[])},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "envelope with invariant",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={
+                "default": envelope(invariants=[{"type": "no_side_effects", "description": "d"}])
+            },
+            tags=["envelope", "predicate"],
+        )
+    )
+    add(
+        mk(
+            "envelope with enforced expr",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={
+                "default": envelope(
+                    invariants=[
+                        {
+                            "type": "t",
+                            "description": "d",
+                            "expr": {
+                                "op": "forall_steps",
+                                "pred": {"op": "not_equals", "path": "type", "value": "network"},
+                            },
+                        }
+                    ]
+                )
+            },
+            tags=["envelope", "predicate"],
+        )
+    )
+    add(
+        mk(
+            "envelope with malformed expr",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={
+                "default": envelope(
+                    invariants=[
+                        {
+                            "type": "t",
+                            "description": "d",
+                            "expr": {
+                                "op": "forall_steps",
+                                "body": {"op": "not_equals", "path": "type", "value": "network"},
+                            },
+                        }
+                    ]
+                )
+            },
+            tags=["envelope", "predicate"],
+        )
+    )
+    # re's FutureWarning patterns (nested sets, set operators), at both
+    # compile sites: the vacuity check (sre_parse) and evaluation
+    # (re.search), bare and inside nested groups. The hook's stderr must
+    # hold the verdict alone.
+    for i, (regex, op, where) in enumerate(
+        [
+            ("[[:alpha:]]", "not_matches", "invariants"),
+            ("(a([[b]))", "matches", "invariants"),
+            ("((((x[a--b]))))", "not_matches", "postconditions"),
+            ("[a&&b]|R", "matches", "postconditions"),
+            ("^(?:[a||b]|Read)$", "matches", "invariants"),
+            ("[a~~b]", "not_matches", "invariants"),
+        ]
+    ):
+        pred = {"op": op, "path": "tool" if i % 2 else "type", "regex": regex}
+        item = {
+            "type": "t",
+            "description": "d",
+            "expr": {"op": "forall_steps", "pred": pred} if i % 3 else pred,
+        }
+        add(
+            mk(
+                f"envelope warning regex {i}",
+                payload("Read", {"file_path": "/work/a"}),
+                envelopes={"default": envelope(**{where: [item]})},
+                tags=["envelope", "predicate"],
+            )
+        )
+    # llm_check: no key; a key and a port nothing listens on; physical
+    # stakes; inside a quantifier and under or/not; the old backend name.
+    # Never a real model.
+    llm = {"op": "llm_check", "rule": "reads only"}
+    refused = {
+        "ANTHROPIC_API_KEY": "sk-test",
+        "ANTHROPIC_API_BASE": "http://127.0.0.1:1",
+        "OPENDAISUGI_LLM_BACKEND": "api",
+    }
+    for name, expr, env, fmt, extra in [
+        ("llm no key", llm, {}, "claude", {}),
+        ("llm refused", llm, refused, "claude", {}),
+        ("llm refused hermes", llm, refused, "hermes", {}),
+        ("llm refused openclaw", {"op": "not", "child": llm}, refused, "openclaw", {}),
+        ("llm physical", llm, refused, "claude", {"stakes": "physical"}),
+        (
+            "llm under or",
+            {"op": "or", "children": [{"op": "equals", "path": "type", "value": "file_read"}, llm]},
+            refused,
+            "claude",
+            {},
+        ),
+        ("llm in forall", {"op": "forall_steps", "pred": llm}, refused, "claude", {}),
+        # The old backend name: the check fails closed with no call (LLM-13).
+        (
+            "llm renamed backend",
+            llm,
+            {**refused, "OPENDAISUGI_LLM_BACKEND": "litellm"},
+            "claude",
+            {},
+        ),
+        (
+            "llm renamed backend spaces",
+            llm,
+            {**refused, "OPENDAISUGI_LLM_BACKEND": " litellm "},
+            "claude",
+            {},
+        ),
+        # The chat-completions wire and the model names (LLM-2): each call
+        # goes to a port nothing listens on, or fails before any request.
+        (
+            "llm ollama refused",
+            llm,
+            {
+                "OPENDAISUGI_LLM_BACKEND": "api",
+                "OPENDAISUGI_LLM_CHECK_MODEL": "ollama/x",
+                "OLLAMA_API_BASE": "http://127.0.0.1:1",
+            },
+            "claude",
+            {},
+        ),
+        (
+            "llm openai refused",
+            llm,
+            {
+                "OPENDAISUGI_LLM_BACKEND": "api",
+                "OPENDAISUGI_LLM_CHECK_MODEL": "openai/x",
+                "OPENAI_API_BASE": "http://127.0.0.1:1/v1",
+                "OPENAI_API_KEY": "sk-openai-test",
+            },
+            "claude",
+            {},
+        ),
+        ("llm no wire", llm, {**refused, "OPENDAISUGI_LLM_CHECK_MODEL": "gpt-4o"}, "claude", {}),
+        (
+            "llm bare claude name",
+            llm,
+            {**refused, "OPENDAISUGI_LLM_CHECK_MODEL": "claude-3-haiku"},
+            "claude",
+            {},
+        ),
+    ]:
+        item = {"type": "t", "description": "d", "expr": expr}
+        # A model call's first import (httpx) can outrun 5 s on a loaded
+        # box, which made the expectation depend on the box; 30 s does not.
+        add(
+            mk(
+                name,
+                payload("Read", {"file_path": "/work/a"}),
+                fmt=fmt,
+                env=env,
+                envelopes={"default": envelope(invariants=[item], **extra)},
+                tags=["envelope", "predicate", "llm"],
+                extra_args=["--verify-timeout", "30"],
+            )
+        )
+    # llm_check through the claude-code backend: no key, and a fake
+    # `claude` first on PATH that reads the prompt and prints a fixed
+    # reply. A failed run is a plain "not satisfied".
+    for name, script in [
+        ("llm claude holds", 'printf \'%s\' \'{"satisfied": true, "rationale": "ok"}\''),
+        ("llm claude not satisfied", "printf '%s' 'verdict: {\"satisfied\": false}'"),
+        ("llm claude dict literal", "printf '%s' \"{'satisfied': True}\""),
+        ("llm claude prose", "printf '%s' 'I think so.'"),
+        ("llm claude fails", "echo boom >&2; exit 3"),
+    ]:
+        add(
+            mk(
+                name,
+                payload("Read", {"file_path": "/work/a"}),
+                env={"PATH": "{ROOT}/bin:/usr/bin:/bin"},
+                envelopes={
+                    "default": envelope(invariants=[{"type": "t", "description": "d", "expr": llm}])
+                },
+                files={
+                    "bin/claude": {"text": f"#!/bin/sh\ncat >/dev/null\n{script}\n", "mode": 0o755}
+                },
+                tags=["envelope", "predicate", "llm"],
+                extra_args=["--verify-timeout", "30"],
+            )
+        )
+    add(
+        mk(
+            "envelope coerced bool",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(network="yes")},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "envelope broken json",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": '{"generated_by": '},
+            tags=["envelope"],
+        )
+    )
+    add(
+        mk(
+            "envelope missing task",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": {"generated_by": "x", "permissions": {}}},
+            tags=["envelope"],
+        )
+    )
+
+    # A registered envelope with NaN or an infinity in any number is
+    # invalid (models.non_finite_error): an unreadable envelope, never a
+    # null limit. JSON has no such literal; Python's reader takes NaN,
+    # Infinity, -Infinity, and a number too large for a float.
+    def raw_env(**perms: Any) -> str:
+        return json.dumps(envelope(**perms), indent=2)
+
+    for name, text in [
+        ("nan velocity", raw_env(velocity_limit=float("nan"))),
+        ("infinity torque", raw_env(torque_limit=float("inf"))),
+        ("minus infinity bound", raw_env(workspace_bounds=[[0, 0, 0], [1, float("-inf"), 1]])),
+        ("1e999 joint limit", raw_env(joint_limits={"j": [0, 1]}).replace("1\n", "1e999\n", 1)),
+        ("nan string", raw_env(velocity_limit=" nan ")),
+        (
+            "nan in expr",
+            raw_env(
+                invariants=[
+                    {
+                        "type": "t",
+                        "description": "d",
+                        "enforce": False,
+                        "expr": {"op": "equals", "path": "x", "value": [1, float("nan")]},
+                    }
+                ]
+            ),
+        ),
+        ("two non-finite", raw_env(velocity_limit=float("inf"), torque_limit=float("nan"))),
+    ]:
+        for mode in ("enforce", "audit"):
+            add(
+                mk(
+                    f"envelope {name} ({mode})",
+                    payload("Read", {"file_path": "/work/a"}),
+                    mode=mode,
+                    envelopes={"default": text},
+                    tags=["envelope", "non_finite"],
+                )
+            )
+    add(
+        mk(
+            "envelope nan velocity hermes",
+            payload("Read", {"file_path": "/work/a"}),
+            fmt="hermes",
+            envelopes={"default": raw_env(velocity_limit=float("nan"))},
+            tags=["envelope", "non_finite"],
+        )
+    )
+    # The plan the warden builds for an MCP call is invalid the same way when
+    # the call's arguments hold such a number: an internal error, a deny.
+    for mode in ("enforce", "audit"):
+        add(
+            mk(
+                f"mcp nan argument ({mode})",
+                payload("mcp__github__get_issue", {"n": float("nan"), "ok": 1.5}),
+                mode=mode,
+                tags=["mcp", "non_finite"],
+            )
+        )
+    add(
+        mk(
+            "mcp nested infinities",
+            payload("mcp__github__get_issue", {"a": {"b": [1, float("-inf")]}, "c": float("inf")}),
+            tags=["mcp", "non_finite"],
+        )
+    )
+    add(
+        mk(
+            "mcp 1e999 argument",
+            payload("mcp__github__get_issue", {"n": 7}).replace(": 7", ": 1e999"),
+            tags=["mcp", "non_finite"],
+        )
+    )
+    add(
+        mk(
+            "mcp nan argument hermes",
+            payload("mcp__github__get_issue", {"n": float("nan")}),
+            fmt="hermes",
+            tags=["mcp", "non_finite"],
+        )
+    )
+    add(
+        mk(
+            "mcp nan argument not allowed",
+            payload("mcp__slack__post", {"n": float("nan")}),
+            tags=["mcp", "non_finite"],
+        )
+    )
+    add(
+        mk(
+            "envelope nan session file",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(), "s1": raw_env(velocity_limit=float("nan"))},
+            tags=["envelope", "non_finite"],
+        )
+    )
+    add(
+        mk(
+            "envelope glob allowlist",
+            bash(".venv/bin/pytest -q"),
+            envelopes={"default": envelope(shell_allowlist=[".venv/bin/*"])},
+            tags=["envelope", "shell"],
+        )
+    )
+    add(
+        mk(
+            "envelope physical stakes",
+            payload("Read", {"file_path": "/work/a"}),
+            envelopes={"default": envelope(stakes="physical")},
+            tags=["envelope"],
+        )
+    )
+
+    # -- warden root state -----------------------------------------------------
+    add(mk("disarmed enforce", bash("rm -rf /"), disarmed=True, tags=["disarm"]))
+    add(mk("disarmed hermes", bash("rm -rf /"), disarmed=True, fmt="hermes", tags=["disarm"]))
+    add(
+        mk(
+            "config names python",
+            bash("ls"),
+            config="verifier_client: python\nwarden_mode: enforce\n",
+            tags=["config"],
+        )
+    )
+    add(mk("config names go", bash("ls"), config="verifier_client: go\n", tags=["config"]))
+    add(
+        mk(
+            "no mode uses config",
+            bash("rm -rf /"),
+            mode=None,
+            config="warden_mode: enforce\n",
+            tags=["config"],
+        )
+    )
+    add(mk("no mode no config", bash("rm -rf /"), mode=None, tags=["config"]))
+    tree_seed = (
+        json.dumps(
+            {
+                "type": "session",
+                "id": "s1",
+                "ts": 1.0,
+                "v": 1,
+                "harness": "claude-code",
+                "cwd": "/work",
+            }
+        )
+        + "\n"
+        + json.dumps({"type": "tool_call", "id": "aaaa0001", "parentId": None, "ts": 2.0})
+        + "\n"
+        + json.dumps({"type": "verdict", "id": "aaaa0002", "parentId": "aaaa0001", "ts": 3.0})
+        + "\n"
+        + json.dumps({"type": "state", "id": "aaaa0003", "parentId": "aaaa0002", "ts": 4.0})
+        + "\n"
+        + '{"type": "verdict", "id": "torn\n'
+    )
+    add(
+        mk(
+            "existing session tree",
+            payload("Read", {"file_path": "/work/a"}),
+            sessions={"s1": tree_seed},
+            tags=["tree"],
+        )
+    )
+    head_seed = (
+        json.dumps({"type": "session", "id": "s1", "ts": 1.0})
+        + "\n"
+        + json.dumps({"type": "prompt", "id": "bbbb0001", "parentId": None, "ts": 2.0})
+        + "\n"
+        + json.dumps({"type": "head", "leafId": "bbbb0000", "ts": 3.0})
+        + "\n"
+        + json.dumps({"type": "label", "id": "bbbb0002", "parentId": "bbbb0001", "ts": 4.0})
+        + "\n"
+    )
+    add(
+        mk(
+            "session tree head entry",
+            payload("Read", {"file_path": "/work/a"}),
+            sessions={"s1": head_seed},
+            tags=["tree"],
+        )
+    )
+    add(
+        mk(
+            "captures mirror allow",
+            payload("Read", {"file_path": "/work/a"}, tool_use_id="t9"),
+            captures=True,
+            tags=["captures"],
+        )
+    )
+    add(
+        mk(
+            "captures skip deny",
+            payload("Read", {"file_path": "/etc/a"}),
+            captures=True,
+            tags=["captures"],
+        )
+    )
+    add(
+        mk(
+            "captures pi tool",
+            payload("read", {"path": "/work/a"}),
+            fmt="pi",
+            captures=True,
+            tags=["captures"],
+        )
+    )
+    add(
+        mk(
+            "coppice report allow",
+            payload("Read", {"file_path": "/work/a"}),
+            coppice=True,
+            tags=["coppice"],
+        )
+    )
+    add(mk("coppice report deny", bash("rm -rf /"), coppice=True, tags=["coppice"]))
+    add(
+        mk(
+            "coppice report unicode clause",
+            payload("TodoWrite", {}),
+            coppice=True,
+            tags=["coppice"],
+        )
+    )
+    add(
+        mk(
+            "coppice tmux pane",
+            payload("Read", {"file_path": "/work/a"}),
+            coppice=True,
+            env={"TMUX_PANE": "%3"},
+            tags=["coppice"],
+        )
+    )
+    add(
+        mk(
+            "herdr pane",
+            payload("Read", {"file_path": "/work/a"}),
+            env={"HERDR_PANE_ID": "h1"},
+            tags=["coppice"],
+        )
+    )
+    add(mk("ask flag", bash("rm -rf /"), extra_args=["--ask", "--ask-timeout", "1"], tags=["ask"]))
+    # An operator answers the ask. An edit is a new call and passes the
+    # whole warden again; a deny there stands, with no second ask.
+    ask_args = ["--ask", "--ask-timeout", "10"]
+    for name, answer in (
+        ("operator allows", {"decision": "allow", "reason": "ok", "updatedInput": None}),
+        ("operator denies", {"decision": "deny", "reason": "no", "updatedInput": None}),
+        (
+            "operator edit inside",
+            {"decision": "allow", "reason": "ok", "updatedInput": {"command": "ls"}},
+        ),
+        (
+            "operator edit outside",
+            {"decision": "allow", "reason": "ok", "updatedInput": {"command": "rm -rf /tmp/x"}},
+        ),
+        (
+            "operator edit into floor",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "rm -rf ~/.config/coppice/coppice.toml"},
+            },
+        ),
+        (
+            "operator edit rank record",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "daisugi rank record --judge owner"},
+            },
+        ),
+        (
+            "operator edit warden disarm",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "daisugi warden disarm"},
+            },
+        ),
+        (
+            "operator edit npm start",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "ls && npm start"},
+            },
+        ),
+        (
+            "operator edit not an object",
+            {"decision": "allow", "reason": "ok", "updatedInput": "ls"},
+        ),
+        (
+            "operator edit named",
+            {
+                "decision": "allow",
+                "reason": "ok",
+                "updatedInput": {"command": "rm /tmp/y"},
+                "by": "ana",
+                "whoFrom": "token",
+            },
+        ),
+    ):
+        add(
+            mk(
+                name,
+                bash("rm -rf /work/x", tool_use_id="tu-1"),
+                extra_args=ask_args,
+                operator={"tool_use_id": "tu-1", "answer": answer},
+                tags=["ask"],
+            )
+        )
+    add(
+        mk(
+            "checkpoints flag",
+            payload("Read", {"file_path": "/work/a"}),
+            extra_args=["--checkpoints"],
+            tags=["ask"],
+        )
+    )
+    add(
+        mk(
+            "abbreviated flag",
+            payload("Read", {"file_path": "/work/a"}),
+            mode=None,
+            extra_args=["--mo", "enforce"],
+            tags=["argv"],
+        )
+    )
+    add(
+        mk(
+            "flag equals form",
+            payload("Read", {"file_path": "/work/a"}),
+            mode=None,
+            extra_args=["--mode=enforce"],
+            tags=["argv"],
+        )
+    )
+    # A bad flag denies on stdout for a format whose host never reads the
+    # exit code (hermes, openclaw), not just via the empty-stdout exit-2
+    # body that format never sees; claude keeps that plain exit-2 deny.
+    for fmt in ("hermes", "openclaw", "claude"):
+        add(
+            mk(
+                f"format {fmt} bad flag",
+                payload("Read", {"file_path": "/work/a"}),
+                fmt=fmt,
+                extra_args=["--no-such-flag"],
+                tags=["argv", "format"],
+            )
+        )
+    dialect_cases(add)
+    dialect_followup_cases(add)
+    dialect_audit_cases(add)
+    shell_access_cases(add)
+    opaque_cases(add)
+    daisugi_config_cases(add)
+    graft_cases(add)
+    warden_state_cases(add)
+    data_home_cases(add)
+    agent_mode_cases(add)
+    state_link_cases(add)
+    ask_link_cases(add)
+    checkpoint_state_cases(add)
+    return C
+
+
+def state_link_cases(add: Any) -> None:
+    """GR-R-1: the warden reads its own state (the root, DISARMED, envelopes/
+    and each envelope file) through no link, and only from files this user
+    owns that group and other cannot write. Each refusal is a case whose call
+    the planted state would ALLOW: DISARMED that is refused reads as not
+    disarmed, an envelope that is refused is none. Each ends in a deny, and
+    has an allow twin (``state ... ok``) so the set fails when the check is
+    taken out and when it is too strict."""
+    read = payload("Read", {"file_path": "/work/a.txt"})
+    wipe = bash("rm -rf /")
+    env_text = json.dumps(envelope(), indent=2)
+    tag = ["state_links"]
+    # Twins: the same state, reached the plain way, is honored.
+    add(mk("state ok disarmed", wipe, disarmed=True, tags=tag))
+    add(mk("state ok envelope", read, tags=tag))
+    # The path DOWN TO the root may follow a link (GR-R-2).
+    add(mk("state ok root behind symlinked parent", read, links={"parent": True}, tags=tag))
+    add(
+        mk(
+            "state ok disarmed behind symlinked parent",
+            wipe,
+            disarmed=True,
+            links={"parent": True},
+            tags=tag,
+        )
+    )
+    # A link AT the root or below is refused.
+    add(mk("state root symlink disarmed", wipe, disarmed=True, links={"root": True}, tags=tag))
+    add(mk("state root symlink envelope", read, links={"root": True}, tags=tag))
+    add(mk("state envelopes dir symlink", read, links={"envelopes": True}, tags=tag))
+    add(
+        mk(
+            "state envelopes dir symlink disarmed ok",
+            wipe,
+            disarmed=True,
+            links={"envelopes": True},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state DISARMED symlink",
+            wipe,
+            files={
+                "data/warden/DISARMED": {"symlink": "{ROOT}/real-disarmed"},
+                "real-disarmed": {"text": "disarmed by operator\n"},
+            },
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state DISARMED hard link",
+            wipe,
+            files={
+                "data/warden/DISARMED": {"text": "disarmed by operator\n"},
+                "zz-second-name": {"hardlink": "data/warden/DISARMED"},
+            },
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state DISARMED directory",
+            wipe,
+            files={"data/warden/DISARMED": {"dir": True}},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state DISARMED world writable",
+            wipe,
+            files={"data/warden/DISARMED": {"text": "disarmed by operator\n", "mode": 0o666}},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state DISARMED group writable",
+            wipe,
+            files={"data/warden/DISARMED": {"text": "disarmed by operator\n", "mode": 0o620}},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state envelope symlink",
+            read,
+            envelopes={},
+            files={
+                "data/warden/envelopes/default.json": {"symlink": "{ROOT}/real-envelope.json"},
+                "real-envelope.json": {"text": env_text},
+            },
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state envelope hard link",
+            read,
+            files={"zz-second-name": {"hardlink": "data/warden/envelopes/default.json"}},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state envelope world writable",
+            read,
+            modes={"data/warden/envelopes/default.json": 0o646},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state envelope group writable",
+            read,
+            modes={"data/warden/envelopes/default.json": 0o664},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "state envelopes dir world writable",
+            read,
+            modes={"data/warden/envelopes": 0o757},
+            tags=tag,
+        )
+    )
+    add(mk("state root world writable", read, modes={"data/warden": 0o757}, tags=tag))
+    add(
+        mk(
+            "state root group writable disarmed",
+            wipe,
+            disarmed=True,
+            modes={"data/warden": 0o770},
+            tags=tag,
+        )
+    )
+    # A session's own envelope is read the same way.
+    add(
+        mk(
+            "state session envelope world writable",
+            payload("Read", {"file_path": "/work/a.txt"}, sid="s1"),
+            pin="s1",
+            envelopes={"s1": envelope()},
+            modes={"data/warden/envelopes/s1.json": 0o666},
+            tags=tag,
+        )
+    )
+
+
+def checkpoint_state_cases(add: Any) -> None:
+    """GR-R-1, GR-R-9: the checkpoint state (``checkpoint-state/<sid>.json``,
+    the prompt a checkpoint was last taken for) is read through no link and
+    only from a file this user owns that group and other cannot write; a
+    refused state reads as none, so the checkpoint is taken. The warden's own
+    write of it replaces a link at the file and never writes through it. The
+    set holds ``ok`` (a plain state for this prompt: no checkpoint, nothing
+    rewritten) and ``absent`` (the checkpoint is taken and the state made) as
+    its twins."""
+    work = "{ROOT}/work"
+    row = {
+        "type": "user",
+        "uuid": "u1",
+        "parentUuid": None,
+        "sessionId": "s1",
+        "timestamp": "2026-08-27T10:00:00Z",
+        "message": {"role": "user", "content": "hi"},
+    }
+    call = payload(
+        "Read",
+        {"file_path": f"{work}/a.txt"},
+        cwd=work,
+        transcript_path=f"{work}/t.jsonl",
+    )
+    env_ = {"default": envelope(file_read=[f"{work}/**"])}
+    state = "data/warden/checkpoint-state/s1.json"
+    same = json.dumps({"prompt": "u1"})
+    base = {"work/t.jsonl": {"text": json.dumps(row) + "\n"}}
+    tag = ["checkpoint_state"]
+
+    def c(name: str, files: dict[str, Any] | None = None, **kw: Any) -> None:
+        add(
+            mk(
+                name,
+                call,
+                envelopes=env_,
+                files={**base, **(files or {})},
+                repos=["work"],
+                extra_args=["--checkpoints"],
+                tags=tag,
+                **kw,
+            )
+        )
+
+    c("checkpoint state absent")
+    c("checkpoint state ok", {state: {"text": same}})
+    c(
+        "checkpoint state symlink",
+        {state: {"symlink": "{ROOT}/real-state.json"}, "real-state.json": {"text": same}},
+    )
+    c("checkpoint state group writable", {state: {"text": same, "mode": 0o664}})
+    c("checkpoint state hard link", {state: {"text": same}, "zz-second-name": {"hardlink": state}})
+    c("checkpoint state dir symlink", {state: {"text": same}}, links={"checkpoint-state": True})
+
+
+def ask_link_cases(add: Any) -> None:
+    """GR-R-10: the ask channel is read and written through no link.
+    ``operator.json``, ``asks/`` and ``answers/`` behind a link used to let a
+    concurrent workspace write supply an allow: the fake operator answers
+    through the link and the old warden honors it. Each case ends in a deny with
+    the channel refused, and ``ask operator allows`` (the case of the same
+    call with the plain channel) is its twin, so the set fails when the check
+    is taken out and when it is too strict. The ask timeout is short for the
+    cases that would wait it out."""
+    ask_args = ["--ask", "--ask-timeout", "2"]
+    answer = {"decision": "allow", "reason": "ok", "updatedInput": None}
+    call = bash("rm -rf /work/x", tool_use_id="tu-1")
+    op = {"tool_use_id": "tu-1", "answer": answer}
+    tag = ["ask", "state_links"]
+    add(mk("ask channel ok", call, extra_args=ask_args, operator=op, tags=tag))
+    for name, links in (
+        ("ask answers dir symlink", {"answers": True}),
+        ("ask asks dir symlink", {"asks": True}),
+        ("ask operator.json symlink", {"operator": True}),
+    ):
+        add(mk(name, call, extra_args=ask_args, operator=op, links=links, tags=tag))
+    add(
+        mk(
+            "ask operator.json group writable",
+            call,
+            extra_args=ask_args,
+            operator=op,
+            modes={"data/warden/operator.json": 0o664},
+            tags=tag,
+        )
+    )
+    add(
+        mk(
+            "ask operator.json hard link",
+            call,
+            extra_args=ask_args,
+            operator=op,
+            files={"zz-second-name": {"hardlink": "data/warden/operator.json"}},
+            tags=tag,
+        )
+    )
+    # What stands at the answer file's own name: the operator writes in place
+    # (FakeOperator "plant"), so a link, a second name or a loose mode is what
+    # the warden meets. Each answer is otherwise valid, so only the check denies.
+    for name, plant in (
+        ("ask answer file symlink", "symlink"),
+        ("ask answer file hard link", "hardlink"),
+        ("ask answer file group writable", "group_writable"),
+    ):
+        add(
+            mk(
+                name,
+                call,
+                extra_args=ask_args,
+                operator={**op, "plant": plant},
+                tags=tag,
+            )
+        )
+
+
+def agent_mode_cases(add: Any) -> None:
+    """F11: the per-agent mode marker, <warden root>/agents/<floor>/<pane>.mode.
+
+    Only the bytes ``watching`` (one newline after it at most), in a
+    regular file named for the calling pane (COPPICE_PANE, coppice's own
+    id shape) in the calling floor's directory (the key of COPPICE_SOCK),
+    lower an enforce hook to audit. Every other marker leaves the hook's
+    mode (F11-R-1, F11-R-2, F11-R-6). Each case that ends in a deny has a
+    twin, ``agent mode watching``, where the same call is lowered, so the
+    set fails when the marker code is taken out.
+    """
+    me = {"COPPICE_PANE": "w1:p1", "COPPICE_SOCK": "/run/coppice/floor-a.sock"}
+    mark = "data/warden/agents/{FLOOR}/w1:p1.mode"
+    outside = payload("Read", {"file_path": "/etc/passwd"})
+    for name, files, env in (
+        ("missing", None, me),
+        ("garbage", {mark: {"text": "banana\n"}}, me),
+        ("watching", {mark: {"text": "watching\n"}}, me),
+        ("watching no newline", {mark: {"text": "watching"}}, me),
+        ("watching two newlines", {mark: {"text": "watching\n\n"}}, me),
+        ("watching crlf", {mark: {"text": "watching\r\n"}}, me),
+        ("watching upper", {mark: {"text": "WATCHING\n"}}, me),
+        ("enforcing", {mark: {"text": "enforcing\n"}}, me),
+        ("off", {mark: {"text": "off\n"}}, me),
+        ("empty", {mark: {"text": ""}}, me),
+        ("too big", {mark: {"text": "watching\n" + " " * 60}}, me),
+        ("bad utf8", {mark: {"hex": "ff77617463680a"}}, me),
+        ("symlink", {"w.txt": {"text": "watching\n"}, mark: {"symlink": "{ROOT}/w.txt"}}, me),
+        ("fifo", {mark: {"fifo": True}}, me),
+        ("directory", {mark: {"dir": True}}, me),
+        ("other pane", {"data/warden/agents/{FLOOR}/w1:p2.mode": {"text": "watching\n"}}, me),
+        (
+            "other floor",
+            {
+                "data/warden/agents/{FLOOR=/run/coppice/floor-b.sock}/w1:p1.mode": {
+                    "text": "watching\n"
+                }
+            },
+            me,
+        ),
+        (
+            "other floor same pane both",
+            {
+                "data/warden/agents/{FLOOR=/run/coppice/floor-b.sock}/w1:p1.mode": {
+                    "text": "watching\n"
+                },
+                mark: {"text": "enforcing\n"},
+            },
+            me,
+        ),
+        ("no floor dir", {"data/warden/agents/w1:p1.mode": {"text": "watching\n"}}, me),
+        ("no sock", {mark: {"text": "watching\n"}}, {"COPPICE_PANE": "w1:p1"}),
+        ("empty sock", {mark: {"text": "watching\n"}}, {**me, "COPPICE_SOCK": ""}),
+        (
+            "traversal",
+            {"data/warden/agents/w1:p1.mode": {"text": "watching\n"}, mark: {"text": "watching\n"}},
+            {**me, "COPPICE_PANE": "../w1:p1"},
+        ),
+        (
+            "traversal inside",
+            {mark: {"text": "watching\n"}},
+            {**me, "COPPICE_PANE": "w1:p1/../w1:p1"},
+        ),
+        ("long id", {mark: {"text": "watching\n"}}, {**me, "COPPICE_PANE": "w1:p1234567890"}),
+        # F11-R-7: the directories are not followed through a symlink, and
+        # the marker must be this user's, with one link, writable by no one
+        # else.
+        (
+            "agents dir symlink",
+            {
+                "data/warden/agents": {"symlink": "{ROOT}/real-agents"},
+                "real-agents/{FLOOR}/w1:p1.mode": {"text": "watching\n"},
+            },
+            me,
+        ),
+        (
+            "floor dir symlink",
+            {
+                "data/warden/agents/{FLOOR}": {"symlink": "{ROOT}/real-floor"},
+                "real-floor/w1:p1.mode": {"text": "watching\n"},
+            },
+            me,
+        ),
+        ("hard link", {mark: {"text": "watching\n"}, "zz-second-name": {"hardlink": mark}}, me),
+        ("group writable", {mark: {"text": "watching\n", "mode": 0o664}}, me),
+        ("other writable", {mark: {"text": "watching\n", "mode": 0o646}}, me),
+        (
+            "tmux pane only",
+            {mark: {"text": "watching\n"}},
+            {"TMUX_PANE": "w1:p1", "COPPICE_SOCK": me["COPPICE_SOCK"]},
+        ),
+        (
+            "herdr pane only",
+            {mark: {"text": "watching\n"}},
+            {"HERDR_PANE_ID": "w1:p1", "COPPICE_SOCK": me["COPPICE_SOCK"]},
+        ),
+    ):
+        add(mk(f"agent mode {name}", outside, files=files, env=env, tags=["agent_mode"]))
+    watching = {mark: {"text": "watching\n"}}
+    # GR-R-1: the marker is read through the warden root, so a root behind a
+    # link lowers nothing, while the same marker under a link ABOVE the root
+    # still does (GR-R-2).
+    add(
+        mk(
+            "agent mode root symlink",
+            outside,
+            files=watching,
+            env=me,
+            links={"root": True},
+            tags=["agent_mode"],
+        )
+    )
+    add(
+        mk(
+            "agent mode root behind symlinked parent",
+            outside,
+            files=watching,
+            env=me,
+            links={"parent": True},
+            tags=["agent_mode"],
+        )
+    )
+    add(
+        mk(
+            "agent mode audit hook enforcing marker",
+            outside,
+            mode="audit",
+            files={mark: {"text": "enforcing\n"}},
+            env=me,
+            tags=["agent_mode"],
+        )
+    )
+    # F11-R-11: a typed wire call of agent.set_mode is the pane rule's
+    # deny in every mode, as agent.allow is: a pane may not lower an agent.
+    for mode in ("enforce", "audit"):
+        for name, line in (
+            (
+                "nc",
+                'printf \'{"cmd":"agent.set_mode","pane":"w1:p1","mode":"watching"}\\n\''
+                ' | nc -U "$COPPICE_SOCK"',
+            ),
+            (
+                "setsid python",
+                """setsid python3 -c 'send({"cmd": "agent.set_mode", "pane": "w1:p2"})'""",
+            ),
+        ):
+            add(
+                mk(
+                    f"agent mode typed set_mode {name} ({mode})",
+                    bash(line),
+                    mode=mode,
+                    env=me,
+                    tags=["agent_mode"],
+                )
+            )
+    # The report names the mode the call was decided in. The fake coppice
+    # socket is the floor here, so the floor key is its path's.
+    add(
+        mk(
+            "agent mode watching report",
+            outside,
+            files=watching,
+            env={"COPPICE_PANE": "w1:p1"},
+            coppice=True,
+            tags=["agent_mode"],
+        )
+    )
+
+
+def data_home_cases(add: Any) -> None:
+    """DH-R-2: OPENDAISUGI_HOME and XDG_DATA_HOME can move the data home.
+    Every place it can be is guarded: the warden's state, daisugi's
+    config.yaml and coppice's data directory, by path and through the
+    variable. The fake HOME has no ~/.opendaisugi, so XDG_DATA_HOME moves
+    the data home; the legacy directory stays guarded too."""
+    allow = envelope(
+        file_read=["/**"],
+        file_write=["/**"],
+        shell_allowlist=[*ALLOW, "touch", "tee", "rm", "cp"],
+        shell_allow_decomposition=True,
+    )
+    od = {"OPENDAISUGI_HOME": "/od"}
+    xdg = {"XDG_DATA_HOME": "/xdg"}
+    calls = {
+        "od envelope": (
+            od,
+            payload("Write", {"file_path": "/od/warden/envelopes/default.json", "content": "{}"}),
+        ),
+        "od config": (od, payload("Write", {"file_path": "/od/config.yaml", "content": "x"})),
+        "od coppice": (od, payload("Write", {"file_path": "/od/coppice/web.json", "content": "x"})),
+        "od var": (od, bash("touch $OPENDAISUGI_HOME/warden/DISARMED")),
+        "od var braces": (od, bash("tee ${OPENDAISUGI_HOME}/config.yaml < /dev/null")),
+        "od legacy": (
+            od,
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/warden/DISARMED", "content": "x"}
+            ),
+        ),
+        "od elsewhere": (
+            od,
+            payload("Write", {"file_path": "/work/od/warden/DISARMED", "content": "x"}),
+        ),
+        "xdg envelope": (
+            xdg,
+            payload(
+                "Write",
+                {"file_path": "/xdg/opendaisugi/warden/envelopes/default.json", "content": "{}"},
+            ),
+        ),
+        "xdg config": (
+            xdg,
+            payload("Write", {"file_path": "/xdg/opendaisugi/config.yaml", "content": "x"}),
+        ),
+        "xdg coppice": (
+            xdg,
+            payload("Write", {"file_path": "/xdg/opendaisugi/coppice/web.json", "content": "x"}),
+        ),
+        "xdg var": (xdg, bash("rm -f $XDG_DATA_HOME/opendaisugi/warden/DISARMED")),
+        "xdg legacy": (
+            xdg,
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/config.yaml", "content": "x"}
+            ),
+        ),
+        "unset var": ({}, bash("touch $OPENDAISUGI_HOME/x")),
+        "od web token read": (od, payload("Read", {"file_path": "/od/coppice/web/token"})),
+        "xdg ca key cat": (xdg, bash("cat /xdg/opendaisugi/coppice/web/ca/ca.key")),
+        # A leading ~ is the home; a value still not absolute is ignored, so
+        # it never moves the guarded set into the workspace.
+        "od tilde": (
+            {"OPENDAISUGI_HOME": "~/od"},
+            payload("Write", {"file_path": f"{FAKE_HOME}/od/warden/DISARMED", "content": "x"}),
+        ),
+        "od tilde var": (
+            {"OPENDAISUGI_HOME": "~/od"},
+            bash("touch $OPENDAISUGI_HOME/warden/DISARMED"),
+        ),
+        "od relative": (
+            {"OPENDAISUGI_HOME": "od"},
+            payload("Write", {"file_path": "od/warden/DISARMED", "content": "x"}),
+        ),
+        "od dot relative": (
+            {"OPENDAISUGI_HOME": "./od"},
+            payload("Write", {"file_path": "/work/od/config.yaml", "content": "x"}),
+        ),
+        "od empty": (
+            {"OPENDAISUGI_HOME": ""},
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/warden/DISARMED", "content": "x"}
+            ),
+        ),
+        "xdg tilde": (
+            {"XDG_DATA_HOME": "~/x"},
+            payload(
+                "Write", {"file_path": f"{FAKE_HOME}/x/opendaisugi/config.yaml", "content": "x"}
+            ),
+        ),
+        "xdg relative": (
+            {"XDG_DATA_HOME": "rel"},
+            payload("Write", {"file_path": "/work/rel/opendaisugi/config.yaml", "content": "x"}),
+        ),
+    }
+    for cname, (env_, call) in calls.items():
+        add(
+            mk(
+                f"data home {cname}",
+                call,
+                envelopes={"default": allow},
+                env=env_ or None,
+                tags=["state", "data-home"],
+            )
+        )
+
+
+def dialect_cases(add: Any) -> None:
+    """The system dialect at the warden: a word's would-deny is logged in
+    audit (word_audit), and config.yaml's dialect_enforce enforces it.
+    Chains near Python's recursion limit check that the write paths are
+    decomposed at the oracle's frame depth."""
+    from opendaisugi.dialect import DIALECT_HASH
+
+    def env(*invariants: Any, **perms: Any) -> dict[str, Any]:
+        perms.setdefault("shell_allowlist", [*ALLOW, "sh"])
+        perms.setdefault("shell_allow_decomposition", True)
+        return envelope(invariants=list(invariants), **perms)
+
+    def word(type_name: str, target: str | None = None) -> dict[str, Any]:
+        d: dict[str, Any] = {"type": type_name, "description": "d"}
+        if target is not None:
+            d["target"] = target
+        return d
+
+    def kernel(expr: Any) -> dict[str, Any]:
+        return {"type": "k", "description": "d", "expr": expr}
+
+    no_src = {
+        "op": "forall_steps",
+        "pred": {
+            "op": "forall_writes",
+            "pred": {"op": "not_matches", "path": "path", "regex": "^/work/src/"},
+        },
+    }
+    enforce_cfg = f"dialect_enforce: {DIALECT_HASH}\n"
+    calls = {
+        "write src": payload("Write", {"file_path": "/work/src/a.py", "content": "x"}),
+        "write rel src": payload("Write", {"file_path": "src/../src/b.py", "content": "x"}),
+        "write out": payload("Write", {"file_path": "/work/out/a.txt", "content": "x"}),
+        "edit src": payload(
+            "Edit", {"file_path": "/work/src/a.py", "old_string": "a", "new_string": "b"}
+        ),
+        "read src": payload("Read", {"file_path": "/work/src/a.py"}),
+        "bash ls": bash("ls"),
+        "bash redirect src": bash("echo x > /work/src/a.py"),
+        "bash redirect null": bash("echo x > /dev/null && ls 2>&1"),
+        "bash sh -c": bash("sh -c 'echo x > /work/src/b.py'"),
+        "bash redirect out": bash("ls > /work/out/list.txt"),
+    }
+    words = {
+        "file_unchanged src": word("file_unchanged", "/work/src/**"),
+        "read_only": word("read_only"),
+        "no_modifications py": word("no_modifications", "/work/**/*.py"),
+        "unsupported target": word("file_immutable", "[x]"),
+    }
+    for wname, inv in words.items():
+        for cname, call in calls.items():
+            add(
+                mk(
+                    f"dialect {wname} {cname}",
+                    call,
+                    envelopes={"default": env(inv)},
+                    tags=["dialect"],
+                )
+            )
+    for cname in ("write src", "bash redirect src", "bash ls", "bash sh -c"):
+        add(
+            mk(
+                f"dialect enforced file_unchanged {cname}",
+                calls[cname],
+                envelopes={"default": env(words["file_unchanged src"])},
+                config=enforce_cfg,
+                tags=["dialect"],
+            )
+        )
+        add(
+            mk(
+                f"dialect pin mismatch {cname}",
+                calls[cname],
+                envelopes={"default": env(words["file_unchanged src"])},
+                config='dialect_enforce: "0000000000000000"\n',
+                tags=["dialect"],
+            )
+        )
+    for mode in ("audit", "enforce"):
+        add(
+            mk(
+                f"dialect audit mode {mode}",
+                calls["write src"],
+                mode=mode,
+                envelopes={"default": env(words["read_only"])},
+                tags=["dialect"],
+            )
+        )
+    for cfg_name, cfg in (
+        ("empty pin", 'dialect_enforce: ""\n'),
+        ("null pin", "dialect_enforce: null\n"),
+        ("int pin", "dialect_enforce: 1234\n"),
+        ("pin and client", f"dialect_enforce: {DIALECT_HASH}\nverifier_client: python\n"),
+    ):
+        add(
+            mk(
+                f"dialect config {cfg_name}",
+                calls["write src"],
+                envelopes={"default": env(words["file_unchanged src"])},
+                config=cfg,
+                tags=["dialect", "config"],
+            )
+        )
+    add(
+        mk(
+            "dialect strict stakes read_only",
+            calls["bash redirect out"],
+            envelopes={"default": env(words["read_only"], stakes="high")},
+            tags=["dialect"],
+        )
+    )
+    add(
+        mk(
+            "dialect two words",
+            calls["write src"],
+            envelopes={"default": env(words["read_only"], words["file_unchanged src"])},
+            tags=["dialect"],
+        )
+    )
+    add(
+        mk(
+            "dialect word not enforced",
+            calls["write src"],
+            envelopes={"default": env(dict(words["read_only"], enforce=False))},
+            tags=["dialect"],
+        )
+    )
+    add(
+        mk(
+            "dialect word in a postcondition",
+            calls["write src"],
+            envelopes={
+                "default": env(
+                    postconditions=[{"type": "file_unchanged", "path": "/work/src/a.py"}]
+                )
+            },
+            tags=["dialect"],
+        )
+    )
+    add(
+        mk(
+            "dialect permission deny first",
+            calls["bash redirect src"],
+            envelopes={"default": env(words["read_only"], shell_allow_decomposition=False)},
+            tags=["dialect"],
+        )
+    )
+    # The kernel quantifier written by hand.
+    kernels = {
+        "no src": no_src,
+        "at root": {"op": "forall_writes", "pred": {"op": "exists", "path": "path"}},
+        "nested twice": {
+            "op": "forall_steps",
+            "pred": {
+                "op": "forall_writes",
+                "pred": {"op": "forall_writes", "pred": {"op": "exists", "path": "path"}},
+            },
+        },
+        "in and": {
+            "op": "forall_steps",
+            "pred": {
+                "op": "and",
+                "children": [
+                    {"op": "exists", "path": "id"},
+                    {
+                        "op": "not",
+                        "child": {
+                            "op": "forall_writes",
+                            "pred": {"op": "matches", "path": "path", "regex": "^/work/out/"},
+                        },
+                    },
+                ],
+            },
+        },
+        "tautology": {
+            "op": "forall_steps",
+            "pred": {
+                "op": "forall_writes",
+                "pred": {
+                    "op": "or",
+                    "children": [
+                        {"op": "matches", "path": "path", "regex": "a"},
+                        {"op": "not_matches", "path": "path", "regex": "a"},
+                    ],
+                },
+            },
+        },
+        "in outputs": {
+            "op": "forall_outputs",
+            "pred": {"op": "forall_writes", "pred": {"op": "exists", "path": "path"}},
+        },
+    }
+    for kname, expr in kernels.items():
+        for cname in ("write src", "bash redirect src", "bash ls", "bash redirect out"):
+            add(
+                mk(
+                    f"dialect kernel {kname} {cname}",
+                    calls[cname],
+                    envelopes={"default": env(kernel(expr))},
+                    tags=["dialect", "predicate"],
+                )
+            )
+    add(
+        mk(
+            "dialect kernel no src strict",
+            calls["bash redirect src"],
+            envelopes={"default": env(kernel(no_src), stakes="high")},
+            tags=["dialect", "predicate"],
+        )
+    )
+    # Long && chains: the permission stage decomposes at frame 10, the
+    # kernel quantifier at 17, a word at 19 and its witness at 15. Near the
+    # limit one decomposition passes where a deeper one raises.
+    for n in (960, 966, 968, 970, 972, 974, 975, 976, 977, 978, 979, 980):
+        cmd = " && ".join(["ls"] * n) + " > /work/src/z"
+        for iname, inv in (("word", words["read_only"]), ("kernel", kernel(no_src))):
+            add(
+                mk(
+                    f"dialect chain {n} {iname}",
+                    bash(cmd),
+                    envelopes={"default": env(inv)},
+                    tags=["dialect", "depth"],
+                )
+            )
+
+
+SHELL_ACCESS_ALLOW = [
+    "cp", "mv", "tee", "sed", "cat", "find", "xargs", "tar", "grep", "ls",
+    "install", "dd", "rm", "echo", "sh", "env", "cd", "head",
+    "uniq", "xxd", "eval", "exec", "builtin", "diff", "sort",
+    "less", "nice", "timeout", "ionice", "time", "chroot", "flock", "busybox", "script",
+    "parallel", "coproc", "trap",
+    "git", "od", "hexdump", "rg", "md5sum", "sudo", "doas", "watch", "systemd-run", "tmux", "screen", "unbuffer", "expect", "vim", "nvim", "vi", "ssh", "at", "batch", "crontab", "nohup", "setsid", "stdbuf", "taskset", "chrt", "unshare", "nsenter", "runuser", "su", "prlimit", "entr", "sha256sum", "/usr/bin/env", "/usr/bin/timeout", "/usr/bin/sudo",
+]  # fmt: skip
+
+
+def dialect_audit_cases(add: Any) -> None:
+    """The word grid of ``dialect_cases`` again, in audit mode: the words
+    are logged (word_audit) and nothing is denied for them. In enforce mode
+    the same envelopes enforce the words (SG-9)."""
+    calls = {
+        "write src": payload("Write", {"file_path": "/work/src/a.py", "content": "x"}),
+        "write out": payload("Write", {"file_path": "/work/out/a.txt", "content": "x"}),
+        "bash ls": bash("ls"),
+        "bash redirect src": bash("echo x > /work/src/a.py"),
+        "bash sh -c": bash("sh -c 'echo x > /work/src/b.py'"),
+    }
+    words = {
+        "file_unchanged src": {
+            "type": "file_unchanged",
+            "description": "d",
+            "target": "/work/src/**",
+        },
+        "read_only": {"type": "read_only", "description": "d"},
+        "no_modifications py": {
+            "type": "no_modifications",
+            "description": "d",
+            "target": "/work/**/*.py",
+        },
+    }
+    for wname, inv in words.items():
+        for cname, call in calls.items():
+            add(
+                mk(
+                    f"dialect audit {wname} {cname}",
+                    call,
+                    mode="audit",
+                    envelopes={
+                        "default": envelope(
+                            invariants=[inv],
+                            shell_allowlist=[*ALLOW, "sh"],
+                            shell_allow_decomposition=True,
+                        )
+                    },
+                    tags=["dialect"],
+                )
+            )
+
+
+def shell_access_cases(add: Any) -> None:
+    """The files a shell command reads and writes through its operands face
+    file_read and file_write (SG-1 to SG-6): the attacks and benign lines of
+    the adversarial corpus, in audit and enforce mode, under a narrow
+    envelope, an everything envelope and a narrow one without decomposition.
+    Relative lines also run from a cwd outside the scope."""
+    from opendaisugi.adversarial import _SHELL_FILE_ATTACK_ROWS, _SHELL_FILE_BENIGN_ROWS
+
+    def env_(read: list[str], write: list[str], decomp: bool = True) -> dict[str, Any]:
+        return {
+            "default": envelope(
+                file_read=read,
+                file_write=write,
+                shell_allowlist=SHELL_ACCESS_ALLOW,
+                shell_allow_decomposition=decomp,
+            )
+        }
+
+    envs = {
+        "narrow": env_(["/work/**"], ["/work/**"]),
+        "everything": env_(["/**"], ["/**"]),
+        "no-decomp": env_(["/work/**"], ["/work/**"], False),
+    }
+    rows: list[tuple[str, Any]] = [(i, spec) for i, spec, _ in _SHELL_FILE_ATTACK_ROWS]
+    rows += list(_SHELL_FILE_BENIGN_ROWS)
+    for ident, spec in rows:
+        command, cwd = spec if isinstance(spec, tuple) else (spec, "/work")
+        cwds = [cwd]
+        if isinstance(spec, tuple) and cwd != "/home/user":
+            cwds.append("/home/user")
+        for c in cwds:
+            for mode in ("audit", "enforce"):
+                for ename, envs_ in envs.items():
+                    suffix = "" if c == cwd else " from home"
+                    add(
+                        mk(
+                            f"shell access {ident}{suffix} {mode} {ename}",
+                            bash(command, cwd=c),
+                            mode=mode,
+                            envelopes=envs_,
+                            tags=["shell_access"],
+                        )
+                    )
+    # Trees need a covering glob; a pattern glob is not everything.
+    for ename, read, write in (
+        ("tree glob", ["/work/**"], ["/work/out/*"]),
+        ("star glob", ["/**/*"], ["/**/*"]),
+        ("home glob", ["/home/**"], ["/home/**"]),
+    ):
+        for command in ("tar -xzf /work/in.tgz -C /work/out", "ls | xargs cat", "ls | xargs rm"):
+            add(
+                mk(
+                    f"shell access scope {ename}: {command}",
+                    bash(command),
+                    envelopes=env_(read, write),
+                    tags=["shell_access"],
+                )
+            )
+
+
+def opaque_cases(add: Any) -> None:
+    """An enforced invariant or postcondition nothing can check is a
+    violation at every stakes (SG-8). A dialect word stays audited below
+    strict stakes. Enforce mode enforces the words with no pin (SG-9)."""
+    from opendaisugi.dialect import DIALECT_HASH
+
+    items: dict[str, dict[str, Any]] = {
+        "no_side_effects": {
+            "invariants": [{"type": "no_side_effects", "description": "d"}],
+        },
+        "no_side_effects off": {
+            "invariants": [{"type": "no_side_effects", "description": "d", "enforce": False}],
+        },
+        "file_unchanged src": {
+            "invariants": [
+                {"type": "file_unchanged", "description": "d", "target": "/work/src/**"}
+            ],
+        },
+        "tests_pass": {
+            "postconditions": [{"type": "tests_pass", "description": "d"}],
+        },
+        "exit_code": {
+            "postconditions": [{"type": "exit_code", "description": "d", "expected": 0}],
+        },
+    }
+    calls = {
+        "write src": payload("Write", {"file_path": "/work/src/a.py", "content": "x"}),
+        "bash ls": bash("ls"),
+    }
+    for stakes in ("low", "medium", "high"):
+        for iname, extra in items.items():
+            for cname, call in calls.items():
+                for mode in ("audit", "enforce"):
+                    add(
+                        mk(
+                            f"opaque {stakes} {iname} {cname} {mode}",
+                            call,
+                            mode=mode,
+                            envelopes={"default": envelope(stakes=stakes, **extra)},
+                            tags=["opaque"],
+                        )
+                    )
+    word = items["file_unchanged src"]
+    for cname in ("write src", "write out", "bash ls", "bash redirect src"):
+        call = (
+            calls[cname]
+            if cname in calls
+            else payload("Write", {"file_path": "/work/out/a.txt", "content": "x"})
+            if cname == "write out"
+            else bash("echo x > /work/src/a.py")
+        )
+        add(
+            mk(
+                f"opaque enforce mode enforces the word {cname}",
+                call,
+                mode=None,
+                config="warden_mode: enforce\n",
+                envelopes={"default": envelope(**word)},
+                tags=["opaque"],
+            )
+        )
+        for mode in ("audit", "enforce"):
+            add(
+                mk(
+                    f"opaque old pin {cname} {mode}",
+                    call,
+                    mode=mode,
+                    config='dialect_enforce: "0000000000000000"\n',
+                    envelopes={"default": envelope(**word)},
+                    tags=["opaque"],
+                )
+            )
+    add(
+        mk(
+            "opaque build pin in audit mode",
+            calls["write src"],
+            mode="audit",
+            config=f"dialect_enforce: {DIALECT_HASH}\n",
+            envelopes={"default": envelope(**word)},
+            tags=["opaque"],
+        )
+    )
+
+
+def dialect_followup_cases(add: Any) -> None:
+    """Operand writes, and a word placed from the call's cwd: a relative
+    target joins the cwd and relative writes resolve against it."""
+    writers = ["cp", "mv", "sed", "rm", "tee", "touch", "dd", "xargs", "sh"]
+
+    def env(*invariants: Any) -> dict[str, Any]:
+        return envelope(
+            invariants=list(invariants),
+            file_read=["**"],
+            file_write=["**"],
+            shell_allowlist=[*ALLOW, *writers],
+            shell_allow_decomposition=True,
+        )
+
+    def word(type_name: str, target: str | None = None) -> dict[str, Any]:
+        d: dict[str, Any] = {"type": type_name, "description": "d"}
+        if target is not None:
+            d["target"] = target
+        return d
+
+    calls = {
+        "write abs src": payload("Write", {"file_path": "/work/src/a.py", "content": "x"}),
+        "write abs out": payload("Write", {"file_path": "/work/out/a.py", "content": "x"}),
+        "redirect rel src": bash("echo x > src/a.py"),
+        "redirect up": bash("echo x > ../work/src/a.py", cwd="/work/sub"),
+        "cp into src": bash("cp a.py src/"),
+        "cp abs": bash("cp /work/a.py /work/src/a.py"),
+        "mv out of src": bash("mv src/a.py out/"),
+        "sed in place": bash("sed -i 's/a/b/' src/a.py"),
+        "sed no i": bash("sed 's/a/b/' src/a.py"),
+        "rm rf src": bash("rm -rf /work/src"),
+        "tee src": bash("echo x | tee -a src/t.py"),
+        "dd of": bash("dd if=/dev/zero of=src/z bs=1 count=1"),
+        "xargs rm": bash("ls | xargs rm"),
+        "cd then touch": bash("cd out && touch a.py"),
+        "touch home": bash("touch ~/a.py"),
+        "touch bad flag": bash("touch --nope out/a"),
+        "no cwd": bash("echo x > src/a.py", cwd=None),
+        "relative cwd": bash("echo x > src/a.py", cwd="work"),
+        "glob cwd": bash("echo x > src/a.py", cwd="/wo*rk"),
+        "dotted cwd": bash("echo x > src/a.py", cwd="/work/./x/.."),
+    }
+    words = {
+        "rel src": word("file_unchanged", "src/**"),
+        "rel py": word("read_only", "*.py"),
+        "abs src": word("keep_unchanged", "/work/src/**"),
+        "default": word("no_file_writes"),
+        "dot dot": word("keep_unchanged", "src/../a.py"),
+        "dot star": word("keep_unchanged", "./**"),
+    }
+    for wname, inv in words.items():
+        for cname, call in calls.items():
+            add(
+                mk(
+                    f"dialect placed {wname} {cname}",
+                    call,
+                    envelopes={"default": env(inv)},
+                    tags=["dialect"],
+                )
+            )
+    from opendaisugi.dialect import DIALECT_HASH
+
+    for cname in ("cp into src", "redirect rel src", "write abs out"):
+        add(
+            mk(
+                f"dialect placed enforced {cname}",
+                calls[cname],
+                envelopes={"default": env(words["rel src"])},
+                config=f"dialect_enforce: {DIALECT_HASH}\n",
+                tags=["dialect"],
+            )
+        )
+    # An operand writer at the end of a chain near the recursion limit.
+    for n in (966, 972, 976, 978):
+        cmd = " && ".join(["ls"] * n) + " && rm /work/src/z"
+        add(
+            mk(
+                f"dialect chain {n} operand",
+                bash(cmd),
+                envelopes={"default": env(words["abs src"])},
+                tags=["dialect", "depth"],
+            )
+        )
+
+
+def daisugi_config_cases(add: Any) -> None:
+    """The hard-deny rule on daisugi's own config.yaml: the one beside the
+    warden root and the default one under HOME."""
+    cfg = "{ROOT}/data/config.yaml"
+    default = f"{FAKE_HOME}/.opendaisugi/config.yaml"
+    allow = envelope(
+        file_read=["/**"],
+        file_write=["/**"],
+        shell_allowlist=[*ALLOW, "sed", "rm", "cp", "tee", "mv"],
+        shell_allow_decomposition=True,
+        mcp_allowlist=["fs/write_file"],
+    )
+    calls = {
+        "write": payload("Write", {"file_path": cfg, "content": "warden_mode: audit\n"}),
+        "write default": payload("Write", {"file_path": default, "content": "x"}),
+        "edit": payload("Edit", {"file_path": cfg, "old_string": "a", "new_string": "b"}),
+        "sed": bash(f"sed -i '/dialect_enforce/d' {cfg}"),
+        "redirect": bash(f"echo 'warden_mode: audit' > {cfg}"),
+        "tilde": bash("rm -f ~/.opendaisugi/config.yaml"),
+        "home var": bash("tee $HOME/.opendaisugi/config.yaml < /dev/null"),
+        "cd rm": bash("cd {ROOT}/data && rm config.yaml"),
+        "relative": bash("echo x > config.yaml", cwd="{ROOT}/data"),
+        "cat": bash(f"cat {cfg}"),
+        "mcp": payload("mcp__fs__write_file", {"path": cfg}),
+        "read": payload("Read", {"file_path": cfg}),
+        "other config": payload("Write", {"file_path": "/work/config.yaml", "content": "x"}),
+        "mv dir": bash("mv {ROOT}/data /tmp/x"),
+        "cd up bare": bash("cd .. && cat config.yaml"),
+        "no cwd bare": bash("cat config.yaml", cwd=None),
+        "cd up src": bash("cd .. && cat src/config.yaml"),
+        "cd up dotdir": bash("cd .. && rm .opendaisugi/config.yaml"),
+        "cd up data dir": bash("cd .. && rm data/config.yaml"),
+        "mcp text": payload("mcp__fs__write_file", {"body": "fix the config.yaml parser"}),
+    }
+    for cname, call in calls.items():
+        for mode in ("enforce", "audit"):
+            add(
+                mk(
+                    f"daisugi config {cname} {mode}",
+                    call,
+                    mode=mode,
+                    envelopes={"default": allow},
+                    tags=["floor", "config"],
+                )
+            )
+
+
+def warden_state_cases(add: Any) -> None:
+    """The hard-deny rule on the warden's own state (SW-17): every write
+    form into the warden root and the data dir's state paths, the reads and
+    the near misses that stay allowed, and the long lines."""
+    g = "{ROOT}/data/warden"
+    data = "{ROOT}/data"
+    allow = envelope(
+        file_read=["/**"],
+        file_write=["/**"],
+        shell_allowlist=[
+            *ALLOW,
+            "chmod",
+            "cp",
+            "curl",
+            "dd",
+            "find",
+            "install",
+            "jq",
+            "ln",
+            "mkdir",
+            "mv",
+            "python",
+            "rm",
+            "rsync",
+            "sed",
+            "sh",
+            "tail",
+            "tar",
+            "tee",
+            "touch",
+            "truncate",
+        ],
+        shell_allow_decomposition=True,
+        mcp_allowlist=["fs/*"],
+    )
+    denied = {
+        "write marker": payload("Write", {"file_path": f"{g}/DISARMED", "content": "x"}),
+        "write envelope": payload(
+            "Write", {"file_path": f"{g}/envelopes/default.json", "content": "{}"}
+        ),
+        "write graft": payload("Write", {"file_path": f"{g}/grafts/g.json", "content": "{}"}),
+        "write label": payload(
+            "Write", {"file_path": f"{data}/router/labels.jsonl", "content": "{}"}
+        ),
+        "write default tree": payload(
+            "Write", {"file_path": f"{FAKE_HOME}/.opendaisugi/tree/ledger.jsonl", "content": "x"}
+        ),
+        "write dotdot": payload(
+            "Write", {"file_path": f"{data}/x/../warden/DISARMED", "content": "x"}
+        ),
+        "write symlinked parent": payload(
+            "Write", {"file_path": "{ROOT}/work/g/DISARMED", "content": "x"}
+        ),
+        "edit envelope": payload(
+            "Edit",
+            {"file_path": f"{g}/envelopes/default.json", "old_string": "a", "new_string": "b"},
+        ),
+        "multiedit envelope": payload(
+            "MultiEdit", {"file_path": f"{g}/envelopes/default.json", "edits": []}
+        ),
+        "apply_patch": payload(
+            "mcp__opencode__apply_patch",
+            {"patchText": f"*** Begin Patch\n*** Add File: {g}/DISARMED\n+x\n*** End Patch"},
+        ),
+        "touch": bash(f"touch {g}/DISARMED"),
+        "redirect": bash(f"echo x > {g}/DISARMED"),
+        "append label": bash(f"echo '{{}}' >> {data}/router/labels.jsonl"),
+        "mkdir": bash(f"mkdir -p {g}/grafts"),
+        "rm": bash(f"rm -f {g}/envelopes/default.json"),
+        "mv dest": bash(f"mv /work/e.json {g}/envelopes/default.json"),
+        "mv source": bash(f"mv {g}/envelopes/default.json /work/e.json"),
+        "cp dest": bash(f"cp /work/e.json {g}/envelopes/default.json"),
+        "cp into dir": bash(f"cp /work/e.json {g}/envelopes/"),
+        "cp link": bash(f"cp -l {g}/envelopes/default.json /work/x"),
+        "ln": bash(f"ln {g}/envelopes/default.json /work/x"),
+        "ln -s dest": bash(f"ln -s /work/e.json {g}/envelopes/default.json"),
+        "ln -s then write": bash(f"ln -s {g}/DISARMED /work/x && echo x > /work/x"),
+        "chmod": bash(f"chmod 777 {g}/envelopes/default.json"),
+        "truncate": bash(f"truncate -s 0 {data}/router/delegations.jsonl"),
+        "tee": bash(f"tee {g}/DISARMED < /dev/null"),
+        "dd": bash(f"dd if=/dev/zero of={g}/DISARMED count=0"),
+        "install": bash(f"install -m 600 /work/e.json {g}/envelopes/default.json"),
+        "rsync": bash(f"rsync -a /work/grafts/ {g}/grafts/"),
+        "sed -i": bash(f"sed -i 's/enforce/audit/' {g}/envelopes/default.json"),
+        "git": bash(f"git -C {g} checkout ."),
+        "tar": bash(f"tar -xf /work/x.tar -C {g}"),
+        "python": bash(f"python -c \"open('{g}/DISARMED','w')\""),
+        "sh -c": bash(f"sh -c 'touch {g}/DISARMED'"),
+        "curl": bash(f"curl -o {g}/grafts/g.json http://example.com/g"),
+        "find delete": bash(f"find {g} -name '*.json' -delete"),
+        "tilde": bash("touch ~/.opendaisugi/warden/DISARMED"),
+        "home var": bash("touch $HOME/.opendaisugi/warden/DISARMED"),
+        "variable": bash(f'cp /work/x "{data}/$NAME"'),
+        "glob": bash(f"cp /work/x {data}/*/"),
+        "substitution": bash(f"cp /work/x {data}/$(cat /work/n)"),
+        "cd then write": bash(f"cd {g} && touch DISARMED"),
+        "cd data rm": bash(f"cd {data} && rm -r warden"),
+        "relative in root": bash("touch DISARMED", cwd=g),
+        "no cwd": bash(f"ls {data} && touch DISARMED", cwd=None),
+        "journal": bash(f"touch {data}/journal/traces/x.yaml"),
+        "router": bash(f"echo x > {data}/router/turns.jsonl"),
+        "weave": bash(f"echo x > {data}/weave/run.jsonl"),
+        "envelope cache": bash(f"echo x > {data}/envelope_cache.db"),
+        "tree ledger": bash(f"echo x > {data}/tree/ledger.jsonl"),
+        "rm data dir": bash(f"rm -rf {data}"),
+        "mv data dir": bash(f"mv {data} /work/old"),
+        "chmod -R data dir": bash(f"chmod -R 777 {data}"),
+        "mcp write": payload("mcp__fs__write_file", {"path": f"{g}/DISARMED", "content": "x"}),
+        "mcp cwd": payload("mcp__fs__write_file", {"path": "DISARMED"}, cwd=g),
+    }
+    allowed = {
+        "read": payload("Read", {"file_path": f"{g}/envelopes/default.json"}),
+        "cat": bash(f"cat {g}/envelopes/default.json"),
+        "ls": bash(f"ls -la {g}"),
+        "tail jq": bash(f"tail -n 5 {data}/router/labels.jsonl | jq .outcome"),
+        "head to work": bash(f"head {g}/audit/s1.jsonl > /work/out.txt"),
+        "find": bash(f"find {g} -name '*.json'"),
+        "cp out": bash(f"cp {g}/envelopes/default.json /work/env.json"),
+        "ls from root": bash("ls envelopes", cwd=g),
+        "beside state": bash(f"touch {data}/notes.txt"),
+        "sibling touch": bash("touch {ROOT}/data2/DISARMED"),
+        "sibling redirect": bash("echo x > {ROOT}/data2/warden/DISARMED"),
+        "sibling git": bash("git -C {ROOT}/data2 status"),
+        "sibling write": payload(
+            "Write", {"file_path": "{ROOT}/data2/warden/DISARMED", "content": "x"}
+        ),
+        "unnamed variable": bash('cp /work/x "/work/$NAME"'),
+        "unnamed git": bash("git -C /work status"),
+        "mcp elsewhere": payload("mcp__fs__write_file", {"path": "/work/x", "content": "x"}),
+    }
+    files = {"work/g": {"symlink": g}}
+    for group in (denied, allowed):
+        for cname, call in group.items():
+            for mode in ("enforce", "audit"):
+                add(
+                    mk(
+                        f"warden state {cname} {mode}",
+                        call,
+                        mode=mode,
+                        envelopes={"default": allow},
+                        files=files if cname == "write symlinked parent" else None,
+                        tags=["state"],
+                    )
+                )
+    add(
+        mk(
+            "warden state ask",
+            bash(f"touch {g}/DISARMED", tool_use_id="tu-1"),
+            envelopes={"default": allow},
+            extra_args=["--ask", "--ask-timeout", "10"],
+            operator={
+                "tool_use_id": "tu-1",
+                "answer": {"decision": "allow", "reason": "ok", "updatedInput": None},
+            },
+            tags=["state", "ask"],
+        )
+    )
+    # Long lines: the rule decomposes no deeper than the floor rule, and
+    # an sh -c payload is decomposed a few frames deeper.
+    for n in (960, 975, 977, 978, 979):
+        cmd = " && ".join(["ls"] * n) + f" && touch {g}/DISARMED"
+        add(
+            mk(
+                f"warden state chain {n}",
+                bash(cmd),
+                envelopes={"default": allow},
+                tags=["state", "depth"],
+            )
+        )
+    for n in (960, 970, 972, 973, 974, 975, 976, 977, 978):
+        inner = " && ".join(["ls"] * n) + f" && touch {g}/DISARMED"
+        add(
+            mk(
+                f"warden state sh chain {n}",
+                bash(f"sh -c '{inner}'"),
+                envelopes={"default": allow},
+                tags=["state", "depth"],
+            )
+        )
+
+
+def graft_cases(add: Any) -> None:
+    """The deny_redirect graft on a whole read of a large
+    file, and the warden's check of the spawn MCP call. The files are real
+    files under the run's directory; the rule and the local worker are data
+    in the warden root and the data dir."""
+    work = "{ROOT}/work"
+    big = f"{work}/big.py"
+    rule = {
+        "id": "big-read",
+        "version": 1,
+        "shape": "deny_redirect",
+        "state": "active",
+        "match": {"tool": "Read", "file_lines_over": 5},
+    }
+    local = {"model": "qwen", "base_url": "http://127.0.0.1:9/v1"}
+    remote = {"model": "qwen", "base_url": "http://worker.invalid:8080/v1"}
+    six = {"text": "".join(f"line {i}\n" for i in range(6))}
+    five = {"text": "".join(f"line {i}\n" for i in range(5))}
+    files = {
+        "work/big.py": six,
+        "work/five.py": five,
+        "work/nonl.py": {"text": "a\nb\nc\nd\ne\nf"},
+        "work/crlf.py": {"text": "a\r\nb\r\nc\r\nd\r\ne\r\nf\r\n"},
+        "work/cr.py": {"text": "a\rb\rc\rd\re\rf\rg\r"},
+        "work/nul.bin": {"hex": ("610a" * 6) + "00"},
+        "work/latin.txt": {"hex": ("610a" * 6) + "e9"},
+        "work/huge.txt": {"repeat": "x\n", "count": 262145},
+        "work/cap.txt": {"repeat": "x\n", "count": 262144},
+        "work/fifo": {"fifo": True},
+        "work/sub": {"dir": True},
+        "work/link.py": {"symlink": big},
+        "work/utf8.py": {"text": "é\n" * 6},
+    }
+
+    def env_(**perms: Any) -> dict[str, Any]:
+        p = {
+            "file_read": [f"{work}/**"],
+            "file_write": [f"{work}/**"],
+            "mcp_allowlist": ["opendaisugi/spawn"],
+            **perms,
+        }
+        return envelope(**p)
+
+    base = {"default": env_()}
+
+    def read(path: str, **inp: Any) -> str:
+        return payload("Read", {"file_path": path, **inp}, cwd=work)
+
+    def g(name: str, stdin: str, *, mode: str = "enforce", **kw: Any) -> None:
+        kw.setdefault("envelopes", base)
+        kw.setdefault("files", files)
+        kw.setdefault("grafts", {"big-read.json": rule})
+        kw.setdefault("tier1", local)
+        add(mk(name, stdin, mode=mode, tags=["graft"], **kw))
+
+    # GR-R-1: a rule is read only through a grafts/ that is no link, so the
+    # same read passes when the directory is a link.
+    g("graft dir symlink", read(big), links={"grafts": True})
+    for mode in ("enforce", "audit"):
+        g(f"graft big read ({mode})", read(big), mode=mode)
+        g(f"graft small read ({mode})", read(f"{work}/five.py"), mode=mode)
+        g(f"graft no worker ({mode})", read(big), mode=mode, tier1=None)
+        g(f"graft outside read ({mode})", read("/etc/passwd"), mode=mode)
+        g(
+            f"graft audit rule ({mode})",
+            read(big),
+            mode=mode,
+            grafts={"r.json": {**rule, "state": "audit"}},
+        )
+        g(
+            f"graft spawn call ({mode})",
+            payload("mcp__opendaisugi__spawn", {"path": big, "question": "q"}),
+            mode=mode,
+        )
+        g(
+            f"graft spawn call outside ({mode})",
+            payload("mcp__opendaisugi__spawn", {"path": "/etc/passwd", "question": "q"}),
+            mode=mode,
+        )
+    # The limit escape: an integer limit at or under the threshold passes.
+    for label, inp in {
+        "limit 5": {"limit": 5},
+        "limit 1": {"limit": 1},
+        "limit 6": {"limit": 6},
+        "limit 0": {"limit": 0},
+        "limit -3": {"limit": -3},
+        "limit true": {"limit": True},
+        "limit string": {"limit": "5"},
+        "limit float": {"limit": 5.0},
+        "limit null": {"limit": None},
+        "limit huge": {"limit": 10**30},
+        "offset only": {"offset": 3},
+    }.items():
+        g(f"graft {label}", read(big, **inp))
+    # How lines are counted, and what the spawn cannot read.
+    for label, rel in {
+        "no final newline": "nonl.py",
+        "crlf": "crlf.py",
+        "cr only": "cr.py",
+        "nul byte": "nul.bin",
+        "not utf8": "latin.txt",
+        "over the cap": "huge.txt",
+        "at the cap": "cap.txt",
+        "fifo": "fifo",
+        "directory": "sub",
+        "symlink": "link.py",
+        "utf8": "utf8.py",
+        "missing": "missing.py",
+    }.items():
+        g(f"graft file {label}", read(f"{work}/{rel}"))
+    for mode in ("enforce", "audit"):
+        g(
+            f"graft spawn not allowed ({mode})",
+            read(big),
+            mode=mode,
+            envelopes={"default": env_(mcp_allowlist=[])},
+        )
+    g(
+        "graft spawn glob allowed",
+        read(big),
+        envelopes={"default": env_(mcp_allowlist=["opendaisugi/*"])},
+    )
+    # A path a hard-deny rule refuses in an MCP argument but not as a Read:
+    # the spawn call is the stricter of the two.
+    open_env = {"default": env_(file_read=["/**"])}
+    cfg_path = "{ROOT}/data/config.yaml"
+    g("graft config read", read(cfg_path), envelopes=open_env, config="warden_mode: audit\n")
+    g(
+        "graft spawn call config",
+        payload("mcp__opendaisugi__spawn", {"path": cfg_path}),
+        envelopes=open_env,
+        config="warden_mode: audit\n",
+    )
+    g("graft relative path", payload("Read", {"file_path": "big.py"}, cwd=work))
+    g("graft relative path no cwd", payload("Read", {"file_path": "big.py"}, cwd=None))
+    g("graft dotdot path", read(f"{work}/sub/../big.py"))
+    g("graft no rule", read(big), grafts=None)
+    g("graft grep", payload("Grep", {"pattern": "line", "path": big}, cwd=work))
+    g("graft pi read", payload("read", {"path": big}, cwd=work), fmt="pi")
+    g("graft codex format", read(big), fmt="codex")
+    g("graft hermes format", read(big), fmt="hermes")
+    g("graft openclaw format", read(big), fmt="openclaw")
+    g("graft opencode format", read(big), fmt="opencode")
+    g("graft disarmed", read(big), disarmed=True)
+    g("graft pinned session", read(big), pin="s1", envelopes={"s1": env_()})
+    # The rule files.
+    for label, grafts in {
+        "retired": {"r.json": {**rule, "state": "retired"}},
+        "trial": {"r.json": {**rule, "state": "trial"}},
+        "threshold 3": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": 3}}},
+        "threshold 6": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": 6}}},
+        "default threshold": {"r.json": {**rule, "match": {"tool": "Read"}}},
+        "threshold 0": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": 0}}},
+        "threshold bool": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": True}}},
+        "threshold float": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": 5.0}}},
+        "match grep": {"r.json": {**rule, "match": {"tool": "Grep"}}},
+        "shape rewrite": {"r.json": {**rule, "shape": "shell_rewrite"}},
+        "no id": {"r.json": {k: v for k, v in rule.items() if k != "id"}},
+        "bad id": {"r.json": {**rule, "id": "../x"}},
+        "id newline": {"r.json": {**rule, "id": "big\n"}},
+        "id long": {"r.json": {**rule, "id": "a" * 65}},
+        "big version": {"r.json": {**rule, "version": 10**30}},
+        "big threshold": {"r.json": {**rule, "match": {"tool": "Read", "file_lines_over": 10**30}}},
+        "directory named json": {"d.json/x": {}},
+        "version 0": {"r.json": {**rule, "version": 0}},
+        "state not string": {"r.json": {**rule, "state": 1}},
+        "redirect other": {"r.json": {**rule, "redirect": {"tool": "recall"}}},
+        "worker choose": {"r.json": {**rule, "worker": {"choose": "fixed"}}},
+        "allow remote not bool": {"r.json": {**rule, "worker": {"allow_remote": "yes"}}},
+        "not an object": {"r.json": [rule]},
+        "not json": {"r.json": "{"},
+        "bom": {"r.json": "\ufeff" + json.dumps(rule)},
+        "not json name": {"r.txt": rule},
+        "first by name": {
+            "a.json": {**rule, "id": "a", "state": "retired"},
+            "b.json": {**rule, "id": "b", "match": {"tool": "Read", "file_lines_over": 3}},
+            "c.json": {**rule, "id": "c"},
+        },
+        "unknown keys": {"r.json": {**rule, "note": "x", "match": {"tool": "Read", "extra": 1}}},
+    }.items():
+        g(f"graft rule {label}", read(big), grafts=grafts)
+    # The router's worker.
+    for label, t1 in {
+        "tier1 bare model no url": {"model": "qwen"},
+        "tier1 ollama": {"model": "ollama/qwen"},
+        "tier1 localhost": {"model": "qwen", "base_url": "http://localhost:9/v1"},
+        "tier1 ipv6": {"model": "qwen", "base_url": "http://[::1]:9/v1"},
+        "tier1 127 other": {"model": "qwen", "base_url": "http://127.1.2.3:9"},
+        "tier1 leading zero": {"model": "qwen", "base_url": "http://127.0.0.01:9"},
+        "tier1 user in url": {"model": "qwen", "base_url": "http://u:p@LOCALHOST:9"},
+        "tier1 remote": remote,
+        "tier1 anthropic no key": {"model": "anthropic/claude-haiku-4-5"},
+        "tier1 claude no key": {"model": "claude-haiku-4-5", "base_url": "http://127.0.0.1:9"},
+        "tier1 no wire": {"model": "mistral/x"},
+        "tier1 empty model": {"model": ""},
+        "tier1 model not string": {"model": 5},
+        "tier1 url not string": {"model": "ollama/qwen", "base_url": 5},
+        "tier1 not object": [local],
+        "tier1 not json": "{",
+        "tier1 no host": {"model": "qwen", "base_url": "http:///v1"},
+    }.items():
+        g(f"graft {label}", read(big), tier1=t1)
+    g(
+        "graft tier1 anthropic key",
+        read(big),
+        tier1={"model": "anthropic/claude-haiku-4-5"},
+        env={"ANTHROPIC_API_KEY": "sk-test-0000000000000000"},
+    )
+    g(
+        "graft tier1 ollama env base",
+        read(big),
+        tier1={"model": "ollama/qwen"},
+        env={"OLLAMA_API_BASE": "http://gpu.invalid:11434"},
+    )
+    remote_rule = {"r.json": {**rule, "worker": {"allow_remote": True}}}
+    granted = {"default": env_(network=True, network_hosts=["worker.invalid"])}
+    for label, kw in {
+        "remote no allow": {},
+        "remote allowed no grant": {"grafts": remote_rule},
+        "remote allowed any host": {
+            "grafts": remote_rule,
+            "envelopes": {"default": env_(network=True)},
+        },
+        "remote allowed hosts no network": {
+            "grafts": remote_rule,
+            "envelopes": {"default": env_(network_hosts=["worker.invalid"])},
+        },
+        "remote granted": {"grafts": remote_rule, "envelopes": granted},
+        "remote granted upper": {
+            "grafts": remote_rule,
+            "envelopes": {"default": env_(network=True, network_hosts=["WORKER.invalid"])},
+        },
+    }.items():
+        g(f"graft {label}", read(big), tier1=remote, **kw)
+        g(
+            f"graft spawn call {label}",
+            payload("mcp__opendaisugi__spawn", {"path": big, "question": "q"}),
+            tier1=remote,
+            **kw,
+        )
+    physical = {"default": env_(stakes="physical")}
+    g("graft physical", read(big), envelopes=physical)
+    # The spawn MCP call: its read, its path, and its worker.
+    dg = "mcp__opendaisugi__spawn"
+    for label, args in {
+        "relative": {"path": "big.py"},
+        "tilde": {"path": "~/big.py"},
+        "var": {"path": "$HOME/big.py"},
+        "no path": {"question": "q"},
+        "path not string": {"path": 5},
+        "path null": {"path": None},
+        "dotdot out": {"path": f"{work}/../etc/passwd"},
+        "dotdot in": {"path": f"{work}/sub/../big.py"},
+        "double slash": {"path": "//etc/passwd"},
+        "missing file": {"path": f"{work}/missing.py"},
+        "other key": {"file_path": big},
+    }.items():
+        g(f"graft spawn call {label}", payload(dg, args, cwd=work))
+    # A graft trial (SW-13): the session's arm is recorded; only the graft
+    # arm is redirected. s0..s9 fall in both arms for seed 5.
+    trial_rule = {**rule, "state": "trial", "trial": {"seed": 5}}
+    for sid in ("s0", "s1", "s2", "s3", "s4", "s5"):
+        g(
+            f"graft trial {sid}",
+            payload("Read", {"file_path": big}, sid=sid, cwd=work),
+            grafts={"big-read.json": trial_rule},
+        )
+    g(
+        "graft trial audit warden",
+        payload("Read", {"file_path": big}, sid="s0", cwd=work),
+        mode="audit",
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial audit warden graft arm",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        mode="audit",
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial pinned",
+        payload("Read", {"file_path": big}, sid="s0", cwd=work),
+        pin="kid",
+        envelopes={"kid": env_()},
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial no session",
+        payload("Read", {"file_path": big}, sid=None, cwd=work),
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial unsafe session",
+        payload("Read", {"file_path": big}, sid="../x y", cwd=work),
+        grafts={"big-read.json": trial_rule},
+    )
+    g(
+        "graft trial no seed",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": {**rule, "state": "trial"}},
+    )
+    g(
+        "graft trial bad seed",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": {**rule, "state": "trial", "trial": {"seed": 1.5}}},
+    )
+    g(
+        "graft trial no worker",
+        payload("Read", {"file_path": big}, sid="s1", cwd=work),
+        grafts={"big-read.json": trial_rule},
+        tier1=None,
+    )
+    # A code write reads its target only when the target exists.
+    for label, args in {
+        "big": {"path": big},
+        "new": {"path": f"{work}/sub/new.py"},
+        "new outside": {"path": "/elsewhere/new.py"},
+        "outside exists": {"path": "/etc/passwd"},
+        "dir": {"path": f"{work}/sub"},
+        "link": {"path": f"{work}/link.py"},
+        "fifo": {"path": f"{work}/fifo"},
+        "dotdot new outside": {"path": f"{work}/../elsewhere/new.py"},
+        "relative": {"path": "new.py"},
+    }.items():
+        g(
+            f"graft spawn code write {label}",
+            payload(dg, {**args, "question": "q", "mode": "code_write"}, cwd=work),
+        )
+    for label, mode_value in {"mode null": None, "mode int": 1, "mode other": "edit"}.items():
+        g(
+            f"graft spawn code write {label}",
+            payload(dg, {"path": "/elsewhere/new.py", "question": "q", "mode": mode_value}),
+        )
+    for label, kw in {
+        "remote no grant": {"grafts": remote_rule},
+        "remote granted": {"grafts": remote_rule, "envelopes": granted},
+    }.items():
+        g(
+            f"graft spawn code write new {label}",
+            payload(dg, {"path": "/elsewhere/new.py", "question": "q", "mode": "code_write"}),
+            tier1=remote,
+            **kw,
+        )
+    g(
+        "graft spawn code write physical",
+        payload(dg, {"path": "/elsewhere/new.py", "mode": "code_write"}),
+        envelopes=physical,
+    )
+    g("graft spawn call physical", payload(dg, {"path": big}), envelopes=physical)
+    g(
+        "graft spawn call not allowed",
+        payload(dg, {"path": big}),
+        envelopes={"default": env_(mcp_allowlist=[])},
+    )
+    g("graft spawn call no rule no tier1", payload(dg, {"path": big}), grafts=None, tier1=None)
+    g(
+        "graft spawn other server",
+        payload("mcp__other__delegate", {"path": "/etc/passwd"}),
+        envelopes={"default": env_(mcp_allowlist=["other/spawn"])},
+    )
+    g(
+        "graft spawn call pi",
+        payload("spawn", {"path": "/etc/passwd"}),
+        fmt="pi",
+        envelopes={"default": env_(mcp_allowlist=["pi/spawn"])},
+    )
+    g(
+        "graft spawn call audit outside dotdot",
+        payload(dg, {"path": f"{work}/../etc/passwd"}),
+        mode="audit",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Writing the fixture
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--out", type=Path, default=FIXTURE_DIR)
+    ap.add_argument(
+        "--check", action="store_true", help="run every case twice and fail on any difference"
+    )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse the answers a run cut short saved; run only the rest",
+    )
+    ap.add_argument(
+        "--only",
+        default="",
+        help="run only the cases whose name contains this; keep every other "
+        "case's line from the fixture as it is",
+    )
+    args = ap.parse_args()
+    cases = build_cases()
+    names = [c["name"] for c in cases]
+    dup = {n for n in names if names.count(n) > 1}
+    if dup:
+        raise SystemExit(f"duplicate case names: {sorted(dup)}")
+    kept: list[dict[str, Any]] = []
+    if args.only:
+        wanted = set(names)
+        fixture = args.out / "cases.jsonl"
+        if fixture.exists():
+            for ln in fixture.read_text(encoding="utf-8").splitlines():
+                old = json.loads(ln)
+                if args.only not in old["name"] and old["name"] in wanted:
+                    kept.append(old)
+        cases = [c for c in cases if args.only in c["name"]]
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    out_lines = []
+    cmd = python_warden_cmd()
+    # Each answer is saved as it is made, so a run cut short can go on
+    # with --resume. A finished run deletes the file.
+    cache_path = SCRATCH / "gen-cache.jsonl"
+    cached: dict[str, Any] = {}
+    if args.resume and cache_path.exists():
+        for ln in cache_path.read_text(encoding="utf-8").splitlines():
+            if ln.strip():
+                rec = json.loads(ln)
+                cached[rec["key"]] = rec["obs"]
+    elif cache_path.exists():
+        cache_path.unlink()
+    for i, c in enumerate(cases):
+        work = fixed_root(SCRATCH, f"g/{i:04d}")
+        key = case_id(c)
+        if key in cached and not args.check:
+            obs = cached[key]
+        else:
+            obs, _ = run_case(c, cmd, work)
+            with cache_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"key": key, "obs": obs}) + "\n")
+        if args.check:
+            again, _ = run_case(c, cmd, work)
+            if again != obs:
+                raise SystemExit(f"case {c['name']!r} is not deterministic")
+        body = dict(c)
+        body["expect"] = {"summary": summary(obs), **obs}
+        body["id"] = case_id(body)
+        out_lines.append(body)
+        print(
+            f"{i + 1:4d}/{len(cases)} {summary(obs)['host_verdict']:5s} exit={obs['exit']} {c['name']}",
+            flush=True,
+        )
+    out_lines.extend(kept)
+    out_lines.sort(key=lambda c: c["id"])
+    args.out.mkdir(parents=True, exist_ok=True)
+    path = args.out / "cases.jsonl"
+    data = "".join(canonical_json(c) + "\n" for c in out_lines).encode("utf-8")
+    path.write_bytes(data)
+    manifest = {
+        "v": CASE_VERSION,
+        "count": len(out_lines),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    (args.out / "cases.manifest.json").write_text(
+        json.dumps(manifest, indent=1) + "\n", encoding="utf-8"
+    )
+    print(f"wrote {len(out_lines)} cases to {path}")
+    shutil.rmtree(SCRATCH / "g", ignore_errors=True)
+    cache_path.unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    raise SystemExit(main())

@@ -4,8 +4,8 @@
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
 
 use super::pynum::py_float;
 

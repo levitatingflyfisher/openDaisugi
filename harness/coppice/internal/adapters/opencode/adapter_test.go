@@ -174,7 +174,7 @@ func startFake(t *testing.T, sse string, env map[string]string, opts pane.StartO
 		t.Fatal(err)
 	}
 	cfg := filepath.Join(dir, "cfg")
-	plugin := filepath.Join(cfg, "opencode", "plugins", "daisugi-gate.ts")
+	plugin := filepath.Join(cfg, "opencode", "plugins", "daisugi-warden.ts")
 	if err := os.MkdirAll(filepath.Dir(plugin), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +533,7 @@ func TestAChildSessionsPermissionBlocksThePaneAndIsAnswerable(t *testing.T) {
 	findRequest(t, run, "POST", "/permission/per_1/reply")
 }
 
-func TestStartRefusesWhenTheGatePluginIsMissing(t *testing.T) {
+func TestStartRefusesWhenTheWardenPluginIsMissing(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "empty-cfg")
 	_, _, err := startFake(t, "", map[string]string{"XDG_CONFIG_HOME": cfg}, pane.StartOpts{})
 	if err == nil || !strings.Contains(err.Error(), "daisugi install --harness opencode") {
@@ -541,18 +541,18 @@ func TestStartRefusesWhenTheGatePluginIsMissing(t *testing.T) {
 	}
 }
 
-func TestGatePluginPathFollowsTheServersEnvironment(t *testing.T) {
+func TestWardenPluginPathFollowsTheServersEnvironment(t *testing.T) {
 	for env, want := range map[string]string{
-		"HOME=/h":                        "/h/.config/opencode/plugins/daisugi-gate.ts",
-		"HOME=/h\x00XDG_CONFIG_HOME=/x":  "/x/opencode/plugins/daisugi-gate.ts",
-		"HOME=/h\x00XDG_CONFIG_HOME=rel": "/h/.config/opencode/plugins/daisugi-gate.ts",
+		"HOME=/h":                        "/h/.config/opencode/plugins/daisugi-warden.ts",
+		"HOME=/h\x00XDG_CONFIG_HOME=/x":  "/x/opencode/plugins/daisugi-warden.ts",
+		"HOME=/h\x00XDG_CONFIG_HOME=rel": "/h/.config/opencode/plugins/daisugi-warden.ts",
 	} {
-		got, err := gatePluginPath(strings.Split(env, "\x00"))
+		got, err := wardenPluginPath(strings.Split(env, "\x00"))
 		if err != nil || got != want {
-			t.Fatalf("gatePluginPath(%q) = %q, %v, want %q", env, got, err, want)
+			t.Fatalf("wardenPluginPath(%q) = %q, %v, want %q", env, got, err, want)
 		}
 	}
-	if _, err := gatePluginPath([]string{"PATH=/bin"}); err == nil {
+	if _, err := wardenPluginPath([]string{"PATH=/bin"}); err == nil {
 		t.Fatal("no HOME and no XDG_CONFIG_HOME must fail")
 	}
 }
@@ -678,7 +678,7 @@ func TestTheAdapterIsAPidSource(t *testing.T) {
 }
 
 // --pure and OPENCODE_PURE make OpenCode skip every external plugin, the
-// gate plugin too. A coppice pane must never start ungated that way.
+// warden plugin too. A coppice pane must never start ungated that way.
 func TestStartRefusesThePureFlag(t *testing.T) {
 	for _, argv := range [][]string{{"--pure"}, {"--pure=true"}, {"--print-logs", "--pure"}} {
 		a := adapter{Bin: filepath.Join(t.TempDir(), "never-run")}
@@ -723,11 +723,11 @@ func TestTheServerNeverSeesOpencodePure(t *testing.T) {
 	t.Fatal("the fake did not log its env")
 }
 
-// shippedPlugin is the gate plugin as the Python package ships it.
+// shippedPlugin is the warden plugin as the Python package ships it.
 func shippedPlugin(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..",
-		"src", "opendaisugi", "harness_opencode", "plugin", "daisugi-gate.ts"))
+		"src", "opendaisugi", "harness_opencode", "plugin", "daisugi-warden.ts"))
 	if err != nil {
 		t.Fatalf("read the shipped plugin: %v", err)
 	}
@@ -738,15 +738,15 @@ func shippedPlugin(t *testing.T) []byte {
 // A change to the plugin fails here until the hash follows it.
 func TestThePinnedPluginHashIsTheShippedPlugins(t *testing.T) {
 	sum := sha256.Sum256(shippedPlugin(t))
-	if got := hex.EncodeToString(sum[:]); got != gatePluginSHA256 {
-		t.Fatalf("gatePluginSHA256 = %s, the shipped plugin hashes to %s", gatePluginSHA256, got)
+	if got := hex.EncodeToString(sum[:]); got != wardenPluginSHA256 {
+		t.Fatalf("wardenPluginSHA256 = %s, the shipped plugin hashes to %s", wardenPluginSHA256, got)
 	}
 }
 
 func TestStartRefusesAPluginThatIsNotTheShippedOne(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "cfg")
-	plugin := filepath.Join(cfg, "opencode", "plugins", "daisugi-gate.ts")
+	plugin := filepath.Join(cfg, "opencode", "plugins", "daisugi-warden.ts")
 	if err := os.MkdirAll(filepath.Dir(plugin), 0o700); err != nil {
 		t.Fatal(err)
 	}

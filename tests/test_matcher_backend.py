@@ -83,7 +83,7 @@ def test_lexical_embedder_paraphrase_clears_threshold_unrelated_pair_does_not():
     )
     assert float(np.dot(a, b)) >= _LEXICAL_THRESHOLD
 
-    c, d = emb.encode(["rebuild the android apk", "write the ADR for the gateway"])
+    c, d = emb.encode(["rebuild the android apk", "write the ADR for the router"])
     assert float(np.dot(c, d)) < _LEXICAL_THRESHOLD
 
 
@@ -637,7 +637,11 @@ def _write_success_trace(journal, task):
     )
 
     env = Envelope(
-        generated_by="test", task=task, permissions=Permission(shell=True, shell_allowlist=["find"])
+        generated_by="test",
+        task=task,
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t", task=task, steps=[ShellStep(id="s1", command="find /tmp -name '*.tmp'")]
@@ -940,7 +944,7 @@ def _int8_reachable() -> bool:
 
 
 def _pin_int8_offline(monkeypatch) -> str:
-    """Point OPENDAISUGI_INT8_MODEL at the cache dir the gate checked, so the
+    """Point OPENDAISUGI_INT8_MODEL at the cache dir the warden checked, so the
     embedder takes the offline branch. A stale cache then refuses. It never
     fetches from inside the suite. Returns the dir for a child process."""
     from opendaisugi._search import _int8_cache_dir
@@ -1075,7 +1079,7 @@ def test_int8_paraphrase_clears_threshold_unrelated_does_not(monkeypatch):
     )
     assert float(np.dot(a, b)) >= _search._INT8_THRESHOLD
 
-    c, d = model.encode(["rebuild the android apk", "write the ADR for the gateway"])
+    c, d = model.encode(["rebuild the android apk", "write the ADR for the router"])
     assert float(np.dot(c, d)) < _search._INT8_THRESHOLD
 
 

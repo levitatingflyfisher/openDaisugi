@@ -35,7 +35,7 @@ def _lexical(monkeypatch, tmp_path):
 
 
 def _seed(data_dir: Path, model: str, outcome: str, n: int, text: str = TASK) -> None:
-    store = rk.OutcomeStore(data_dir / "gateway" / "routing.db")
+    store = rk.OutcomeStore(data_dir / "router" / "routing.db")
     vec = [float(x) for x in _get_model().encode([text], convert_to_numpy=True)[0]]
     vec = rk.unpack_vec(rk.pack_vec(vec))
     for _ in range(n):
@@ -83,7 +83,7 @@ def test_route_knn_with_no_table_says_why(tmp_path) -> None:
     res = runner.invoke(app, ["route", TASK, "--data-dir", str(tmp_path), "--knn"])
     assert res.exit_code == 0, res.output
     assert "0 of 0 neighbours have a known outcome (need 3); the rules router decides" in res.output
-    assert not (tmp_path / "gateway" / "routing.db").exists()  # a read books nothing
+    assert not (tmp_path / "router" / "routing.db").exists()  # a read books nothing
 
 
 def test_route_feedback_sets_an_outcome(tmp_path) -> None:
@@ -91,7 +91,7 @@ def test_route_feedback_sets_an_outcome(tmp_path) -> None:
     res = runner.invoke(app, ["route", "feedback", "t1", "bad", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     assert "turn t1: outcome set to bad" in res.output
-    store = rk.OutcomeStore(tmp_path / "gateway" / "routing.db")
+    store = rk.OutcomeStore(tmp_path / "router" / "routing.db")
     assert store.recent(ID)[0].outcome == rk.BAD
 
 
@@ -114,12 +114,12 @@ def test_a_plain_task_with_extra_words_is_a_usage_error(tmp_path) -> None:
 
 
 def test_router_status_names_knn_and_lists_booked_turns(tmp_path) -> None:
-    save_config(Config(matcher_model="lexical", gateway_router="knn"), tmp_path / "config.yaml")
+    save_config(Config(matcher_model="lexical", routing_mode="knn"), tmp_path / "config.yaml")
     _seed(tmp_path, HAIKU, rk.GOOD, 2)
     _seed(tmp_path, OPUS, rk.BAD, 1)
     res = runner.invoke(app, ["router", "status", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
-    assert "configured router: knn" in res.output
+    assert "configured routing mode: knn" in res.output
     assert "knn outcomes: 3 booked (good 2, bad 1, unknown 0)" in res.output
     assert "    t3  claude-opus-4-8  bad" in res.output
     data = json.loads(
@@ -138,25 +138,23 @@ def test_install_accepts_knn_as_a_router(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    res = runner.invoke(app, ["install", "--dry-run", "--gateway", "--router", "knn"])
+    res = runner.invoke(app, ["install", "--dry-run", "--router", "--routing-mode", "knn"])
     assert res.exit_code == 0, res.output
-    assert "Router: set gateway_router to knn" in res.output
+    assert "Router: set routing_mode to knn" in res.output
 
 
 def test_install_still_refuses_an_unknown_router(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    res = runner.invoke(app, ["install", "--dry-run", "--gateway", "--router", "nope"])
+    res = runner.invoke(app, ["install", "--dry-run", "--router", "--routing-mode", "nope"])
     assert res.exit_code == 1
     assert "choose one of: rules, switchyard, knn, model, off" in res.output
 
 
 def test_the_module_map_has_a_knn_row(tmp_path) -> None:
     def knn_row(router: str):
-        save_config(
-            Config(matcher_model="lexical", gateway_router=router), tmp_path / "config.yaml"
-        )
+        save_config(Config(matcher_model="lexical", routing_mode=router), tmp_path / "config.yaml")
         stage = next(s for s in detect_stages(tmp_path, home=tmp_path) if s.key == "router")
         return next(m for m in stage.modules if m.name == "knn")
 

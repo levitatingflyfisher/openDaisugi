@@ -66,7 +66,7 @@ func TestTwoRacingStartsLeaveOneServerAndOneLayout(t *testing.T) {
 				results[i] = outcome{s: s, err: err}
 				return
 			}
-			// Listen before Restore: a resumed pane's gate hook dials
+			// Listen before Restore: a resumed pane's warden hook dials
 			// COPPICE_SOCK, and Listen's own backlog is what makes that
 			// connection queue instead of refuse while Restore is still
 			// running. New already registered the pane, attach and agent

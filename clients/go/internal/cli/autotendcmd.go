@@ -12,12 +12,12 @@ import (
 
 	"daisugi-verify/internal/capture"
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 func (e *Env) hook(args []string) error {
@@ -65,7 +65,7 @@ type conversion struct {
 // kind, or a capture this binary does not read the Python way, is an
 // error.
 func prepareConversion(s capture.Session, root string, decompose bool) (*conversion, error) {
-	path := gateroot.Join(gateroot.PathStr(root), s.ID+".jsonl")
+	path := wardenroot.Join(wardenroot.PathStr(root), s.ID+".jsonl")
 	c, err := convertCapture(path, s.ID, "captured session "+s.ID, decompose)
 	var pe *capture.PyErr
 	if errors.As(err, &pe) && (pe.Type == "ValueError" || pe.Type == "UnicodeDecodeError") {
@@ -120,10 +120,10 @@ func convertCapture(path, id, task string, decompose bool) (*conversion, error) 
 func (e *Env) autoTend(args []string) error {
 	const cmd = "hook auto-tend"
 	opts := []opt{
-		{names: []string{"--captures-root"}, value: true, metavar: "PATH"},
+		capturesRootOpt,
 		{names: []string{"--data-dir"}, value: true, metavar: "PATH"},
 		{names: []string{"--min-interval"}, value: true, metavar: "INTEGER", help: "Skip if last auto-tend was newer than this many seconds."},
-		{names: []string{"--force"}, help: "Ignore the min-interval gate."},
+		{names: []string{"--force"}, help: "Ignore the min-interval warden."},
 		{names: []string{"--skip-distill"}, help: "Convert captures-to-traces but don't run tend afterwards."},
 		{names: []string{"--allow-shell-decomposition"}, neg: "--no-allow-shell-decomposition",
 			help: "Let the envelope admit compound shell (ADR-0010)."},
@@ -139,8 +139,8 @@ func (e *Env) autoTend(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
-	root := p.str("--captures-root", filepath.Join(e.dataHome(), "captures"))
 	dataDir := p.str("--data-dir", e.dataHome())
+	roots := e.captureRoots(p, dataDir)
 	force := p.flag("--force")
 	cfg, err := config.Load(filepath.Join(dataDir, "config.yaml"))
 	if errors.Is(err, config.ErrInvalid) {
@@ -170,7 +170,7 @@ func (e *Env) autoTend(args []string) error {
 	}
 	// Everything this run would convert is read and checked first, so a
 	// capture this binary cannot convert changes nothing.
-	sessions, err := capture.ListSessions(root)
+	sessions, err := capture.ListSessionsIn(roots)
 	if err != nil {
 		return e.autoTendErr(cmd, err)
 	}
@@ -194,7 +194,7 @@ func (e *Env) autoTend(args []string) error {
 				continue
 			}
 		}
-		c, err := prepareConversion(s, root, decompose)
+		c, err := prepareConversion(s, s.Root, decompose)
 		if err != nil {
 			return e.autoTendErr(cmd, err)
 		}
@@ -250,7 +250,7 @@ func (e *Env) autoTend(args []string) error {
 		if c == nil {
 			for _, sk := range skipped {
 				if sk == s.ID {
-					e.errf("  skipped %s: no records in %s\n", s.ID, filepath.Join(root, s.ID+".jsonl"))
+					e.errf("  skipped %s: no records in %s\n", s.ID, filepath.Join(s.Root, s.ID+".jsonl"))
 				}
 			}
 			continue

@@ -9,11 +9,11 @@ use std::time::Duration;
 
 use super::config::{self, RowsErr};
 use super::configcmd::JSON_OPT;
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Parsed, Res, Stop};
-use crate::gate::argparse::py_float;
-use crate::gate::py::text::{repr, splitlines, strip};
-use crate::gate::pyjson::{dumps_indent, Object, Value};
+use crate::warden::argparse::py_float;
+use crate::warden::py::text::{repr, splitlines, strip};
+use crate::warden::pyjson::{dumps_indent, Object, Value};
 use crate::pathways::store::{Col, Store};
 use crate::tracejournal::Journal;
 
@@ -174,7 +174,7 @@ impl Env {
         };
         rep.decompose_enabled = cfg.shell_allow_decomposition;
         rep.plans_would_deny = plans_would_deny(&rep.data_dir);
-        rep.calls_would_deny = match super::journal::word_would_deny(&join(&rep.data_dir, "gate")) {
+        rep.calls_would_deny = match super::journal::word_would_deny(&join(&rep.data_dir, "warden")) {
             Ok(n) => n,
             Err(e) => return self.refuse(CMD, &e.to_string()),
         };
@@ -182,8 +182,9 @@ impl Env {
         let trust_ready = rep.total > 0;
         // The bash grammar is linked into this binary.
         let decompose_ready = rep.decompose_enabled;
+        let open_files = self.unconfined(&join(&rep.data_dir, "warden"));
         if p.flag("--json") {
-            let o = Object::new()
+            let mut o = Object::new()
                 .with("data_dir", rep.data_dir.as_str())
                 .with("search_extra_installed", rep.search_installed)
                 .with("pathway_count", Value::Int(rep.pathway_count.to_string()))
@@ -199,6 +200,9 @@ impl Env {
                 .with("token_savings_ready", token_ready)
                 .with("trust_ready", trust_ready)
                 .with("shell_decomposition_ready", decompose_ready);
+            if open_files {
+                o.set("unconfined", true);
+            }
             self.out(&format!("{}\n", dumps_indent(&Value::Obj(o), 2, true)));
             return Ok(());
         }
@@ -223,8 +227,11 @@ impl Env {
         b.push_str("\nTrust (verified actions):\n");
         b.push_str(&format!("  • journal traces: {} ({} verified, {} rejected)\n", rep.total, rep.passed, rep.failed));
         b.push_str("  • verification: strict at stakes high/physical (rejects unprovable invariants)\n");
+        if open_files {
+            b.push_str(&format!("  • {}\n", super::fencenotice::UNCONFINED_LINE));
+        }
         b.push_str(&format!(
-            "  • dialect would-denies: {} plans in the journal, {} calls in the gate's audit log\n",
+            "  • dialect would-denies: {} plans in the journal, {} calls in the warden's audit log\n",
             rep.plans_would_deny, rep.calls_would_deny
         ));
         if !rep.decompose_enabled {
@@ -469,7 +476,7 @@ pub(super) enum JsonErr {
 
 /// `json.loads(text)`, nesting past 900 levels refused.
 pub(super) fn load_json(text: &str) -> Result<Value, JsonErr> {
-    use crate::gate::pyjson::{loads, py_decode_error, LoadError, PyDecodeFail};
+    use crate::warden::pyjson::{loads, py_decode_error, LoadError, PyDecodeFail};
     match py_decode_error(text, 900) {
         Some(PyDecodeFail::Raised(m)) => return Err(JsonErr::Raised(m)),
         Some(PyDecodeFail::TooDeep) => return Err(JsonErr::Unread),

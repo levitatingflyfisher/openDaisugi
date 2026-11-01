@@ -140,6 +140,13 @@ func permissionScopeViolation(z3c *Z3Client, outer, inner Permission, timeoutMs 
 			return axis.label + ": " + reason, nil
 		}
 	}
+	reason, err := mcpRulesSubsume(z3c, inner, outer, timeoutMs)
+	if err != nil {
+		return "", err
+	}
+	if reason != "" {
+		return reason, nil
+	}
 	return networkScopeViolation(outer, inner), nil
 }
 

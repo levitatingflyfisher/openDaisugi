@@ -11,7 +11,7 @@ pub const SKILL_FILES: &[(&str, &str)] = &[
     ("references/passive-capture.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/passive-capture.md")),
     ("references/postconditions.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/postconditions.md")),
     ("references/vla-integration.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/vla-integration.md")),
-    ("references/when-to-delegate.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/when-to-delegate.md")),
+    ("references/when-to-spawn.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/when-to-spawn.md")),
     ("references/worked-example-council.md", include_str!("../../../../src/opendaisugi/skills/opendaisugi-checklist/references/worked-example-council.md")),
 ];
 

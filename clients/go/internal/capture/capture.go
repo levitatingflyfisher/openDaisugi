@@ -48,6 +48,47 @@ type Session struct {
 	FirstAt any
 	LastAt  any
 	Path    string
+	// Root is the captures root the row came from.
+	Root string
+}
+
+// CaptureRoots is capture_roots(data_dir): the directories the journal
+// feed scans, primary first.
+func CaptureRoots(dataDir string) []string {
+	return []string{filepath.Join(dataDir, "captures"), filepath.Join(dataDir, "warden", "captures")}
+}
+
+// ListSessionsIn is list_sessions_in(roots): one row per session id, from
+// the first root that holds it, newest last_at first.
+func ListSessionsIn(roots []string) ([]Session, error) {
+	var rows []Session
+	seen := map[string]bool{}
+	for _, root := range roots {
+		got, err := ListSessions(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range got {
+			if seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+			rows = append(rows, r)
+		}
+	}
+	return sortSessions(rows)
+}
+
+// FindCapture is find_capture(session_id, roots): the first
+// <root>/<session_id>.jsonl that exists, or "".
+func FindCapture(name string, roots []string) string {
+	for _, root := range roots {
+		path := filepath.Join(root, name+".jsonl")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 // read is open(path, encoding="utf-8") iterated by line: the lines
@@ -191,8 +232,13 @@ func ListSessions(root string) ([]Session, error) {
 		}
 		firstAt, _ := fo.Get("captured_at")
 		lastAt, _ := lo.Get("captured_at")
-		rows = append(rows, Session{ID: stem(filepath.Base(f)), Calls: calls, FirstAt: firstAt, LastAt: lastAt, Path: f})
+		rows = append(rows, Session{ID: stem(filepath.Base(f)), Calls: calls, FirstAt: firstAt, LastAt: lastAt, Path: f, Root: root})
 	}
+	return sortSessions(rows)
+}
+
+// sortSessions orders rows newest last_at first, as list_sessions does.
+func sortSessions(rows []Session) ([]Session, error) {
 	keys := make([]any, len(rows))
 	for i, r := range rows {
 		keys[i] = r.LastAt
@@ -342,6 +388,37 @@ func globForPath(path string) string {
 
 const maxObserveDepth = 4
 
+// globForAccess is hook._glob_for_access: the file-scope glob that admits one
+// shell access. A tree needs a /** glob (SG-2); a path takes its parent
+// directory's glob.
+func globForAccess(path string, tree bool) string {
+	if !tree {
+		return globForPath(path)
+	}
+	if path == "" || path == "." {
+		return "./**"
+	}
+	return strings.TrimRight(path, "/") + "/**"
+}
+
+// observedAccesses is hook._observed_accesses: the file-scope globs for the
+// operand accesses of a command. An access that cannot be placed adds
+// nothing, so the command stays rejected downstream.
+func observedAccesses(command string) (reads, writes []string) {
+	acc := verify.ShellAccesses(command, "")
+	for _, a := range acc.Reads {
+		if a.Via == "operand" && !sanctionedRead[a.Path] {
+			reads = append(reads, globForAccess(a.Path, a.Tree))
+		}
+	}
+	for _, a := range acc.Writes {
+		if a.Via == "operand" && !sanctionedWrite[a.Path] {
+			writes = append(writes, globForAccess(a.Path, a.Tree))
+		}
+	}
+	return reads, writes
+}
+
 // observedEffects is hook._observed_effects.
 func observedEffects(command string, decompose bool) (heads, reads, writes []string) {
 	var collect func(cmd string, depth int)
@@ -411,6 +488,15 @@ func InferEnvelope(records []*pyjson.Object, task string, decompose bool) (*pyjs
 			h, rs, ws := observedEffects(cmd, decompose)
 			for _, x := range h {
 				heads[x] = true
+			}
+			if decompose || !verify.HasShellMetachar(cmd) {
+				ors, ows := observedAccesses(cmd)
+				for _, g := range ors {
+					reads[g] = true
+				}
+				for _, g := range ows {
+					writes[g] = true
+				}
 			}
 			for _, p := range rs {
 				if !sanctionedRead[p] {

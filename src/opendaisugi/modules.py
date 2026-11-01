@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from opendaisugi.datahome import coppice_data_home, data_home
+from opendaisugi.datahome import coppice_data_home
 
 # State of one candidate module within a stage.
 ACTIVE = "active"  # wired and in use right now
@@ -76,18 +76,18 @@ def _int8_unsupported_reason() -> str | None:
     return None
 
 
-def _client_modules(gate_root: Path) -> list[Module]:
+def _client_modules(warden_root: Path) -> list[Module]:
     """One module per compiled verifier client, honest about built and last dispatch.
 
     ACTIVE only when the binary is present AND the last dispatch through it
     succeeded. A binary that exists but has never answered is AVAILABLE, not
-    ACTIVE. Presence is not proof it works. ``gate_root`` is where the gate
+    ACTIVE. Presence is not proof it works. ``warden_root`` is where the warden
     records its dispatches, under the data dir this map describes.
     """
     from opendaisugi.bench.options import VERIFIER_CLIENTS, build_hint, client_is_built
     from opendaisugi.verifier_dispatch import last_dispatch
 
-    record = last_dispatch(gate_root)
+    record = last_dispatch(warden_root)
     labels = {
         "rust": "rust",
         "go": "go (mvdan)",
@@ -123,8 +123,8 @@ def _claude_hook_installed(
 
 
 def _pi_extension_installed(home: Path) -> bool:
-    """Is the daisugi-gate extension materialized where pi auto-discovers it?"""
-    return (home / ".pi" / "agent" / "extensions" / "daisugi-gate" / "index.ts").exists()
+    """Is the daisugi-warden extension materialized where pi auto-discovers it?"""
+    return (home / ".pi" / "agent" / "extensions" / "daisugi-warden" / "index.ts").exists()
 
 
 def _pi_detected(home: Path) -> bool:
@@ -133,7 +133,7 @@ def _pi_detected(home: Path) -> bool:
 
 
 def _opencode_plugin_installed(home: Path, env: Mapping[str, str] | None = None) -> bool:
-    """Is the daisugi gate plugin in OpenCode's global plugin directory?"""
+    """Is the daisugi warden plugin in OpenCode's global plugin directory?"""
     from opendaisugi.install import opencode_plugin_path
 
     return opencode_plugin_path(home, env).exists()
@@ -171,23 +171,23 @@ def _coppice_socket_present(
     return stat.S_ISSOCK(st.st_mode) and st.st_uid == os.getuid()
 
 
-def _switchyard_module(gateway_router: str, which: Callable[[str], str | None]) -> Module:
+def _switchyard_module(routing_mode: str, which: Callable[[str], str | None]) -> Module:
     """The NeMo Switchyard row of the router stage.
 
-    ACTIVE when config selects it and the binary is on PATH. The gateway reads
+    ACTIVE when config selects it and the binary is on PATH. The router reads
     that choice when it starts, so the row points at `daisugi router status`
     for whether a child runs now. A selection without the binary is POSSIBLE
     and says so.
     """
-    from opendaisugi.router_switchyard import INSTALL_CMD, locate_binary
+    from opendaisugi.routing_switchyard import INSTALL_CMD, locate_binary
 
     present = locate_binary(which=which) is not None
-    selected = gateway_router == "switchyard"
+    selected = routing_mode == "switchyard"
     if selected and present:
         return Module(
             "NeMo Switchyard",
             ACTIVE,
-            "selected; `daisugi gateway` starts it. The gateway row says if turns flow. "
+            "selected; `daisugi router serve` starts it. The router row says if turns flow. "
             "See `daisugi router status`",
         )
     if selected:
@@ -198,20 +198,22 @@ def _switchyard_module(gateway_router: str, which: Callable[[str], str | None]) 
         return Module(
             "NeMo Switchyard",
             AVAILABLE,
-            "binary found: daisugi install --gateway --router switchyard --efficient-model <id>",
+            "binary found: daisugi install --router --routing-mode switchyard --efficient-model <id>",
         )
     return Module("NeMo Switchyard", POSSIBLE, f"needs the binary: {INSTALL_CMD}")
 
 
-def _knn_module(gateway_router: str) -> Module:
+def _knn_module(routing_mode: str) -> Module:
     """The knn row of the router stage: ACTIVE when config selects it."""
-    if gateway_router == "knn":
+    if routing_mode == "knn":
         return Module(
             "knn",
             ACTIVE,
             "selected; routes by past outcomes. See `daisugi router status`",
         )
-    return Module("knn", AVAILABLE, "learns from outcomes: daisugi install --gateway --router knn")
+    return Module(
+        "knn", AVAILABLE, "learns from outcomes: daisugi install --router --routing-mode knn"
+    )
 
 
 def detect_stages(
@@ -252,8 +254,8 @@ def detect_stages(
 
     env = os.environ if env is None else env
     backend = env.get("OPENDAISUGI_LLM_BACKEND", "").strip()
-    gateway_on = bool(
-        os.environ.get("OPENDAISUGI_GATEWAY_BASE_URL") or _claude_hook_installed("gateway")
+    router_on = bool(
+        os.environ.get("OPENDAISUGI_ROUTER_BASE_URL") or _claude_hook_installed("router")
     )
 
     # The pathway embedder (used by both matcher reuse and distill clustering) is
@@ -265,7 +267,7 @@ def detect_stages(
 
     matcher_cfg = load_config(data_dir / "config.yaml")
     matcher_sel = matcher_cfg.matcher_model
-    switchyard_row = _switchyard_module(matcher_cfg.gateway_router, which)
+    switchyard_row = _switchyard_module(matcher_cfg.routing_mode, which)
     # Both hooks are required for ACTIVE — one alone is a half-wired install,
     # not a working floor report (Fix round 1, Finding 1c).
     herdr_stop_on = _claude_hook_installed("--event stop", event="Stop", home=home)
@@ -287,9 +289,9 @@ def detect_stages(
         herdr_state, herdr_note = ACTIVE, "hooks installed; Herdr CLI contract unverified"
     elif herdr_hooks_partial:
         herdr_state = AVAILABLE
-        herdr_note = "one of two hooks installed; run `daisugi install --gate --report herdr`"
+        herdr_note = "one of two hooks installed; run `daisugi install --report herdr`"
     elif herdr_binary_present:
-        herdr_state, herdr_note = AVAILABLE, "run `daisugi install --gate --report herdr`"
+        herdr_state, herdr_note = AVAILABLE, "run `daisugi install --report herdr`"
     else:
         herdr_state, herdr_note = POSSIBLE, "install Herdr first"
     minilm_installed = _have("sentence_transformers")
@@ -353,7 +355,7 @@ def detect_stages(
                 f"{netloc} ({matcher_cfg.llm_host_kind}, {model_part}, {ctx_part})",
                 # AVAILABLE, not ACTIVE. A recorded host is not a harness
                 # that routes through it right now. Nothing here checks
-                # whether ANTHROPIC_BASE_URL or `daisugi gateway --upstream`
+                # whether ANTHROPIC_BASE_URL or `daisugi router serve --upstream`
                 # point at it. A claim of ACTIVE would be dressed-up control.
                 AVAILABLE,
                 "recorded. Export the env lines from `tiers setup --remote` to use it",
@@ -409,7 +411,7 @@ def detect_stages(
                 Module(
                     "pi",
                     ACTIVE if pi_installed else (AVAILABLE if pi_present else POSSIBLE),
-                    "gate extension installed"
+                    "warden extension installed"
                     if pi_installed
                     else (
                         "pi detected. Run `daisugi install --harness pi`"
@@ -420,7 +422,7 @@ def detect_stages(
                 Module(
                     "opencode",
                     ACTIVE if oc_installed else (AVAILABLE if oc_present else POSSIBLE),
-                    "gate plugin installed: in-process deny-only hook; fail-closed"
+                    "warden plugin installed: in-process deny-only hook; fail-closed"
                     if oc_installed
                     else (
                         "opencode detected. Run `daisugi install --harness opencode`"
@@ -434,8 +436,8 @@ def detect_stages(
             ],
         ),
         Stage(
-            "gate",
-            "gate (call-time)",
+            "warden",
+            "warden (call-time)",
             "checks each proposed action BEFORE it runs; fail-closed",
             [
                 Module(
@@ -445,7 +447,7 @@ def detect_stages(
                     if _claude_hook_installed("daisugi hook")
                     else "run `daisugi install`",
                 ),
-                Module("codex hooks.json", AVAILABLE, "fail-open class — soft gate"),
+                Module("codex hooks.json", AVAILABLE, "fail-open class — soft warden"),
                 Module(
                     "pi tool_call (in-process)",
                     ACTIVE if pi_installed else POSSIBLE,
@@ -458,7 +460,7 @@ def detect_stages(
                     ACTIVE if oc_installed else POSSIBLE,
                     "in-process deny-only hook; fail-closed on every call. apply_patch is "
                     "checked path by path. Writes to OpenCode's config, to .opencode plugin and tool "
-                    "directories and to any opencode.json are hard-denied. Every ask is permanent: the gate has no fixed "
+                    "directories and to any opencode.json are hard-denied. Every ask is permanent: the warden has no fixed "
                     "project root for OpenCode. A coppice pane will not start without the "
                     "plugin or with --pure. Outside coppice, OpenCode runs ungated if the "
                     "plugin fails to load or with --pure. Plugins under OPENCODE_CONFIG_DIR "
@@ -466,7 +468,7 @@ def detect_stages(
                     if oc_installed
                     else "run `daisugi install --harness opencode`",
                 ),
-                Module("audit / off", AVAILABLE, "config: gate mode"),
+                Module("audit / off", AVAILABLE, "config: warden mode"),
             ],
         ),
         Stage(
@@ -475,7 +477,7 @@ def detect_stages(
             "proves the action stays inside the envelope (SMT-backed)",
             [
                 Module("python (in-process)", ACTIVE, "the oracle; always runs"),
-                *_client_modules(data_dir / "gate"),
+                *_client_modules(data_dir / "warden"),
             ],
         ),
         Stage(
@@ -539,17 +541,19 @@ def detect_stages(
         ),
         Stage(
             "router",
-            "token router / gateway",
+            "router",
             "routes turns to cheap vs frontier models to save tokens",
             [
                 Module(
-                    "daisugi gateway",
-                    ACTIVE if gateway_on else POSSIBLE,
-                    "base_url wired" if gateway_on else "daisugi install --gateway",
+                    "daisugi router serve",
+                    ACTIVE if router_on else POSSIBLE,
+                    "base_url wired" if router_on else "daisugi install --router",
                 ),
                 switchyard_row,
-                _knn_module(matcher_cfg.gateway_router),
-                Module("off (direct)", AVAILABLE, "default; start routing with `daisugi gateway`"),
+                _knn_module(matcher_cfg.routing_mode),
+                Module(
+                    "off (direct)", AVAILABLE, "default; start routing with `daisugi router serve`"
+                ),
             ],
         ),
         Stage(
@@ -791,7 +795,7 @@ PIECE_OFF = "off"
 class Piece:
     key: str
     title: str
-    state: str  # "on" | "off"; the router shows its mode (rules, switchyard, off) when the gateway is on
+    state: str  # "on" | "off"; the router shows its mode (rules, switchyard, off) when the router is on
     detail: str
     turn_on: str
     turn_off: str
@@ -821,47 +825,47 @@ def detect_pieces(
     home_dir = home or Path.home()
     cfg = load_config(data_dir / "config.yaml")
 
-    gate_for = []
+    warden_for = []
     if _claude_hook_installed("daisugi hook", home=home_dir):
-        gate_for.append("claude-code")
+        warden_for.append("claude-code")
     if _pi_extension_installed(home_dir):
-        gate_for.append("pi")
+        warden_for.append("pi")
     if _opencode_plugin_installed(home_dir, env):
-        gate_for.append("opencode")
+        warden_for.append("opencode")
 
-    gateway_on = bool(
-        env.get("OPENDAISUGI_GATEWAY_BASE_URL") or _claude_hook_installed("gateway", home=home_dir)
+    router_on = bool(
+        env.get("OPENDAISUGI_ROUTER_BASE_URL") or _claude_hook_installed("router", home=home_dir)
     )
-    router = cfg.gateway_router
+    routing_mode = cfg.routing_mode
     mcp_on = _mcp_registered(home_dir)
     floor_on = _coppice_socket_present(home=home, env=env)
     loop_on = which("sprig") is not None
 
     return [
         Piece(
-            "gate",
-            "gate",
-            PIECE_ON if gate_for else PIECE_OFF,
-            f"hook installed for {', '.join(gate_for)}" if gate_for else "no gate hook found",
-            "daisugi install --gate",
-            "daisugi install --uninstall (removes gate, gateway and memory together)",
-        ),
-        Piece(
-            "gateway",
-            "gateway",
-            PIECE_ON if gateway_on else PIECE_OFF,
-            "the harness base_url points at it" if gateway_on else "no harness points at it",
-            "daisugi install --gateway",
-            "daisugi install --uninstall (removes gate, gateway and memory together)",
+            "warden",
+            "warden",
+            PIECE_ON if warden_for else PIECE_OFF,
+            f"hook installed for {', '.join(warden_for)}" if warden_for else "no warden hook found",
+            "daisugi install",
+            "daisugi install --uninstall (removes warden, router and memory together)",
         ),
         Piece(
             "router",
             "router",
-            router if gateway_on else PIECE_OFF,
-            f"gateway_router: {router}"
-            + ("" if gateway_on else "; it runs only when the gateway is on"),
-            "daisugi install --gateway --router rules|switchyard|knn|model",
-            "daisugi install --gateway --router off",
+            PIECE_ON if router_on else PIECE_OFF,
+            "the harness base_url points at it" if router_on else "no harness points at it",
+            "daisugi install --router",
+            "daisugi install --uninstall (removes warden, router and memory together)",
+        ),
+        Piece(
+            "routing_mode",
+            "routing mode",
+            routing_mode if router_on else PIECE_OFF,
+            f"routing_mode: {routing_mode}"
+            + ("" if router_on else "; it runs only when the router is on"),
+            "daisugi install --router --routing-mode rules|switchyard|knn|model",
+            "daisugi install --router --routing-mode off",
         ),
         Piece(
             "memory",
@@ -869,7 +873,7 @@ def detect_pieces(
             PIECE_ON if mcp_on else PIECE_OFF,
             "MCP server registered" if mcp_on else "MCP server not registered",
             "daisugi install",
-            "daisugi install --uninstall (removes gate, gateway and memory together)",
+            "daisugi install --uninstall (removes warden, router and memory together)",
         ),
         Piece(
             "floor",

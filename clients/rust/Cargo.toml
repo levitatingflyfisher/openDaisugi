@@ -8,8 +8,8 @@ name = "conform"
 path = "src/main.rs"
 
 [[bin]]
-name = "daisugi-gate"
-path = "src/bin/daisugi_gate.rs"
+name = "daisugi-warden"
+path = "src/bin/daisugi_warden.rs"
 
 [[bin]]
 name = "daisugi"
@@ -21,13 +21,13 @@ path = "src/bin/daisugi.rs"
 name = "pathway-probe"
 path = "src/bin/pathway_probe.rs"
 
-# A test instrument for clients/gateway_compare.py --fuzz: turn sequences
-# through the gateway pipeline in one process. It is not shipped.
+# A test instrument for clients/router_compare.py --fuzz: turn sequences
+# through the router pipeline in one process. It is not shipped.
 [[bin]]
-name = "gateway-probe"
-path = "src/bin/gateway_probe.rs"
+name = "router-probe"
+path = "src/bin/router_probe.rs"
 
-# A test instrument for clients/gateway_compare.py: recall and
+# A test instrument for clients/router_compare.py: recall and
 # recall_answer on the oracle's cases. It is not shipped.
 [[bin]]
 name = "recall-probe"
@@ -77,6 +77,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tree-sitter = "0.25"
 tree-sitter-bash = "0.25.1"
 regex = "1"
+# Pando R2, the conversation memory (ADR-0023).
+pando = { path = "pando" }
 thiserror = "1"
 libc = "0.2"
 # pydantic-core's JSON parser, for the envelope file.
@@ -87,11 +89,11 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-native-certs = "0.8"
 # SQLite for the pathway store, the public-domain amalgamation compiled in.
 rusqlite = { version = "=0.31.0", features = ["bundled"] }
-# Exact integers for the gateway's token counts, as Python's int. Already
+# Exact integers for the router's token counts, as Python's int. Already
 # in the tree through jiter.
 num-bigint = "0.4"
 num-traits = "0.2"
-# The gzip and deflate decoders the gateway applies to an upstream answer,
+# The gzip and deflate decoders the router applies to an upstream answer,
 # as httpx does. Pure Rust, no C.
 miniz_oxide = "0.8"
 # ed25519 signing and verifying for pathway bundles and release

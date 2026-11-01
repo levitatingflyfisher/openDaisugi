@@ -40,7 +40,7 @@ type VoiceConfig struct {
 	// Args are added after the flags the server passes to daisugi voice
 	// serve.
 	Args []string
-	// SpeakURL is a speech server for the foreman's replies, and the model
+	// SpeakURL is a speech server for the steward's replies, and the model
 	// and voice it is asked for. SpeakProfile names an operator agent
 	// profile whose key it gets. See speech.go.
 	SpeakURL, SpeakModel, SpeakVoice, SpeakProfile string

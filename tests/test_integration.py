@@ -73,7 +73,9 @@ def test_disallowed_shell_command_caught_by_permissions():
     env = Envelope(
         generated_by="test",
         task="Run a script",
-        permissions=Permission(shell=True, shell_allowlist=["python3"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["python3"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="vanilla-llm",
@@ -89,7 +91,9 @@ def test_cycle_in_plan_caught_by_dag():
     env = Envelope(
         generated_by="test",
         task="Cyclic plan",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="test",
@@ -139,7 +143,9 @@ async def test_full_daisugi_cycle_with_journal(tmp_path, mock_llm_client, sample
     # Override permissions so the "echo" shell step passes verification.
     envelope = envelope.model_copy(
         update={
-            "permissions": Permission(shell=True, shell_allowlist=["echo"]),
+            "permissions": Permission(
+                shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+            ),
         }
     )
 

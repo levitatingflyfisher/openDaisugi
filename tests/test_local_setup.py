@@ -1,9 +1,9 @@
-"""Local Tier-1 qualification gate + config wiring (v0.30).
+"""Local Tier-1 qualification check + config wiring (v0.30).
 
-The qualification gate is the load-bearing honesty mechanism: a hardware
+The qualification check is the load-bearing honesty mechanism: a hardware
 recommendation is only a hypothesis, so before a local model is trusted as
 Tier-1 it must prove — on the actual box — that it emits valid envelopes at an
-acceptable rate over the REAL provider path. These tests exercise the gate's
+acceptable rate over the REAL provider path. These tests exercise the warden's
 counting/threshold/decision logic against a provider that FLAKES realistically
 (valid / declined / error), never an always-valid stub.
 """
@@ -38,7 +38,7 @@ class _FlakyProvider:
         return outcome  # Envelope() or None
 
 
-def test_gate_counts_valid_declined_and_errors():
+def test_warden_counts_valid_declined_and_errors():
     prov = _FlakyProvider([_env(), _env(), None, "raise"])  # 1 task list of 4
     res = asyncio.run(qualify_local_model(prov, probe_tasks=["a", "b", "c", "d"], threshold=0.8))
     assert isinstance(res, QualificationResult)
@@ -50,7 +50,7 @@ def test_gate_counts_valid_declined_and_errors():
     assert kinds == ["declined", "error", "valid", "valid"]
 
 
-def test_gate_passes_only_above_threshold():
+def test_warden_passes_only_above_threshold():
     # 3 of 5 valid = 0.6
     script = [_env(), _env(), _env(), None, None]
     below = asyncio.run(
@@ -64,14 +64,14 @@ def test_gate_passes_only_above_threshold():
     assert below.pass_rate == above.pass_rate == 0.6
 
 
-def test_gate_all_declines_fails_clean():
+def test_warden_all_declines_fails_clean():
     res = asyncio.run(
         qualify_local_model(_FlakyProvider([None]), probe_tasks=list("abc"), threshold=0.5)
     )
     assert res.valid == 0 and res.pass_rate == 0.0 and res.passed is False
 
 
-def test_gate_repeats_samples_each_task_multiple_times():
+def test_warden_repeats_samples_each_task_multiple_times():
     # repeats multiplies attempts so a probabilistic model is sampled, not asked once
     res = asyncio.run(
         qualify_local_model(
@@ -90,7 +90,9 @@ def test_default_probe_battery_is_used_when_none_given():
 
 
 def test_write_then_load_tier1_config(tmp_path):
-    write_tier1_config(tmp_path, model="qwen2.5:1.5b", base_url="http://localhost:8080/v1")
+    write_tier1_config(
+        tmp_path, model="qwen2.5:1.5b", base_url="http://localhost:8080/v1", host_kind="openai"
+    )
     prov = load_configured_tier1(tmp_path)
     assert prov is not None
     assert getattr(prov, "model", None) and "qwen2.5" in prov.model
@@ -109,3 +111,47 @@ def test_a_raised_error_reason_holds_no_key():
     res = asyncio.run(qualify_local_model(Raises(), probe_tasks=["a"], threshold=0.8))
     assert res.outcomes == [("a", "error")]
     assert "MIDDLE" not in res.reasons[0] and "pw@" not in res.reasons[0]
+
+
+def test_write_then_load_tier1_config_keeps_host_kind(tmp_path):
+    import json
+
+    from opendaisugi.local_setup import load_configured_tier1, write_tier1_config
+
+    p = write_tier1_config(tmp_path, model="m", base_url="http://h:11434/v1", host_kind="ollama")
+    assert json.loads(p.read_text()) == {
+        "model": "m",
+        "base_url": "http://h:11434/v1",
+        "host_kind": "ollama",
+    }
+    assert list(json.loads(p.read_text())) == ["model", "base_url", "host_kind"]
+    assert load_configured_tier1(tmp_path).reasoning_effort == "none"
+    write_tier1_config(tmp_path, model="m", base_url="http://h:8080/v1", host_kind="openai")
+    assert load_configured_tier1(tmp_path).reasoning_effort is None
+
+
+def test_load_tier1_config_without_host_kind_sends_no_effort(tmp_path):
+    from opendaisugi.local_setup import load_configured_tier1
+
+    (tmp_path / "local_tier1.json").write_text('{"model": "m", "base_url": "http://h/v1"}')
+    assert load_configured_tier1(tmp_path).reasoning_effort is None
+
+
+def test_all_failures_truncated():
+    from opendaisugi.local_setup import QualificationResult
+
+    def r(kinds):
+        return QualificationResult(
+            attempts=len(kinds),
+            valid=kinds.count("valid"),
+            pass_rate=0.0,
+            passed=False,
+            threshold=0.8,
+            outcomes=[("t", k) for k in kinds],
+            reasons=[""] * len(kinds),
+        )
+
+    assert r(["truncated", "truncated"]).all_failures_truncated()
+    assert r(["valid", "truncated"]).all_failures_truncated()
+    assert not r(["truncated", "declined"]).all_failures_truncated()
+    assert not r(["valid", "valid"]).all_failures_truncated()

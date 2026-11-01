@@ -19,7 +19,7 @@ from opendaisugi.supervisor import Supervisor
 
 def _reject_only_per_step(real_verify_step):
     """Force per-step verify to reject. v0.22+ supervisor uses verify_step
-    for per-step gating, so the patch target shifted accordingly.
+    for per-step checking, so the patch target shifted accordingly.
     """
 
     def _patched(step, envelope, *, z3_timeout_ms=500):

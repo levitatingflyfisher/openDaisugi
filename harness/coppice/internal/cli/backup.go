@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"daisugi-verify/pando"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -10,32 +11,84 @@ import (
 
 	"github.com/opendaisugi/coppice/internal/backup"
 	"github.com/opendaisugi/coppice/internal/config"
-	"github.com/opendaisugi/coppice/internal/foreman"
+	"github.com/opendaisugi/coppice/internal/steward"
 )
 
-// backupSpec is what `coppice backup` holds: the foreman's log and memory
-// tree, the layout, coppice.toml and pools.toml. It is an allow-list. The
+// backupSpec is what `coppice backup` holds: the steward's conversation
+// memory, the layout, coppice.toml and pools.toml. It is an allow-list. The
 // web token, certificates, sockets, locks and the server log stay out, and
 // so does anything new until it is added here.
-func (c *CLI) backupSpec() backup.Spec {
-	return backup.Spec{
-		Tool:    "coppice",
-		Version: c.Version,
-		Roots: map[string]string{
-			"data":    c.DataDir,
-			"foreman": foreman.LogDir(c.DataDir),
-			"config":  filepath.Dir(config.Path()),
-		},
-		Units: []backup.Unit{
-			{Area: "data", Rel: "layout.json"},
-			{Area: "data", Rel: "recent-dirs.json"},
-			{Area: "foreman", Rel: "main"},
-			{Area: "foreman", Rel: "tree"},
-			{Area: "foreman", Rel: "view.json"},
-			{Area: "config", Rel: "coppice.toml"},
-			{Area: "config", Rel: "pools.toml"},
-		},
+//
+// The memory is every Pando R2 store in <data home>/pando (ADR-0023), with
+// the parts the pando package names (pando.BackupRels), and a chat that has
+// not been moved yet. A restore passes the paths its archive holds: a store
+// the target does not have yet is put back, and an archive made before the
+// move (area "foreman", the old chat) goes into the work store.
+func (c *CLI) backupSpec(archived ...string) backup.Spec {
+	home := steward.StoreRoot(c.DataDir)
+	pandoDir := filepath.Join(home, "pando")
+	var inPando []string
+	legacy := false
+	for _, p := range archived {
+		if rest, ok := strings.CutPrefix(p, "datahome/pando/"); ok {
+			inPando = append(inPando, rest)
+		}
+		if strings.HasPrefix(p, steward.DirName+"/") {
+			legacy = true
+		}
 	}
+	roots := map[string]string{
+		"data":     c.DataDir,
+		"datahome": home,
+		// A chat that has not been moved yet is still saved.
+		"steward-old": steward.LogDir(c.DataDir),
+		"config":      filepath.Dir(config.Path()),
+	}
+	units := []backup.Unit{
+		{Area: "data", Rel: "layout.json"},
+		{Area: "data", Rel: "recent-dirs.json"},
+	}
+	for _, r := range pando.BackupRels(pando.BackupStores(pandoDir, inPando)) {
+		// An old archive's chat is the work store; one area holds it.
+		if legacy && strings.HasPrefix(r, pando.DefaultStore+"/") {
+			continue
+		}
+		units = append(units, backup.Unit{Area: "datahome", Rel: "pando/" + r})
+	}
+	if legacy {
+		roots[steward.DirName] = filepath.Join(pandoDir, pando.DefaultStore)
+		for _, part := range pando.BackupParts {
+			units = append(units, backup.Unit{Area: steward.DirName, Rel: part})
+		}
+	}
+	for _, part := range []string{"main", "tree", "view.json", pando.ImportFile} {
+		units = append(units, backup.Unit{Area: "steward-old", Rel: part})
+	}
+	units = append(units, backup.Unit{Area: "config", Rel: "coppice.toml"}, backup.Unit{Area: "config", Rel: "pools.toml"})
+	return backup.Spec{Tool: "coppice", Version: c.Version, Roots: roots, Units: units}
+}
+
+// archivedPaths is the paths an archive holds, as its manifest lists them.
+// The manifest is read with the whole pando dir and the old chat's area
+// allowed, only to learn which stores it names; the restore itself checks
+// every path against the real list. An archive that does not read gives
+// none, and Restore then says what is wrong with it.
+func (c *CLI) archivedPaths(file string) []string {
+	peek := c.backupSpec()
+	peek.Roots[steward.DirName] = filepath.Join(steward.StoreRoot(c.DataDir), "pando", pando.DefaultStore)
+	peek.Units = append(peek.Units, backup.Unit{Area: "datahome", Rel: "pando"})
+	for _, part := range pando.BackupParts {
+		peek.Units = append(peek.Units, backup.Unit{Area: steward.DirName, Rel: part})
+	}
+	m, err := peek.ReadManifest(file)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.Files))
+	for _, f := range m.Files {
+		out = append(out, f.Path)
+	}
+	return out
 }
 
 // runBackup is coppice backup [FILE]. It reads files only and dials no
@@ -67,7 +120,7 @@ func (c *CLI) runBackup(argv []string) int {
 }
 
 // runRestore is coppice restore FILE [--force]. The server must be stopped:
-// it holds the layout and the foreman files open and writes them back.
+// it holds the layout and the steward files open and writes them back.
 func (c *CLI) runRestore(argv []string) int {
 	force := false
 	var rest []string
@@ -94,7 +147,8 @@ func (c *CLI) runRestore(argv []string) int {
 		fmt.Fprintln(c.Err, "coppice restore: the server is running. Run coppice server stop, then restore.")
 		return 1
 	}
-	r, err := backup.Restore(c.backupSpec(), rest[0], force, time.Now())
+	spec := c.backupSpec(c.archivedPaths(rest[0])...)
+	r, err := backup.Restore(spec, rest[0], force, time.Now())
 	for _, a := range r.Aside {
 		fmt.Fprintf(c.Out, "Moved aside: %s\n", a)
 	}
@@ -103,13 +157,13 @@ func (c *CLI) runRestore(argv []string) int {
 		return 1
 	}
 	fmt.Fprintf(c.Out, "Restored %d files (%d bytes) into %s. Start the server again with coppice server start.\n",
-		r.Files, r.Bytes, strings.Join(rootList(c.backupSpec()), " and "))
+		r.Files, r.Bytes, strings.Join(rootList(spec), " and "))
 	return 0
 }
 
 const backupHelp = `Usage: coppice backup [FILE]
 
-  Write the foreman's chat and memory, the layout, coppice.toml and
+  Write the steward's chat and memory, the layout, coppice.toml and
   pools.toml to one .tgz (default ./coppice-backup-DATE.tgz). No key, token
   or credential files go in. Your chat and logs do, so keep the file as
   private as the data. The config files always come from the XDG config

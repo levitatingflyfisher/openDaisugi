@@ -20,12 +20,12 @@ import (
 	"unicode/utf8"
 
 	"daisugi-verify/internal/bundle"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/pyyaml"
 	"daisugi-verify/internal/signing"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // PathwaysSubdir and TrustedSignersFile are the layout names.
@@ -163,7 +163,7 @@ type Options struct {
 // clone are put in it. The count put is dropped, as the constructor drops
 // it.
 func Open(repoPath string, o Options) (*Store, error) {
-	s := &Store{RepoPath: gateroot.PathStr(repoPath), Priv: o.Priv, Pub: o.Pub, Publisher: o.Publisher,
+	s := &Store{RepoPath: wardenroot.PathStr(repoPath), Priv: o.Priv, Pub: o.Pub, Publisher: o.Publisher,
 		RequireSigned: o.RequireSigned, OfflineOK: true, Git: Git{Environ: o.Environ}}
 	if s.Publisher == "" {
 		s.Publisher = "opendaisugi-instance"
@@ -178,16 +178,16 @@ func Open(repoPath string, o Options) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	cacheDir := gateroot.Join(s.RepoPath, ".cache")
+	cacheDir := wardenroot.Join(s.RepoPath, ".cache")
 	if err := mkdirParents(cacheDir); err != nil {
 		return nil, err
 	}
-	st, err := pathways.Open(gateroot.Join(cacheDir, "pathways.db"))
+	st, err := pathways.Open(wardenroot.Join(cacheDir, "pathways.db"))
 	if err != nil {
 		return nil, err
 	}
 	s.cache = st
-	s.trustPath = gateroot.Join(cacheDir, TrustedSignersFile)
+	s.trustPath = wardenroot.Join(cacheDir, TrustedSignersFile)
 	s.putPathway = st.PutPathway
 	if _, err := s.materialize(found); err != nil {
 		st.Close()
@@ -216,7 +216,7 @@ func mkdirParents(d string) error {
 	return nil
 }
 
-func (s *Store) pathwaysDir() string { return gateroot.Join(s.RepoPath, PathwaysSubdir) }
+func (s *Store) pathwaysDir() string { return wardenroot.Join(s.RepoPath, PathwaysSubdir) }
 
 // TrustedSigners is _load_trusted_signers: the distinct str values of the
 // local anchor file, or none when it is absent, not JSON, or not an
@@ -289,7 +289,7 @@ func (s *Store) readBundles() ([]found, error) {
 	}
 	var out []found
 	for _, n := range names {
-		p := gateroot.Join(s.pathwaysDir(), n)
+		p := wardenroot.Join(s.pathwaysDir(), n)
 		raw, err := os.ReadFile(p)
 		if err != nil || !utf8.Valid(raw) {
 			// read_text raises (a directory, bytes that are not UTF-8),
@@ -402,7 +402,7 @@ func (s *Store) Publish(p *pathways.Pathway, publishedAt float64, push bool) (st
 	}
 	hash := b.Value("bundle_hash").(string)
 	rel := PathwaysSubdir + "/" + hash + ".yaml"
-	if err := os.WriteFile(gateroot.Join(s.RepoPath, rel), []byte(text), 0o666); err != nil {
+	if err := os.WriteFile(wardenroot.Join(s.RepoPath, rel), []byte(text), 0o666); err != nil {
 		return "", err
 	}
 	if r, err := s.Git.Run(s.RepoPath, "add", rel); err != nil {

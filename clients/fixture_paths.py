@@ -21,7 +21,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 # Every case's scratch root (the directory a fixture writes as {ROOT} or
 # {HOME}) is this many characters long, whatever the scratch directory.
-# The gate cuts a record's text at 200 characters and YAML folds a long
+# The warden cuts a record's text at 200 characters and YAML folds a long
 # line at a space, so the text a case keeps depends on the length of the
 # path in it. A fixed length makes the fixtures the same on every machine
 # and under every DAISUGI_*_SCRATCH. It is short because the weave cases
@@ -48,9 +48,10 @@ def fixed_root(base: Path, leaf: str) -> Path:
 # Synthetic paths such as /home/user, .venv/bin/* in an allowlist, or a
 # brace pattern like /home/us{1..100} are not matched. Nor is a dot
 # directory under a scratch HOME ({WORK}/home/.opendaisugi/): no user name
-# starts with a dot.
+# starts with a dot. Nor is a pando store named home (<data>/pando/home/...).
 LEAK = re.compile(
-    r"/mnt/|/Users/|/root/|/home/(?!user/)(?!\.)[A-Za-z0-9_.-]+/|site-packages|/\.venv/lib/|/pytest-of-"
+    r"/mnt/|/Users/|/root/|(?<!pando)/home/(?!user/)(?!\.)[A-Za-z0-9_.-]+/"
+    r"|site-packages|/\.venv/lib/|/pytest-of-"
 )
 
 

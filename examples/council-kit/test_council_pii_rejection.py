@@ -1,7 +1,7 @@
 """examples/council-kit/test_council_pii_rejection.py
 
 Runnable demo: a contribution containing an AWS secret is rejected by
-the pre-council gate before any council LLM sees it. Deterministic
+the pre-council warden before any council LLM sees it. Deterministic
 structural check on the way in means the council burns no bandwidth on
 obvious rejects.
 """

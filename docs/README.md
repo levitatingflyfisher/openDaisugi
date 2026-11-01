@@ -26,7 +26,7 @@ their name). Plans, research and ADRs dated before that day keep the old names.
 
 This is the quadrant we're actively growing. Today the entry points are:
 - **[Protect an agent you're already running](tutorials/protect-your-existing-session.md)**:
-  one command to a working audit-mode gate over a live session, then one flag
+  one command to a working audit-mode warden over a live session, then one flag
   to enforce.
 - The **[README quickstart](../README.md)**: install, then verify an LLM's plan and
   watch an out-of-envelope action refused (no API key).
@@ -44,19 +44,23 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Deployment](deployment.md)**: run it in the modes it supports.
 - **[Integrations](integrations.md)**: wire it into a harness (per-harness adapters).
 - **[Hook integration](hook-integration.md)**: the passive-hook path.
-- **[Gate a live session](how-to/gate.md)**: the call-time gate runs audit → report → enforce → disarm.
-- **[Bring your own foreman](how-to/bring-your-own-foreman.md)**: any harness that speaks MCP can be the foreman and still get the gated `spawn` and `status`.
-- **[Run the foreman on any model](how-to/foreman-any-model.md)**: `[foreman] turn_profile` picks the Anthropic API, an OpenAI-style server on any machine, or Claude Code.
+- **[Warden a live session](how-to/warden.md)**: the call-time warden runs audit → report → enforce → disarm.
+- **[Bring your own steward](how-to/bring-your-own-steward.md)**: any harness that speaks MCP can be the steward and still get the checked `spawn` and `status`.
+- **[Run the steward on any model](how-to/steward-any-model.md)**: `[steward] turn_profile` picks the Anthropic API, an OpenAI-style server on any machine, or Claude Code.
 - **[Add a GPU box to the floor](how-to/add-a-gpu-box.md)**: join the tailnet, run a model server, add a profile, and read the Machines panel.
 - **[Use the phone](how-to/phone.md)**: the PWA coppice serves, both certificate paths, the token QR, and ntfy push.
-- **[Back up and restore](how-to/backup.md)**: one file for your journal, pathways, foreman memory and config; no key, token or credential files go in; your chat and logs do, so keep the file as private as the data.
+- **[Let the steward work in a known project](how-to/default-permission.md)**: the default permission, the trusted roots, the deny list (push, release, deploy, money), and when a card appears.
+- **[Answer from the floor](how-to/needs-you.md)**: the Needs you cards, how ended agents tidy themselves, and why the floor never answers a prompt by itself.
+- **[Back up and restore](how-to/backup.md)**: one file for your journal, pathways, steward memory and config; no key, token or credential files go in; your chat and logs do, so keep the file as private as the data.
 - **[Train a LoRA adapter from the Go or Rust daisugi](how-to/ml-pack.md)**: `daisugi pack install train`, then `daisugi lora train`; bundles for machines with no network, and the AUR `daisugi-ml`.
-- **[Bring your old Claude Code and Codex chats into the foreman](how-to/import-old-chats.md)**: opt-in, one message at a time, never ahead of a live message.
-- **[The foreman answers aloud](how-to/foreman-aloud.md)**: replies read aloud by the browser's voice, or by one speech server named with `[voice] speak_url`.
+- **[Bring your old Claude Code and Codex chats into the steward](how-to/import-old-chats.md)**: opt-in, one message at a time, never ahead of a live message.
+- **[The steward answers aloud](how-to/steward-aloud.md)**: replies read aloud by the browser's voice, or by one speech server named with `[voice] speak_url`.
 - **[Record anywhere, land it in a pane](how-to/voice.md)**: `daisugi voice serve|ptt|arm|disarm`, previewed by default, direct send only when a pane is armed.
-- **[Hand model choice to NeMo Switchyard](how-to/router-switchyard.md)**: `daisugi gateway --router switchyard` runs Switchyard behind the gateway, and the gateway meters each turn by the target that served it.
+- **[Hand model choice to NeMo Switchyard](how-to/routing-mode-switchyard.md)**: `daisugi router serve --routing-mode switchyard` runs Switchyard behind the router, and the router meters each turn by the target that served it.
 - **[Let `a && b` through](how-to/compound-shell.md)**: the compound-shell opt-in. It shows what it admits, what stays rejected, what it recovers.
-- **[Fence any harness with Landlock](how-to/fence.md)**: `daisugi fence -- claude`. The kernel keeps the harness out of your keys and the gate's state; what it grants, what it does not limit.
+- **[Branch one task into several attempts](how-to/branching.md)**: `tree run` with `attempts` and `why`: worktrees, a hard budget, ranking by `daisugi rank`, one card for the choice.
+- **[Review the choices daisugi made for you](how-to/review-cards.md)**: `rank queue`, `rank show`, `rank record`, `rank pivot` and `tree adopt`: answer a card from the terminal.
+- **[Fence any harness with Landlock](how-to/fence.md)**: `daisugi fence -- claude`. The kernel keeps the harness out of your keys and the warden's state; what it grants, what it does not limit.
 - **[π0 / VLA integration](pi-vla-integration.md)**: the robotics integration path.
 - Agent-guidance for working *in* this repo: **[AGENTS.md](../AGENTS.md)**.
 
@@ -89,8 +93,9 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Vision](../VISION.md)**: the one idea, the invariants, the honest scorecard.
 - **[Roadmap](roadmap.md)**: the problems we cannot yet solve, each paired with
   the evidence that would prove it solved.
-- **[The modular stack](explanation/modular-stack.md)**: the slots, the slot rule, the three token savers and history, knowledge and skills, and the gate that checks meaning.
+- **[The modular stack](explanation/modular-stack.md)**: the slots, the slot rule, the three token savers and history, knowledge and skills, and the warden that checks meaning.
 - **[The landscape](explanation/landscape.md)**: the other tools that fill each slot, with links.
+- **[How the idea grew](explanation/history.md)**: the path from the first question to the current design, the four runtime-assurance patterns, the open research questions, and the name.
 - **[Recipes](recipes/README.md)**: four ways to mix our pieces with others.
 - **[Architecture overview](architecture/OVERVIEW.md)**: the spine + diagrams.
 - **[Architecture Decision Records](adr/)**: why each load-bearing choice was made.
@@ -102,7 +107,7 @@ tutorial. If you write one, put it in `docs/tutorials/`.
 - **[Case study: AI council](case-studies/ai-council.md)**: a worked example.
 - **[Verifier client diversity](client-diversity.md)**: the verifier built five
   times over in five languages; the differential harness that found three oracle
-  bugs; and the gated campaign that took the machine-checked Lean client from
+  bugs; and the checked campaign that took the machine-checked Lean client from
   8,882 to 11,097 / 11,450 without ever letting an unsafe case through.
 - **[Exploration: the blind-design gauntlet](exploration/2026-08-blind-design-gauntlet/)**:
   the convergence experiment (five independent, closed-book architects) that

@@ -1,0 +1,9 @@
+#!/bin/sh
+# A stand-in for mise: `mise which claude` names the real binary beside this
+# directory. Nothing else is answered.
+if [ "$1" = which ] && [ "$2" = claude ]; then
+  here=$(cd "$(dirname "$0")" && pwd)
+  echo "$here/../real/bin/claude"
+  exit 0
+fi
+exit 1

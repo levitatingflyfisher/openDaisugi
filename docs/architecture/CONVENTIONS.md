@@ -30,7 +30,7 @@ system, [`OVERVIEW.md`](OVERVIEW.md).
 - Tests are **real code, not mocks of the thing under test.** Mock the boundary
   (subprocess, network, LLM client), never the logic you're checking.
 - `uv run pytest -q` must be green before committing. 1598 tests today; keep it so.
-- Robotics (`mujoco`) and some heavy paths are `importorskip`-gated — that's why a
+- Robotics (`mujoco`) and some heavy paths are `importorskip`-checked — that's why a
   test lives in a non-robotics file when it needs to always run.
 
 ## Style & structure

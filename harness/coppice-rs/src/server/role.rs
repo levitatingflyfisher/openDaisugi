@@ -17,20 +17,20 @@ use crate::textwidth;
 /// The one message a pane connection gets for a verb only the operator
 /// may run.
 pub const PANE_REFUSAL: &str = "a pane can propose. It cannot allow.";
-/// The message a pane or a plugin gets for a verb that names a foreman.
-pub const FOREMAN_REFUSAL: &str = "only the operator names a foreman.";
+/// The message a pane or a plugin gets for a verb that names a steward.
+pub const STEWARD_REFUSAL: &str = "only the operator names a steward.";
 /// The message a plugin gets for an allow verb.
 pub const PLUGIN_REFUSAL: &str = "a plugin can propose. It cannot allow.";
-pub const TALK_REFUSAL: &str = "only the operator talks to the floor's foreman.";
+pub const TALK_REFUSAL: &str = "only the operator talks to the floor's steward.";
 pub const PROJECT_REFUSAL: &str = "only the operator edits the project list.";
 pub const TRUST_REFUSAL: &str = "only the operator trusts a folder.";
-pub const FOREMAN_LABEL_REFUSAL: &str = "only the operator names a pane foreman.";
+pub const STEWARD_LABEL_REFUSAL: &str = "only the operator names a pane steward.";
 pub const LABEL_TAKEN_REFUSAL: &str =
     "another live pane has that label. Only the operator gives two panes one name.";
 pub const RENAME_REFUSAL: &str = "a pane may rename only itself. The operator renames any pane.";
 
-/// The label of the floor's foreman when the config file names none.
-pub const DEFAULT_FOREMAN_LABEL: &str = "foreman";
+/// The label of the floor's steward when the config file names none.
+pub const DEFAULT_STEWARD_LABEL: &str = "steward";
 
 /// How many runes a pane label keeps.
 pub const LABEL_MAX: usize = 64;
@@ -280,15 +280,15 @@ pub fn valid_harness(name: &str) -> bool {
         .all(|(i, r)| r.is_ascii_alphanumeric() || (i > 0 && (r == '.' || r == '_' || r == '-')))
 }
 
-pub fn is_foreman_label(label: &str) -> bool {
-    clean_label(label).to_lowercase() == DEFAULT_FOREMAN_LABEL
+pub fn is_steward_label(label: &str) -> bool {
+    clean_label(label).to_lowercase() == DEFAULT_STEWARD_LABEL
 }
 
-fn takes_foreman_label(r: &Request) -> bool {
+fn takes_steward_label(r: &Request) -> bool {
     matches!(
         r.cmd.as_str(),
         "pane.create" | "pane.split" | "pane.fork" | "pane.rename"
-    ) && is_foreman_label(&r.s("label"))
+    ) && is_steward_label(&r.s("label"))
 }
 
 /// Verbs that make no note when a pane runs them.
@@ -323,17 +323,20 @@ pub(super) fn operator_verb_refusal(cmd: &str) -> Option<&'static str> {
 
 fn operator_verb(cmd: &str) -> Option<&'static str> {
     match cmd {
-        "task.set_foreman" | "floor.foreman" => Some(FOREMAN_REFUSAL),
+        "task.set_steward" | "floor.steward" => Some(STEWARD_REFUSAL),
         "floor.talk" | "floor.chat" => Some(TALK_REFUSAL),
         "pane.trust" => Some(TRUST_REFUSAL),
         "pane.ack_changed" => Some(super::fence::ACK_REFUSAL),
         "agent.set_mode" => Some(super::mode::MODE_REFUSAL),
         "agent.set_model" => Some(super::swap::MODEL_REFUSAL),
-        "agent.set_router" => Some(super::swap::ROUTER_REFUSAL),
+        "agent.set_route" => Some(super::swap::ROUTE_REFUSAL),
         "agent.move" => Some(super::handoff::MOVE_REFUSAL),
         "floor.machines" => Some(super::machines::MACHINES_REFUSAL),
-        "floor.import" => Some(super::foreman_import::IMPORT_REFUSAL),
+        "floor.import" => Some(super::steward_import::IMPORT_REFUSAL),
         "project.remove" => Some(PROJECT_REFUSAL),
+        "envelope.pending" | "envelope.approve" | "envelope.decline" => {
+            Some(super::envelope::PROPOSAL_REFUSAL)
+        }
         "speech.say" | "speech.status" => Some(super::speech::SPEECH_REFUSAL),
         _ => None,
     }
@@ -620,13 +623,13 @@ impl Server {
         if (r.cmd == "speech.say" || r.cmd == "speech.status") && c.token_named() {
             return refuse(super::speech::SPEECH_REFUSAL);
         }
-        // A model on a prompt and a router on a resume are swaps too.
+        // A model on a prompt and a route on a resume are swaps too.
         if ro.no_allow {
             if r.cmd == "agent.prompt" && !r.s("model").is_empty() {
                 return refuse(super::swap::MODEL_REFUSAL);
             }
-            if r.cmd == "pane.resume" && !r.s("router").is_empty() {
-                return refuse(super::swap::ROUTER_REFUSAL);
+            if r.cmd == "pane.resume" && !r.s("route").is_empty() {
+                return refuse(super::swap::ROUTE_REFUSAL);
             }
         }
         if let Some(resp) = self.chat_guard(c, &ro, r) {
@@ -635,8 +638,8 @@ impl Server {
         if let Some(resp) = self.sprig_guard(&ro, r) {
             return (resp, false);
         }
-        if ro.no_allow && takes_foreman_label(r) {
-            return refuse(FOREMAN_LABEL_REFUSAL);
+        if ro.no_allow && takes_steward_label(r) {
+            return refuse(STEWARD_LABEL_REFUSAL);
         }
         if r.cmd == "pane.rename" && ro.no_allow {
             let pane = r.s("pane");
@@ -649,7 +652,7 @@ impl Server {
         }
         if (r.cmd == "agent.allow" || r.cmd == "agent.deny")
             && ro.no_allow
-            && !self.foreman_deny(&ro, r)
+            && !self.steward_deny(&ro, r)
         {
             if !ro.plugin.is_empty() {
                 return refuse(PLUGIN_REFUSAL);
@@ -670,11 +673,11 @@ impl Server {
         if let Some(msg) = self.fence_guard(&ro, typing(&r.cmd), &r.s("pane")) {
             return refuse(msg);
         }
-        // A prompt to a gated pane gets the handler's own refusal, which
+        // A prompt to a checked pane gets the handler's own refusal, which
         // names the pane and says to answer its question first.
         if typing(&r.cmd)
             && ro.no_allow
-            && !(super::ready::is_prompt_request(r) && self.gated(&r.s("pane")))
+            && !(super::ready::is_prompt_request(r) && self.checked(&r.s("pane")))
         {
             let id = r.s("pane");
             if let Some(eff) = self.effective_state(&id) {
@@ -806,9 +809,9 @@ impl Server {
     }
 
     /// Whether a connection with role ro may run the deny in r: a pane
-    /// the kernel placed or named, no plugin, and the foreman that holds
+    /// the kernel placed or named, no plugin, and the steward that holds
     /// that exact ask of that exact pane now.
-    fn foreman_deny(&self, ro: &Role, r: &Request) -> bool {
+    fn steward_deny(&self, ro: &Role, r: &Request) -> bool {
         if r.cmd != "agent.deny"
             || !ro.pane
             || ro.unknown
@@ -822,14 +825,14 @@ impl Server {
         !pane.is_empty() && !ask.is_empty() && self.holder(&pane, &ask) == ro.pane_id
     }
 
-    /// Answers the gate's ask, through the same file the phone writes.
-    /// guard lets through only the operator, and a foreman's deny of the
-    /// ask it holds. The foreman check runs again here.
+    /// Answers the warden's ask, through the same file the phone writes.
+    /// guard lets through only the operator, and a steward's deny of the
+    /// ask it holds. The steward check runs again here.
     fn handle_answer(self: &Arc<Server>, decision: &str, c: &Arc<Client>, r: &Request) -> Response {
         let verb = format!("agent.{decision}");
         let ro = c.role();
-        let foreman = ro.no_allow;
-        if foreman && !self.foreman_deny(&ro, r) {
+        let steward = ro.no_allow;
+        if steward && !self.steward_deny(&ro, r) {
             return proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, PANE_REFUSAL);
         }
         let id = r.s("pane");
@@ -866,14 +869,14 @@ impl Server {
             );
         };
         let mut reason = r.s("reason");
-        if foreman {
-            reason = format!("denied by the foreman {}", self.label_of(&ro.pane_id));
+        if steward {
+            reason = format!("denied by the steward {}", self.label_of(&ro.pane_id));
         } else if reason.is_empty() {
             reason = "answered from coppice by the operator".into();
         }
         let (by, from) = c.who();
         let res = if let Some(an) = self.harness_asker(&id, &ask) {
-            // The harness holds this ask itself, not the gate. The same
+            // The harness holds this ask itself, not the warden. The same
             // allow rule applies: a permanent ask needs the pane name.
             let mut res = Ok(());
             if decision == "allow" {
@@ -892,7 +895,7 @@ impl Server {
             res
         } else {
             super::ask::answer(
-                &self.gate_root(),
+                &self.warden_root(),
                 &super::ask::Reply {
                     tool_use_id: ask.clone(),
                     decision: decision.into(),
@@ -923,7 +926,7 @@ impl Server {
                 &r.id,
                 proto::ERR_BAD_REQUEST,
                 &format!(
-                    "no pending ask {}. The gate timed out, or someone answered it.",
+                    "no pending ask {}. The warden timed out, or someone answered it.",
                     sys::go_quote(&ask)
                 ),
             ),
@@ -987,7 +990,7 @@ impl Server {
     }
 
     /// Drops every ask of a pane that closed, ends its hold, and sends
-    /// every ask it held as a foreman to the operator.
+    /// every ask it held as a steward to the operator.
     pub fn forget_asks(&self, pane: &str) {
         self.end_holds(pane);
         self.asks
@@ -1019,7 +1022,7 @@ mod tests {
     #[test]
     fn labels_lose_controls_and_format_marks() {
         assert_eq!(clean_label("  a\u{200b}b\u{1b}c  "), "abc");
-        assert!(is_foreman_label(" Foreman "));
+        assert!(is_steward_label(" Steward "));
         assert!(valid_harness("claude-2.x"));
         assert!(!valid_harness("-x") && !valid_harness(""));
     }

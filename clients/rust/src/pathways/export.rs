@@ -3,8 +3,8 @@
 use super::pathway::{json_mode, py_dumps_indent, Pathway};
 use super::yamldump::safe_dump;
 use super::PwErr;
-use crate::gate::py::text::{is_alnum, lower, repr_list};
-use crate::gate::pyjson::{py_float_repr, Object, Value};
+use crate::warden::py::text::{is_alnum, lower, repr_list};
+use crate::warden::pyjson::{py_float_repr, Object, Value};
 
 /// `portability._SUPPORTED_FORMATS`, in its order.
 pub const FORMATS: &[&str] = &["json", "skill", "mermaid", "md", "smtlib"];
@@ -75,7 +75,7 @@ fn py_str(v: &Value) -> String {
         Value::Int(t) => t.clone(),
         Value::Bool(_) => py_bool(v).into(),
         Value::Float(f) => py_float_repr(*f),
-        other => crate::gate::pyjson::py_repr(other).unwrap_or_default(),
+        other => crate::warden::pyjson::py_repr(other).unwrap_or_default(),
     }
 }
 

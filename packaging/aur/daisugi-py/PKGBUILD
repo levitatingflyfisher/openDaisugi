@@ -7,10 +7,10 @@
 # It is its own package, not a split of opendaisugi, so installing it
 # builds no Go, Rust or Z3 (ruling PK-R-16).
 #
-# Every name in depends was checked on 2026-10-08: python-tree-sitter
+# Every name in depends was checked on 2026-10-08 (python-google-re2 on 2026-11-02, in extra): python-tree-sitter
 # (0.26.0) and python-tree-sitter-bash (0.25.1) are in the AUR, at the
-# versions the gate pins; the rest are in extra. Arch's python-z3-solver
-# was 4.16.0, where the Go and Rust ports link Z3 5.1.0; the gate's cases
+# versions the warden pins; the rest are in extra. Arch's python-z3-solver
+# was 4.16.0, where the Go and Rust ports link Z3 5.1.0; the warden's cases
 # were measured with 5.1.0.
 #
 # _commit is the commit the opendaisugi package pins. Until one exists,
@@ -20,12 +20,12 @@ pkgname=daisugi-py
 pkgver=0.43.0
 pkgrel=1
 _commit=
-pkgdesc='The Python daisugi CLI, the tool-call gate the Go and Rust ports are checked against'
+pkgdesc='The Python daisugi CLI, the tool-call warden the Go and Rust ports are checked against'
 arch=('any')
 url='https://github.com/levitatingflyfisher/openDaisugi'
 license=('MIT')
-depends=('python' 'python-pydantic' 'python-z3-solver' 'python-networkx' 'python-yaml'
-         'python-typer' 'python-click' 'python-numpy'
+depends=('python' 'python-pydantic' 'python-z3-solver' 'python-yaml'
+         'python-typer' 'python-click' 'python-numpy' 'python-google-re2'
          'python-tree-sitter' 'python-tree-sitter-bash')
 optdepends=('python-httpx: model calls over HTTP (envelope generation, orchestrate, tend on the API backend)'
             'python-mcp: daisugi-py mcp serve'

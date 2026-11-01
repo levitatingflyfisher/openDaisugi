@@ -6,16 +6,16 @@ import (
 	"os"
 	"strings"
 
-	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/wardenroot"
 )
 
-// The gate extensions, byte for byte the files Python ships in
-// harness_pi/extension/index.ts and harness_opencode/plugin/daisugi-gate.ts.
+// The warden extensions, byte for byte the files Python ships in
+// harness_pi/extension/index.ts and harness_opencode/plugin/daisugi-warden.ts.
 // A test fails when they drift.
 var (
 	//go:embed assets/pi-index.ts
 	PiExtension string
-	//go:embed assets/opencode-daisugi-gate.ts
+	//go:embed assets/opencode-daisugi-warden.ts
 	OpenCodePlugin string
 )
 
@@ -23,16 +23,16 @@ var (
 var Harnesses = []string{"pi", "opencode"}
 
 // PiDir is install.pi_extension_dir.
-func PiDir(home string) string { return gateroot.Join(home, ".pi/agent/extensions/daisugi-gate") }
+func PiDir(home string) string { return wardenroot.Join(home, ".pi/agent/extensions/daisugi-warden") }
 
 // OpenCodePath is install.opencode_plugin_path: under $XDG_CONFIG_HOME
 // when it is absolute, else ~/.config.
 func OpenCodePath(home string, env map[string]string) string {
-	base := gateroot.Join(home, ".config")
+	base := wardenroot.Join(home, ".config")
 	if x := env["XDG_CONFIG_HOME"]; x != "" && strings.HasPrefix(x, "/") {
-		base = gateroot.PathStr(x)
+		base = wardenroot.PathStr(x)
 	}
-	return gateroot.Join(base, "opencode/plugins/daisugi-gate.ts")
+	return wardenroot.Join(base, "opencode/plugins/daisugi-warden.ts")
 }
 
 // Target is install.harness_extension_target.
@@ -40,7 +40,7 @@ func Target(name, home string, env map[string]string) string {
 	if name == "opencode" {
 		return OpenCodePath(home, env)
 	}
-	return gateroot.Join(PiDir(home), "index.ts")
+	return wardenroot.Join(PiDir(home), "index.ts")
 }
 
 func isSymlink(p string) bool {
@@ -61,13 +61,13 @@ func InstallHarness(name, home string, env map[string]string) ([]string, error) 
 	text := PiExtension
 	if name == "opencode" {
 		text = OpenCodePlugin
-		parent := gateroot.Parent(out)
+		parent := wardenroot.Parent(out)
 		if isSymlink(parent) {
 			return nil, &HarnessError{Msg: parent + " is a symlink, so the plugin would land somewhere else. " +
 				"Replace it with a directory, then run this again."}
 		}
 	}
-	if err := os.MkdirAll(gateroot.Parent(out), 0o777); err != nil {
+	if err := os.MkdirAll(wardenroot.Parent(out), 0o777); err != nil {
 		return nil, err
 	}
 	if isSymlink(out) {
@@ -80,7 +80,7 @@ func InstallHarness(name, home string, env map[string]string) ([]string, error) 
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := gateroot.ReplaceFile(out, text); err != nil {
+	if err := wardenroot.ReplaceFile(out, text); err != nil {
 		return nil, err
 	}
 	return []string{out}, nil
@@ -88,23 +88,26 @@ func InstallHarness(name, home string, env map[string]string) ([]string, error) 
 
 // UninstallHarness is uninstall_harness_extension: pi's whole extension
 // directory, or OpenCode's one plugin file (its directory may hold the
-// user's own plugins).
+// user's own plugins). The directory that held it goes too when it is left
+// empty, since install made it; the harness's own root stays.
 func UninstallHarness(name, home string, env map[string]string) ([]string, error) {
-	if name == "pi" {
-		d := PiDir(home)
-		if !isSymlink(d) && !pathExists(d) {
-			return nil, nil
-		}
-		if isDirNoFollow(d) {
-			return []string{d}, os.RemoveAll(d)
-		}
-		return []string{d}, os.Remove(d)
+	target := PiDir(home)
+	if name != "pi" {
+		target = OpenCodePath(home, env)
 	}
-	out := OpenCodePath(home, env)
-	if isSymlink(out) || pathExists(out) {
-		return []string{out}, os.Remove(out)
+	if !isSymlink(target) && !pathExists(target) {
+		return nil, nil
 	}
-	return nil, nil
+	var err error
+	if name == "pi" && isDirNoFollow(target) {
+		err = os.RemoveAll(target)
+	} else {
+		err = os.Remove(target)
+	}
+	if err == nil {
+		removeEmptyDir(wardenroot.Parent(target)) // a real, empty dir only
+	}
+	return []string{target}, err
 }
 
 func pathExists(p string) bool {

@@ -162,7 +162,7 @@ The Aloha MJCF declares 14 joints (7 per arm) plus two grippers; your
 Same shape: subclass `VLAExecutorBase`, implement `_predict_actions`,
 swap the model load. The executor base is policy-agnostic.
 
-## What the substrate gates that a bare VLA doesn't
+## What the substrate checks that a bare VLA doesn't
 
 | concern | bare VLA inference | with openDaisugi |
 |---|---|---|

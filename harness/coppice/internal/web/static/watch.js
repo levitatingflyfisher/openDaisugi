@@ -120,8 +120,8 @@ export function mountWatch(rpc, changed) {
     quiet() {
       return chain.then(() => {});
     },
-    // gate makes every later call wait for p first.
-    gate(p) {
+    // warden makes every later call wait for p first.
+    warden(p) {
       queue(() => p);
     },
     // end stops every watch. It returns a promise that settles once each

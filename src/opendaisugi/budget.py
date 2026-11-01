@@ -1,4 +1,4 @@
-"""Live token-budget accounting that gates orchestration during a run (v0.32).
+"""Live token-budget accounting that checks orchestration during a run (v0.32).
 
 ``accounting.tier_stats`` reports token spend *after the fact* by scanning the
 journal. The orchestrator needs the opposite: a running total consulted *before*
@@ -6,7 +6,7 @@ each step so routing can downgrade (or, in strict mode, stop) when the budget is
 tight. ``BudgetTracker`` is that running total.
 
 It is deliberately small and legible — token counts are rough estimates (see
-``accounting`` and ``model_sizer``), not billing-grade. The value is the gate:
+``accounting`` and ``model_sizer``), not billing-grade. The value is the warden:
 the difference between "we spent 40k tokens" discovered afterward and "this step
 would blow the budget" decided in time to route around it.
 """

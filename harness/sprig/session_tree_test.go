@@ -38,7 +38,7 @@ func TestSessionWriterWritesTheSpecShape(t *testing.T) {
 		[]ToolUse{{ID: "toolu_1", Name: "bash"}})
 	w.OnToolCall("toolu_1", "bash", map[string]any{"command": "ls"})
 	w.OnVerdict("toolu_1", false, "permissions: no pipes", 400*time.Microsecond)
-	w.OnToolResult("toolu_1", false, "REFUSED by the gate")
+	w.OnToolResult("toolu_1", false, "REFUSED by the warden")
 
 	raw, _ := os.ReadFile(filepath.Join(dir, "e1.jsonl"))
 	var rows []map[string]any
@@ -80,7 +80,7 @@ func TestSessionWriterWritesTheSpecShape(t *testing.T) {
 	if rows[4]["decision"] != "deny" || rows[4]["toolUseId"] != "toolu_1" {
 		t.Fatalf("verdict: %v", rows[4])
 	}
-	if rows[5]["ok"] != false || rows[5]["summary"] != "REFUSED by the gate" {
+	if rows[5]["ok"] != false || rows[5]["summary"] != "REFUSED by the warden" {
 		t.Fatalf("tool_result: %v", rows[5])
 	}
 }

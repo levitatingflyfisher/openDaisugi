@@ -8,13 +8,13 @@ import (
 	"daisugi-verify/internal/pyjson"
 )
 
-// GateHookMarker is the first word of every hook command this binary
-// writes. Python's config.gate_hook_args accepts it as the Go entry point.
-const GateHookMarker = "DAISUGI_GATE_HOOK=opendaisugi.gate"
+// WardenHookMarker is the first word of every hook command this binary
+// writes. Python's config.warden_hook_args accepts it as the Go entry point.
+const WardenHookMarker = "DAISUGI_WARDEN_HOOK=opendaisugi.warden"
 
 // InstalledHookMode is config.installed_hook_mode: the --mode of the
-// first gate hook in a settings.json PreToolUse list, "" when none, and
-// "unknown" when a gate hook is in a form not read and no read hook
+// first warden hook in a settings.json PreToolUse list, "" when none, and
+// "unknown" when a warden hook is in a form not read and no read hook
 // enforces. err is ErrUnsupported where Python would raise instead of
 // answering.
 func InstalledHookMode(settingsPath string) (string, error) {
@@ -74,17 +74,17 @@ func InstalledHookMode(settingsPath string) (string, error) {
 				return "", ErrUnsupported
 			}
 			command := hook.Value("command")
-			if GateHookKind(command) == KindUnknown || IsStaleModeHook(command) {
+			if WardenHookKind(command) == KindUnknown || IsStaleModeHook(command) {
 				// A --mode shadow hook denies every call, so it counts
 				// as a hook that may enforce, never as audit.
 				unknown = true
 			}
-			if mode := GateHookMode(command); mode != "" && first == "" {
+			if mode := WardenHookMode(command); mode != "" && first == "" {
 				first = mode
 			}
 		}
 	}
-	// A gate hook in a form not read may enforce: only a read enforce hook
+	// A warden hook in a form not read may enforce: only a read enforce hook
 	// outranks it, never a read audit one.
 	if first == "enforce" || !unknown {
 		return first, nil
@@ -121,7 +121,7 @@ func EffectiveHookMode(home, cwd string) (EffectiveHook, error) {
 	}
 	eff := EffectiveHook{CwdMode: c, GlobalMode: g}
 	// max() keeps the first of equal keys: cwd before global.
-	// "unknown" is a gate hook in a form not read: it may enforce.
+	// "unknown" is a warden hook in a form not read: it may enforce.
 	rank := map[string]int{"enforce": 3, KindUnknown: 2, "audit": 1}
 	for _, m := range []string{c, g} {
 		if m != "" && (eff.Mode == "" || rank[m] > rank[eff.Mode]) {

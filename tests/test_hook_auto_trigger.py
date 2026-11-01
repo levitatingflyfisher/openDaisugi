@@ -52,3 +52,25 @@ def test_never_raises_on_spawn_error(tmp_path):
         maybe_trigger_background_tend(tmp_path, now=10_000.0, spawn=boom, min_interval_s=1800)
         is False
     )
+
+
+def test_resident_mirror_triggers_auto_tend_from_the_data_home(tmp_path, monkeypatch):
+    import json
+
+    from opendaisugi.models import Envelope, Permission
+    from opendaisugi.warden import register_envelope, warden_and_contract
+
+    spawned = []
+    monkeypatch.setattr("opendaisugi.hook._spawn_detached_auto_tend", lambda d: spawned.append(d))
+    data = tmp_path / "d"
+    data.mkdir()
+    save_config(Config(auto_tend=True), data / "config.yaml")
+    env = Envelope(generated_by="test", task="t", permissions=Permission(shell_allowlist=["ls"]))
+    register_envelope(env, root=data / "warden")
+    payload = json.dumps(
+        {"tool_name": "bash", "tool_input": {"command": "ls"}, "session_id": "s1"}
+    ).encode()
+    warden_and_contract(
+        payload, root=data / "warden", fmt="pi", captures_root=data / "warden" / "captures"
+    )
+    assert spawned == [data]

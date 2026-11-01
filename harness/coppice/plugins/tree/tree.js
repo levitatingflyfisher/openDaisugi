@@ -5,6 +5,8 @@
 // is marked. Every mark is a state the socket reports. A click on a pane
 // line asks the floor page to open that pane.
 
+import { nodeLines, askText } from './nodes.js';
+
 // stateMark is the dot and word a tree line ends with.
 export function stateMark(state) {
   switch (state) {
@@ -43,7 +45,7 @@ export function paneText(p) {
 // treeLines walks the tasks depth first. Each line is { text, task, pane }:
 // a task line names its task, a pane line its pane. Under a task its panes
 // come first, then its child tasks.
-export function treeLines(tasks, panes) {
+export function treeLines(tasks, panes, tree) {
   const byId = new Map();
   const children = new Map();
   for (const t of tasks || []) byId.set(t.id, t);
@@ -59,6 +61,7 @@ export function treeLines(tasks, panes) {
   const paneRows = new Map();
   for (const p of panes || []) paneRows.set(p.id, p);
   const seen = new Set();
+  const claimed = new Set();
   const out = [];
   const walk = (id, indent, last) => {
     if (seen.has(id)) return;
@@ -73,9 +76,24 @@ export function treeLines(tasks, panes) {
       const b = i === here.length - 1 && kids.length === 0 ? '└─ ' : '├─ ';
       out.push({ text: indent + deeper + b + paneText(p), task: '', pane: p.id });
     });
+    // The task's place in the delegation tree: its session's node and the
+    // nodes below it.
+    if (tree && t.session) {
+      const nl = nodeLines(tree.nodes, t.session, indent + deeper);
+      for (const l of nl) { claimed.add(l.node); out.push(l); }
+    }
     kids.forEach((kid, i) => walk(kid, indent + deeper, i === kids.length - 1));
   };
   roots.forEach((id, i) => walk(id, '', i === roots.length - 1));
+  if (tree) {
+    // Nodes no task holds, such as a sprig child, follow under their own
+    // heading, and the asks that need a person come last.
+    const loose = (tree.nodes || []).filter((n) => !claimed.has(n.session) && !(n.parent && !claimed.has(n.parent) && (tree.nodes || []).some((m) => m.session === n.parent)));
+    for (const n of loose) for (const l of nodeLines(tree.nodes, n.session, '')) if (!claimed.has(l.node)) { claimed.add(l.node); out.push(l); }
+    for (const a of Array.isArray(tree.asks) ? tree.asks : []) {
+      out.push({ text: askText(a), task: '', pane: '', ask: a.ask_id });
+    }
+  }
   return out;
 }
 
@@ -96,7 +114,8 @@ export function mountTree(status, list, { post }) {
     if (!data || data.type !== 'coppice.data') return;
     const tasks = Array.isArray(data.tasks) ? data.tasks : [];
     const panes = Array.isArray(data.panes) ? data.panes : [];
-    const lines = markSelected(treeLines(tasks, panes), Array.isArray(data.sel) ? data.sel : []);
+    const tree = data.tree && typeof data.tree === 'object' ? data.tree : null;
+    const lines = markSelected(treeLines(tasks, panes, tree), Array.isArray(data.sel) ? data.sel : []);
     list.textContent = '';
     for (const l of lines) {
       const li = document.createElement('li');
@@ -106,9 +125,23 @@ export function mountTree(status, list, { post }) {
         li.dataset.pane = l.pane;
         li.addEventListener('click', () => post({ type: 'open-pane', pane: l.pane }));
       }
+      if (l.ask) {
+        // An ask needs a person. Allow starts the child, marked not
+        // proved. Deny refuses it.
+        li.dataset.ask = l.ask;
+        for (const decision of ['allow', 'deny']) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = decision === 'allow' ? 'Allow' : 'Deny';
+          b.dataset.decision = decision;
+          b.addEventListener('click', () => post({ type: 'tree-answer', ask_id: l.ask, decision }));
+          li.append(b);
+        }
+      }
       list.append(li);
     }
-    status.textContent = lines.length ? '' : 'No tasks yet.';
+    const note = typeof data.notice === 'string' ? data.notice : '';
+    status.textContent = note || (lines.length ? '' : 'No tasks yet.');
   };
   return { render };
 }

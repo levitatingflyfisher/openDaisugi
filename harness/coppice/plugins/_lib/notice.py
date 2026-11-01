@@ -5,7 +5,7 @@
 """The words a notifier sends, and the one ntfy post they share.
 
 The words match the built-in Go publisher: the title names the pane, the
-body names what the ask wants and what the gate said.
+body names what the ask wants and what the warden said.
 """
 
 from __future__ import annotations
@@ -38,12 +38,12 @@ def ascii_header(s: str, limit: int) -> str:
     return text[: limit - 3].strip() + "..."
 
 
-def gate_says(gate: dict | None) -> str:
-    if gate and gate.get("verdict") == "allow":
-        return "Gate says yes."
-    if gate and gate.get("rule") is not None:
-        return f"Gate says no, rule {gate['rule']}."
-    return "Gate says no."
+def warden_says(warden: dict | None) -> str:
+    if warden and warden.get("verdict") == "allow":
+        return "Warden says yes."
+    if warden and warden.get("rule") is not None:
+        return f"Warden says no, rule {warden['rule']}."
+    return "Warden says no."
 
 
 def title(label: str) -> str:
@@ -53,10 +53,10 @@ def title(label: str) -> str:
 def body(ev: dict) -> str:
     ask = ev.get("ask") or {}
     if ask.get("summary"):
-        return f"Wants {ask['summary']}. {gate_says(ask.get('gate'))}"
+        return f"Wants {ask['summary']}. {warden_says(ask.get('warden'))}"
     if ev.get("detail"):
         return ev["detail"]
-    return "blocked, and the gate gave no detail"
+    return "blocked, and the warden gave no detail"
 
 
 def label_of(client: FloorClient, pane: str) -> str:
@@ -74,7 +74,7 @@ def label_of(client: FloorClient, pane: str) -> str:
 class BlockedEdges:
     """Tells the moment a pane becomes blocked from a repeat of it.
 
-    A blocked event that carries held waits on a foreman first, so it counts
+    A blocked event that carries held waits on a steward first, so it counts
     as not blocked. The edge comes when the hold ends and the same ask goes
     out with no held.
     """

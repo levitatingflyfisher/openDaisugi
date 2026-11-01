@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A stand-in for daisugi in the foreman's chat cases. It never calls a
+"""A stand-in for daisugi in the steward's chat cases. It never calls a
 model and never runs a worker.
 
 - `agent-profiles bundle --fd 3`: writes $FAKE_BUNDLE_JSON, or else the file
@@ -21,6 +21,13 @@ model and never runs a worker.
   "refuse" answers status refused with a reason (exit 1); "ask" answers
   status asked with an ask id (exit 3); anything else exits 2 with a line on
   stderr.
+  A task "help-need", "help-escalate" or "help-timeout" answers status help
+  with help_kind need_info, escalate or need_info and the text "which db?"
+  (exit 0); "help-give" answers help_kind give_up after it wrote a session
+  file with two write calls and an edit call. A request with a "resume" (the
+  steward's answer to a question; the task is the answer, one word) waits for
+  the go file named by the answer, then answers status ran with "got: " and
+  the answer, on session s-help-2.
 
 Anything else exits 2.
 """
@@ -89,6 +96,59 @@ def main():
         log("run " + " ".join(a[2:]) + " " + json.dumps(req, sort_keys=True))
         root = a[a.index("--root") + 1]
         task = req["task"]
+        if req.get("resume"):
+            print(json.dumps({"status": "ran", "session": "s-help-2", "answer": "got: " + task}))
+            return 0
+        if task.startswith("help-"):
+            kind = {
+                "help-need": "need_info",
+                "help-escalate": "escalate",
+                "help-give": "give_up",
+                "help-timeout": "need_info",
+            }[task]
+            text = "the envelope has no network" if kind == "give_up" else "which db?"
+            if kind == "give_up":
+                os.makedirs(os.path.join(root, "sessions"), exist_ok=True)
+                calls = [
+                    ("write", {"path": "b.go", "content": "x"}),
+                    ("read", {"path": "c.go"}),
+                    ("edit", {"path": "a.go", "old": "1", "new": "2"}),
+                ]
+                with open(
+                    os.path.join(root, "sessions", "s-help.jsonl"), "w", encoding="utf-8"
+                ) as f:
+                    for i, (name, inp) in enumerate(calls):
+                        uid = "t%d" % i
+                        f.write(
+                            json.dumps(
+                                {"type": "tool_call", "toolUseId": uid, "name": name, "input": inp}
+                            )
+                            + "\n"
+                        )
+                        f.write(
+                            json.dumps(
+                                {
+                                    "type": "tool_result",
+                                    "toolUseId": uid,
+                                    "ok": True,
+                                    "summary": "done",
+                                }
+                            )
+                            + "\n"
+                        )
+            print(
+                json.dumps(
+                    {
+                        "status": "help",
+                        "session": "s-help",
+                        "answer": text,
+                        "reasons": [],
+                        "help_kind": kind,
+                        "help_text": text,
+                    }
+                )
+            )
+            return 0
         if task.startswith("ran"):
             os.makedirs(os.path.join(root, "sessions"), exist_ok=True)
             with open(os.path.join(root, "sessions", "s-ran.jsonl"), "w", encoding="utf-8") as f:

@@ -109,3 +109,56 @@ func TestOutputPast16MiBIsTooBig(t *testing.T) {
 		t.Fatalf("big %v err %v", big, err)
 	}
 }
+
+// Review r9 fix 1, finding 4: the verdict is the timer's. A cap that fires
+// at the moment the child exits (a starved supervisor sees both at once)
+// is reported as past the cap, never as ran. The fake timer has already
+// fired when the exit is seen: its Stop returns false.
+func TestARunWhoseCapFiresAsItExitsIsPastTheCap(t *testing.T) {
+	old := runCapTimer
+	t.Cleanup(func() { runCapTimer = old })
+	runCapTimer = func(d time.Duration, f func()) *time.Timer {
+		fired := time.AfterFunc(time.Hour, func() {})
+		fired.Stop()
+		return fired
+	}
+	for i := 0; i < 20; i++ {
+		_, _, _, timedOut, _, err := runGroupFds("sh", []string{"-c", "echo '{}'"}, t.TempDir(), os.Environ(), nil, 1, nil, nil, nil)
+		if err != nil || !timedOut {
+			t.Fatalf("run %d: timeout %v err %v", i, timedOut, err)
+		}
+	}
+}
+
+// With no cap the verdict is never a timeout.
+func TestARunWithNoCapIsNeverPastIt(t *testing.T) {
+	_, _, _, timedOut, _, err := runGroupFds("sh", []string{"-c", "sleep 0.2; echo '{}'"}, t.TempDir(), os.Environ(), nil, 0, nil, nil, nil)
+	if err != nil || timedOut {
+		t.Fatalf("timeout %v err %v", timedOut, err)
+	}
+}
+
+// Review r9 fix 2, finding 3: a child that exits cleanly while a process
+// outside its group holds its stdout ends after a short grace, with its
+// answer kept, not at the run cap as a timeout.
+func TestACleanExitWithAHeldPipeEndsAfterAGraceWithItsAnswer(t *testing.T) {
+	old := exitGrace
+	t.Cleanup(func() { exitGrace = old })
+	exitGrace = 300 * time.Millisecond
+	pids := t.TempDir() + "/pids"
+	script := "printf '{\"answer\": \"done\"}'; setsid sleep 30 & echo $! > " + pids + "; sleep 0.1"
+	t0 := time.Now()
+	rc, out, _, timedOut, _, err := runGroupFds("sh", []string{"-c", script}, t.TempDir(), os.Environ(), nil, 60, nil, nil, nil)
+	took := time.Since(t0)
+	t.Cleanup(func() {
+		for _, p := range pidsIn(t, pids) {
+			_ = syscall.Kill(p, syscall.SIGKILL)
+		}
+	})
+	if err != nil || rc != 0 || timedOut || string(out) != `{"answer": "done"}` {
+		t.Fatalf("rc %d out %q timeout %v err %v", rc, out, timedOut, err)
+	}
+	if took > 5*time.Second {
+		t.Fatalf("took %v: it waited for the run cap", took)
+	}
+}

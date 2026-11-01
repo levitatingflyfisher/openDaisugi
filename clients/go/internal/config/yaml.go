@@ -1,6 +1,6 @@
 // Package config reads ~/.opendaisugi/config.yaml the way
-// opendaisugi.config.load_config does, for the settings the gate commands
-// read, and finds the gate hook mode installed in Claude Code's settings.
+// opendaisugi.config.load_config does, for the settings the warden commands
+// read, and finds the warden hook mode installed in Claude Code's settings.
 //
 // Python validates the whole file with pydantic: one bad field anywhere
 // makes load_config raise. The YAML is read by package pyyaml, as PyYAML's

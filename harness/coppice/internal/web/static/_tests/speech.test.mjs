@@ -318,7 +318,7 @@ test('the voiced mark waits for our own owner row: another page\'s line before i
 
 test('a read that finishes late still finds our row and speaks the reply that follows', async () => {
   let release;
-  const gate = new Promise((r) => { release = r; });
+  const warden = new Promise((r) => { release = r; });
   const { speech, synth, chat } = make({ info: async () => ({ mode: 'browser' }) });
   await speech.prime();
   speech.markVoiced();
@@ -330,7 +330,7 @@ test('a read that finishes late still finds our row and speaks the reply that fo
   assert.deepEqual(synth.spoken, []);
   chat.msgs.push(agent(2, 'The reply came late.'));
   release();
-  await gate;
+  await warden;
   await first;
   await speech.onEvent({ event: 'messages', chat: true });
   await flush();
@@ -355,14 +355,14 @@ test('a typed line after the voiced one ends the mark, and its reply stays silen
 
 test('a send right after the mic waits for the read the mic started, so our row is never taken for an old one', async () => {
   let release;
-  const gate = new Promise((r) => { release = r; });
+  const warden = new Promise((r) => { release = r; });
   const msgs = [];
   const spoken = [];
   const speech = createSpeech({
     say: async () => { throw new Error('no server'); },
     info: async () => ({ mode: 'browser' }),
     // A read that answers late, with the chat as it is when it answers.
-    chat: async () => { await gate; return msgs.slice(); },
+    chat: async () => { await warden; return msgs.slice(); },
     audio: () => null,
     synth: () => ({ speak: async (t) => { spoken.push(t); }, cancel() {}, unlock() {} }),
     status: () => {},
@@ -399,4 +399,65 @@ test('an owner row from elsewhere after ours ends the mark too', async () => {
   await speech.onEvent({ event: 'messages', chat: true });
   await flush();
   assert.deepEqual(synth.spoken, ['Ours is spoken.']);
+});
+
+test('an untagged auto reply queued behind a tagged Listen leaves the Listen tag, then takes its own turn', async () => {
+  const synth = fakeSynth();
+  synth.auto = false;
+  const { speech, chat } = make({ synth, info: async () => ({ mode: 'browser' }) });
+  speech.setReadAloud(true);
+  await speech.prime();
+  speech.speak('The listened reply.', 'chat:7');
+  await flush();
+  assert.equal(speech.current(), 'chat:7');
+  chat.msgs.push(agent(1, 'An auto reply arrives.'));
+  await speech.onEvent({ event: 'messages', chat: true });
+  await flush();
+  assert.equal(speech.current(), 'chat:7', 'the auto reply took the tag of the Listen');
+  synth.waiting.splice(0).forEach((r) => r());
+  await flush();
+  assert.deepEqual(synth.spoken, ['The listened reply.', 'An auto reply arrives.']);
+  assert.equal(speech.current(), '', 'the auto reply plays with no tag');
+  assert.equal(speech.speaking(), true, 'untagged speech is speaking, so the global Stop shows');
+  speech.stop();
+  assert.equal(speech.speaking(), false);
+});
+
+test('the global Stop button shows while untagged speech plays and stops it', async () => {
+  const { reset, element } = await import('./browser-stub.mjs');
+  const { mountSpeech } = await import('../speech.js');
+  const { readFileSync } = await import('node:fs');
+  reset();
+  // The page ships the button hidden, in the status row.
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<button id="speech-stop"[^>]*\bhidden\b/);
+  const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  assert.match(app, /mountSpeech\(/);
+  const stop = element('speech-stop');
+  stop.hidden = true;
+  const spoken = [];
+  let cancels = 0;
+  const waiting = [];
+  globalThis.window.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+  globalThis.window.speechSynthesis = {
+    speak(u) { spoken.push(u.text); waiting.push(u); },
+    cancel() { cancels += 1; waiting.splice(0).forEach((u) => u.onend && u.onend()); },
+  };
+  const speech = mountSpeech({
+    rpc: async () => ({ mode: 'browser' }), status: () => {}, storage: memory(), connected: () => true,
+  });
+  await speech.refresh();
+  await speech.prime();
+  speech.speak('Read this out loud.');
+  await flush();
+  assert.equal(speech.current(), '', 'the speech has no tag');
+  assert.equal(speech.speaking(), true);
+  assert.equal(stop.hidden, false, 'the Stop button shows for untagged speech');
+  stop.dispatchEvent({ type: 'click' });
+  await flush();
+  assert.ok(cancels > 0, 'Stop cancelled the voice');
+  assert.equal(speech.speaking(), false);
+  assert.equal(stop.hidden, true, 'the Stop button hides again');
+  delete globalThis.window.speechSynthesis;
+  delete globalThis.window.SpeechSynthesisUtterance;
 });

@@ -1,4 +1,4 @@
-//! The journal on the floor: the gate verdicts the server was told,
+//! The journal on the floor: the warden verdicts the server was told,
 //! newest first, drawn over the windows. j on the rail opens it.
 
 use crate::textwidth;
@@ -10,7 +10,7 @@ use super::run::{call, list_of, Floor};
 
 /// What the journal lists, in the words the web page uses.
 pub const JOURNAL_TITLE: &str =
-    "Journal · the verdicts the gate and each agent's loop report, newest first. 100 per agent, 500 in all, oldest first";
+    "Journal · the verdicts the warden and each agent's loop report, newest first. 100 per agent, 500 in all, oldest first";
 
 /// One verdict from floor.journal.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,7 +88,7 @@ pub fn journal_lines(m: &Model, cols: i64, height: i64) -> Vec<String> {
             pad(&textwidth::truncate(&text, cols), cols)
         ));
     } else if v.rows.is_empty() {
-        lines.push(pad("No gate verdicts yet.", cols));
+        lines.push(pad("No warden verdicts yet.", cols));
     }
     for r in v.rows.iter().skip(v.top) {
         if lines.len() as i64 >= height {

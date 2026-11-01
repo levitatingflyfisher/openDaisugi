@@ -8,7 +8,13 @@ from pathlib import Path
 
 import opendaisugi
 
-HEAVY = ("z3", "networkx", "opendaisugi.agentic_executor", "opendaisugi.verify", "opendaisugi.gate")
+HEAVY = (
+    "z3",
+    "networkx",
+    "opendaisugi.agentic_executor",
+    "opendaisugi.verify",
+    "opendaisugi.warden",
+)
 
 
 def _modules_after(stmt: str) -> set[str]:
@@ -70,7 +76,7 @@ def test_integrations_is_reachable_and_not_self_referential():
     assert mod.__name__ == "opendaisugi.integrations"
 
 
-def test_gate_import_does_not_load_networkx():
-    loaded = _modules_after("import opendaisugi.gate")
+def test_warden_import_does_not_load_networkx():
+    loaded = _modules_after("import opendaisugi.warden")
     assert "networkx" not in loaded
     assert "z3" in loaded  # the verifier itself is expected here

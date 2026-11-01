@@ -31,7 +31,7 @@ which today deploy with no such layer.
 Every agent framework treats a model's output as trustworthy-enough to act on. It
 is not. An LLM agent that decides to `rm -rf` the wrong directory just does it. A
 vision-language-action (VLA) model that grips at the wrong angle just does it. There
-is no gate between "the model decided X" and "X happens to the world." The two
+is no warden between "the model decided X" and "X happens to the world." The two
 honest options have each been unsatisfying:
 
 - **Verify the model.** Intractable. You cannot prove properties of a 100B-parameter
@@ -57,6 +57,16 @@ anticipating every case (impossible) nor is it the model's raw output (untrusted
 It's model-generated *and* independently checkable, with a human-set ceiling it can
 only tighten.
 
+The unit of proof is small on purpose. Deciding whether every program written in some
+language stays inside a policy is undecidable, by Rice's theorem: any non-trivial
+property of what a program does has no general decision procedure. The warden does not
+try. It asks one question about one plan and one envelope: does this plan stay inside
+this envelope? That question is decidable for the fragments of the kernel we use, and Z3
+usually answers it in milliseconds. Where it cannot, it says unknown and the warden
+denies (§9). The schema is fixed, so the set of things an envelope can say
+is fixed. The content is new for each task. We do not define a general language for models
+to write programs in.
+
 The boundary also carries a cost story, and it is worth stating precisely because it
 is easy to get backwards. The envelope is not itself a token-saving trick. It is the
 **trust substrate** that makes token-saving *safe*: once an action is proven
@@ -77,7 +87,7 @@ This is not a new architecture. It is a 30-year-old one from a new angle. Runtim
 Assurance (RTA) is the discipline of deploying an unverified advanced system safely
 by monitoring and constraining it at runtime. Four established patterns:
 
-1. **Simplex** (Sha et al., 1996): an advanced (unverified) controller plus a
+1. **Simplex** (Sha, 2001, building on early work from 1996): an advanced (unverified) controller plus a
    conservative (verified) baseline, with a decision module that switches to the
    baseline when a safety boundary is approached.
 2. **NN-tuned classical control**: a neural net adjusts a PID/MPC's parameters; the
@@ -91,7 +101,7 @@ by monitoring and constraining it at runtime. Four established patterns:
 RTA is deployed in F-16 collision avoidance, spacecraft, and autonomous vehicles.
 Few published LLM-agent systems name the Simplex lineage. Robotics work such as
 RoboGuard is the closest, and solver-checked agent policies such as Progent and ActGov
-are near neighbours (§10). We found no system that applies one RTA gate to both
+are near neighbours (§10). We found no system that applies one RTA warden to both
 software agents and robot foundation models. "Not found" is not "does not exist". That
 gap is the opportunity. openDaisugi maps each pattern onto AI action: the compiled pathway is
 the advanced controller, full-model reasoning is the baseline, the supervisor is the
@@ -123,21 +133,21 @@ task ─▶ generate envelope ─┐
   verification stack supervises it.
 
 The pipeline above checks a declared plan. Most agents today declare no plan; they
-emit tool calls one at a time inside a host harness. For them, the **gate**
-([ADR-0007](adr/0007-call-time-gate.md), `src/opendaisugi/gate.py`) checks each call
+emit tool calls one at a time inside a host harness. For them, the **warden**
+([ADR-0007](adr/0007-call-time-gate.md), `src/opendaisugi/warden.py`) checks each call
 against a registered envelope before it runs, and answers allow, deny or ask. It runs
 in audit mode by default: it logs what it would deny and allows. The yellow paper §8
 states what a per-call check can and cannot promise.
 
 Two cost parts sit beside the spine:
 
-- **The gateway** ([ADR-0012](adr/0012-gateway-reuse-and-answer-store.md),
-  [ADR-0015](adr/0015-cache-aware-sticky-routing.md), `src/opendaisugi/gateway.py`) is
+- **The router** ([ADR-0012](adr/0012-gateway-reuse-and-answer-store.md),
+  [ADR-0015](adr/0015-cache-aware-sticky-routing.md), `src/opendaisugi/router.py`) is
   a `base_url` proxy. It routes whole turns to a model tier, meters each turn, and
   offers reuse of stored answers and pathways. It can hand the model choice to NVIDIA
-  NeMo Switchyard and stay the meter ([how-to](how-to/router-switchyard.md)). The
+  NeMo Switchyard and stay the meter ([how-to](how-to/routing-mode-switchyard.md)). The
   honest ceiling for routing is about 3× on a blended day, not 100×
-  ([how-to](how-to/token-saving-gateway.md)).
+  ([how-to](how-to/router.md)).
 - **Pathways** serve recurring work at Tier 0, with no model call. A reused pathway
   is re-verified against the **caller's** envelope, never its own (yellow paper §5).
   A router that learns from verified results is designed, not built
@@ -152,11 +162,11 @@ openDaisugi does the same with agent work:
 |---|---|---|
 | Interpreter (slow, general, always works) | the frontier model, reasoning from scratch | rented |
 | Profiler | the journal: every action, verdict and token | Built (`journal.py`) |
-| Tiered compilation | the routing ladder: pathway (0 tokens), local model, warm cache, cheap model, frontier | Built in part (`routing.py`, the gateway); the learned router is Designed |
+| Tiered compilation | the routing ladder: pathway (0 tokens), local model, warm cache, cheap model, frontier | Built in part (`routing.py`, the router); the learned router is Designed |
 | Profile-guided optimizer | the garden, which compiles repeated work into pathways | Built (`distiller.py`, `gardener/`) |
 | Type checker | Z3 and the envelope, before anything runs | Built (`verify.py`) |
 | Deoptimization | fail closed: a failed proof falls back to the frontier or to a human | Built as re-verification plus deny or ask; no explicit pathway guards yet ([correspondence.md](correspondence.md), Part C, gap 8) |
-| The runtime's sandbox | the gate | Built (`gate.py`) |
+| The runtime's sandbox | the warden | Built (`warden.py`) |
 | Debugger and console | coppice | Built (`harness/coppice/`) |
 
 The pitch in one breath: *the first time, a frontier model does the work and a formal
@@ -164,12 +174,32 @@ proof checks every action before it runs. The tenth time, it runs as a verified 
 for free.* The second sentence is a mechanism, not a measurement. How much real work
 recurs, and how much reuse saves, is not measured yet (roadmap Stage 4; §7).
 
+### 4.2 The same idea under older names
+
+The JIT compiler is the picture we use. The idea that work done once by a general,
+slow method can be kept as a fast, special one is older than that picture, and several
+fields have their own exact term for it:
+
+| Field | Term | What it means there | The part of openDaisugi it resembles |
+|---|---|---|---|
+| Programming languages | Partial evaluation (Futamura, 1971; Jones, Gomard and Sestoft, 1993) | A general program is specialized to the inputs that are already known, which leaves a smaller, faster residual program | A pathway is what is left of a task once its fixed parts are settled, with slots for the parts that vary |
+| Cognitive architectures | Chunking in Soar (Laird, Rosenbloom and Newell, 1986) | When problem solving in a subgoal reaches a result, a rule is stored that gives that result directly the next time | The garden distils a group of like runs into a pathway that is served without planning again |
+| Cognitive architectures | Production compilation in ACT-R (Taatgen and Lee, 2003) | Two rules that fire one after the other are merged into one rule, with the fact they looked up built in | Steps that always follow each other become one stored step sequence |
+| AI planning | Macro-operators (Fikes, Hart and Nilsson, 1972; Korf, 1985) | A sequence of operators that solved a problem is stored and reused as a single operator | A pathway is a stored sequence of steps reused as one unit |
+| Program synthesis | Library learning in DreamCoder (Ellis and others, 2021) | Solved programs are refactored to find the parts they share, and those parts join a library | Dialect words that a model grows from the journal, which are designed and not built |
+
+One thing is not in those older systems and is the point of this one: every reuse is
+checked again. A pathway served from the store is verified against the caller's own
+envelope before it runs, so a stored shortcut can never carry more permission than the
+task in hand allows. The table compares ideas. It claims none of those systems' measured
+results for openDaisugi.
+
 ## 5. Positioning: daisugi is not a harness
 
 openDaisugi is three parts ([ADR-0020](adr/0020-layer-floor-loop.md)). **daisugi** is
-the gate, the verifier, the journal and the garden: a library that imports nothing
+the warden, the verifier, the journal and the garden: a library that imports nothing
 above it and runs alone in any harness. **coppice** is the floor: a Go daemon that
-supervises panes of agents and takes every state it shows from the gate. The **loop**
+supervises panes of agents and takes every state it shows from the warden. The **loop**
 is whatever harness runs in a pane; sprig is ours and is on hold with the owner, and
 the rest are rented. The rule below applies to daisugi.
 
@@ -179,12 +209,12 @@ sits above daisugi and uses it like any other harness; it is on hold with the ow
 
 - **vs. harnesses (Claude Code, Codex, OpenClaw, Hermes, Gas Town)**: they own the
   driving loop and the messaging/skills. daisugi is the assurance + budget +
-  memory substrate they *lack*. It integrates mainly through the gate hook
-  (`daisugi install --gate` for Claude Code and Codex, an extension for pi), and also
+  memory substrate they *lack*. It integrates mainly through the warden hook
+  (`daisugi install` for Claude Code and Codex, an extension for pi), and also
   through an MCP server and per-harness install adapters. The honest overlap: harnesses
   can already generate their own skills from usage, and they offer permission
   rules and hooks. What we did not find in them is *runtime assurance*: checkable
-  envelopes, proved delegation, fail-closed gates. Policy engines such as AWS
+  envelopes, proved delegation, fail-closed checks. Policy engines such as AWS
   AgentCore on Cedar come closer (§10).
 - **vs. prompt caching**: caching cuts the cost of *context*; distillation cuts the
   cost of *reasoning* by removing calls entirely. Complementary.
@@ -199,10 +229,10 @@ serves two applications of very different magnitude:
 
 - **LLM agents (real but incremental).** Makes something that exists cheaper and
   safer. Genuine value; not, on its own, a novel contribution.
-- **Robot foundation models (novel).** We found no Simplex-style RTA gate for
+- **Robot foundation models (novel).** We found no Simplex-style RTA warden for
   VLA models; RoboGuard, the nearest, repairs LLM plans against temporal-logic
   rules (§10). π0 and its kin output motor commands from pixels with no quality
-  gate, no fallback controller, no safety envelope. The same architecture applies. The VLA
+  warden, no fallback controller, no safety envelope. The same architecture applies. The VLA
   proposes a trajectory, a constraint layer checks joint/velocity/force/collision
   bounds and deconflicts a swarm's airspace, a conservative baseline takes over when
   the envelope is violated. It is straightforward to describe, maps directly onto
@@ -220,14 +250,14 @@ A white paper that overclaims is marketing. Honestly, as of v0.43.0 (2026-09-26)
   distillation with signing, the forward orchestrator, and swarm airspace
   deconfliction (analytic geometry, plan level). It runs as a library, as an MCP
   server, or from the CLI, with no API key.
-- The call-time gate ([ADR-0007](adr/0007-call-time-gate.md)), audit mode by
+- The call-time warden ([ADR-0007](adr/0007-call-time-gate.md)), audit mode by
   default, with ask tiers and a resident process.
 - Security campaigns keep closing fail-opens. On 2026-09-26 alone: subsumption now
   also checks stakes, custom step types and budgets, and a Z3 timeout there denies in
   every mode; a hook payload's session id never selects an envelope; definition arguments
   are substituted in one pass and escaped in regex fields, and no definition can shadow a
   system word (commits `f9e202e7`, `31871c4d`, `92f87edf`).
-- The gateway: whole-turn routing by rules or by NeMo Switchyard, a per-turn meter,
+- The router: whole-turn routing by rules or by NeMo Switchyard, a per-turn meter,
   and reuse of answers and pathways (ADR-0012, ADR-0015).
 - The three cost levers of ADR-0011, to the mechanism line: the deed ledger (v0.41),
   batch compilation with a net-token meter (v0.42), and the rationale store with
@@ -239,22 +269,22 @@ A white paper that overclaims is marketing. Honestly, as of v0.43.0 (2026-09-26)
   Z3 (5.1.0, built from pinned source, linked statically) and parse shell with the
   same tree-sitter-bash grammar as the oracle ([clients/go/README.md](../clients/go/README.md),
   [clients/rust/README.md](../clients/rust/README.md)). The binaries are compared with
-  the oracle on committed golden cases: 1,310 gate cases, 472 CLI cases, 223 gateway
+  the oracle on committed golden cases: 1,310 warden cases, 472 CLI cases, 223 router
   cases, 215 garden cases and 158 pathway command cases (the manifests in
   `clients/fixtures/`), plus a local verifier corpus of 11,450 cases that is never
-  published because it holds real paths. The Rust README records 1,310 of 1,310 gate
+  published because it holds real paths. The Rust README records 1,310 of 1,310 warden
   cases and 11,450 of 11,450 corpus cases in agreement. Where a binary may differ from
   the oracle, the ruling is in [clients/ADJUDICATIONS.md](../clients/ADJUDICATIONS.md).
   Full parity is the goal (owner ruling, 2026-09-26), not yet the state: a few CLI
   commands, and the parts that use pathways at run time and generate envelopes
   (stage K of the port plan), still need Python.
 - **Install.** One script (`scripts/install.sh`) builds and installs `daisugi`,
-  coppice and sprig. A floor then takes two commands: `daisugi install --gate`, then
+  coppice and sprig. A floor then takes two commands: `daisugi install`, then
   `coppice` (or `coppice web` for a browser or a phone).
 
 These case counts come from synthetic cases. They show that the three
 implementations agree and that the checks are correct on those cases. They do not
-show that the gate is useful on real work: its false-deny rate, the gateway's savings
+show that the warden is useful on real work: its false-deny rate, the router's savings
 on real traffic, and coppice across many projects are the next measurements (the
 "dogfood week" in the [strategy notes](plans/2026-09-24-omarchy/strategy-2026-09-26.md)).
 
@@ -281,7 +311,7 @@ understood the task. That gap is bounded, not closed.
 
 ## 8. Why it's worth doing
 
-Because the alternative (deploying capable, unverifiable models with no gate between
+Because the alternative (deploying capable, unverifiable models with no warden between
 decision and effect) is what everyone does now, and it doesn't scale to physical
 stakes or to agents with real permissions. The contribution is not a new model or a
 new solver. It is the architecture that lets a capable black box operate under a
@@ -292,7 +322,7 @@ problem wearing different clothes.
 There is a second reason, quieter but real: the architecture appears to be the
 *convergent* one. Five independent architects, each given a neutral statement of the
 problem and told nothing about openDaisugi, rebuilt its spine: enforcement outside
-the context window, fail-closed pre-execution gating, a human floor a model may only
+the context window, fail-closed pre-execution checking, a human floor a model may only
 tighten. Two of the pieces they reinvented were never hinted at in their brief
 (the monotone-narrowing subsumption law and within-instance compilation). Convergence
 that was not planted is the cheapest strong evidence a design is right. The
@@ -345,7 +375,7 @@ The honest limits:
   hard as the same question in the kernel.
 - **Robot words need kernel work first.** Today the kernel has one bounding box per
   envelope, no force field on gripper steps, and no cross-agent predicate. Nonlinear
-  dynamics may make Z3 answer unknown, and the gate then denies.
+  dynamics may make Z3 answer unknown, and the warden then denies.
 - **Shell writes are not visible to predicates.** `must_not_modify` can cover
   `file_write` steps only, until each shell step's decomposed write paths become a
   field the algebra can read.
@@ -366,32 +396,32 @@ models already write one kernel definition, so they are enforced.
 
 This section draws on two surveys made on 2026-09-26:
 [research/prior-art-2026-09-26.md](research/prior-art-2026-09-26.md) and
-[correspondence.md](correspondence.md), plus the gateway and grafts notes named below.
+[correspondence.md](correspondence.md), plus the router and grafts notes named below.
 Most rows rest on abstracts; a claim here is no deeper than the survey that read it.
 Where the survey marked a source "search listing", so does this section. For each
 neighbour we say what we borrow and what differs.
 
 ### 10.1 Runtime assurance and shields
 
-- **Simplex** (Sha 1996; Sha, *Using Simplicity to Control Complexity*, IEEE Software
-  2001, [slides](https://engineering.purdue.edu/dcsl/reading/2007/foob-using_simplicity_to_control_complexity.pdf);
+- **Simplex** (Sha, *Using Simplicity to Control Complexity*, IEEE Software
+  2001; early work 1996, [slides](https://engineering.purdue.edu/dcsl/reading/2007/foob-using_simplicity_to_control_complexity.pdf);
   [Black-Box Simplex](https://arxiv.org/abs/2102.12981)). We borrow the split: an
   untrusted, capable controller beside a simple, trusted check. What differs: Simplex
-  keeps the plant where a safe controller can recover it over time. Our gate only
+  keeps the plant where a safe controller can recover it over time. Our warden only
   prevents single actions and makes no recoverable-state promise (yellow paper §8.6).
 - **ASTM F3269** ([store page](https://store.astm.org/f3269-21.html), search listing),
   the aviation RTA standard. We borrow the frame of bounding a function that cannot be
   certified by design. We have no certification claim.
 - **Shields** (Alshiekh et al. 2017, [arXiv 1708.08611](https://arxiv.org/abs/1708.08611)).
   A shield enforces a temporal-logic specification on a learning agent, by listing safe
-  actions first or by correcting an unsafe one. Our gate is a blocking shield, and a
+  actions first or by correcting an unsafe one. Our warden is a blocking shield, and a
   graft (designed) would be a correcting one. Our specification is per step, not
   temporal.
 - **RoboGuard** ([arXiv 2503.07885](https://arxiv.org/abs/2503.07885)) grounds fixed
   safety rules into temporal logic for the current scene and repairs unsafe plans by
   control synthesis; unsafe plan execution fell from over 92% to below 3%. It is the
   closest robotics neighbour. We borrow the idea of grounding rules per scene. What
-  differs: one gate for software agents and robots, and model-written envelopes.
+  differs: one warden for software agents and robots, and model-written envelopes.
   Reachability checks of LLM commands ([arXiv 2503.03911](https://arxiv.org/abs/2503.03911))
   compute reachable sets; our swarm check is a static box check, not reachability.
 
@@ -399,7 +429,7 @@ neighbour we say what we borrow and what differs.
 
 - **Reference monitor** ([Wikipedia](https://en.wikipedia.org/wiki/Reference_monitor))
   and **execution monitors** (Schneider 2000,
-  [PDF](https://www.cs.cornell.edu/fbs/publications/EnfSecPols.pdf)). The gate is a
+  [PDF](https://www.cs.cornell.edu/fbs/publications/EnfSecPols.pdf)). The warden is a
   reference monitor, and Schneider's result tells us exactly what it can enforce:
   safety properties (yellow paper §8.1). "Always invoked" holds only while the host
   fires the hook (yellow paper §8.5).
@@ -420,7 +450,7 @@ neighbour we say what we borrow and what differs.
   ([arXiv 2409.07429](https://arxiv.org/abs/2409.07429)) and **Memp**
   ([arXiv 2508.06433](https://arxiv.org/abs/2508.06433)) induce reusable workflows and
   retire stale ones. We borrow online induction and deprecation. What differs: a
-  pathway must fit an envelope before reuse, and the gate re-checks every step.
+  pathway must fit an envelope before reuse, and the warden re-checks every step.
 - **Newer learners.** SkillGen ([arXiv 2605.10999](https://arxiv.org/html/2605.10999v1))
   counts repairs against regressions on identical inputs before a skill goes live;
   SkillForge ([arXiv 2608.24747](https://arxiv.org/html/2608.24747)) and SkillOps
@@ -431,7 +461,7 @@ neighbour we say what we borrow and what differs.
 - **Anthropic Agent Skills**
   ([engineering post](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills))
   load a skill by progressive disclosure: name first, body on demand. We borrow that
-  for listing dialect words in a prompt. What differs: the gate, not a skill's own
+  for listing dialect words in a prompt. What differs: the warden, not a skill's own
   metadata, decides what a skill may do. The need is measured: one study found a
   vulnerability in 26.1% of 31,132 marketplace skills
   ([arXiv 2601.10338](https://arxiv.org/abs/2601.10338)).
@@ -493,12 +523,12 @@ neighbour we say what we borrow and what differs.
 - **RouteLLM** ([arXiv 2406.18665](https://arxiv.org/abs/2406.18665)) and **FrugalGPT**
   ([arXiv 2305.05176](https://arxiv.org/abs/2305.05176)) route or cascade across model
   tiers. The designed router borrows "cheap first, escalate". What differs: it would
-  escalate on external signals (a gate deny, a failed postcondition), never on the
+  escalate on external signals (a warden deny, a failed postcondition), never on the
   cheap model's own report.
 - **NVIDIA NeMo Switchyard** ([GitHub](https://github.com/NVIDIA-NeMo/Switchyard), read
-  at tag v0.3.0) is a trained chooser. We do not compete with it: the gateway can run
+  at tag v0.3.0) is a trained chooser. We do not compete with it: the router can run
   Switchyard behind it and stay the meter, so each saving is tied to the model that
-  served the turn ([how-to](how-to/router-switchyard.md)).
+  served the turn ([how-to](how-to/routing-mode-switchyard.md)).
 - **Spotify's shunt** ([post](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90);
   [code](https://github.com/spotify/portal-ai-plugins/tree/main/plugins/shunt), Apache-2.0)
   blocks large file reads in Claude Code with a hook and redirects the model to a skill
@@ -520,7 +550,7 @@ neighbour we say what we borrow and what differs.
   Our envelope is per step.
 - **Benchmarks.** The neighbours report AgentDojo, AgentDyn and tau2-bench numbers. We
   report none; our numbers come from synthetic cases.
-- **Adversarial skills.** We have not tested the gate against a corpus of malicious
+- **Adversarial skills.** We have not tested the warden against a corpus of malicious
   skills.
 
 ### 10.8 Where we may be first
@@ -529,14 +559,14 @@ We did not find these in the surveys. "Not found" is not "does not exist".
 
 1. Learned, proved dialects for the policy that governs agent actions (§9).
 2. Skills that must fit an envelope before reuse, with every step re-checked.
-3. One verifier that gates both software agents and robots.
+3. One verifier that checks both software agents and robots.
 4. Per-action SMT proof across harnesses, with a journal that feeds a distiller.
 
 ---
 
 ## References
 
-- Sha, L. (1996/2001). *Using Simplicity to Control Complexity.* IEEE Software. It is the foundational Simplex Architecture paper.
+- Sha, L. (2001). *Using Simplicity to Control Complexity.* IEEE Software 18(4). It is the canonical Simplex Architecture paper. Earlier Simplex work from the same group dates to 1996.
 - Schierman, J. et al. (2015). *Runtime Assurance for aerospace systems.*
 - Wood, G. *Ethereum Yellow Paper*. It is the formal-specification register this project's [yellow paper](spec/yellow-paper.md) borrows.
 - Black, K. et al. (2024). *π0: A Vision-Language-Action Flow Model for General Robot Control.* Physical Intelligence.

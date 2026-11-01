@@ -48,6 +48,35 @@ stickiness is an optimization and never policy.
 tokens, the cache hit rate as a share of all input, and the local-rung turn count —
 the measured FinOps view the survey says most teams lack.
 
+## The cost of a switch, and the hysteresis rule
+
+The prefix threshold above prices one easy turn. A switch pays back over the turns that
+follow. Take a cached prefix `P`, new input `N` per turn, output `O` per turn, and `k`
+more turns on the same prefix. Model A is warm, model B is cold. Prices `a` and `b` are per token.
+
+```
+stay on A:    k*(0.1*P + N)*a_in + k*O*a_out
+switch to B:  (1.25*P + 0.1*P*(k-1) + k*N)*b_in + k*O*b_out
+```
+
+Switch only when the second line is lower. In one worked case (P = 50K, N = 2K, O = 1K,
+B three times cheaper than A) a one-turn switch costs about twice as much as staying. The
+break-even is near 2.4 turns. At ten turns the switch costs half as much.
+
+A router with a switch cost and a noisy signal needs a deadband, or it chatters. So:
+switch models when the expected remaining turns clear the break-even, and decide at a
+session or task boundary where one is available. A mid-session switch should be rare. The
+router today gates on prefix size (`STICKY_PREFIX_THRESHOLD_TOKENS`). It does not yet
+estimate the remaining turns.
+
+Two measurement rules go with this:
+
+- Compare **cost per task**, not price per token. Tokenizers differ, so one text gives
+  different token counts on different model families.
+- Read **billed** reasoning tokens from the usage fields of the reply. Do not take the
+  length of the visible text. Hidden or summarized thinking bills as output and can be
+  much longer than what the log shows.
+
 ## What was deliberately not done
 
 - **No body rewriting** (output caps, compression, injected cache_control): the proxy

@@ -23,7 +23,7 @@ receipt. weave adds four things.
   no receipt at all may have run, so the run stops before it unless
   ``--rerun`` names it (a ``task`` step, which has no effect, runs again).
 - **Agentic steps (WV-4)** run through ``AgenticExecutor`` (``claude -p``
-  under the call-time gate).
+  under the call-time warden).
 - **Attempts.** A ``task`` step may carry ``attempts: N`` (2 to 8). The
   runner asks the model N times, ranks the answers with ``rank`` (an answer
   that fails or whose slots do not read is out), goes on with the leader,
@@ -238,7 +238,7 @@ def _check_value(typ: str, v: Any) -> bool:
 
 def collect(outputs: dict[str, str], stdout: str, *, fence: bool) -> dict[str, Any] | str:
     """The slot values in a step's output, or why there are none."""
-    from opendaisugi.delegate import _strip_fence
+    from opendaisugi.spawn import _strip_fence
 
     text = _strip_fence(stdout) if fence else stdout.strip()
     try:

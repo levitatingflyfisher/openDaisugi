@@ -1,0 +1,8 @@
+# Inside a pane (COPPICE_PANE set, which only the server does) a coppice
+# command dials the pane's own server, whatever socket the default rule would
+# pick. Outside one the environment does not choose the server. The run gets
+# no --socket (dial), so the rule is the one under test.
+{"id":"d1","cli":["pane","list"],"dial":true,"env":{"COPPICE_PANE":"w1:p1","COPPICE_SOCK":"{SOCK}","COPPICE_DATA_DIR":"{DATA}"}}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"","stderr":""}}
+{"id":"d2","cli":["pane","list"],"dial":true,"env":{"COPPICE_SOCK":"{SOCK}","COPPICE_DATA_DIR":"{DATA}"}}
+{"id":"$id","ok":true,"result":{"code":3,"stdout":"","stderr":"*"}}

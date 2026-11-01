@@ -116,7 +116,7 @@ def test_a_default_config_does_not_pin_the_backend(tmp_path):
     not set it must not audit auto-detection, or every box would force one."""
     from opendaisugi.config import configured_backend
 
-    (tmp_path / "config.yaml").write_text("gate_mode: audit\n")
+    (tmp_path / "config.yaml").write_text("warden_mode: audit\n")
     assert configured_backend(tmp_path / "config.yaml") is None
     (tmp_path / "config.yaml").write_text("llm_backend: ollama\n")
     assert configured_backend(tmp_path / "config.yaml") == "ollama"
@@ -135,7 +135,7 @@ def test_a_product_write_that_touches_another_field_does_not_pin_the_backend(tmp
     monkeypatch.setattr("shutil.which", lambda name: None)
     data_dir = tmp_path / "product"
     monkeypatch.setattr(opendaisugi, "DEFAULT_DATA_DIR", data_dir)
-    path = _write_config(data_dir, gate_mode="audit")
+    path = _write_config(data_dir, warden_mode="audit")
     assert "llm_backend" in path.read_text()
     assert configured_backend(path) is None
     from opendaisugi.llm import resolve_backend
@@ -186,7 +186,7 @@ def test_config_truth_surface_shows_auto_for_a_null_backend(tmp_path, monkeypatc
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     monkeypatch.setattr("shutil.which", lambda name: None)
-    path = _write_config(tmp_path / "surface", gate_mode="audit")
+    path = _write_config(tmp_path / "surface", warden_mode="audit")
     fields = {f.key: f for f in resolved_config(path, home=tmp_path, cwd=tmp_path, env={})}
     assert fields["llm_backend"].value == "auto"
     assert fields["llm_backend (resolved)"].source == "auto"
@@ -206,7 +206,7 @@ def test_config_truth_surface_reads_only_the_path_and_env_it_was_given(tmp_path,
     monkeypatch.setenv("OPENDAISUGI_LLM_BACKEND", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
     monkeypatch.setattr("shutil.which", lambda name: None)
-    (tmp_path / "config.yaml").write_text("gate_mode: audit\n")
+    (tmp_path / "config.yaml").write_text("warden_mode: audit\n")
     fields = {
         f.key: f
         for f in resolved_config(tmp_path / "config.yaml", home=tmp_path, cwd=tmp_path, env={})
@@ -282,12 +282,12 @@ def test_config_truth_surface_ranks_env_above_the_file(tmp_path):
 
 
 def prove_verifier_swap(tmp: Path) -> None:
-    """Rewrite verifier_client in config.yaml, call the gate, and the gate
+    """Rewrite verifier_client in config.yaml, call the warden, and the warden
     dispatches to the new client. No restart.
 
-    The observation runs through `gate.evaluate_record`, the function every
+    The observation runs through `warden.evaluate_record`, the function every
     hook payload lands in, and reads back the dispatch that actually happened
-    from `verifier_dispatch.last_dispatch`, which the gate writes under the
+    from `verifier_dispatch.last_dispatch`, which the warden writes under the
     data dir. Nothing here inspects a private attribute or re-reads the YAML.
 
     The clients are fake scripts, never compiled binaries, so the proof holds
@@ -298,9 +298,9 @@ def prove_verifier_swap(tmp: Path) -> None:
 
     import opendaisugi
     from opendaisugi.bench import options
-    from opendaisugi.gate import evaluate_record
     from opendaisugi.models import Envelope, Permission
     from opendaisugi.verifier_dispatch import last_dispatch
+    from opendaisugi.warden import evaluate_record
 
     data_dir = tmp / "verifier"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -317,7 +317,9 @@ def prove_verifier_swap(tmp: Path) -> None:
     envelope = Envelope(
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["pytest"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["pytest"], file_read=["**"], file_write=["**"]
+        ),
     )
     record = {"tool_name": "Bash", "step_type": "shell", "command": "pytest -q"}
     original = opendaisugi.DEFAULT_DATA_DIR
@@ -336,12 +338,12 @@ def prove_verifier_swap(tmp: Path) -> None:
 
         _write_config(data_dir, verifier_client="alpha")
         assert evaluate_record(record, envelope, mode="enforce").allow is True
-        assert last_dispatch(data_dir / "gate")["client"] == "alpha"
+        assert last_dispatch(data_dir / "warden")["client"] == "alpha"
 
         _write_config(data_dir, verifier_client="beta")
         assert evaluate_record(record, envelope, mode="enforce").allow is True
-        assert last_dispatch(data_dir / "gate")["client"] == "beta", (
-            "the gate cached the client choice"
+        assert last_dispatch(data_dir / "warden")["client"] == "beta", (
+            "the warden cached the client choice"
         )
     finally:
         options.VERIFIER_CLIENTS.clear()
@@ -456,12 +458,12 @@ def test_two_real_backends_swap_live_when_both_are_installed(tmp_path):
 
 
 def prove_shell_swap(tmp: Path) -> None:
-    """Flip shell_allow_decomposition in config.yaml and the gate's verdict on a
+    """Flip shell_allow_decomposition in config.yaml and the warden's verdict on a
     compound command changes. No restart.
 
-    The whole path is public: `daisugi gate init` reads config.yaml and
-    registers a starter envelope, `gate.load_envelope` reads it back, and
-    `gate.evaluate_record` rules on `echo a && echo b`. With decomposition off
+    The whole path is public: `daisugi warden init` reads config.yaml and
+    registers a starter envelope, `warden.load_envelope` reads it back, and
+    `warden.evaluate_record` rules on `echo a && echo b`. With decomposition off
     the compound is refused outright; with it on, every head is checked
     against the starter allowlist and `echo` is in it.
     """
@@ -469,8 +471,8 @@ def prove_shell_swap(tmp: Path) -> None:
 
     import opendaisugi
     from opendaisugi.cli import app
-    from opendaisugi.gate import evaluate_record, load_envelope
     from opendaisugi.shell_decompose import parser_available
+    from opendaisugi.warden import evaluate_record, load_envelope
 
     assert parser_available(), (
         "this proof needs the bash grammar from the shell extra. Without it the "
@@ -478,14 +480,14 @@ def prove_shell_swap(tmp: Path) -> None:
     )
 
     data_dir = tmp / "shell"
-    root = data_dir / "gate"
+    root = data_dir / "warden"
     runner = CliRunner()
     record = {"tool_name": "Bash", "step_type": "shell", "command": "echo a && echo b"}
     original = opendaisugi.DEFAULT_DATA_DIR
     try:
         opendaisugi.DEFAULT_DATA_DIR = data_dir
         _write_config(data_dir, shell_allow_decomposition=False)
-        init = ["gate", "init", "--root", str(root), "--workspace", str(tmp), "--force"]
+        init = ["warden", "init", "--root", str(root), "--workspace", str(tmp), "--force"]
         assert runner.invoke(app, init).exit_code == 0
         off = evaluate_record(record, load_envelope(None, root=root), mode="enforce")
         assert off.allow is False, "a compound command must be refused with decomposition off"
@@ -525,21 +527,21 @@ def prove_distill_swap(tmp: Path) -> None:
     on = runner.invoke(app, argv)
     assert on.exit_code == 0
     assert "background distillation is off" not in on.output, (
-        "the consent gate did not follow the config"
+        "the consent check did not follow the config"
     )
     assert "converted 0 sessions" in on.output
 
 
 def prove_router_swap(tmp: Path) -> None:
-    """Rewrite the gateway's config, and the SAME running app routes the next
+    """Rewrite the router's config, and the SAME running app routes the next
     turn to the new model. No restart, no new app object.
 
-    The behavioural half uses `gateway_local_model`. The structural half,
+    The behavioural half uses `router_local_model`. The structural half,
     `test_reloader_hands_the_rebuild_a_whole_fresh_config` in
-    tests/test_gateway_reload.py, covers any other field the rebuild reads:
+    tests/test_router_reload.py, covers any other field the rebuild reads:
     the reloader hands the rebuild a whole fresh Config, not a list of named
-    fields. The choice of chooser, gateway_router, is not live. `daisugi
-    gateway` reads it at launch, because a Switchyard child cannot follow a
+    fields. The choice of chooser, routing_mode, is not live. `daisugi
+    router` reads it at launch, because a Switchyard child cannot follow a
     config change.
     """
     import asyncio
@@ -547,14 +549,14 @@ def prove_router_swap(tmp: Path) -> None:
 
     import httpx
 
-    from opendaisugi.gateway_asgi import ConfigReloader, build_default_gateway, make_gateway_app
+    from opendaisugi.router_asgi import ConfigReloader, build_default_router, make_router_app
 
     data_dir = tmp / "router"
-    path = _write_config(data_dir, gateway_local_model=None)
+    path = _write_config(data_dir, router_local_model=None)
     reloader = ConfigReloader(
         path,
-        lambda config: build_default_gateway(
-            data_dir=data_dir, journalling=False, local_model=config.gateway_local_model
+        lambda config: build_default_router(
+            data_dir=data_dir, journalling=False, local_model=config.router_local_model
         ),
         min_interval_s=0.0,
     )
@@ -564,8 +566,8 @@ def prove_router_swap(tmp: Path) -> None:
         seen.append(json.loads(request.content)["model"])
         return httpx.Response(200, json={"content": [], "usage": {}})
 
-    app = make_gateway_app(
-        build_default_gateway(data_dir=data_dir, journalling=False),
+    app = make_router_app(
+        build_default_router(data_dir=data_dir, journalling=False),
         upstream_base_url="http://up",
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         reloader=reloader,
@@ -588,9 +590,9 @@ def prove_router_swap(tmp: Path) -> None:
     asyncio.run(_post())
     assert seen[-1] == "claude-haiku-4-5"
 
-    _write_config(data_dir, gateway_local_model="qwen2.5-coder-7b")
+    _write_config(data_dir, router_local_model="qwen2.5-coder-7b")
     asyncio.run(_post())
-    assert seen[-1] == "qwen2.5-coder-7b", "the running app cached its gateway"
+    assert seen[-1] == "qwen2.5-coder-7b", "the running app cached its router"
 
 
 def prove_floor_backend_swap(tmp: Path) -> None:
@@ -691,12 +693,12 @@ def test_every_proof_names_a_stage_that_is_tagged_live():
         assert STAGE_EFFECT.get(stage) == LIVE, f"{stage!r} has a proof but is not tagged live"
 
 
-def test_the_gate_stage_stays_cfg_and_says_the_hook_file_is_not_ours():
+def test_the_warden_stage_stays_cfg_and_says_the_hook_file_is_not_ours():
     from opendaisugi.swap import CFG_REASON, STAGE_EFFECT, tag_for
 
-    assert STAGE_EFFECT["gate"] == "cfg"
-    assert "harness" in CFG_REASON["gate"]
-    assert "reinstall" in tag_for("gate")
+    assert STAGE_EFFECT["warden"] == "cfg"
+    assert "harness" in CFG_REASON["warden"]
+    assert "reinstall" in tag_for("warden")
 
 
 def test_tag_for_a_live_stage_carries_no_reason():

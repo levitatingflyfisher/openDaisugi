@@ -1,6 +1,6 @@
-// Package journal reads the gate's verdict journal: the audit log each
-// gate call appends one JSON line to, under <root>/audit/<session>.jsonl.
-// Report is gate.audit_report; Text is the lines `daisugi gate report`
+// Package journal reads the warden's verdict journal: the audit log each
+// warden call appends one JSON line to, under <root>/audit/<session>.jsonl.
+// Report is warden.audit_report; Text is the lines `daisugi warden report`
 // prints.
 package journal
 
@@ -14,8 +14,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // ErrUnsupported marks a log line holding a value this package does not
@@ -35,11 +35,11 @@ type Report struct {
 	Denied  []*pyjson.Object
 	FP      []*pyjson.Object
 	Reasons *pyjson.Object
-	// Word are the records with a dialect audit line (gate._word_lines).
+	// Word are the records with a dialect audit line (warden._word_lines).
 	Word []*pyjson.Object
 }
 
-// wordLines is gate._word_lines: a record's word_audit list, else none.
+// wordLines is warden._word_lines: a record's word_audit list, else none.
 func wordLines(r *pyjson.Object) []any {
 	l, _ := r.Value("word_audit").([]any)
 	return l
@@ -50,7 +50,7 @@ func wordLines(r *pyjson.Object) []any {
 // directory, one session's file or every *.jsonl in each.
 func Files(root, session string, hasSession bool) ([]string, error) {
 	var out []string
-	for _, d := range []string{gateroot.LegacyAuditDir(root), gateroot.AuditDir(root)} {
+	for _, d := range []string{wardenroot.LegacyAuditDir(root), wardenroot.AuditDir(root)} {
 		got, err := dirFiles(d, session, hasSession)
 		if err != nil {
 			return nil, err
@@ -62,7 +62,7 @@ func Files(root, session string, hasSession bool) ([]string, error) {
 
 func dirFiles(d, session string, hasSession bool) ([]string, error) {
 	if hasSession {
-		return []string{gateroot.Join(d, gateroot.SafeSessionID(session)+".jsonl")}, nil
+		return []string{wardenroot.Join(d, wardenroot.SafeSessionID(session)+".jsonl")}, nil
 	}
 	if _, err := os.Stat(d); err != nil {
 		return nil, nil
@@ -77,7 +77,7 @@ func dirFiles(d, session string, hasSession bool) ([]string, error) {
 			return nil, ErrUnsupported
 		}
 		if strings.HasSuffix(e.Name(), ".jsonl") {
-			out = append(out, gateroot.Join(d, e.Name()))
+			out = append(out, wardenroot.Join(d, e.Name()))
 		}
 	}
 	sort.Strings(out)
@@ -119,8 +119,8 @@ func Build(files []string) (*Report, error) {
 	return rep.summarize()
 }
 
-// FromRecords is gate._build_report over records already in hand (the
-// records gate replay decides).
+// FromRecords is warden._build_report over records already in hand (the
+// records warden replay decides).
 func FromRecords(records []*pyjson.Object) (*Report, error) {
 	rep := &Report{Reasons: pyjson.NewObject(), Records: records}
 	return rep.summarize()
@@ -383,13 +383,13 @@ func isPySpace(r rune) bool {
 	return r >= 0x2000 && r <= 0x200a
 }
 
-// WordWouldDeny is gate.word_would_deny: the records of the audit log
+// WordWouldDeny is warden.word_would_deny: the records of the audit log
 // under root with a non-empty word_audit list. A file it cannot read, or
 // that is not UTF-8, is skipped, and so is a line that is not a JSON
 // object.
 func WordWouldDeny(root string) (int, error) {
 	count := 0
-	for _, d := range []string{gateroot.LegacyAuditDir(root), gateroot.AuditDir(root)} {
+	for _, d := range []string{wardenroot.LegacyAuditDir(root), wardenroot.AuditDir(root)} {
 		if st, err := os.Stat(d); err != nil || !st.IsDir() {
 			continue
 		}

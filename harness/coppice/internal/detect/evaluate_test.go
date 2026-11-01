@@ -130,7 +130,7 @@ not = [{ contains = ["esc to cancel"] }]
 
 // skip_state_update means emit nothing. If it produced "unknown" instead, a
 // Claude pane sitting in the transcript viewer would be reset to unknown every
-// 500 ms, wiping whatever the gate told us.
+// 500 ms, wiping whatever the warden told us.
 func TestSkipStateUpdateEmitsNothing(t *testing.T) {
 	c := compile(t, `
 id = "x"
@@ -190,7 +190,7 @@ contains = ["yes"]
 
 // An accept-path test of nested
 // all/any/not composition, two levels deep, exercising every one of the three
-// gate kinds nested inside each other.
+// condition kinds nested inside each other.
 func TestNestedAllAnyNotCompositionMatchesCorrectly(t *testing.T) {
 	c := compile(t, `
 id = "x"

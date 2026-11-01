@@ -1,4 +1,4 @@
-# Subagents. A gate hook reports a subagent that started or stopped inside
+# Subagents. A warden hook reports a subagent that started or stopped inside
 # a pane's harness. The pane's row lists it, read only, and each report is
 # a child event.
 #!watch child

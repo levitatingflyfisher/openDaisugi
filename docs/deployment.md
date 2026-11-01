@@ -37,7 +37,7 @@ names it, the same rule picks it in Python, Go and Rust:
 3. else `~/.opendaisugi`.
 
 An existing `~/.opendaisugi` keeps working: setting XDG_DATA_HOME later
-does not move it, and nothing is migrated. The gate guards every place the
+does not move it, and nothing is migrated. The warden guards every place the
 rule can pick. Nothing outside that directory is written unless the caller
 explicitly constructs a `Journal`, `EnvelopeCache`, or `PathwayStore` with
 a different path. Model caches follow `$XDG_CACHE_HOME` (else `~/.cache`).

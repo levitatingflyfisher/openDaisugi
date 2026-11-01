@@ -260,7 +260,7 @@ impl Server {
         // "now": the agent has the brief. "typed": a terminal agent with no
         // screen rule got it typed at once, and nothing says it landed.
         let mut when = json!("now");
-        if kind == "pty" && !self.gated(&new_id) {
+        if kind == "pty" && !self.checked(&new_id) {
             when = json!("typed");
         }
         if let Some(p) = sent.result.as_ref() {

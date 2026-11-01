@@ -5,14 +5,15 @@
 //! An envelope here is a validated dump (`pmodel` Envelope): every field
 //! in model order with its default, and no deadline key when it has none.
 
+pub use crate::branch_git::is_object_id;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 
 use num_bigint::BigInt;
 use regex::Regex;
 
-use crate::cli::gateroot::{envelopes_dir, join, safe_session_id};
-use crate::gate::pyjson::{canonical_json_ascii, dumps, Object, Value};
+use crate::cli::wardenroot::{envelopes_dir, join, safe_session_id};
+use crate::warden::pyjson::{canonical_json_ascii, dumps, Object, Value};
 use crate::pathways::pmodel::{validate_json, Id};
 
 /// `tree.DEFAULT_TIMEOUT_MS`.
@@ -454,6 +455,22 @@ fn all_strs(v: &Value) -> bool {
     matches!(v, Value::List(l) if l.iter().all(|x| x.as_str().is_some()))
 }
 
+/// The spawn row's base and repo: both or neither, the base an object id,
+/// the repo a non-empty text.
+fn base_repo_ok(row: &Object) -> bool {
+    let (b, r) = (row.value("base"), row.value("repo"));
+    if b.is_null() != r.is_null() {
+        return false;
+    }
+    if b.is_null() {
+        return true;
+    }
+    match (b.as_str(), r.as_str()) {
+        (Some(b), Some(r)) => crate::branch_git::is_object_id(b) && !r.is_empty(),
+        _ => false,
+    }
+}
+
 /// `tree._fits`.
 fn fits(row: &Object) -> bool {
     if !finite(row.value("ts")) {
@@ -478,6 +495,9 @@ fn fits(row: &Object) -> bool {
                 && matches!(row.value("proved"), Value::Bool(_))
                 && (row.value("profile").is_null() || is_str(row, "profile"))
                 && (row.value("model").is_null() || is_str(row, "model"))
+                && (row.value("branch_of").is_null() || is_str(row, "branch_of"))
+                && (row.value("why").is_null() || is_str(row, "why"))
+                && base_repo_ok(row)
                 && count(row.value("parent_tokens_used"))
                 && count(row.value("parent_turns_used"))
         }
@@ -532,6 +552,15 @@ pub struct Node {
     /// holds them.
     pub profile: Option<String>,
     pub model: Option<String>,
+    /// The ranking a branch belongs to, and why the branch was started.
+    pub branch_of: Option<String>,
+    pub why: Option<String>,
+    /// The commit a branch started from and the repository's git
+    /// directory, as the parent recorded them.
+    pub base: Option<String>,
+    pub repo: Option<String>,
+    /// The ts of its end row; 0 while it runs.
+    pub ended_at: f64,
     /// Its own use as the latest spawn under it reported it.
     pub own_tokens_used: Option<BigInt>,
     pub own_turns_used: Option<BigInt>,
@@ -574,6 +603,8 @@ impl Node {
 /// `tree.Tree`.
 #[derive(Default)]
 pub struct Tree {
+    /// The sessions in the order their rows were read.
+    pub order: Vec<String>,
     pub nodes: HashMap<String, Node>,
     pub roots: Vec<String>,
     pub asks: HashMap<String, Object>,
@@ -708,11 +739,17 @@ pub fn read_tree(data_dir: &str) -> Tree {
                         refused: 0,
                         profile: if ev == "spawn" { row.value("profile").as_str().map(String::from) } else { None },
                         model: if ev == "spawn" { row.value("model").as_str().map(String::from) } else { None },
+                        branch_of: if ev == "spawn" { row.value("branch_of").as_str().map(String::from) } else { None },
+                        why: if ev == "spawn" { row.value("why").as_str().map(String::from) } else { None },
+                        base: if ev == "spawn" { row.value("base").as_str().map(String::from) } else { None },
+                        repo: if ev == "spawn" { row.value("repo").as_str().map(String::from) } else { None },
+                        ended_at: 0.0,
                         own_tokens_used: None,
                         own_turns_used: None,
                         pgid: 0,
                     },
                 );
+                t.order.push(sid.clone());
                 match parent {
                     None => t.roots.push(sid),
                     Some(p) => {
@@ -773,6 +810,7 @@ pub fn read_tree(data_dir: &str) -> Tree {
                 }
                 let n = t.nodes.get_mut(&sid).unwrap();
                 n.state = "ended".into();
+                n.ended_at = num(row.value("ts"));
                 n.tokens_used = opt_big(row.value("tokens_used"));
                 n.turns_used = opt_big(row.value("turns_used"));
             }
@@ -869,8 +907,8 @@ fn check_counts(counts: &[(&str, &Option<BigInt>)]) -> Result<(), Fail> {
     Ok(())
 }
 
-fn envelope_file(gate_root: &str, session: &str) -> String {
-    join(&envelopes_dir(gate_root), &format!("{session}.json"))
+fn envelope_file(warden_root: &str, session: &str) -> String {
+    join(&envelopes_dir(warden_root), &format!("{session}.json"))
 }
 
 fn exists(p: &str) -> bool {
@@ -878,15 +916,15 @@ fn exists(p: &str) -> bool {
 }
 
 /// `tree.load_registered_checked`: the envelope registered for a session,
-/// read as the gate reads it (GR-R-1). The envelope is None when there is
+/// read as the warden reads it (GR-R-1). The envelope is None when there is
 /// none or it does not read as one; the refusal is Some when the root,
 /// envelopes/ or the file is a link, is owned by another user, has a second
 /// link or is writable by group or others. A refusal means "cannot be read"
 /// (GR-R-7).
-pub fn load_registered_checked(session: &str, gate_root: &str) -> (Option<Object>, Option<String>) {
-    use crate::gate::statefile::{probe_read, Miss};
+pub fn load_registered_checked(session: &str, warden_root: &str) -> (Option<Object>, Option<String>) {
+    use crate::warden::statefile::{probe_read, Miss};
     let name = if session.is_empty() { "default".to_string() } else { safe_session_id(session) };
-    let bytes = match probe_read(gate_root, &["envelopes"], &format!("{name}.json")) {
+    let bytes = match probe_read(warden_root, &["envelopes"], &format!("{name}.json")) {
         Err(Miss::Refused(why)) => return (None, Some(why)),
         Err(Miss::Missing) => return (None, None),
         Ok(Err(_)) => return (None, None),
@@ -900,10 +938,10 @@ pub fn load_registered_checked(session: &str, gate_root: &str) -> (Option<Object
 }
 
 /// `tree.load_registered`: the envelope registered for a session, or None
-/// when there is none, it does not read as one or the gate would refuse to
+/// when there is none, it does not read as one or the warden would refuse to
 /// read it.
-pub fn load_registered(session: &str, gate_root: &str) -> Option<Object> {
-    load_registered_checked(session, gate_root).0
+pub fn load_registered(session: &str, warden_root: &str) -> Option<Object> {
+    load_registered_checked(session, warden_root).0
 }
 
 fn big_value(b: &Option<BigInt>) -> Value {
@@ -913,20 +951,20 @@ fn big_value(b: &Option<BigInt>) -> Value {
     }
 }
 
-fn register(env: &Object, session: &str, gate_root: &str) -> Result<String, Fail> {
-    let (path, res) = crate::cli::envelope::register(env, session, gate_root);
+fn register(env: &Object, session: &str, warden_root: &str) -> Result<String, Fail> {
+    let (path, res) = crate::cli::envelope::register(env, session, warden_root);
     res?;
     Ok(path)
 }
 
 /// `tree.make_root`.
-pub fn make_root(data_dir: &str, gate_root: &str, env: &Object, session: &str, tokens: Option<BigInt>, turns: Option<BigInt>) -> Result<String, Fail> {
+pub fn make_root(data_dir: &str, warden_root: &str, env: &Object, session: &str, tokens: Option<BigInt>, turns: Option<BigInt>) -> Result<String, Fail> {
     let what = format!("Tried to make session {session} a root of the tree.");
     check_session(session, &what)?;
     check_counts(&[("tokens", &tokens), ("turns", &turns)])?;
     locked(data_dir, || {
         let t = read_tree(data_dir);
-        if t.nodes.contains_key(session) || exists(&envelope_file(gate_root, session)) {
+        if t.nodes.contains_key(session) || exists(&envelope_file(warden_root, session)) {
             return Err(te(&what, &format!("Session {session} is in use already."), "Pick another session id.", 1));
         }
         let row = Object::new()
@@ -938,7 +976,7 @@ pub fn make_root(data_dir: &str, gate_root: &str, env: &Object, session: &str, t
             .with("deadline", env.value("deadline").clone())
             .with("ts", now());
         append(data_dir, &[row])?;
-        register(env, session, gate_root)
+        register(env, session, warden_root)
     })
 }
 
@@ -959,6 +997,10 @@ pub struct Spawn {
 pub struct SpawnOpts {
     pub profile: Option<String>,
     pub model: Option<String>,
+    pub branch_of: Option<String>,
+    pub why: Option<String>,
+    pub base: Option<String>,
+    pub repo: Option<String>,
     pub parent_tokens_used: Option<BigInt>,
     pub parent_turns_used: Option<BigInt>,
 }
@@ -967,13 +1009,13 @@ pub struct SpawnOpts {
 /// `[parent, n]`.
 pub fn mint_session(parent: &str, n: usize) -> String {
     let doc = Value::List(vec![parent.into(), Value::Int(n.to_string())]);
-    let hexed = crate::gate::sha256::hexdigest(canonical_json_ascii(&doc).as_bytes());
+    let hexed = crate::warden::sha256::hexdigest(canonical_json_ascii(&doc).as_bytes());
     format!("n-{}", &hexed[..12])
 }
 
 fn ask_id(parent: &str, session: &str, env: &Object, n: usize) -> String {
     let doc = Value::List(vec![parent.into(), session.into(), Value::Obj(env.clone()), Value::Int(n.to_string())]);
-    let hexed = crate::gate::sha256::hexdigest(canonical_json_ascii(&doc).as_bytes());
+    let hexed = crate::warden::sha256::hexdigest(canonical_json_ascii(&doc).as_bytes());
     format!("ask_{}", &hexed[..12])
 }
 
@@ -998,7 +1040,7 @@ fn strs_value(l: &[String]) -> Value {
 #[allow(clippy::too_many_arguments)]
 pub fn spawn(
     data_dir: &str,
-    gate_root: &str,
+    warden_root: &str,
     env: &Object,
     parent: &str,
     session: &str,
@@ -1006,31 +1048,20 @@ pub fn spawn(
     turns: Option<BigInt>,
     timeout_ms: u32,
 ) -> Result<Spawn, Fail> {
-    spawn_opts(data_dir, gate_root, env, parent, Some(session), tokens, turns, timeout_ms, SpawnOpts::default())
+    spawn_opts(data_dir, warden_root, env, parent, Some(session), tokens, turns, timeout_ms, SpawnOpts::default())
 }
 
-/// `tree.spawn`. A session of None is minted (mint_session).
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_opts(
-    data_dir: &str,
-    gate_root: &str,
-    env: &Object,
-    parent: &str,
-    session: Option<&str>,
-    tokens: Option<BigInt>,
-    turns: Option<BigInt>,
-    timeout_ms: u32,
-    o: SpawnOpts,
-) -> Result<Spawn, Fail> {
-    let mut session_s = session.unwrap_or("None").to_string();
-    let mut what = format!("Tried to start session {session_s} under {parent}.");
+/// `tree._check_spawn_args`.
+fn check_spawn_args(parent: &str, session: Option<&str>, tokens: &Option<BigInt>, turns: &Option<BigInt>, o: &SpawnOpts) -> Result<(), Fail> {
+    let session_s = session.unwrap_or("None").to_string();
+    let what = format!("Tried to start session {session_s} under {parent}.");
     if session.is_some() {
         check_session(&session_s, &what)?;
     }
     check_session(parent, &what)?;
     check_counts(&[
-        ("tokens", &tokens),
-        ("turns", &turns),
+        ("tokens", tokens),
+        ("turns", turns),
         ("parent-tokens-used", &o.parent_tokens_used),
         ("parent-turns-used", &o.parent_turns_used),
     ])?;
@@ -1045,12 +1076,55 @@ pub fn spawn_opts(
             2,
         ));
     }
-    locked(data_dir, || {
+    for (name, v) in [("branch_of", &o.branch_of), ("why", &o.why)] {
+        if let Some(v) = v {
+            let n = v.chars().count();
+            if n == 0 || n > 200 {
+                return Err(te(&what, &format!("{name} must be 1 to 200 characters of text."), "Fix it.", 1));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `tree.spawn`. A session of None is minted (mint_session).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_opts(
+    data_dir: &str,
+    warden_root: &str,
+    env: &Object,
+    parent: &str,
+    session: Option<&str>,
+    tokens: Option<BigInt>,
+    turns: Option<BigInt>,
+    timeout_ms: u32,
+    o: SpawnOpts,
+) -> Result<Spawn, Fail> {
+    check_spawn_args(parent, session, &tokens, &turns, &o)?;
+    locked(data_dir, || spawn_locked(data_dir, warden_root, env, parent, session, tokens, turns, timeout_ms, &o))
+}
+
+/// `tree._spawn_locked`: spawn with the ledger lock held.
+#[allow(clippy::too_many_arguments)]
+fn spawn_locked(
+    data_dir: &str,
+    warden_root: &str,
+    env: &Object,
+    parent: &str,
+    session: Option<&str>,
+    tokens: Option<BigInt>,
+    turns: Option<BigInt>,
+    timeout_ms: u32,
+    o: &SpawnOpts,
+) -> Result<Spawn, Fail> {
+    let mut session_s = session.unwrap_or("None").to_string();
+    let mut what = format!("Tried to start session {session_s} under {parent}.");
+    {
         let mut t = read_tree(data_dir);
         if session.is_none() {
             let mut n = t.proposals.get(parent).copied().unwrap_or(0);
             session_s = mint_session(parent, n);
-            while t.nodes.contains_key(&session_s) || exists(&envelope_file(gate_root, &session_s)) {
+            while t.nodes.contains_key(&session_s) || exists(&envelope_file(warden_root, &session_s)) {
                 n += 1;
                 session_s = mint_session(parent, n);
             }
@@ -1075,7 +1149,7 @@ pub fn spawn_opts(
                 1,
             ));
         };
-        if t.nodes.contains_key(session) || exists(&envelope_file(gate_root, session)) {
+        if t.nodes.contains_key(session) || exists(&envelope_file(warden_root, session)) {
             return Err(te(&what, &format!("Session {session} is in use already."), "Pick another session id.", 1));
         }
         if t.open_asks().iter().any(|a| a.value("session").as_str() == Some(session)) {
@@ -1086,7 +1160,7 @@ pub fn spawn_opts(
                 1,
             ));
         }
-        let penv = load_registered(parent, gate_root);
+        let penv = load_registered(parent, warden_root);
         let mut res = None;
         let mut reasons = if penv.as_ref().is_some_and(|p| p.value("stakes").as_str() == Some("physical")) {
             vec!["stakes: the parent's stakes are physical, so it cannot start an agent".to_string()]
@@ -1161,20 +1235,128 @@ pub fn spawn_opts(
         if o.parent_turns_used.is_some() {
             row = row.with("parent_turns_used", big_value(&o.parent_turns_used));
         }
+        if let Some(b) = &o.branch_of {
+            row = row.with("branch_of", b.as_str());
+        }
+        if let Some(w) = &o.why {
+            row = row.with("why", w.as_str());
+        }
+        if let Some(b) = &o.base {
+            row = row.with("base", b.as_str());
+        }
+        if let Some(r) = &o.repo {
+            row = row.with("repo", r.as_str());
+        }
         let row = row.with("ts", ts);
         append(data_dir, &[row])?;
-        let path = register(&child, session, gate_root)?;
+        let path = register(&child, session, warden_root)?;
         let inherited = if res.inherited { Some(child.value("deadline").clone()) } else { None };
         Ok(Spawn { status: "started", reasons: vec![], path, ask_id: String::new(), inherited, session: session.to_string() })
+    }
+}
+
+/// `tree.Branches`.
+pub struct Branches {
+    pub status: &'static str,
+    pub reasons: Vec<String>,
+    pub sessions: Vec<String>,
+    pub ask_id: String,
+}
+
+/// `tree.spawn_branches`: every branch of one task reserved under one lock,
+/// in branch order, or none (W3K-9, W3K-13).
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_branches(
+    data_dir: &str,
+    warden_root: &str,
+    env: &Object,
+    parent: &str,
+    sessions: &[String],
+    tokens: Option<BigInt>,
+    turns: Option<BigInt>,
+    timeout_ms: u32,
+    o: SpawnOpts,
+) -> Result<Branches, Fail> {
+    let n = sessions.len();
+    check_spawn_args(parent, None, &tokens, &turns, &o)?;
+    if o.base.is_some() != o.repo.is_some() || o.base.as_deref().is_some_and(|b| !crate::branch_git::is_object_id(b)) {
+        return Err(te(
+            &format!("Tried to start branches under {parent}."),
+            "base must be a 40 or 64 digit hex object id, and repo must come with it.",
+            "Fix it.",
+            1,
+        ));
+    }
+    for sid in sessions {
+        check_session(sid, &format!("Tried to start session {sid} under {parent}."))?;
+    }
+    locked(data_dir, || {
+        let mut t = read_tree(data_dir);
+        if let Some(pn) = t.nodes.get_mut(parent).filter(|x| x.state == "running") {
+            if o.parent_tokens_used.is_some() {
+                pn.own_tokens_used = o.parent_tokens_used.clone();
+            }
+            if o.parent_turns_used.is_some() {
+                pn.own_turns_used = o.parent_turns_used.clone();
+            }
+        }
+        if let Some(pnode) = t.running(parent) {
+            for (axis, want) in [("tokens", &tokens), ("turns", &turns)] {
+                if let (Some(left), Some(w)) = (t.left(pnode, axis), want) {
+                    let need = w * BigInt::from(n);
+                    if need > left {
+                        return Ok(Branches {
+                            status: "refused",
+                            reasons: vec![format!("the parent has {left} {axis} left; {n} branches of {w} each need {need}")],
+                            sessions: vec![],
+                            ask_id: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+        let mut done: Vec<String> = vec![];
+        let undo = |done: &[String]| {
+            // End what started, with no report: each keeps its whole reservation.
+            for sid in done {
+                let _ = end_locked(data_dir, warden_root, sid, None, None);
+            }
+        };
+        for sid in sessions {
+            match spawn_locked(data_dir, warden_root, env, parent, Some(sid), tokens.clone(), turns.clone(), timeout_ms, &o) {
+                Err(Fail::Tree(te)) => {
+                    undo(&done);
+                    return Ok(Branches { status: "refused", reasons: vec![te.why], sessions: vec![], ask_id: String::new() });
+                }
+                Err(e) => return Err(e),
+                Ok(sp) if sp.status != "started" => {
+                    // The same envelope and budget were proved for the first
+                    // branch, so a later refusal is a race.
+                    if done.is_empty() {
+                        return Ok(Branches { status: sp.status, reasons: sp.reasons, sessions: vec![], ask_id: sp.ask_id });
+                    }
+                    undo(&done);
+                    return Ok(Branches { status: "refused", reasons: sp.reasons, sessions: vec![], ask_id: String::new() });
+                }
+                Ok(_) => done.push(sid.clone()),
+            }
+        }
+        Ok(Branches { status: "started", reasons: vec![], sessions: done, ask_id: String::new() })
     })
 }
 
 /// `tree.end`: the node that ended.
-pub fn end(data_dir: &str, gate_root: &str, session: &str, tokens_used: Option<BigInt>, turns_used: Option<BigInt>) -> Result<Node, Fail> {
+pub fn end(data_dir: &str, warden_root: &str, session: &str, tokens_used: Option<BigInt>, turns_used: Option<BigInt>) -> Result<Node, Fail> {
     let what = format!("Tried to end session {session}.");
     check_session(session, &what)?;
     check_counts(&[("tokens-used", &tokens_used), ("turns-used", &turns_used)])?;
-    locked(data_dir, || {
+    locked(data_dir, || end_locked(data_dir, warden_root, session, tokens_used, turns_used))
+}
+
+/// `tree._end_locked`: end with the ledger lock held.
+fn end_locked(data_dir: &str, warden_root: &str, session: &str, tokens_used: Option<BigInt>, turns_used: Option<BigInt>) -> Result<Node, Fail> {
+    let what = format!("Tried to end session {session}.");
+    {
         let t = read_tree(data_dir);
         let Some(node) = t.running(session) else {
             return Err(te(
@@ -1198,11 +1380,11 @@ pub fn end(data_dir: &str, gate_root: &str, session: &str, tokens_used: Option<B
             .with("ts", now());
         append(data_dir, &[row])?;
         // Removed through the directory fd (GR-R-9). A refused envelopes/ is
-        // one the gate refuses to read as well, so nothing there stays honored.
-        let why = match crate::gate::statewrite::unlink_file(gate_root, &["envelopes"], &format!("{session}.json")) {
+        // one the warden refuses to read as well, so nothing there stays honored.
+        let why = match crate::warden::statewrite::unlink_file(warden_root, &["envelopes"], &format!("{session}.json")) {
             Ok(true) => None,
             Ok(false) => Some("it was not found".to_string()), // N3: envelopes/ moved aside, or never there
-            Err(e) => match crate::gate::statewrite::write_refused(&e) {
+            Err(e) => match crate::warden::statewrite::write_refused(&e) {
                 None => return Err(e.into()),
                 Some(w) => Some(w.to_string()),
             },
@@ -1210,7 +1392,7 @@ pub fn end(data_dir: &str, gate_root: &str, session: &str, tokens_used: Option<B
         if let Some(why) = why {
             // The end row is written, so the exit code stays; the file left
             // behind is said (N1, N3).
-            let left = gate_root;
+            let left = warden_root;
             let sep = if left.ends_with('/') { "" } else { "/" };
             eprintln!(
                 "daisugi tree: the envelope of {session} was not removed: {why}; remove {left}{sep}envelopes/{session}.json after the fix"
@@ -1221,13 +1403,13 @@ pub fn end(data_dir: &str, gate_root: &str, session: &str, tokens_used: Option<B
         n.tokens_used = tokens_total;
         n.turns_used = turns_total;
         Ok(n)
-    })
+    }
 }
 
 /// `tree.end_subtree`: end every running node under session (and
 /// session, with include_self), leaves first, each with no report, so each
 /// keeps its whole reservation. Returns the sessions it ended.
-pub fn end_subtree(data_dir: &str, gate_root: &str, session: &str, include_self: bool) -> Vec<String> {
+pub fn end_subtree(data_dir: &str, warden_root: &str, session: &str, include_self: bool) -> Vec<String> {
     let t = read_tree(data_dir);
     let mut order = vec![];
     fn walk(t: &Tree, sid: &str, top: &str, include_self: bool, order: &mut Vec<String>) {
@@ -1242,13 +1424,13 @@ pub fn end_subtree(data_dir: &str, gate_root: &str, session: &str, include_self:
         walk(&t, session, session, include_self, &mut order);
     }
     for sid in &order {
-        let _ = end(data_dir, gate_root, sid, None, None);
+        let _ = end(data_dir, warden_root, sid, None, None);
     }
     order
 }
 
 /// `tree.answer`: the ask, and the registered path on an allow.
-pub fn answer(data_dir: &str, gate_root: &str, id: &str, verdict: &str) -> Result<(Object, Option<String>), Fail> {
+pub fn answer(data_dir: &str, warden_root: &str, id: &str, verdict: &str) -> Result<(Object, Option<String>), Fail> {
     let what = format!("Tried to answer ask {id}.");
     if verdict != "allow" && verdict != "deny" {
         return Err(te(&what, "The answer must be allow or deny.", "Run it again with allow or deny.", 2));
@@ -1272,7 +1454,7 @@ pub fn answer(data_dir: &str, gate_root: &str, id: &str, verdict: &str) -> Resul
         let Some(pnode) = t.running(&parent) else {
             return Err(te(&what, &format!("{parent} is not a running node of the tree."), "Deny the ask.", 1));
         };
-        if t.nodes.contains_key(&session) || exists(&envelope_file(gate_root, &session)) {
+        if t.nodes.contains_key(&session) || exists(&envelope_file(warden_root, &session)) {
             return Err(te(&what, &format!("Session {session} is in use already."), "Deny the ask.", 1));
         }
         let over = budget_reasons(&t, pnode, &opt_big(ask.value("tokens")), &opt_big(ask.value("turns")));
@@ -1284,14 +1466,14 @@ pub fn answer(data_dir: &str, gate_root: &str, id: &str, verdict: &str) -> Resul
             _ => return Err(Fail::Io("the ask's envelope is not a valid envelope".into())),
         };
         // One read of the parent serves the check and the edge below. A parent
-        // the gate would refuse to read cannot be shown not to be physical,
+        // the warden would refuse to read cannot be shown not to be physical,
         // so an allow is refused (GR-R-7). AT-5 holds under an allow too: a
         // physical parent starts no agent.
-        let (ppar, refusal) = load_registered_checked(&parent, gate_root);
+        let (ppar, refusal) = load_registered_checked(&parent, warden_root);
         if refusal.is_some() {
             return Err(te(
                 &what,
-                &format!("The envelope of {parent} cannot be read: the gate refuses it."),
+                &format!("The envelope of {parent} cannot be read: the warden refuses it."),
                 "Deny the ask, then fix the file's owner, links or mode.",
                 1,
             ));
@@ -1311,12 +1493,12 @@ pub fn answer(data_dir: &str, gate_root: &str, id: &str, verdict: &str) -> Resul
         if ppar.is_none() && parent != root {
             return Err(te(
                 &what,
-                &format!("The envelope of {parent} is missing or not valid: the gate cannot read it."),
+                &format!("The envelope of {parent} is missing or not valid: the warden cannot read it."),
                 "Deny the ask, then register the parent's envelope again.",
                 1,
             ));
         }
-        let edge = edge_ok(load_registered(&root, gate_root).as_ref(), Some(&proposed), DEFAULT_TIMEOUT_MS);
+        let edge = edge_ok(load_registered(&root, warden_root).as_ref(), Some(&proposed), DEFAULT_TIMEOUT_MS);
         let mut child = match (edge.holds, edge.child) {
             (true, Some(c)) => c,
             _ => {
@@ -1342,7 +1524,7 @@ pub fn answer(data_dir: &str, gate_root: &str, id: &str, verdict: &str) -> Resul
             .with("proved", false)
             .with("ts", ts);
         append(data_dir, &[row, spawn])?;
-        let path = register(&child, &session, gate_root)?;
+        let path = register(&child, &session, warden_root)?;
         Ok((ask, Some(path)))
     })
 }
@@ -1377,6 +1559,12 @@ pub fn status_doc(data_dir: &str) -> Object {
         if let Some(m) = &n.model {
             doc.set("model", m.as_str());
         }
+        if let Some(b) = &n.branch_of {
+            doc.set("branch_of", b.as_str());
+        }
+        if let Some(w) = &n.why {
+            doc.set("why", w.as_str());
+        }
         nodes.push(Value::Obj(doc));
         for c in &n.children {
             walk(t, c, nodes);
@@ -1400,7 +1588,70 @@ pub fn status_doc(data_dir: &str) -> Object {
             )
         })
         .collect();
-    Object::new().with("nodes", Value::List(nodes)).with("asks", Value::List(asks)).with("skipped", Value::Int(t.skipped.to_string()))
+    let mut doc = Object::new()
+        .with("nodes", Value::List(nodes))
+        .with("asks", Value::List(asks))
+        .with("skipped", Value::Int(t.skipped.to_string()));
+    let groups = branch_groups(&t, data_dir);
+    if !groups.is_empty() {
+        doc.set("branches", Value::List(groups));
+    }
+    doc
+}
+
+/// `tree._branch_groups`: the branches of each ranking, in the order their
+/// first branch was reserved, with the leader and the eliminated count when
+/// the ranking opened a card.
+fn branch_groups(t: &Tree, data_dir: &str) -> Vec<Value> {
+    let mut order: Vec<String> = vec![];
+    let mut members: HashMap<String, Vec<&Node>> = HashMap::new();
+    for sid in &t.order {
+        let n = &t.nodes[sid];
+        if let Some(b) = &n.branch_of {
+            if !members.contains_key(b) {
+                order.push(b.clone());
+            }
+            members.entry(b.clone()).or_default().push(n);
+        }
+    }
+    if order.is_empty() {
+        return vec![];
+    }
+    let cards = crate::rank::read_cards(data_dir);
+    let mut out = vec![];
+    for rid in order {
+        let nodes = &members[&rid];
+        let ended = nodes.iter().filter(|n| n.state == "ended").count();
+        let mut sum = BigInt::from(0);
+        for n in nodes {
+            sum += t.charge(n, "tokens");
+        }
+        if sum > max_count() {
+            sum = max_count();
+        }
+        let mut g = Object::new()
+            .with("ranking_id", rid.as_str())
+            .with("why", nodes[0].why.clone().unwrap_or_default())
+            .with("sessions", Value::List(nodes.iter().map(|n| Value::Str(n.session.clone())).collect()))
+            .with("ended", Value::Int(ended.to_string()))
+            .with("tokens", big_value(&Some(sum)));
+        if let Some(card) = cards.iter().find(|c| c.opened.value("ranking_id").as_str() == Some(rid.as_str())) {
+            let opts = card.opened.value("options").as_obj().cloned().unwrap_or_default();
+            let surv = match opts.value("survivors") {
+                Value::List(l) => l.len(),
+                _ => 0,
+            };
+            let elim = match opts.value("eliminated") {
+                Value::List(l) => l.len(),
+                _ => 0,
+            };
+            g.set("leader", card.opened.value("chosen").clone());
+            g.set("ran", Value::Int((surv + elim).to_string()));
+            g.set("eliminated", Value::Int(elim.to_string()));
+        }
+        out.push(Value::Obj(g));
+    }
+    out
 }
 
 fn int_text(v: &Value) -> String {
@@ -1471,6 +1722,26 @@ pub fn status_text(doc: &Object) -> String {
     if lines.is_empty() {
         lines.push("The tree is empty.".to_string());
     }
+    for x in list(doc.value("branches")) {
+        let g = obj(x);
+        let started = list(g.value("sessions")).len();
+        let ended = int_text(g.value("ended"));
+        let body = if !g.value("leader").is_null() {
+            let leader = match g.value("leader") {
+                Value::Str(s) => s.clone(),
+                other => q(other),
+            };
+            format!("{started} started, {ended} ended, {} eliminated, leader {leader}", int_text(g.value("eliminated")))
+        } else {
+            format!("{started} started, {ended} ended")
+        };
+        lines.push(format!(
+            "  branches of {} ({}): {body}, {} tokens",
+            g.value("ranking_id").as_str().unwrap_or(""),
+            g.value("why").as_str().unwrap_or(""),
+            int_text(g.value("tokens"))
+        ));
+    }
     let asks = list(doc.value("asks"));
     if !asks.is_empty() {
         lines.push("Open asks:".to_string());
@@ -1533,7 +1804,7 @@ mod tests {
 
     fn grow(tokens: Option<i64>) -> (String, String) {
         let d = scratch();
-        let g = format!("{d}/gate");
+        let g = format!("{d}/warden");
         let root = env(r#"{"id": "env_root", "generated_by": "t", "task": "t", "permissions": {"shell": true, "shell_allowlist": ["git"]}}"#);
         make_root(&d, &g, &root, "top", tokens.map(BigInt::from), None).unwrap();
         (d, g)
@@ -1578,10 +1849,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    // GR r1 MAJOR-1: the tree reads an envelope as the gate does (GR-R-1,
-    // GR-R-7). What the gate refuses to read, the tree cannot read either.
+    // GR r1 MAJOR-1: the tree reads an envelope as the warden does (GR-R-1,
+    // GR-R-7). What the warden refuses to read, the tree cannot read either.
     #[test]
-    fn load_registered_refuses_what_the_gate_refuses() {
+    fn load_registered_refuses_what_the_warden_refuses() {
         use std::os::unix::fs::{symlink, PermissionsExt};
         type Plant = fn(&str, &std::path::Path);
         let cases: [(&str, Plant); 4] = [
@@ -1670,4 +1941,9 @@ mod tests {
         let r = edge_ok(Some(&parent), Some(&child), DEFAULT_TIMEOUT_MS);
         assert!(r.holds, "{:?}", r.reasons);
     }
+}
+
+/// `tree._envelope_file(...).exists()`.
+pub fn envelope_exists(warden_root: &str, session: &str) -> bool {
+    exists(&envelope_file(warden_root, session))
 }

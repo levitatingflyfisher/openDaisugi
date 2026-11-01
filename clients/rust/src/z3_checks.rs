@@ -9,10 +9,10 @@
 //! Z3-backed in the oracle either (pure f64 numerics/sampling) — ported
 //! here verbatim, including the exact 8-sample interpolation loop.
 
-use crate::gate::py::text::{repr, repr_list};
-use crate::gate::pyjson::py_float_repr;
+use crate::warden::py::text::{repr, repr_list};
+use crate::warden::pyjson::py_float_repr;
 use crate::models::{ActionPlan, Envelope, StepKind};
-use crate::gate::pyjson::Value;
+use crate::warden::pyjson::Value;
 use crate::violation::{kv, Violation};
 use std::collections::{HashMap, HashSet};
 
@@ -315,7 +315,7 @@ pub fn check_plan_invariants(plan: &ActionPlan, env: &Envelope) -> Vec<Violation
 #[cfg(test)]
 mod robotics_detail_tests {
     use super::check_plan_invariants;
-    use crate::gate::pyjson::{dumps, Value};
+    use crate::warden::pyjson::{dumps, Value};
     use crate::models::{parse_plan, Envelope};
 
     /// Each robotics violation carries the oracle's detail dict, so a run
@@ -357,6 +357,6 @@ mod robotics_detail_tests {
 }
 
 /// z3's `str(solver.unsat_core())` with no tracked assertions: "[]".
-fn unsat_core() -> crate::gate::pyjson::Object {
-    crate::gate::pyjson::Object::new().with("unsat_core", "[]")
+fn unsat_core() -> crate::warden::pyjson::Object {
+    crate::warden::pyjson::Object::new().with("unsat_core", "[]")
 }

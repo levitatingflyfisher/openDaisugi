@@ -1,6 +1,6 @@
 """`daisugi bench verifier`: the five clients over the committed corpus.
 
-This is the conformance harness in clients/gate.py and clients/compare.py
+This is the conformance harness in clients/warden.py and clients/compare.py
 reduced to one table. The one column that matters for safety is `fail-open`:
 cases where the oracle rejects and the client accepts. It must be zero.
 Everything else is information.

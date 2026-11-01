@@ -1,4 +1,4 @@
-//! Subagents: pane.report_child. A gate hook reports a subagent that
+//! Subagents: pane.report_child. A warden hook reports a subagent that
 //! started or stopped inside a pane's harness. It is read only: coppice
 //! cannot type into it or close it.
 

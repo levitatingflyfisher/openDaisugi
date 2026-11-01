@@ -24,7 +24,7 @@ func TestJOnTheRailOpensTheJournalFromTheServer(t *testing.T) {
 	for i, d := range []string{"allow", "deny"} {
 		rawCall(t, s.Socket(), "pane.report_state", map[string]any{"pane": id, "event": map[string]any{
 			"v": 1, "ts": nowSeconds(), "session_id": "s", "harness": "claude-code", "pane": id, "state": "working",
-			"source": "gate", "detail": "verdict=" + d, "mode": "enforcing",
+			"source": "warden", "detail": "verdict=" + d, "mode": "enforcing",
 			"verdict": map[string]any{"decision": d, "tool": []string{"Read", "Bash"}[i], "clause": []string{"", "net"}[i]},
 		}})
 	}
@@ -40,7 +40,7 @@ func TestJOnTheRailOpensTheJournalFromTheServer(t *testing.T) {
 		t.Fatalf("newest first: %+v", m.Journal.Rows)
 	}
 	frame := journalFrame(m, 100, 20)
-	for _, want := range []string{"Journal · the verdicts the gate and each agent's loop report", "worker", "deny · Bash · clause net", "allow · Read", "Up Down scroll  Esc or j closes"} {
+	for _, want := range []string{"Journal · the verdicts the warden and each agent's loop report", "worker", "deny · Bash · clause net", "allow · Read", "Up Down scroll  Esc or j closes"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame lacks %q:\n%s", want, frame)
 		}
@@ -88,7 +88,7 @@ func TestTheJournalCoversTheWindowsAndLeavesTheRail(t *testing.T) {
 		}
 	}
 	empty := &Model{Journal: &JournalView{}}
-	if !strings.Contains(journalFrame(empty, 100, 20), "No gate verdicts yet.") {
+	if !strings.Contains(journalFrame(empty, 100, 20), "No warden verdicts yet.") {
 		t.Fatal("an empty journal says nothing")
 	}
 	failed := &Model{Journal: &JournalView{Err: "the server is away"}}
@@ -115,9 +115,9 @@ func TestTheJournalScrollsAndStopsAtTheEnds(t *testing.T) {
 	}
 }
 
-// No gateway figure, no number: the header names a saving only when the
+// No router figure, no number: the header names a saving only when the
 // server sent one.
-func TestTheHeaderNamesTokensSavedOnlyFromAGatewayFigure(t *testing.T) {
+func TestTheHeaderNamesTokensSavedOnlyFromARouterFigure(t *testing.T) {
 	line := func(res map[string]any) string {
 		m := &Model{Facts: decodeFacts(res)}
 		return stripSGR(Render(m, 140, 20)[1])

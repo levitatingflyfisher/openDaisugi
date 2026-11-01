@@ -8,8 +8,8 @@ use super::pmodel::{self, Id, Mode};
 use super::store::{PutRow, Store};
 use super::verify;
 use super::PwErr;
-use crate::gate::py::text::{has_surrogate, is_space, repr};
-use crate::gate::pyjson::{float_repr, loads, Value};
+use crate::warden::py::text::{has_surrogate, is_space, repr};
+use crate::warden::pyjson::{float_repr, loads, Value};
 
 /// `str.lstrip()`: Python's white space, Unicode included.
 pub fn lstrip(s: &str) -> &str {
@@ -50,7 +50,7 @@ fn from_bundle(bundle: &Value, source: &str) -> Result<Pathway, PwErr> {
         if newer {
             let shown = match sv {
                 Value::Int(t) => t.clone(),
-                Value::Float(f) => crate::gate::pyjson::py_float_repr(*f),
+                Value::Float(f) => crate::warden::pyjson::py_float_repr(*f),
                 _ => String::new(),
             };
             return Err(PwErr::import(

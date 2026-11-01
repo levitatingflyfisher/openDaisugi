@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is the pieces half of opendaisugi.modules: `daisugi modules
@@ -24,7 +24,7 @@ type piece struct {
 // mcpRegistered is modules._mcp_registered: the opendaisugi server is
 // among the mcpServers of ~/.claude.json.
 func (e *Env) mcpRegistered() bool {
-	raw, err := os.ReadFile(gateroot.Join(e.home, ".claude.json"))
+	raw, err := os.ReadFile(wardenroot.Join(e.home, ".claude.json"))
 	if err != nil {
 		return false
 	}
@@ -68,11 +68,11 @@ func pick(on bool, yes, no string) string {
 
 // detectPieces is modules.detect_pieces.
 func (e *Env) detectPieces(cmd, dataDir string) ([]piece, error) {
-	cfg, err := config.Load(gateroot.Join(dataDir, "config.yaml"))
+	cfg, err := config.Load(wardenroot.Join(dataDir, "config.yaml"))
 	if err != nil {
 		return nil, e.configLoadErr(cmd, err)
 	}
-	hooks, herr := readHookSettings(gateroot.Join(e.home, ".claude/settings.json"))
+	hooks, herr := readHookSettings(wardenroot.Join(e.home, ".claude/settings.json"))
 	if herr != nil {
 		return nil, e.refuse(cmd, herr)
 	}
@@ -80,40 +80,40 @@ func (e *Env) detectPieces(cmd, dataDir string) ([]piece, error) {
 		_, err := install.LookPath(e.env)(name)
 		return err == nil
 	}
-	var gateFor []string
+	var wardenFor []string
 	if hooks.installed("daisugi hook", "PreToolUse") {
-		gateFor = append(gateFor, "claude-code")
+		wardenFor = append(wardenFor, "claude-code")
 	}
-	if exists(gateroot.Join(e.home, ".pi/agent/extensions/daisugi-gate/index.ts")) {
-		gateFor = append(gateFor, "pi")
+	if exists(wardenroot.Join(e.home, ".pi/agent/extensions/daisugi-warden/index.ts")) {
+		wardenFor = append(wardenFor, "pi")
 	}
 	if exists(e.opencodePluginPath()) {
-		gateFor = append(gateFor, "opencode")
+		wardenFor = append(wardenFor, "opencode")
 	}
-	gatewayOn := e.env["OPENDAISUGI_GATEWAY_BASE_URL"] != "" || hooks.installed("gateway", "PreToolUse")
-	router := cfg.GatewayRouter
-	routerDetail := "gateway_router: " + router
+	routerOn := e.env["OPENDAISUGI_ROUTER_BASE_URL"] != "" || hooks.installed("router", "PreToolUse")
+	router := cfg.RoutingMode
+	routerDetail := "routing_mode: " + router
 	routerState := "off"
-	if gatewayOn {
+	if routerOn {
 		routerState = router
 	} else {
-		routerDetail += "; it runs only when the gateway is on"
+		routerDetail += "; it runs only when the router is on"
 	}
 	mcp := e.mcpRegistered()
 	floor := e.coppiceSocketPresent()
 	loop := which("sprig")
 	return []piece{
-		{"gate", "gate", onOff(len(gateFor) > 0),
-			pick(len(gateFor) > 0, "hook installed for "+strings.Join(gateFor, ", "), "no gate hook found"),
-			"daisugi install --gate", "daisugi install --uninstall (removes gate, gateway and memory together)"},
-		{"gateway", "gateway", onOff(gatewayOn),
-			pick(gatewayOn, "the harness base_url points at it", "no harness points at it"),
-			"daisugi install --gateway", "daisugi install --uninstall (removes gate, gateway and memory together)"},
-		{"router", "router", routerState, routerDetail,
-			"daisugi install --gateway --router rules|switchyard|knn|model", "daisugi install --gateway --router off"},
+		{"warden", "warden", onOff(len(wardenFor) > 0),
+			pick(len(wardenFor) > 0, "hook installed for "+strings.Join(wardenFor, ", "), "no warden hook found"),
+			"daisugi install", "daisugi install --uninstall (removes warden, router and memory together)"},
+		{"router", "router", onOff(routerOn),
+			pick(routerOn, "the harness base_url points at it", "no harness points at it"),
+			"daisugi install --router", "daisugi install --uninstall (removes warden, router and memory together)"},
+		{"routing_mode", "routing mode", routerState, routerDetail,
+			"daisugi install --router --routing-mode rules|switchyard|knn|model", "daisugi install --router --routing-mode off"},
 		{"memory", "memory and pathways", onOff(mcp),
 			pick(mcp, "MCP server registered", "MCP server not registered"),
-			"daisugi install", "daisugi install --uninstall (removes gate, gateway and memory together)"},
+			"daisugi install", "daisugi install --uninstall (removes warden, router and memory together)"},
 		{"floor", "floor (coppice)", onOff(floor),
 			pick(floor, "server answers", "no server answers"),
 			"coppice server start", "coppice server stop"},

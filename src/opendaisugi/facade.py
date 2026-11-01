@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Literal
 from opendaisugi.envelope import ENVELOPE_PROMPT_VERSION
 from opendaisugi.envelope import generate_envelope as _generate_envelope
 from opendaisugi.envelope_cache import EnvelopeCache
-from opendaisugi.gateway_answers import AnswerStore
 from opendaisugi.journal import Journal
 from opendaisugi.models import ActionPlan, Envelope, VerificationResult
 from opendaisugi.pathway_store import PathwayStore
+from opendaisugi.router_answers import AnswerStore
 from opendaisugi.run_session import RunStatus
 from opendaisugi.thinking import ThinkingBudget
 from opendaisugi.verify import verify as _verify
@@ -402,7 +402,7 @@ class Daisugi:
 
     @property
     def answer_store(self) -> AnswerStore | None:
-        """Lazy AnswerStore rooted at ``data_dir / "gateway" / "answers.jsonl"`` (ADR-0012 §2D).
+        """Lazy AnswerStore rooted at ``data_dir / "router" / "answers.jsonl"`` (ADR-0012 §2D).
 
         Returns None if the facade was constructed with ``answer_store=False``.
         Auto-constructs on first access when ``answer_store=True`` (the default),
@@ -415,7 +415,7 @@ class Daisugi:
         if self._answer_store is not None:
             return self._answer_store
         if getattr(self, "_answer_store_auto", False):
-            self._answer_store = AnswerStore(path=self.data_dir / "gateway" / "answers.jsonl")
+            self._answer_store = AnswerStore(path=self.data_dir / "router" / "answers.jsonl")
             return self._answer_store
         return None
 

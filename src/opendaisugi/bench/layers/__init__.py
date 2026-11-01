@@ -11,9 +11,9 @@ from __future__ import annotations
 from opendaisugi.bench import pairs  # noqa: F401
 from opendaisugi.bench.layers import (  # noqa: F401
     backend,
-    gate_path,
     loop,
     matcher,
     router,
     verifier,
+    warden_path,
 )

@@ -201,7 +201,7 @@
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "k8", "cli": ["task", "list", "--tree", "--json"]}
 {"id": "$id", "ok": true, "result": {"code": 1}}
-{"id": "k9", "cli": ["task", "set-foreman", "t1", "--pane", "$p"]}
+{"id": "k9", "cli": ["task", "set-steward", "t1", "--pane", "$p"]}
 {"id": "$id", "ok": true, "result": {"code": "*"}}
 {"id": "k10", "cli": ["task", "move", "t2", "--parent", "t1"]}
 {"id": "$id", "ok": true, "result": {"code": 0}}
@@ -214,7 +214,7 @@
 {"id": "k14", "cli": ["task", "bogus"]}
 {"id": "$id", "ok": true, "result": {"code": 1}}
 # Skills.
-{"id": "sk1", "cli": ["skill", "foreman"]}
+{"id": "sk1", "cli": ["skill", "steward"]}
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "sk2", "cli": ["skill"]}
 {"id": "$id", "ok": true, "result": {"code": 1}}

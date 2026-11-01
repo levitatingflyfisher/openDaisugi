@@ -125,9 +125,9 @@ func compareEventFixtureDirs(t fatalT, goDir, pyDir string) {
 // proven against synthetic directories rather than tests/floor's, which
 // does not exist in this tree yet (see the skip above).
 func TestCompareEventFixtureDirsCatchesRealDivergence(t *testing.T) {
-	base := `{"v":1,"session_id":"s1","harness":"claude-code","state":"idle","source":"gate","ts":1.0}`
-	baseReordered := `{"session_id":"s1","v":1,"source":"gate","harness":"claude-code","ts":1.0,"state":"idle"}`
-	different := `{"v":1,"session_id":"s1","harness":"claude-code","state":"working","source":"gate","ts":1.0}`
+	base := `{"v":1,"session_id":"s1","harness":"claude-code","state":"idle","source":"warden","ts":1.0}`
+	baseReordered := `{"session_id":"s1","v":1,"source":"warden","harness":"claude-code","ts":1.0,"state":"idle"}`
+	different := `{"v":1,"session_id":"s1","harness":"claude-code","state":"working","source":"warden","ts":1.0}`
 
 	t.Run("semantically equal fixtures with different bytes pass", func(t *testing.T) {
 		goDir, pyDir := t.TempDir(), t.TempDir()

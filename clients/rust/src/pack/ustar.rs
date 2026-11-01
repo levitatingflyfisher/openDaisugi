@@ -324,7 +324,7 @@ fn normpath(p: &str) -> String {
 pub fn unpack_tar_gz(data: &[u8], dest: &Path, label: &str) -> Result<(), String> {
     let not_tar = || format!("{label} is not a gzip tar archive.");
     let src: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(data.to_vec()));
-    let mut r = crate::gateway::http::gunzip(src);
+    let mut r = crate::router::http::gunzip(src);
     let root = std::fs::canonicalize(dest).map_err(|e| e.to_string())?;
     let root_s = root.to_string_lossy().into_owned();
     let mut long_name: Option<String> = None;

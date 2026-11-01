@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/netproxy"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is `daisugi tiers setup --remote`: model_host.probe, record
@@ -221,6 +221,26 @@ func namesOf(xs []any, key string) ([]string, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// endpointKind is model_host.endpoint_kind: one GET root/api/tags. A 200
+// with a JSON object whose models is a list means "ollama"; anything else
+// means "openai".
+func (h *hostClient) endpointKind(root string) string {
+	st, b, ok := h.send("GET", root+"/api/tags", nil)
+	if !ok || st != 200 {
+		return "openai"
+	}
+	v, ok, err := jsonBody(b)
+	if err != nil || !ok {
+		return "openai"
+	}
+	if data, isObj := v.(*pyjson.Object); isObj {
+		if _, isList := data.Value("models").([]any); isList {
+			return "ollama"
+		}
+	}
+	return "openai"
 }
 
 func (h *hostClient) probeOllama(base string) (*probed, error) {
@@ -492,7 +512,7 @@ func (e *Env) setupRemote(cmd, dataDir, remote, kind string, model *string, cont
 			"check that the host is reachable and serves Ollama, an OpenAI-compatible /v1, or an "+
 				"Anthropic-compatible /v1/messages. Or pass --kind explicitly.", code)
 	}
-	path := gateroot.Join(dataDir, "config.yaml")
+	path := wardenroot.Join(dataDir, "config.yaml")
 	if _, err := config.Load(path); err != nil {
 		return e.refuse(cmd, fmt.Errorf("%s is not one this binary rewrites: %w", path, err))
 	}
@@ -551,11 +571,11 @@ func (e *Env) setupRemote(cmd, dataDir, remote, kind string, model *string, cont
 		for _, kv := range env {
 			e.echo("  %s=%s\n", kv[0], kv[1])
 		}
-		e.echo("or run: daisugi gateway --upstream %s and point the harness at the gateway. "+
-			"The gateway answers count_tokens itself. Most self-hosted servers do not.\n", info.baseURL)
+		e.echo("or run: daisugi router serve --upstream %s and point the harness at the router. "+
+			"The router answers count_tokens itself. Most self-hosted servers do not.\n", info.baseURL)
 	} else {
 		e.echo("this host speaks the OpenAI wire only. Point an OpenAI wire harness at it directly, " +
-			"or route it through `daisugi gateway --openai-upstream`.\n")
+			"or route it through `daisugi router serve --openai-upstream`.\n")
 	}
 	return nil
 }

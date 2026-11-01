@@ -1,5 +1,5 @@
 use super::*;
-use crate::gate::pyjson::loads;
+use crate::warden::pyjson::loads;
 use crate::pathways::pmodel::{validate_model, Id, Mode};
 
 fn fixture(name: &str) -> String {

@@ -15,7 +15,7 @@ embed real local paths. See docs/spec/conformance.md. That is why the frozen
 | `journal-slice.jsonl` | router |
 | `prices.json`, `switchyard-targets.json` | router |
 | `loop-vocabulary-cases.jsonl`, `loop-vocabulary.json`, `battery-envelope.json` | loop |
-| `gate-paths.jsonl`, `battery-envelope.json` | gate-path |
+| `gate-paths.jsonl`, `battery-envelope.json` | warden-path |
 | `envelopes/<backend>.jsonl` | backend. `claude-code.jsonl` is a hand-written stand-in dated 2026-09-08, not an API capture |
 
 Regenerate the verifier corpus after editing its case list:

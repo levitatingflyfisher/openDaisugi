@@ -6,11 +6,11 @@
 {"id":"$id","ok":true,"result":{"pane":"$a"}}
 {"id":"2","cmd":"pane.create","cwd":"{FIXTURES}","cmd_argv":["/bin/sleep","600"]}
 {"id":"$id","ok":true,"result":{"pane":"$b"}}
-{"id":"3","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a1"}}}
+{"id":"3","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"warden","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a1"}}}
 {"id":"$id","ok":true,"result":{"pane":"$a"}}
-{"id":"4","cmd":"pane.report_state","pane":"$b","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$b","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"b1"}}}
+{"id":"4","cmd":"pane.report_state","pane":"$b","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$b","state":"working","source":"warden","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"b1"}}}
 {"id":"$id","ok":true,"result":{"pane":"$b"}}
-{"id":"5","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"gate","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a2"}}}
+{"id":"5","cmd":"pane.report_state","pane":"$a","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$a","state":"working","source":"warden","detail":"verdict=allow","mode":"enforcing","verdict":{"decision":"allow","tool":"Read","clause":"a2"}}}
 {"id":"$id","ok":true,"result":{"pane":"$a"}}
 {"id":"6","cmd":"floor.journal"}
 {"id":"$id","ok":true,"result":{"entries":[{"at":"*","pane":"$a","decision":"allow","tool":"Read","clause":"a2","mode":"enforcing"},{"at":"*","pane":"$b","decision":"allow","tool":"Read","clause":"b1","mode":"enforcing"},{"at":"*","pane":"$a","decision":"allow","tool":"Read","clause":"a1","mode":"enforcing"}]}}

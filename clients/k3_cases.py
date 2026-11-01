@@ -824,7 +824,7 @@ def answers(*entries: dict[str, Any]) -> dict[str, Any]:
             }
         )
         lines.append(text.replace('"{CREATED}"', "{NOWF:" + str(-e.get("age", 60)) + "}"))
-    return {".opendaisugi/gateway/answers.jsonl": {"text": "\n".join(lines) + "\n"}}
+    return {".opendaisugi/router/answers.jsonl": {"text": "\n".join(lines) + "\n"}}
 
 
 def build_tool_cases() -> list[dict[str, Any]]:
@@ -1771,6 +1771,10 @@ def setup(name: str, *flags: str, **kw: Any) -> dict[str, Any]:
     return c
 
 
+# The reply of a host that has no such path.
+NF = {"http_status": 404, "body": '{"error": "not found"}'}
+
+
 def remote_cases(add: Any) -> None:
     """`tiers setup --remote`: probe a model host on the fake server and
     record it. The fake answers each request in turn: a GET by its path,
@@ -1779,7 +1783,7 @@ def remote_cases(add: Any) -> None:
     def ok(body: Any) -> dict[str, Any]:
         return {"http_status": 200, "body": body if isinstance(body, str) else json.dumps(body)}
 
-    nf = {"http_status": 404, "body": '{"error": "not found"}'}
+    nf = NF
     tags = ok({"models": [{"name": "llama3.2:3b"}, {"name": "qwen:7b"}, {"x": 1}]})
     show = ok(
         {
@@ -1917,8 +1921,17 @@ def build_setup_cases() -> list[dict[str, Any]]:
     good = [{"chat": reply_env("t")}] * 3
     oai = {"OPENDAISUGI_LLM_BACKEND": "api", "OPENAI_API_KEY": "sk-test-k3-openai-0000"}
     ep = ("--endpoint", "http://127.0.0.1:{PORT}/v1", "--model", "local-m")
-    add(setup("setup endpoint passes", *ep, smi=smi("8192"), replies=good, env=oai))
-    add(setup("setup endpoint passes wire", *ep, "--wire", smi=smi("8192"), replies=good, env=oai))
+    add(setup("setup endpoint passes", *ep, smi=smi("8192"), replies=[NF, *good], env=oai))
+    add(
+        setup(
+            "setup endpoint passes wire",
+            *ep,
+            "--wire",
+            smi=smi("8192"),
+            replies=[NF, *good],
+            env=oai,
+        )
+    )
     add(
         setup(
             "setup endpoint passes wire json",
@@ -1927,7 +1940,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             "--json",
             smi=smi("8192"),
             env=oai,
-            replies=good,
+            replies=[NF, *good],
         )
     )
     add(
@@ -1938,6 +1951,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             smi=smi("8192"),
             env=oai,
             replies=[
+                NF,
                 {"chat": "not json"},
                 {"chat": "no"},
                 {"chat": reply_env("t")},
@@ -1958,6 +1972,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             smi=smi("8192"),
             env=oai,
             replies=[
+                NF,
                 {"chat": reply_env("t")},
                 {"chat": "no"},
                 {"chat": "no"},
@@ -1972,7 +1987,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             *ep,
             smi=smi("8192"),
             env=oai,
-            replies=[{"http_status": 500, "body": "{}"}] * 6,
+            replies=[NF, *[{"http_status": 500, "body": "{}"}] * 6],
         )
     )
     add(
@@ -1996,7 +2011,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             "{HOME}/d",
             smi=smi("8192"),
             env=oai,
-            replies=good,
+            replies=[NF, *good],
         )
     )
     # The served window, read after the probes: llama-server's meta.n_ctx.
@@ -2010,7 +2025,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             *ep,
             smi=smi("8192"),
             env=oai,
-            replies=[*good, {"http_body": llama}],
+            replies=[NF, *good, {"http_body": llama}],
         )
     )
     add(
@@ -2020,7 +2035,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             "--json",
             smi=smi("8192"),
             env=oai,
-            replies=[*good, {"http_body": llama}],
+            replies=[NF, *good, {"http_body": llama}],
         )
     )
     two = {
@@ -2038,7 +2053,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             "big",
             smi=smi("8192"),
             env=oai,
-            replies=[*good, {"http_body": two}],
+            replies=[NF, *good, {"http_body": two}],
         )
     )
     add(
@@ -2048,10 +2063,96 @@ def build_setup_cases() -> list[dict[str, Any]]:
             smi=smi("8192"),
             env=oai,
             replies=[
+                NF,
                 *good,
                 {"http_body": {"data": [{"id": "m", "meta": {"n_ctx_train": 262144}}]}},
                 {"http_body": {"default_generation_settings": {"n_ctx": 8192}}},
             ],
+        )
+    )
+    tags = {"http_body": {"models": [{"name": "gemma4:latest"}]}}
+    cut = {"chat": "", "finish": "length"}
+    gep = ("--endpoint", "http://127.0.0.1:{PORT}/v1", "--model", "gemma4")
+    for name, flags, replies in (
+        ("setup endpoint ollama", (), [tags, *good, NF]),
+        ("setup endpoint ollama json", ("--json",), [tags, *good, NF]),
+        ("setup endpoint ollama wire", ("--wire", "--data-dir", "{HOME}/d"), [tags, *good, NF]),
+        ("setup endpoint ollama truncated", (), [tags, cut, cut, cut, NF]),
+        ("setup endpoint ollama truncated json", ("--json",), [tags, cut, cut, cut, NF]),
+    ):
+        add(setup(name, *gep, *flags, smi=smi("8192"), env=oai, replies=replies))
+    add(
+        setup(
+            "setup endpoint openai truncated",
+            *ep,
+            smi=smi("8192"),
+            env=oai,
+            replies=[NF, cut, cut, cut],
+        )
+    )
+    add(
+        setup(
+            "setup endpoint truncated and declined",
+            *ep,
+            smi=smi("8192"),
+            env=oai,
+            replies=[NF, {"chat": "no"}, {"chat": "no"}, cut, cut],
+        )
+    )
+    add(
+        setup(
+            "setup endpoint kind ollama",
+            *ep,
+            "--kind",
+            "ollama",
+            smi=smi("8192"),
+            env=oai,
+            replies=[*good, NF],
+        )
+    )
+    add(
+        setup(
+            "setup endpoint kind openai",
+            *ep,
+            "--kind",
+            "openai",
+            smi=smi("8192"),
+            env=oai,
+            replies=[*good],
+        )
+    )
+    add(
+        setup("setup endpoint kind anthropic", *ep, "--kind", "anthropic", smi=smi("8192"), env=oai)
+    )
+    add(setup("setup endpoint kind bogus", *ep, "--kind", "grpc", smi=smi("8192"), env=oai))
+    add(
+        setup(
+            "setup endpoint tags not ollama shape",
+            *ep,
+            smi=smi("8192"),
+            env=oai,
+            replies=[{"http_body": {"data": []}}, *good],
+        )
+    )
+    add(
+        setup(
+            "setup endpoint tags not json",
+            *ep,
+            smi=smi("8192"),
+            env=oai,
+            replies=[{"http_body": "nope"}, *good],
+        )
+    )
+    add(
+        setup(
+            "setup endpoint root without v1",
+            "--endpoint",
+            "http://127.0.0.1:{PORT}",
+            "--model",
+            "gemma4",
+            smi=smi("8192"),
+            env=oai,
+            replies=[tags, *good, NF],
         )
     )
     # --matcher: potion is the one-step opt-in (DS-3); lexical is the default.
@@ -2064,7 +2165,7 @@ def build_setup_cases() -> list[dict[str, Any]]:
             "setup matcher over a config",
             "--matcher",
             "potion",
-            before={CONFIG: {"text": "matcher_model: all-MiniLM-L6-v2\ngate_mode: enforce\n"}},
+            before={CONFIG: {"text": "matcher_model: all-MiniLM-L6-v2\nwarden_mode: enforce\n"}},
         )
     )
     add(
@@ -2648,8 +2749,8 @@ def build_onboard_cases() -> list[dict[str, Any]]:
     return C
 
 
-def build_delegate_cases() -> list[dict[str, Any]]:
-    """The delegate tool (bulk read) with a fake worker. The
+def build_spawn_cases() -> list[dict[str, Any]]:
+    """The spawn tool (bulk read) with a fake worker. The
     local worker is the chat wire at the fake server (OPENAI_API_BASE); a
     remote worker is reached through the fake proxy. Each call writes one
     row of the delegation journal."""
@@ -2664,11 +2765,11 @@ def build_delegate_cases() -> list[dict[str, Any]]:
         "state": "active",
         "match": {"tool": "Read", "file_lines_over": 5},
     }
-    gate = ".opendaisugi/gate"
+    warden = ".opendaisugi/warden"
     tier1 = ".opendaisugi/local_tier1.json"
     local = {
         "work/big.py": {"text": text},
-        f"{gate}/grafts/big-read.json": {"text": json.dumps(rule)},
+        f"{warden}/grafts/big-read.json": {"text": json.dumps(rule)},
         tier1: {"text": json.dumps({"model": "openai/qwen"})},
     }
     oai = {"OPENAI_API_BASE": "http://127.0.0.1:{PORT}/v1"}
@@ -2683,7 +2784,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
         }
 
     def call(args: dict[str, Any]) -> Session:
-        return Session().call("delegate", args)
+        return Session().call("spawn", args)
 
     q = {"path": big, "question": "What does f2 return?"}
 
@@ -2697,7 +2798,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     def d(name: str, s: Session, *, before=None, env=None, **kw: Any) -> None:
         add(
             mcp(
-                f"delegate {name}",
+                f"spawn {name}",
                 s,
                 before=local if before is None else before,
                 env=oai if env is None else env,
@@ -2738,7 +2839,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d("worker cut", call(q), replies=[{"chat": reply(quotes=["def f2():"]), "finish": "length"}])
     d(
         "two calls",
-        call(q).call("delegate", {"path": big, "question": "Which functions are there?"}),
+        call(q).call("spawn", {"path": big, "question": "Which functions are there?"}),
         replies=[{"chat": reply(quotes=["def f0():"])}, {"chat": reply("f0 to f3", ["def f3():"])}],
     )
     d(
@@ -2783,12 +2884,12 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d(
         "physical stakes",
         call(q),
-        before={**local, f"{gate}/envelopes/default.json": env_file(stakes="physical")},
+        before={**local, f"{warden}/envelopes/default.json": env_file(stakes="physical")},
     )
     d(
         "envelope unreadable",
         call(q),
-        before={**local, f"{gate}/envelopes/default.json": {"text": "{"}},
+        before={**local, f"{warden}/envelopes/default.json": {"text": "{"}},
     )
     remote_t1 = {"text": json.dumps({"model": "qwen", "base_url": "http://worker.invalid/v1"})}
     remote_rule = {"text": json.dumps({**rule, "worker": {"allow_remote": True}})}
@@ -2797,7 +2898,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d(
         "remote no envelope",
         call(q),
-        before={**local, tier1: remote_t1, f"{gate}/grafts/big-read.json": remote_rule},
+        before={**local, tier1: remote_t1, f"{warden}/grafts/big-read.json": remote_rule},
     )
     d(
         "remote any host",
@@ -2805,15 +2906,17 @@ def build_delegate_cases() -> list[dict[str, Any]]:
         before={
             **local,
             tier1: remote_t1,
-            f"{gate}/grafts/big-read.json": remote_rule,
-            f"{gate}/envelopes/default.json": env_file(network=True),
+            f"{warden}/grafts/big-read.json": remote_rule,
+            f"{warden}/envelopes/default.json": env_file(network=True),
         },
     )
     granted = {
         **local,
         tier1: remote_t1,
-        f"{gate}/grafts/big-read.json": remote_rule,
-        f"{gate}/envelopes/default.json": env_file(network=True, network_hosts=["worker.invalid"]),
+        f"{warden}/grafts/big-read.json": remote_rule,
+        f"{warden}/envelopes/default.json": env_file(
+            network=True, network_hosts=["worker.invalid"]
+        ),
     }
     d(
         "remote granted",
@@ -2939,7 +3042,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     d(
         "code write physical stakes",
         call(w),
-        before={**local, f"{gate}/envelopes/default.json": env_file(stakes="physical")},
+        before={**local, f"{warden}/envelopes/default.json": env_file(stakes="physical")},
     )
     d(
         "code write messages wire",
@@ -2958,7 +3061,7 @@ def build_delegate_cases() -> list[dict[str, Any]]:
     )
     d(
         "code write then read",
-        call(w).call("delegate", q),
+        call(w).call("spawn", q),
         replies=[{"chat": draft(text=ok_diff)}, {"chat": reply(quotes=["def f2():"])}],
     )
     return C
@@ -2970,7 +3073,7 @@ def all_cases() -> list[dict[str, Any]]:
         + build_tool_cases()
         + build_setup_cases()
         + build_onboard_cases()
-        + build_delegate_cases()
+        + build_spawn_cases()
     )
     seen: set[str] = set()
     for c in cases:

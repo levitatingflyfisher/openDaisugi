@@ -1,4 +1,4 @@
-//! The process groups of sprig's bash and gate processes (the Go
+//! The process groups of sprig's bash and warden processes (the Go
 //! module's procgroup.go). Each runs in a group of its own with SIGKILL as
 //! its parent-death signal; every group that may still have members is
 //! killed when sprig ends, however it ends, so nothing a tool left behind
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn a_bash_call_has_a_group_of_its_own_and_dies_with_sprig() {
-        use crate::gate::Tool;
+        use crate::warden::Tool;
         let dir = std::env::temp_dir().join(format!("pg-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let pid_file = dir.join("pid");

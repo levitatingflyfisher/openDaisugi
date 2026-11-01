@@ -1,9 +1,9 @@
-// Package statefile is how the gate opens the files it keeps under its
+// Package statefile is how the warden opens the files it keeps under its
 // root (GR-R-1, GR-R-2). It is the twin of src/opendaisugi/_state_files.py
-// and of the Rust module gate::statefile; the three do the same thing and
+// and of the Rust module warden::statefile; the three do the same thing and
 // write the same words.
 //
-// The gate root is opened as a directory without following a symlink at
+// The warden root is opened as a directory without following a symlink at
 // its last component (the path down to the root may follow links), then
 // each name below it is opened by the fd of the directory above. A
 // directory must be this user's and writable by no group and no other
@@ -38,7 +38,7 @@ const (
 var (
 	notedMu sync.Mutex
 	noted   = map[string]bool{}
-	// collected holds a gate child's notes until it has its answer. A hook
+	// collected holds a warden child's notes until it has its answer. A hook
 	// call is decided in a child whose stderr nobody reads, and the
 	// answer's stderr is what the host sees, so the notes go in front of
 	// it (see ChildFrame). Nil outside a child: a note goes to stderr at
@@ -47,10 +47,10 @@ var (
 	collecting bool
 )
 
-// Note is _state_files.state_note: `daisugi gate: not reading <refusal
+// Note is _state_files.state_note: `daisugi warden: not reading <refusal
 // text>` on stderr, once per text.
 func Note(text string) {
-	line := "daisugi gate: not reading " + text
+	line := "daisugi warden: not reading " + text
 	notedMu.Lock()
 	defer notedMu.Unlock()
 	if noted[line] {
@@ -104,7 +104,7 @@ func refuse(notePath, why string, isDir bool) string {
 	return text
 }
 
-// CollectNotes keeps the notes instead of printing them (a gate child).
+// CollectNotes keeps the notes instead of printing them (a warden child).
 func CollectNotes() {
 	notedMu.Lock()
 	collecting, collected = true, nil
@@ -226,7 +226,7 @@ func rootBase(root string) (base, enc string, ok bool) {
 	return base, string(b), true
 }
 
-// ProbeDirs is _state_files.probe_state_dirs: the fds of the gate root and
+// ProbeDirs is _state_files.probe_state_dirs: the fds of the warden root and
 // each directory below it, in order, with no refusal; nil and "" when one
 // is missing; nil and the refusal when one is refused (the ones opened are
 // closed). The caller closes the fds with Close.

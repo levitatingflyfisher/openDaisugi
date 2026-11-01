@@ -6,7 +6,7 @@ stakes='physical' triggers two existing v0.19 guarantees:
 - Blocks llm_check postconditions: physical stakes use sound primitives only.
 
 The envelope also declares an end_effector_in_workspace invariant
-that gates VLAStep.target_pose against the allowed bounds — same
+that checks VLAStep.target_pose against the allowed bounds — same
 v0.8-shipped Z3 check that runs on CartesianMoveStep.
 """
 

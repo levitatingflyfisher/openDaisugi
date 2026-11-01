@@ -45,8 +45,8 @@ def test_the_process_environment_is_the_default(monkeypatch, tmp_path):
 
 
 def test_the_guarded_set_holds_every_place_the_data_can_be(tmp_path):
-    """The gate guards each directory the rule can pick, with no exists
-    check, so a move of the data never leaves the gate's own state open."""
+    """The warden guards each directory the rule can pick, with no exists
+    check, so a move of the data never leaves the warden's own state open."""
     env = {"OPENDAISUGI_HOME": str(tmp_path / "od"), "XDG_DATA_HOME": str(tmp_path / "x")}
     assert guarded_data_dirs(env, tmp_path) == [
         tmp_path / ".opendaisugi",
@@ -59,7 +59,7 @@ def test_the_guarded_set_holds_every_place_the_data_can_be(tmp_path):
 
 
 def test_the_module_is_stdlib_only():
-    """gate_client imports it on the hook's hot path."""
+    """warden_client imports it on the hook's hot path."""
     src = (Path(__file__).resolve().parent.parent / "src/opendaisugi/datahome.py").read_text()
     imports = [ln for ln in src.splitlines() if ln.startswith(("import ", "from "))]
     assert all(
@@ -76,7 +76,7 @@ def test_a_leading_tilde_is_expanded(tmp_path):
 
 
 def test_a_value_that_is_not_absolute_is_ignored(tmp_path):
-    """A relative value would move with the cwd, so the gate's state could
+    """A relative value would move with the cwd, so the warden's state could
     land in an agent's workspace. It is ignored, as the XDG spec says."""
     for bad in ("od", "./od", "~user/od", "~od", ""):
         assert data_home({"OPENDAISUGI_HOME": bad}, tmp_path) == tmp_path / ".opendaisugi", bad
@@ -112,3 +112,30 @@ def test_coppice_data_home_keeps_old_coppice_data(tmp_path):
     (home / ".opendaisugi" / "coppice" / "state").write_text("x")
     env = {"XDG_DATA_HOME": str(tmp_path / "x")}
     assert coppice_data_home(env, home) == home / ".opendaisugi"
+
+
+STORE = "foreman"  # names-ok: the on-disk store name
+
+
+def test_legacy_store_data_keeps_the_legacy_dir(tmp_path):
+    from opendaisugi.datahome import coppice_data_home
+
+    home = tmp_path
+    (home / ".opendaisugi" / "coppice").mkdir(parents=True)  # empty, as an old install leaves it
+    (home / ".opendaisugi" / STORE / "main").mkdir(parents=True)
+    (home / ".opendaisugi" / STORE / "main" / "2026-10-01.jsonl").write_text("{}\n")
+    xdg = tmp_path / "x"
+    xdg.mkdir()
+    assert coppice_data_home({"XDG_DATA_HOME": str(xdg)}, home) == home / ".opendaisugi"
+
+
+def test_xdg_store_data_wins_over_legacy(tmp_path):
+    from opendaisugi.datahome import coppice_data_home
+
+    home = tmp_path
+    (home / ".opendaisugi" / STORE / "main").mkdir(parents=True)
+    (home / ".opendaisugi" / STORE / "main" / "a").write_text("x")
+    xdg = tmp_path / "x"
+    (xdg / "opendaisugi" / STORE / "main").mkdir(parents=True)
+    (xdg / "opendaisugi" / STORE / "main" / "b").write_text("x")
+    assert coppice_data_home({"XDG_DATA_HOME": str(xdg)}, home) == xdg / "opendaisugi"

@@ -205,7 +205,11 @@ def test_parameters_and_structure_signature_survive_store_round_trip(tmp_path):
         task_description="find a pattern",
         task_embedding=[0.1, 0.2],
         envelope=Envelope(
-            generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["grep"])
+            generated_by="t",
+            task="x",
+            permissions=Permission(
+                shell=True, shell_allowlist=["grep"], file_read=["**"], file_write=["**"]
+            ),
         ),
         plan_template=ActionPlan(
             source="distilled", task="x", steps=[ShellStep(id="s1", command="grep -rn TODO src")]

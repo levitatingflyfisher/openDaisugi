@@ -8,7 +8,7 @@ afternoon of discovery.
 
 - **Not a sandbox.** `Supervisor` enforces permissions (shell allowlist,
   file glob bounds, network host bounds) at execution time, but it is a
-  Python-level gate, not an OS-level container, seccomp profile, or
+  Python-level warden, not an OS-level container, seccomp profile, or
   hypervisor. If your threat model includes arbitrary native code
   escaping the Python process, opendaisugi does not help.
 - **Not a hallucination detector.** If an LLM writes a plan that reads
@@ -23,6 +23,21 @@ afternoon of discovery.
   verifies plans authored in its `ActionPlan` format. It will not
   inspect arbitrary Python code or shell scripts. You pass in structured
   steps; it reasons about structured steps.
+
+## A wrong envelope that is consistent
+
+The warden proves a plan stays inside its envelope. It does not prove the envelope fits
+the task. An envelope that is too loose for the task, but has no contradiction and stays
+inside the static base limits, passes. Tightening only caps the damage at those limits. It
+does not find the mistake. What helps: a conservative base envelope, a second check of a
+generated envelope by a rule library or another model, human approval for task classes the
+system has not seen, and denial records that feed tighter envelopes. None of these is a proof.
+
+## No temporal properties
+
+The envelope is checked per step, and Z3 checks each constraint at one point in time. A rule such as "never above this speed
+while within one metre of a person" spans time, and the envelope cannot state it. Signal
+Temporal Logic is the natural next step for robot plans. It is not built.
 
 ## Predicate algebra boundaries
 
@@ -143,6 +158,91 @@ binaries do not trigger the policy; extend
 ``src/opendaisugi/interpreter_parse.py`` downstream if you discover
 more.
 
+## What the warden does not place
+
+The warden places the files a shell command reads and writes through its operands and
+redirects, for the commands in two closed tables (`write_paths.READERS` and `WRITERS`).
+It does not place:
+
+- **An interpreter's work.** `python`, `awk`, `make`, `node` and `perl` read and write
+  whatever their script says. `sed` reads its file operands, and that is placed. A sed
+  script with a `w`, `W`, `e`, `r` or `R` command, an `s` flag `w` or `e`, or a `-f` script
+  file makes the reads and writes of the line unknown, so enforce denies it unless the
+  scope is everything.
+- **A head that runs a command: allowlisting it allows any command it runs.** These
+  heads run a command, a file of commands or a script the warden cannot read. A line
+  that gives them an argument has unknown reads and writes, so enforce denies it unless
+  the scope is everything. The allowlist and the file scopes never see the inner command.
+  If you put one of these heads in `shell_allowlist`, you allow whatever it runs.
+  - Always a runner when given an argument: `exec`, `eval`, `builtin`, `source`, `.`,
+    `chroot`, `flock`, `busybox`, `script`, `parallel`, `coproc`, `trap`, `sudo`, `doas`,
+    `watch`, `systemd-run`, `screen`, `unbuffer`, `runuser`, `taskset`, `chrt`, `prlimit`,
+    `unshare`, `nsenter`, `entr`. `batch` and `expect` read their commands from standard
+    input, so they are runners with no argument too. The ones named in
+    `SHELL_INTERPRETERS` are opaque interpreters, so the `strict` policy rejects them.
+  - A runner only in some forms: `git` with `-c`, `--config-env` or `--exec-path` before the
+    subcommand (`-C` is not one); `ssh` with a word after the host, `-o` with a Command,
+    Match, Include or Exec option, `-F` or `-E`; `su` with `-c`, `--command` or
+    `--session-command`; `tmux` with a command that runs commands (`new-session`,
+    `new-window`, `split-window`, `send-keys`, `run-shell`, `respawn-pane`, `pipe-pane`,
+    `if-shell`, `display-popup`, `source-file`, and the others in `_TMUX_RUNS`, by name,
+    alias or unique prefix) or `-c` or `-f`; `vim`, `nvim`, `vi`, `view`, `vimdiff` and
+    `ex` with any option or `+cmd`; `crontab` and `at` with anything but `-l`.
+  - Unwrapped exactly, so the inner command is checked: `env`, `timeout`, `nice`, `nohup`,
+    `time`, `stdbuf`, `command`, `setsid`, `ionice`, `xargs`, `find -exec`, `sh -c`.
+  - Not covered: a git alias or hook set in a `.git/config` the agent wrote earlier,
+    `git filter-branch`, `git rebase --exec`, `git submodule foreach`, `rsync -e`,
+    `scp -o ProxyCommand` and `sftp`; `make`, `npm run` and the like fall under "an
+    interpreter's work". Allowlisting these heads allows what they run.
+- **A path-qualified head.** The interpreter and runner lists use the program's name for an
+  absolute path (`/usr/bin/env` is `env`). A relative path (`./timeout`) is the project's own file.
+- **A long option it cannot match.** `env`, `xargs` and the transparent wrappers
+  (`timeout`, `nice`, `nohup`, `time`, `stdbuf`, `command`, `setsid`, `ionice`) read
+  long options as GNU getopt_long does: an exact name, else a unique prefix. An ambiguous
+  or unknown long option makes the payload opaque, and the line is unknown.
+- **The agent's `CDPATH`.** The warden cannot see the agent's environment. A relative
+  `cd` is placed as if `CDPATH` is empty; with `CDPATH` set, bash may enter another
+  directory.
+- **A command in neither table.** `git`, `npm`, `curl`, `pip` and the like. The allowlist
+  decides whether they run; no file scope sees their operands. A head that can run a
+  command is listed above.
+- **The file arguments of MCP tools.** The MCP-policy plan owns them.
+- **Symlinks and bind mounts.** Every scope is a path string.
+- **A persistent shell whose cwd is not the payload's cwd.** The warden trusts `cwd` for
+  `Bash` as it does for `Write`. A harness that keeps one shell across calls can `cd` in
+  one call and write a relative path in the next.
+- **A pipeline's operands.** `find ... | xargs cat` is denied because `xargs` adds
+  operands the line does not show. The warden does not follow the pipe from `find` to
+  `xargs`.
+- **A heredoc body as data.**
+- **`uniq IN OUT` and `xxd IN OUT`.** The second operand is a write, and the table places it as one.
+
+A path the warden cannot place (an unquoted glob, `$VAR`, a flag outside the command's
+closed set) is a deny unless the scope is exactly `**` or `/**`.
+
+## Files are confined by the fence, not the warden
+
+The list above is the reason. The parse of a shell line is frozen, and it cannot
+be complete. The file boundary is the kernel fence (`docs/how-to/fence.md`).
+
+- **Inside a fence**, an access the warden cannot place, or places out of scope,
+  is allowed and recorded as `fence_enforced`. The kernel stops what the fence
+  does not grant. The warden still decides everything else about the call.
+- **Without a fence**, enforce mode denies those accesses, as the list above says.
+  A command in neither table, an interpreter's script and a program a head starts
+  can still reach any file the user can. The warden checks commands. It does not
+  confine files. The status commands and the coppice floor say so in one line.
+- **Under coppice**, `fence = "auto"` is the default. A kernel without Landlock ABI 9
+  runs agent work bare, and the floor shows the line with the reason. `fence = "on"` refuses to
+  start without a fence. `fence = "off"` is the operator's choice.
+- **A fence record can be forged only by a process that is not fenced.** Such a
+  process can also write `DISARMED`. The fence is the boundary against an agent
+  that is fenced, not against one that already runs free.
+- **MCP rules take absolute paths.** A relative value in a `path_in` rule is
+  refused, and `warden register` refuses a `path_in` over a `file_read` or
+  `file_write` glob that is relative.
+
+
 ## Z3 practical limits
 
 - **Decidability.** Z3 is complete for linear integer arithmetic and
@@ -193,10 +293,10 @@ See [feature-status.md](feature-status.md) for the full matrix. Summary:
   route through an existing Claude Code install instead of an API key.
 
 - **The data home follows the environment.** `OPENDAISUGI_HOME` and
-  `XDG_DATA_HOME` move it, as `HOME` does. An installed gate hook bakes its
+  `XDG_DATA_HOME` move it, as `HOME` does. An installed warden hook bakes its
   `--root`, so an agent's tool-call environment cannot move an installed
-  gate. A harness an agent starts itself with `OPENDAISUGI_HOME=...` is the
-  same case as one it starts with `HOME=...`: out of scope for the gate.
+  warden. A harness an agent starts itself with `OPENDAISUGI_HOME=...` is the
+  same case as one it starts with `HOME=...`: out of scope for the warden.
 - **A POSIX `sh` at `/bin/sh`.** The executors run a shell step with
   `/bin/sh -c` (Go and Rust) or `subprocess` with `shell=True` (Python,
   which also uses `/bin/sh`). Every Linux, macOS and BSD target has it. A
@@ -208,7 +308,7 @@ See [feature-status.md](feature-status.md) for the full matrix. Summary:
   the system temp directory. On macOS and the BSDs the per-user temp
   directory (`$TMPDIR`) is elsewhere, so a write there falls outside the
   default envelope and is refused. Pass an envelope that names it. The
-  default is kept as it is, since a change would change what the gate
+  default is kept as it is, since a change would change what the warden
   allows.
 
 ## ClaudeCode LLM backend (v0.12.0+)
@@ -226,6 +326,30 @@ See [feature-status.md](feature-status.md) for the full matrix. Summary:
 - **Optional extras** are heavy: `torch`/`peft`/`bitsandbytes` for
   `[lora]`, `mujoco` for `[robotics]`, `sentence-transformers` for
   `[search]`. Install only what you use.
+
+## MCP argument rules
+
+`mcp_rules` (ADR-0027) decide one call from its own arguments. They do not do these:
+
+- **Rules over tool results.** What a search returned is not checked.
+- **Live schemas.** `warden schemas import` stores a `tools/list` result by hand. The warden
+  never asks a server.
+- **MCP tools reached through sprig's `Spawn`.**
+- **Cross-call claims.** "At most three posts per session" needs history. A rule holds for one
+  call.
+- **Symlinks.** `path_in` matches a path as text and does not resolve symlinks, the same as the
+  file tools. A link inside an allowed tree can point outside it.
+- **A path the argument does not spell as a path.** A string that names a file only after the
+  server resolves it (a name, an id) is not a read to the warden. Use `mcp_rules` with
+  `in_set` or an anchored `matches`.
+
+## Codex tools
+
+The warden reads Codex's `apply_patch` (patch text in `tool_input.command`) as one file write
+per path, the same as OpenCode's. Codex's `update_plan` and Claude Code's `TodoWrite` change
+nothing on disk, but the warden does not know them. It denies them in enforce mode and counts a
+would-deny in audit mode. This is a known false positive, not an allow. Admitting named
+no-effect tools is a separate choice (PK-7).
 
 ## Planned, not shipped
 

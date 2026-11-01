@@ -10,7 +10,7 @@ import (
 // PK-R-15). A package installs the three ports beside each other, under
 // the names of PortBinaries; `install` in any of them hands the whole
 // command to the one PortEnv names, once, at install time. The hook it
-// writes then runs that port's binary directly, so the gate's hot path
+// writes then runs that port's binary directly, so the warden's hot path
 // has no extra exec.
 const PortEnv = "DAISUGI_PORT"
 

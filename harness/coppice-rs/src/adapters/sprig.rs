@@ -624,7 +624,7 @@ mod tests {
             strip_session_flags(&s(&[
                 "-session-dir",
                 "/v",
-                "--gate",
+                "--warden",
                 "-resume=r",
                 "--session",
                 "s",
@@ -633,7 +633,7 @@ mod tests {
                 "-resume",
                 "x"
             ])),
-            s(&["--gate", "--", "-resume", "x"])
+            s(&["--warden", "--", "-resume", "x"])
         );
     }
 
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(flag_value(&s(&["--session-dir="]), "session-dir"), None);
         assert_eq!(
             strip_session_flags(&s(&[
-                "--gate",
+                "--warden",
                 "g",
                 "--session",
                 "a",
@@ -662,14 +662,14 @@ mod tests {
                 "--session",
                 "c"
             ])),
-            s(&["--gate", "g", "--", "--session", "c"])
+            s(&["--warden", "g", "--", "--session", "c"])
         );
         assert_eq!(
             insert_after_session_dir(
-                &s(&["--session-dir", "/d", "--gate", "g"]),
+                &s(&["--session-dir", "/d", "--warden", "g"]),
                 &s(&["--session", "x"])
             ),
-            s(&["--session-dir", "/d", "--session", "x", "--gate", "g"])
+            s(&["--session-dir", "/d", "--session", "x", "--warden", "g"])
         );
         assert_eq!(
             tree_path(&s(&["--session-dir", "/d"]), "abc").as_deref(),

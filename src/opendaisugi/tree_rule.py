@@ -1,11 +1,11 @@
-"""The gate's rule that no agent changes the delegation tree.
+"""The warden's rule that no agent changes the delegation tree.
 
 An agent that could register an envelope could give itself any authority:
-the gate checks its calls against whatever envelope is registered. An
+the warden checks its calls against whatever envelope is registered. An
 agent that could start a child through the tree could name a wider
 ancestor as the child's parent and get a child wider than itself. So the
 verbs that write the tree or register an envelope are the operator's and
-the starter's: ``daisugi gate register`` and ``daisugi gate init``,
+the starter's: ``daisugi warden register`` and ``daisugi warden init``,
 ``daisugi start`` (it registers a starter envelope for a new session and
 starts a harness under it), and ``daisugi tree root``, ``spawn``, ``run``,
 ``end`` and ``answer``, and ``daisugi agent-profiles bundle``, which
@@ -14,7 +14,7 @@ writes every provider key the operator's profiles name to a descriptor, and
 URLs and whether each key is set (no key, but a map of the operator's
 machines).
 sprig's spawn tool reaches ``tree run`` as its own tool
-(``mcp__sprig__spawn``), never through the agent's shell. The gate denies
+(``mcp__sprig__spawn``), never through the agent's shell. The warden denies
 a shell line that runs one of them, before any envelope check, in every mode, and no operator ask can turn that deny.
 ``daisugi tree check`` and ``daisugi tree status`` read only and pass.
 

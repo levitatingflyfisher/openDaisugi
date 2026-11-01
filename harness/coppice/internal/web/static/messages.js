@@ -26,7 +26,7 @@ export const KNOWN = [
   'coppice server start', 'coppice server status', 'coppice server stop',
   'coppice web token', 'coppice web serve', 'coppice web cert tailscale', 'coppice task list',
   'coppice agent allow', 'coppice agent deny', 'coppice pane list',
-  'daisugi voice serve', 'daisugi gateway', 'daisugi gate',
+  'daisugi voice serve', 'daisugi router serve', 'daisugi warden',
 ];
 
 // commandIn is the command text names, as a shell fix would type it, or
@@ -103,18 +103,18 @@ export const MESSAGES = {
     return message(k + (k === 1 ? ' agent' : ' agents') + ' stopped when coppice restarted.', [resumeAll(), showRecent()]);
   },
   banned: () => message('Too many bad tokens. Waiting one minute.', [], false, true),
-  // gateNotInstalled is the floor header's hint when no harness has a
-  // daisugi gate hook and no agent is guarded. Its button types the
+  // wardenNotInstalled is the floor header's hint when no harness has a
+  // daisugi warden hook and no agent is guarded. Its button types the
   // command in a shell and does not run it.
-  gateNotInstalled: () => message('daisugi is off: no agent is guarded. Run: daisugi install --gate',
-    [shell('daisugi install --gate')]),
-  // gateOff is what an agent's daisugi details say when no gate hook
+  wardenNotInstalled: () => message('daisugi is off: no agent is guarded. Run: daisugi install',
+    [shell('daisugi install')]),
+  // wardenOff is what an agent's daisugi details say when no warden hook
   // reports for it. Setting the mode rewrites each harness's hook
   // settings, so it stays a command the owner runs, named in words.
-  gateOff: () => message('No gate hook reports for this agent. ' + cap(AWAY) + ', run daisugi install --gate, then start the agent again.', [], true),
+  wardenOff: () => message('No warden hook reports for this agent. ' + cap(AWAY) + ', run daisugi install, then start the agent again.', [], true),
   // modeOff is what the daisugi details say under the mode row: the mode
-  // is set there, but turning the gate off stays a typed command.
-  modeOff: () => message('Turning the gate off stays a command. ' + cap(AWAY) + ', run daisugi gate disarm.', [], true),
+  // is set there, but turning the warden off stays a typed command.
+  modeOff: () => message('Turning the warden off stays a command. ' + cap(AWAY) + ', run daisugi warden disarm.', [], true),
   unreadable: () => message('coppice-server sent a reply the phone could not read. Run coppice server status.', [shell('coppice server status')]),
   // shellOffline is what a shell fix says when there is no connection to
   // start a shell with.
@@ -128,12 +128,63 @@ export const MESSAGES = {
     if (away) return message(String(text || '') + ' Do this ' + AWAY + '.', [], true);
     return message(text, [command ? shell(command, 'Type the fix in a shell') : null, voiceRetry()]);
   },
+  // voiceNoEngine is what the mic says when the voice server runs but has no
+  // speech engine. Retry cannot help: the engine is installed on the
+  // computer that runs coppice.
+  voiceNoEngine: () => message('No speech engine here. ' + cap(AWAY) + ', run scripts/install.sh --voice, then tap Mic again.', [], true),
   // voiceFetching is what the mic says while voice gets its speech model:
   // bytes done and in all, in megabytes (10**6, rounded half up, as
   // daisugi voice status rounds). voiceReady ends it.
   voiceFetching: (done, total) => message('Getting the speech model, ' + megabytes(done) + ' of ' + megabytes(total) + ' MB.', [], false, true),
   voiceReady: () => message('Voice is ready.', [], false, true),
+  // clipKept is what the mic says when a clip did not become text. The
+  // recording is kept in the page, and run holds what the buttons do:
+  // send it again, save the audio, or let it go.
+  clipKept: (why, run) => message(String(why || 'The clip did not send.') + ' Your recording is kept.',
+    [clipAction('Send again', (run || {}).again), clipAction('Save', (run || {}).save)]),
+  // clipPending is what the mic says on a tap to record while an earlier
+  // clip still has no text. A new clip must not push that one away.
+  clipPending: (run) => message('The last clip has no text yet. Send it again, save it, or discard it, then record.',
+    [clipAction('Send again', (run || {}).again), clipAction('Save', (run || {}).save), clipAction('Discard', (run || {}).discard)]),
+  // clipRecovered is the one line on a page that loads with a clip kept
+  // from before: the page was reloaded or dropped while it sent.
+  clipRecovered: (run) => message('A recording from before has no text yet. Send it again, save it, or discard it.',
+    [clipAction('Send again', (run || {}).again), clipAction('Save', (run || {}).save), clipAction('Discard', (run || {}).discard)]),
+  // clipSaved is the line after Save. The clip stays until the owner lets
+  // it go, since a download can fail without an error.
+  clipSaved: (run) => message('Saved to your downloads. Discard the recording once you have the file.',
+    [clipAction('Send again', (run || {}).again), clipAction('Discard', (run || {}).discard)]),
+  // clipGaps is the line when the text is in the box but some of the audio
+  // was not heard. The clip stays.
+  clipGaps: (n, run, cutS = 0) => message(
+    (n === 1 ? '1 part' : n + ' parts') + ' of the recording could not be heard, and the text has '
+    + (n === 1 ? 'a gap' : 'gaps') + '.'
+    + (cutS > 0 ? ' The last ' + cutS + ' s was past the limit and was not turned into text.' : '')
+    + ' Your recording is kept.',
+    [clipAction('Send again', (run || {}).again), clipAction('Save', (run || {}).save), clipAction('Discard', (run || {}).discard)]),
+  // clipCut is the line when the server read only the first part of a clip
+  // that ran past its limit. Sending again would give the same text.
+  clipCut: (seconds, run) => message(
+    'The last ' + seconds + ' s of the recording was past the limit and was not turned into text. Your recording is kept.',
+    [clipAction('Save', (run || {}).save), clipAction('Discard', (run || {}).discard)]),
+  // clipLimit is the line when a recording reaches the server's cap.
+  clipLimit: (seconds) => message('Reached the ' + Math.round(seconds / 60) + ' minute limit. Sending what was recorded.', [], false, true),
+  // clipNearLimit is the warning before the cap.
+  clipNearLimit: (left) => message(clockWords(left) + ' left. A clip stops at the limit and is sent.', [], false, true),
+  // clipWorking is the line while a long clip is turned into text.
+  clipWorking: (seconds) => message('Turning ' + Math.round(seconds) + ' s of speech into text. A long clip takes a while.', [], false, true),
 };
+
+// clockWords is a count of seconds in words.
+function clockWords(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s >= 60) return Math.round(s / 60) + (Math.round(s / 60) === 1 ? ' minute' : ' minutes');
+  return s + ' s';
+}
+
+// clipAction is an action that runs a function held by the page that made
+// it. fix() runs it as it is.
+export const clipAction = (label, fn) => ({ kind: 'run', label, run: typeof fn === 'function' ? fn : () => {} });
 
 // megabytes is a byte count in megabytes, rounded half up.
 export function megabytes(n) {

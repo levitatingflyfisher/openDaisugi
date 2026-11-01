@@ -6,19 +6,19 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gate"
 	"daisugi-verify/internal/journal"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/pyyaml"
+	"daisugi-verify/internal/warden"
 )
 
-// gateReplay is `daisugi gate replay CAPTURES --envelope ENV [--json]`:
-// a captured session through the gate, offline, in audit terms
-// (gate.replay_captures). Nothing runs and nothing is written.
-func (e *Env) gateReplay(args []string) error {
-	const cmd = "gate replay"
+// wardenReplay is `daisugi warden replay CAPTURES --envelope ENV [--json]`:
+// a captured session through the warden, offline, in audit terms
+// (warden.replay_captures). Nothing runs and nothing is written.
+func (e *Env) wardenReplay(args []string) error {
+	const cmd = "warden replay"
 	const argName = "CAPTURES_JSONL"
 	opts := []opt{
 		{names: []string{"--envelope"}, value: true, metavar: "PATH",
@@ -30,7 +30,7 @@ func (e *Env) gateReplay(args []string) error {
 		return e.usageArgs(cmd, argName, err)
 	}
 	if p.help {
-		return e.cmdHelp(cmd, " "+argName, "Replay a captured session through the gate offline (nothing executes).", opts)
+		return e.cmdHelp(cmd, " "+argName, "Replay a captured session through the warden offline (nothing executes).", opts)
 	}
 	if len(p.args) < 1 {
 		return e.usageArgs(cmd, argName, &usageError{"Missing argument '" + argName + "'."})
@@ -46,7 +46,7 @@ func (e *Env) gateReplay(args []string) error {
 		e.errf("Traceback (most recent call last): ...\n%s\n", crash)
 		return exit(1)
 	}
-	recs, rc, why := gate.Replay(p.args[0], envObj, e.env)
+	recs, rc, why := warden.Replay(p.args[0], envObj, e.env)
 	if why != "" {
 		return e.refuse(cmd, fmt.Errorf("%s", why))
 	}

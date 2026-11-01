@@ -2,7 +2,7 @@
 # scripts/speed-build.sh [go|rust|all]
 # Builds the binaries scripts/speed.py measures, release mode, into one
 # directory: $SPEED_BIN_DIR (default .speed/bin in this checkout). Names are
-# <tool>-<impl>: daisugi-go, daisugi-gate-go, coppice-go, sprig-go, and the
+# <tool>-<impl>: daisugi-go, daisugi-warden-go, coppice-go, sprig-go, and the
 # same with -rs. Run it under ~/opendaisugi-scratch/heavy.sh, with
 # `. ~/opendaisugi-scratch/buildenv.sh` sourced first. Rust target dirs live
 # under $SPEED_TARGET_ROOT (default .speed in this checkout), one per crate, so
@@ -35,7 +35,7 @@ build_go() {
   local flags="-trimpath -tags netgo"
   (cd "$root/clients/go" &&
     go build $flags -ldflags="-s -w -X daisugi-verify/internal/cli.Version=$version" -o "$bin/daisugi-go" ./cmd/daisugi &&
-    go build $flags -ldflags="-s -w" -o "$bin/daisugi-gate-go" ./cmd/daisugi-gate)
+    go build $flags -ldflags="-s -w" -o "$bin/daisugi-warden-go" ./cmd/daisugi-warden)
   (cd "$root/harness/coppice" &&
     go build $flags -ldflags="-s -w -X github.com/opendaisugi/coppice/internal/cli.version=$version" -o "$bin/coppice-go" ./cmd/coppice)
   (cd "$root/harness/sprig" &&
@@ -56,7 +56,7 @@ build_rust() {
   # release binaries as they are; without it, this builds them here.
   if [ -n "${SPEED_DAISUGI_RS_DIR:-}" ]; then
     cp -f "$SPEED_DAISUGI_RS_DIR/target/release/daisugi" "$bin/daisugi-rs"
-    cp -f "$SPEED_DAISUGI_RS_DIR/target/release/daisugi-gate" "$bin/daisugi-gate-rs"
+    cp -f "$SPEED_DAISUGI_RS_DIR/target/release/daisugi-warden" "$bin/daisugi-warden-rs"
     return
   fi
   t="$troot/daisugi-rs-target"
@@ -64,10 +64,10 @@ build_rust() {
     cd "$root/clients/rust"
     # shellcheck disable=SC1091
     . tools/z3-build-env.sh
-    CARGO_TARGET_DIR="$t" DAISUGI_VERSION="$version" cargo build --release --locked --bin daisugi --bin daisugi-gate
+    CARGO_TARGET_DIR="$t" DAISUGI_VERSION="$version" cargo build --release --locked --bin daisugi --bin daisugi-warden
   )
   cp -f "$t/release/daisugi" "$bin/daisugi-rs"
-  cp -f "$t/release/daisugi-gate" "$bin/daisugi-gate-rs"
+  cp -f "$t/release/daisugi-warden" "$bin/daisugi-warden-rs"
 }
 
 case "$what" in

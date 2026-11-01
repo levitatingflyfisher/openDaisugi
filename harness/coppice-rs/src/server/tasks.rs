@@ -40,19 +40,19 @@ pub fn register(s: &Arc<Server>) {
     let _ = s.handle("task.close", Arc::new(|s, c, r| s.handle_task_close(c, r)));
     let _ = s.handle("task.move", Arc::new(|s, c, r| s.handle_task_move(c, r)));
     let _ = s.handle(
-        "task.set_foreman",
-        Arc::new(|s, c, r| s.handle_set_foreman(c, r)),
+        "task.set_steward",
+        Arc::new(|s, c, r| s.handle_set_steward(c, r)),
     );
 }
 
 impl Server {
-    fn handle_set_foreman(self: &Arc<Server>, _c: &Arc<Client>, r: &Request) -> Response {
+    fn handle_set_steward(self: &Arc<Server>, _c: &Arc<Client>, r: &Request) -> Response {
         let id = r.s("task");
         if id.is_empty() {
             return proto::err_resp(
                 &r.id,
                 proto::ERR_BAD_REQUEST,
-                "task.set_foreman needs task. Run: coppice task list",
+                "task.set_steward needs task. Run: coppice task list",
             );
         }
         if self.tree.task(&id).is_none() {
@@ -71,22 +71,22 @@ impl Server {
                 return proto::err_resp(
                     &r.id,
                     proto::ERR_BAD_REQUEST,
-                    &format!("pane {pane} is closed. A foreman must be open."),
+                    &format!("pane {pane} is closed. A steward must be open."),
                 );
             }
         }
-        if self.tree.set_foreman(&id, &pane).is_err() {
+        if self.tree.set_steward(&id, &pane).is_err() {
             return no_task(&r.id, &id);
         }
         self.mark_layout_dirty();
         self.recheck_holds();
         proto::ok_resp(
             &r.id,
-            gojson::map(vec![("task", json!(id)), ("foreman", json!(pane))]),
+            gojson::map(vec![("task", json!(id)), ("steward", json!(pane))]),
         )
     }
 
-    fn handle_task_create(self: &Arc<Server>, _c: &Arc<Client>, r: &Request) -> Response {
+    fn handle_task_create(self: &Arc<Server>, c: &Arc<Client>, r: &Request) -> Response {
         let label = clean_label(&r.s("label"));
         if label.is_empty() {
             return proto::err_resp(
@@ -99,6 +99,10 @@ impl Server {
         if !parent.is_empty() && self.tree.task(&parent).is_none() {
             return no_task(&r.id, &parent);
         }
+        let envelope = match self.task_envelope_param(c, r, &parent) {
+            Ok(e) => e,
+            Err(resp) => return resp,
+        };
         let cwd = r.s("cwd");
         let mut path = String::new();
         let mut repo = String::new();
@@ -133,6 +137,7 @@ impl Server {
             cwd,
             worktree: path.clone(),
             model: r.s("model"),
+            envelope,
             ..Default::default()
         }) {
             Ok(t) => t,
@@ -168,7 +173,7 @@ impl Server {
             ("cwd", json!(tk.cwd)),
             ("worktree", json!(tk.worktree)),
             ("model", json!(tk.model)),
-            ("foreman", json!(tk.foreman)),
+            ("steward", json!(tk.steward)),
             (
                 "state",
                 json!(layout::task_state(tk, &self.tree, pane_state)),
@@ -181,6 +186,14 @@ impl Server {
             if let Ok((ahead, _, _)) = worktree::status(&tk.worktree) {
                 row.push(("ahead", json!(ahead)));
             }
+        }
+        // The session a task's envelope is registered under, once a pane
+        // has started in it, and whether the task has an envelope.
+        if !tk.session.is_empty() {
+            row.push(("session", json!(tk.session)));
+        }
+        if !tk.envelope.is_empty() {
+            row.push(("envelope", json!(true)));
         }
         gojson::map(row)
     }
@@ -226,8 +239,8 @@ impl Server {
             Err(resp) => return resp,
         };
         self.refresh_process(&[]);
-        // A blocked pane whose ask a foreman holds folds as working: the
-        // task waits on its foreman, not on the operator.
+        // A blocked pane whose ask a steward holds folds as working: the
+        // task waits on its steward, not on the operator.
         let pane_state = |id: &str| -> String {
             match self.effective_state(id) {
                 None => state::STATE_UNKNOWN.into(),
@@ -371,4 +384,64 @@ impl Server {
             gojson::map(vec![("task", json!(id)), ("parent", json!(parent))]),
         )
     }
+}
+
+impl Server {
+    /// Reads the envelope a task.create asks for: envelope (a JSON object)
+    /// or project (a name, read from <config dir>/envelopes as the steward's
+    /// spawn reads it). With a parent that carries an envelope, the child's
+    /// is proved to fit inside it; a refusal is bad_request with the
+    /// reasons. With no envelope above, only the operator may give one (W3K-12).
+    /// An empty string means the task has none.
+    fn task_envelope_param(&self, c: &Arc<Client>, r: &Request, parent: &str) -> Result<String, Response> {
+        let mut raw = r.raw("envelope").map(str::to_string);
+        let project = r.s("project");
+        if matches!(raw.as_deref(), Some(t) if t.is_empty() || t == "null") {
+            raw = None;
+        }
+        if raw.is_none() && project.is_empty() {
+            return Ok(String::new());
+        }
+        let bad = |m: &str| proto::err_resp(&r.id, proto::ERR_BAD_REQUEST, m);
+        if raw.is_some() && !project.is_empty() {
+            return Err(bad("task.create takes envelope or project, not both."));
+        }
+        // An envelope that has none above it is a root: it has nothing to be
+        // proved against. A pane may not make a root, under a task or not.
+        let up = if parent.is_empty() { None } else { self.pinned_task(parent) };
+        if up.is_none() && c.role().no_allow {
+            return Err(proto::err_resp(&r.id, proto::ERR_UNAUTHORIZED, super::taskenv::TASK_REFUSAL));
+        }
+        let env = match raw {
+            Some(t) => t,
+            None => {
+                if !valid_project_name(&project) {
+                    return Err(bad(&format!("{} is not a project name.", crate::sys::go_quote(&project))));
+                }
+                let path = super::steward_work::envelope_dir().join(format!("{project}.json"));
+                match super::steward_work::read_project_envelope(&path, &project) {
+                    Ok(pe) => pe.envelope_text(),
+                    Err(e) => return Err(bad(&e)),
+                }
+            }
+        };
+        if !super::taskenv::is_object(&env) {
+            return Err(bad("the envelope must be a JSON object."));
+        }
+        if let Some(up) = up {
+            if let Err(e) = self.prove_edge(&up, &env) {
+                return Err(bad(&format!("the envelope does not fit inside its parent's: {e}")));
+            }
+        }
+        Ok(env)
+    }
+}
+
+/// A project's file stem: letters, digits, dot, dash and underscore, never
+/// starting with a dot or a dash.
+fn valid_project_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 || name.starts_with('.') || name.starts_with('-') {
+        return false;
+    }
+    name.chars().all(|r| r.is_ascii_alphanumeric() || matches!(r, '.' | '-' | '_'))
 }

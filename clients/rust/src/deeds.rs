@@ -2,7 +2,7 @@
 //! file writes undone from the journal alone, with no model, no executor
 //! and no re-run. The Go client's `internal/deeds` is the reference.
 
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::pyjson::{Object, Value};
 use crate::lerr::{LErr, PyError, LR};
 use crate::pathways::pmodel::{validate_model, Id, Mode, ValidationError};
 use crate::tracejournal::Journal;
@@ -57,7 +57,7 @@ fn basename(p: &str) -> &str {
 fn atomic_write(path: &str, content: &str) -> LR<()> {
     let parent = dirname(path);
     std::fs::create_dir_all(&parent).map_err(|e| LErr::io(e, &parent))?;
-    let token = crate::gate::random_hex(6).map_err(|_| LErr::Unread("no random name".into()))?;
+    let token = crate::warden::random_hex(6).map_err(|_| LErr::Unread("no random name".into()))?;
     let tmp = format!(
         "{}/.daisugi-undo-{token}-{}",
         parent.trim_end_matches('/'),

@@ -158,9 +158,9 @@ def compose():
 
 def recall():
     from dataclasses import asdict
-    from opendaisugi import gateway_recall
+    from opendaisugi import router_recall
     from opendaisugi.pathway_store import PathwayStore
-    r = asyncio.run(gateway_recall.recall(q["task"], env_of(q["envelope"]), pathway_store=PathwayStore(Path(q["db"])),
+    r = asyncio.run(router_recall.recall(q["task"], env_of(q["envelope"]), pathway_store=PathwayStore(Path(q["db"])),
                                           z3_timeout_ms=q["z3_timeout_ms"]))
     return {"hit": r.hit, "reason": r.reason,
             "plan": r.plan.model_dump(mode="json") if r.plan is not None else None,
@@ -1714,13 +1714,18 @@ def build_cli_cases() -> list[dict[str, Any]]:
         "cli data dir disarmed",
         [T, "--data-dir", "d", "--stakes", "low", "--json"],
         env=API,
-        before={"d/gate/DISARMED": {"text": ""}, "d/config.yaml": {"text": "gate_mode: enforce\n"}},
+        before={
+            "d/warden/DISARMED": {"text": ""},
+            "d/config.yaml": {"text": "warden_mode: enforce\n"},
+        },
     )
     add(
         "cli data dir enforce",
         [T, "--data-dir", "d", "--stakes", "low", "--json"],
         env=API,
-        before={"d/config.yaml": {"text": "gate_mode: enforce\nshell_allow_decomposition: true\n"}},
+        before={
+            "d/config.yaml": {"text": "warden_mode: enforce\nshell_allow_decomposition: true\n"}
+        },
     )
     add(
         "cli data dir outside home",

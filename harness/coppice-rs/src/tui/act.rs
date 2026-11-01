@@ -1,4 +1,4 @@
-//! The client act id of a sentence to the foreman (FM-R-65). The twin of
+//! The client act id of a sentence to the steward (FM-R-65). The twin of
 //! Go's tui/act.go.
 //!
 //! The server uses it to log the sentence once and to queue one turn,

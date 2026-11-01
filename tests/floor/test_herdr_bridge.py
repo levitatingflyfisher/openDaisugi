@@ -105,20 +105,20 @@ def test_the_manifest_is_valid_toml_with_only_known_keys_and_regions():
 
 def test_the_blocked_rule_matches_the_attach_status_line():
     m = herdr_bridge.manifest()
-    blocked = _status("w1:p2", "build", "claude-code", "blocked", "gate", " Bash: rm -rf build/")
+    blocked = _status("w1:p2", "build", "claude-code", "blocked", "warden", " Bash: rm -rf build/")
     assert _state_of(m, blocked) == "blocked"
     assert _state_of(m, _status("w1:p2", "", "", "blocked", "manifest")) == "blocked"
 
 
 def test_the_other_rules_match_their_states_and_never_blocked():
     m = herdr_bridge.manifest()
-    assert _state_of(m, _status("w1:p2", "build", "claude-code", "working", "gate")) == "working"
+    assert _state_of(m, _status("w1:p2", "build", "claude-code", "working", "warden")) == "working"
     assert _state_of(m, _status("w1:p2", "build", "claude-code", "idle", "process")) == "idle"
     assert _state_of(m, _status("w1:p2", "build", "", "done", "process")) == "unknown"
     assert _state_of(m, _status("w1:p2", "build", "", "unknown", "none")) == "unknown"
-    # An ask summary that says "blocked via gate" cannot turn a working
+    # An ask summary that says "blocked via warden" cannot turn a working
     # line blocked: the state word sits right after the fixed fields.
-    tricky = _status("w1:p2", "build", "pi", "working", "gate", " Bash: echo blocked via gate")
+    tricky = _status("w1:p2", "build", "pi", "working", "warden", " Bash: echo blocked via warden")
     assert _state_of(m, tricky) == "working"
 
 

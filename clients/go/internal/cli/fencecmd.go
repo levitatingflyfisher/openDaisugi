@@ -14,23 +14,23 @@ import (
 
 	"daisugi-verify/internal/fence"
 	"daisugi-verify/internal/fenceruns"
-	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/wardenroot"
 )
 
 const fenceHelp = `Usage: daisugi fence [OPTIONS] [--] COMMAND [ARGS]...
 
   Run any agent harness under a Landlock fence. The kernel then holds the
-  line the gate only reads: the harness and every process it starts can
+  line the warden only reads: the harness and every process it starts can
   read and write the workspace, the harness's own directory and the temp
   dir, read the system, and reach nothing else under HOME. ~/.ssh, ~/.aws,
-  ~/.gnupg and the other secret directories stay shut, and the gate's own
+  ~/.gnupg and the other secret directories stay shut, and the warden's own
   state is never writable.
 
   The temp dir is a private one on disk, made for this run: /tmp is not
-  reachable. Unix sockets connect only in the gate root and the coppice
+  reachable. Unix sockets connect only in the warden root and the coppice
   socket's directory; abstract sockets and signals stay inside the fence.
-  The gate hook inside the fence asks the resident gate, which the fence
-  starts outside it when the gate is on.
+  The warden hook inside the fence asks the resident warden, which the fence
+  starts outside it when the warden is on.
 
   The fence adds one exec and a few system calls at start and nothing per
   call. It refuses to start the harness when the kernel has no usable
@@ -43,7 +43,7 @@ const fenceHelp = `Usage: daisugi fence [OPTIONS] [--] COMMAND [ARGS]...
 
 Options:
   --harness NAME           Whose own paths to allow: claude, codex, pi, opencode,
-                           sprig. Default: the command's name.
+                           sprig, hermes. Default: the command's name.
   --workspace DIR          The directory to read and write. Default: the current one.
   --allow PATH[:rw]        Also allow PATH, read only unless it ends in :rw. Repeatable.
                            Only --allow opens a secret directory. --allow /tmp:rw
@@ -51,8 +51,8 @@ Options:
   --workdir DIR            Also read and write DIR, checked like the workspace.
                            Repeatable.
   --envelope FILE          Read file_read and file_write from this envelope. Default:
-                           the gate's default envelope.
-  --gate-root DIR          The gate root, when it is not under the data dir.
+                           the warden's default envelope.
+  --warden-root DIR          The warden root, when it is not under the data dir.
   --tmpdir DIR             Use DIR (made 0700) as the private temp dir. The caller
                            removes it. Default: a new one under the data dir.
   --coppice-socket PATH    Let the harness connect to the coppice socket at PATH.
@@ -103,8 +103,8 @@ parse:
 			noFence = true
 		case "--allow-weak-ipc":
 			weakIPC = true
-		case "--harness", "--workspace", "--allow", "--envelope", "--gate-root", "--plan-from",
-			"--workdir", "--tmpdir", "--coppice-socket", "--keep-fd", "--spawn-gate":
+		case "--harness", "--workspace", "--allow", "--envelope", "--warden-root", "--plan-from",
+			"--workdir", "--tmpdir", "--coppice-socket", "--keep-fd", "--spawn-warden":
 			if v, err = val(); err != nil {
 				return e.usage("fence", err)
 			}
@@ -117,16 +117,16 @@ parse:
 				o.Allow = append(o.Allow, v)
 			case "--envelope":
 				o.Envelope = v
-			case "--gate-root":
-				o.GateRoot = v
+			case "--warden-root":
+				o.WardenRoot = v
 			case "--plan-from":
 				planFrom = v
-			case "--spawn-gate":
-				// Hidden: start `gate serve` in a session of its own, print
+			case "--spawn-warden":
+				// Hidden: start `warden serve` in a session of its own, print
 				// its pid and end, so the server's parent is not the harness.
 				// Its captures root is fixed here, <root>/captures, sprig's
 				// own default, so a fenced run's captures land (FN-R-32).
-				e.out("%d\n", e.spawnGateServer(v, gateCapturesArgs(v)...))
+				e.out("%d\n", e.spawnWardenServer(v, wardenCapturesArgs(v)...))
 				return nil
 			case "--workdir":
 				o.Workdirs = append(o.Workdirs, v)
@@ -209,7 +209,8 @@ parse:
 		}
 	}
 	fence.EnsureHarnessDirs(in.Harness, in.Home, in.Workspace)
-	e.fenceGateServer(in)
+	e.fenceWardenServer(in)
+	e.fenceRecord(in)
 	argv := append([]string{o.Cmd[0]}, o.Cmd[1:]...)
 	environ := fence.StripEnv(e.Environ)
 	if in.Tmpdir != "" {
@@ -236,44 +237,54 @@ func dropKey(environ []string, key string) []string {
 	return out
 }
 
-// fenceGateServer makes sure the resident gate answers on each gate root
+// fenceWardenServer makes sure the resident warden answers on each warden root
 // that is in use, starting it outside the fence (before the ruleset) when
-// it does not: inside the fence, the gate hook only asks it (FN-R-12). It
+// it does not: inside the fence, the warden hook only asks it (FN-R-12). It
 // says on stderr which server it started, and with what pid.
-func (e *Env) fenceGateServer(in fence.Input) {
-	for _, root := range fence.GateRoots(in) {
-		if !fence.GateOn(root) {
+func (e *Env) fenceWardenServer(in fence.Input) {
+	for _, root := range fence.WardenRoots(in) {
+		if !fence.WardenOn(root) {
 			continue
 		}
-		// This process becomes the harness (exec keeps the pid), and it is
-		// still outside the fence: the record binds the workspace for the
-		// resident gate's checkpoints (FN-R-21).
-		if err := fenceruns.Register(root, os.Getpid(), in.Workspace); err != nil {
-			e.errf("daisugi fence: cannot record this run in %s (%v); the resident gate will deny its checkpoints\n", root, err)
-		}
-		sock := gateroot.Join(root, "gate.sock")
-		state := probeGate(sock)
-		if state == gateLive {
+		sock := wardenroot.Join(root, "warden.sock")
+		state := probeWarden(sock)
+		if state == wardenLive {
 			continue
 		}
-		if state == gateStale {
+		if state == wardenStale {
 			_ = syscall.Unlink(sock)
 		}
 		pid := 0
 		if self, err := os.Executable(); err == nil {
-			if out, err := exec.Command(self, "fence", "--spawn-gate", root).Output(); err == nil {
+			if out, err := exec.Command(self, "fence", "--spawn-warden", root).Output(); err == nil {
 				pid, _ = strconv.Atoi(strings.TrimSpace(string(out)))
 			}
 		}
 		t0 := time.Now()
-		for probeGate(sock) != gateLive && time.Since(t0) < startServerWait {
+		for probeWarden(sock) != wardenLive && time.Since(t0) < startServerWait {
 			time.Sleep(10 * time.Millisecond)
 		}
-		if probeGate(sock) == gateLive {
-			e.errf("daisugi fence: started the resident gate on %s (pid %d)\n", sock, pid)
+		if probeWarden(sock) == wardenLive {
+			e.errf("daisugi fence: started the resident warden on %s (pid %d)\n", sock, pid)
 		} else {
-			e.errf("daisugi fence: the resident gate did not start on %s; the gate hook will deny every call. "+
-				"Run `daisugi gate serve --root %s` to see why.\n", sock, root)
+			e.errf("daisugi fence: the resident warden did not start on %s; the warden hook will deny every call. "+
+				"Run `daisugi warden serve --root %s` to see why.\n", sock, root)
+		}
+	}
+}
+
+// fenceRecord writes the fence run record in each warden root that is on.
+// This process becomes the harness (exec keeps the pid) and is still
+// outside the fence. It runs last, after any helper this process started,
+// so no unfenced process descends from a recorded pid: the resident warden
+// reads the record as "this caller is fenced" (FN-R-21, ADR-0028).
+func (e *Env) fenceRecord(in fence.Input) {
+	for _, root := range fence.WardenRoots(in) {
+		if !fence.WardenOn(root) {
+			continue
+		}
+		if err := fenceruns.Register(root, os.Getpid(), in.Workspace); err != nil {
+			e.errf("daisugi fence: cannot record this run in %s (%v); the resident warden will treat its calls as unfenced\n", root, err)
 		}
 	}
 }

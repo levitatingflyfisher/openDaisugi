@@ -50,7 +50,7 @@ def test_the_nested_shape_round_trips_through_yaml(tmp_path):
 def test_get_and_set_field_walk_a_dotted_path():
     cfg = Config()
     assert get_field(cfg, "floor.backend") == "auto"
-    assert get_field(cfg, "gate_mode") == "audit"
+    assert get_field(cfg, "warden_mode") == "audit"
     updated = set_field(cfg, "floor.backend", "herdr")
     assert updated.floor.backend == "herdr"
     assert cfg.floor.backend == "auto", "set_field must not mutate the original"

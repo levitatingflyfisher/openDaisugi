@@ -102,7 +102,10 @@ def test_install_no_longer_adds_session_start_hook(tmp_path):
     (tmp_path / ".claude").mkdir()
     install(home=tmp_path, yes=True)
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert "SessionStart" not in settings.get("hooks", {})
+    # The pando layer's SessionStart hook gives a new chat the memory view; the
+    # old print-skill hook is not added.
+    commands = [h["command"] for e in settings["hooks"].get("SessionStart", []) for h in e["hooks"]]
+    assert commands and all(c.endswith(" pando hook") for c in commands)
 
 
 def test_install_idempotent_settings(tmp_path):
@@ -251,7 +254,8 @@ def test_claude_install_does_not_add_session_start(tmp_path):
     (tmp_path / ".claude").mkdir()
     ClaudeCodeRuntime().apply(tmp_path)
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert "SessionStart" not in settings.get("hooks", {})
+    commands = [h["command"] for e in settings["hooks"].get("SessionStart", []) for h in e["hooks"]]
+    assert commands and all(c.endswith(" pando hook") for c in commands)
 
 
 def test_claude_install_migrates_out_old_session_start(tmp_path):
@@ -320,12 +324,12 @@ def test_codex_install_symlinks_skill(tmp_path):
     assert (skill / "SKILL.md").is_file()
 
 
-def test_codex_install_registers_mcp_in_toml(tmp_path):
+def test_codex_install_registers_mcp_in_toml(tmp_path, fake_daisugi_exe):
     (tmp_path / ".codex").mkdir()
     CodexRuntime().apply(tmp_path)
     toml_text = (tmp_path / ".codex" / "config.toml").read_text()
     assert "mcp_servers.opendaisugi" in toml_text
-    assert 'command = "daisugi"' in toml_text
+    assert f'command = "{fake_daisugi_exe}"' in toml_text
 
 
 def test_codex_install_is_idempotent(tmp_path):
@@ -387,11 +391,11 @@ def test_openclaw_symlinks_skill_into_workspace(tmp_path):
     assert (skill / "SKILL.md").is_file()
 
 
-def test_openclaw_registers_mcp_in_json(tmp_path):
+def test_openclaw_registers_mcp_in_json(tmp_path, fake_daisugi_exe):
     (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
     OpenClawRuntime().apply(tmp_path)
     cfg = json.loads((tmp_path / ".openclaw" / "openclaw.json").read_text())
-    assert cfg["mcp"]["servers"]["opendaisugi"]["command"] == "daisugi"
+    assert cfg["mcp"]["servers"]["opendaisugi"]["command"] == fake_daisugi_exe
 
 
 def test_openclaw_preserves_existing_keys(tmp_path):
@@ -515,11 +519,11 @@ def test_select_runtimes_ambiguous_or_unknown_raises():
 # --- SGCM fix: Claude MCP lands in ~/.claude.json (settings.json is dead) ------
 
 
-def test_claude_mcp_goes_to_claude_json_not_settings(tmp_path):
+def test_claude_mcp_goes_to_claude_json_not_settings(tmp_path, fake_daisugi_exe):
     (tmp_path / ".claude").mkdir()
     ClaudeCodeRuntime().apply(tmp_path)
     cj = json.loads((tmp_path / ".claude.json").read_text())
-    assert cj["mcpServers"]["opendaisugi"]["command"] == "daisugi"
+    assert cj["mcpServers"]["opendaisugi"]["command"] == fake_daisugi_exe
     assert cj["mcpServers"]["opendaisugi"]["type"] == "stdio"
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert "mcpServers" not in settings  # the dead file must stay clean
@@ -712,6 +716,8 @@ from opendaisugi.install import _backup
 def test_hermes_apply_no_bak_on_idempotent_rerun(tmp_path):
     (tmp_path / ".hermes").mkdir()
     HermesRuntime().apply(tmp_path)
+    for old in (tmp_path / ".hermes").glob("config.yaml.bak*"):
+        old.unlink()  # the first run writes config.yaml twice: the pando layer backs up the first write
     HermesRuntime().apply(tmp_path)  # idempotent
     assert list((tmp_path / ".hermes").glob("config.yaml.bak*")) == []
 

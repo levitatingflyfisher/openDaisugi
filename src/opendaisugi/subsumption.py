@@ -132,7 +132,7 @@ def _encode_shell_admission(perms: Permission, cmd_var: z3.ExprRef) -> z3.BoolRe
     # redirect characters and newline coverage was added in v0.28.2; the
     # $( command-substitution substring was added in v0.28.3 (verify has
     # always caught it, subsumption lagged). The two lists MUST stay in
-    # sync — subsumption permissiveness here above the verify gate
+    # sync — subsumption permissiveness here above the verify warden
     # produces unsound delegation proofs.
     metachars = [";", "|", "&", "`", "<", ">", "\n", "\r"]
     substrings = ["$("]
@@ -168,7 +168,7 @@ def _patterns_subsume(
         )
     # Shared with z3_checks.Z3_SOLVE_LOCK — see its docstring in z3_checks.py.
     # This function's Z3 solve is reachable from verify()'s Stage 1b
-    # skill-delegation check, on the same global context the resident gate
+    # skill-delegation check, on the same global context the resident warden
     # server's other threads may be solving on concurrently.
     with z3_checks.Z3_SOLVE_LOCK:
         solver = z3.Solver()
@@ -221,6 +221,94 @@ def _network_scope_violation(outer: Permission, inner: Permission) -> str | None
     return None
 
 
+def _tool_overlap(a: str, b: str, *, timeout_ms: int) -> bool:
+    """True unless Z3 proves no ``server/tool`` string matches both patterns.
+    A timeout reads as overlap: the safe answer for a check that must not
+    miss a rule."""
+    with z3_checks.Z3_SOLVE_LOCK:
+        solver = z3.Solver()
+        solver.set("timeout", timeout_ms)
+        v = z3.String("tool")
+        solver.add(_glob_to_z3(v, a), _glob_to_z3(v, b))
+        return solver.check() != z3.unsat
+
+
+def _rule_term(rule: Any, perms: Permission, scope: _Scope) -> z3.BoolRef:
+    scope.perms = perms
+    soft: list[str] = []
+    terms = [_compile_scalar(expr, scope, soft, scope.prefix) for expr in rule.args]
+    return z3.And(*terms) if len(terms) > 1 else (terms[0] if terms else z3.BoolVal(True))
+
+
+def _mcp_rules_subsume(inner: Permission, outer: Permission, *, timeout_ms: int) -> str | None:
+    """None if every MCP call inner admits, outer admits too (MP-7); else a
+    reason that names the tool. A timeout or an encoder refusal is a reason.
+    """
+    from opendaisugi.mcp_rules import known_keys
+
+    for rule in inner.mcp_rules:
+        overlapping = [
+            o for o in outer.mcp_rules if _tool_overlap(rule.tool, o.tool, timeout_ms=timeout_ms)
+        ]
+        if not overlapping:
+            reason = _patterns_subsume(
+                [rule.tool], outer.mcp_allowlist, label="mcp_allowlist", timeout_ms=timeout_ms
+            )
+            if reason is not None:
+                return f"mcp_rules: {rule.tool}: outer does not admit it by name or by rule"
+            continue
+        for o in overlapping:
+            if (
+                _patterns_subsume([rule.tool], [o.tool], label="mcp_rules", timeout_ms=timeout_ms)
+                is not None
+            ):
+                return (
+                    f"mcp_rules: {rule.tool}: outer rule for {o.tool} covers only part of "
+                    "the tools this rule admits"
+                )
+            extra = sorted(known_keys(rule) - known_keys(o))
+            if extra:
+                return (
+                    f"mcp_rules: {rule.tool}: inner known arguments {extra} "
+                    f"are not in the known arguments of the outer rule for {o.tool}"
+                )
+            try:
+                with z3_checks.Z3_SOLVE_LOCK:
+                    inner_scope = _Scope(prefix="arg", concrete=None)
+                    outer_scope = _Scope(prefix="arg", concrete=None)
+                    inner_term = _rule_term(rule, inner, inner_scope)
+                    outer_term = _rule_term(o, outer, outer_scope)
+                    solver = z3.Solver()
+                    solver.set("timeout", timeout_ms)
+                    solver.add(inner_term, z3.Not(outer_term))
+                    result = solver.check()
+            except ValueError as exc:
+                return f"mcp_rules: {rule.tool}: cannot prove it narrower than {o.tool}: {exc}"
+            if result != z3.unsat:
+                return (
+                    f"mcp_rules: {rule.tool}: its argument rules are not proved narrower "
+                    f"than the outer rule for {o.tool}"
+                )
+    for pattern in inner.mcp_allowlist:
+        if "*" not in pattern and any(
+            _head_allowed_pattern(pattern, r.tool) for r in inner.mcp_rules
+        ):
+            continue  # decided by an inner rule, checked above
+        for o in outer.mcp_rules:
+            if _tool_overlap(pattern, o.tool, timeout_ms=timeout_ms):
+                return (
+                    f"mcp_rules: {pattern}: inner admits it by name; "
+                    f"the outer constrains {o.tool} by rule"
+                )
+    return None
+
+
+def _head_allowed_pattern(literal: str, pattern: str) -> bool:
+    from opendaisugi.verify import _head_allowed
+
+    return _head_allowed(literal, [pattern])
+
+
 def _permission_scope_violation(
     outer: Permission, inner: Permission, *, timeout_ms: int
 ) -> str | None:
@@ -244,6 +332,9 @@ def _permission_scope_violation(
         reason = _patterns_subsume(inner_p, outer_p, label=label, timeout_ms=timeout_ms)
         if reason is not None:
             return reason
+    reason = _mcp_rules_subsume(inner, outer, timeout_ms=timeout_ms)
+    if reason is not None:
+        return reason
     return _network_scope_violation(outer, inner)
 
 
@@ -514,7 +605,7 @@ def envelope_subsumes(
 
     # Shared with z3_checks.Z3_SOLVE_LOCK — see its docstring in
     # z3_checks.py. This is the real subsumption proof, reachable from
-    # verify()'s Stage 1b skill-delegation check on the resident gate
+    # verify()'s Stage 1b skill-delegation check on the resident warden
     # server's concurrent-connection path.
     with z3_checks.Z3_SOLVE_LOCK:
         solver = z3.Solver()

@@ -3,7 +3,7 @@ package pmodel
 import "daisugi-verify/internal/pyjson"
 
 // This file holds config.Config and config.FloorConfig
-// (opendaisugi/config.py). The gate reads two fields, but load_config
+// (opendaisugi/config.py). The warden reads two fields, but load_config
 // validates every field, so one bad field anywhere fails the whole load.
 
 // Path is pathlib.Path: a str, the only path-like value a YAML load gives.
@@ -30,24 +30,24 @@ func floorDefault() any {
 }
 
 // Config is config.Config. data_dir's default (the home's .opendaisugi)
-// is left nil here: the gate never reads it.
+// is left nil here: the warden never reads it.
 var Config = &Model{Name: "Config", Fields: []Field{
 	{Name: "model", Schema: Str{}, Default: constant("anthropic/claude-sonnet-4-20250514")},
 	{Name: "max_task_chars", Schema: Int{}, Default: constant(pyjson.Int{Text: "4000"})},
 	{Name: "z3_timeout_ms", Schema: Int{}, Default: constant(pyjson.Int{Text: "500"})},
 	{Name: "data_dir", Schema: Path{}, Default: constant(nil)},
 	{Name: "auto_tend", Schema: Nullable{Bool{}}, Default: constant(nil)},
-	{Name: "gateway_local_model", Schema: Nullable{Str{}}, Default: constant(nil)},
-	{Name: "gateway_router", Schema: Str{}, Default: constant("rules")},
-	{Name: "gateway_router_model", Schema: Nullable{Str{}}, Default: constant(nil)},
-	{Name: "gateway_grader", Schema: Nullable{Str{}}, Default: constant(nil)},
+	{Name: "router_local_model", Schema: Nullable{Str{}}, Default: constant(nil)},
+	{Name: "routing_mode", Schema: Str{}, Default: constant("rules")},
+	{Name: "routing_model", Schema: Nullable{Str{}}, Default: constant(nil)},
+	{Name: "router_grader", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "switchyard_route_id", Schema: Str{}, Default: constant("daisugi")},
 	{Name: "switchyard_capable_model", Schema: Str{}, Default: constant("claude-sonnet-5")},
 	{Name: "switchyard_efficient_model", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "switchyard_api_key_env", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "shell_allow_decomposition", Schema: Bool{}, Default: constant(false)},
-	{Name: "gate_mode", Schema: Str{}, Default: constant("audit")},
-	{Name: "gate_ask", Schema: Bool{}, Default: constant(false)},
+	{Name: "warden_mode", Schema: Str{}, Default: constant("audit")},
+	{Name: "warden_ask", Schema: Bool{}, Default: constant(false)},
 	{Name: "dialect_enforce", Schema: Nullable{Str{}}, Default: constant(nil)},
 	{Name: "verifier_client", Schema: Str{}, Default: constant("python")},
 	{Name: "matcher_model", Schema: Str{}, Default: constant("lexical")},

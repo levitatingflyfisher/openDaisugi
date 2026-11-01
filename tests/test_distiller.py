@@ -239,7 +239,7 @@ def test_intersect_permissions_boolean_and():
 
 
 def test_intersect_permissions_single_returns_copy():
-    p1 = Permission(shell=True, shell_allowlist=["ls"])
+    p1 = Permission(shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"])
     result = _intersect_permissions([p1])
     assert result.shell == p1.shell
     assert result.shell_allowlist == p1.shell_allowlist
@@ -369,7 +369,9 @@ def test_validate_envelope_scores_test_plans():
     env = Envelope(
         generated_by="test",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     pass_plan = ActionPlan(
         source="t",
@@ -404,12 +406,16 @@ async def test_improve_envelope_calls_llm_with_failure_context(monkeypatch):
     tight = Envelope(
         generated_by="test",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     loose = Envelope(
         generated_by="test",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find", "rm"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find", "rm"], file_read=["**"], file_write=["**"]
+        ),
     )
     failing_plan = ActionPlan(
         source="t",

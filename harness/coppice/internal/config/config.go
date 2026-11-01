@@ -50,12 +50,12 @@ type Config struct {
 	// what edit it. project.list shows these first, then the directories
 	// panes have most recently started in.
 	Projects []string `toml:"projects,omitempty"`
-	// Gateway is the base URL of the daisugi token-saving gateway. The
+	// Router is the base URL of the daisugi token-saving router. The
 	// floor compares a pane's ANTHROPIC_BASE_URL and OPENAI_BASE_URL with
-	// it, and checks that it answers. With no gateway key the floor uses
-	// DefaultGateway. gateway = "" says there is no gateway, and the floor
-	// then shows no router at all. It is a pointer so the two stay apart.
-	Gateway *string `toml:"gateway,omitempty"`
+	// it, and checks that it answers. With no router key the floor uses
+	// DefaultRouter. router = "" says there is no router, and the floor
+	// then shows no route at all. It is a pointer so the two stay apart.
+	Router *string `toml:"router,omitempty"`
 	// LayoutSaveSettle is how long the server waits after the last layout
 	// change before it writes layout.json, as a duration such as "3s". A
 	// burst of changes gives one write. "0s" writes at once. With no key
@@ -67,27 +67,27 @@ type Config struct {
 	BrokenKeep *int `toml:"broken_keep,omitempty"`
 	// Fence says whether a harness starts under `daisugi fence`: "off"
 	// (the default: the fence is opt-in, FN-R-33) never, "on" always,
-	// "auto" while the gate is on. A pane can override it.
+	// "auto" while the warden is on. A pane can override it.
 	Fence *string `toml:"fence,omitempty"`
 	// Voice is the [voice] table. See Voice.
 	Voice Voice `toml:"voice,omitempty"`
-	// Foreman is the [foreman] table. See Foreman.
-	Foreman Foreman `toml:"foreman,omitempty"`
+	// Steward is the [steward] table. See Steward.
+	Steward Steward `toml:"steward,omitempty"`
 }
 
-// DefaultGateway is where `daisugi gateway` listens when started with no
-// --host or --port, and the base URL `daisugi install --gateway` points
+// DefaultRouter is where `daisugi router serve` listens when started with no
+// --host or --port, and the base URL `daisugi install --router` points
 // a harness at.
-const DefaultGateway = "http://127.0.0.1:8787"
+const DefaultRouter = "http://127.0.0.1:8787"
 
-// GatewayURL is the gateway base URL the floor compares with: the gateway
-// key when the file has one, else DefaultGateway. It is empty when the
-// file says gateway = "".
-func (c Config) GatewayURL() string {
-	if c.Gateway == nil {
-		return DefaultGateway
+// RouterURL is the router base URL the floor compares with: the router
+// key when the file has one, else DefaultRouter. It is empty when the
+// file says router = "".
+func (c Config) RouterURL() string {
+	if c.Router == nil {
+		return DefaultRouter
 	}
-	return *c.Gateway
+	return *c.Router
 }
 
 // DefaultLayoutSaveSettle is the wait after the last layout change.
@@ -110,7 +110,8 @@ func (c Config) LayoutSettle() time.Duration {
 }
 
 // FenceMode is the fence setting: "auto", "on" or "off". An unset value
-// is "off": the fence is opt-in (FN-R-33). Load refuses an unknown one.
+// is "auto": agent work runs under the fence while the warden is on, and a
+// plain shell pane stays bare (ADR-0028). Load refuses an unknown one.
 func (c Config) FenceMode() string {
 	if c.Fence != nil {
 		switch *c.Fence {
@@ -118,7 +119,7 @@ func (c Config) FenceMode() string {
 			return *c.Fence
 		}
 	}
-	return "off"
+	return "auto"
 }
 
 // BrokenKeepN is the broken copies to keep: broken_keep, else
@@ -135,7 +136,7 @@ func (c Config) BrokenKeepN() int {
 // a topic. The other policies ship off, since each one acts on panes, and
 // an operator turns one on by listing it.
 func DefaultPlugins() []string {
-	return []string{"tree", "minimap", "kanban", "colony", "shift-log", "herdr-grid", "inbox", "notify-ntfy"}
+	return []string{"tree", "cards", "minimap", "kanban", "colony", "shift-log", "herdr-grid", "inbox", "notify-ntfy"}
 }
 
 // EnabledPlugins is the plugin ids that run: the plugins list when the
@@ -175,6 +176,9 @@ func Load() (Config, bool, error) {
 		}
 		return Config{}, false, err
 	}
+	if err := staleNames(string(b)); err != nil {
+		return Config{}, false, err
+	}
 	// The fence key is checked on the text first, so a bare word or a
 	// boolean gives the fence error, not a parse error (FN-R-37).
 	raw, hasFence := fenceRaw(string(b))
@@ -191,6 +195,34 @@ func Load() (Config, bool, error) {
 		return Config{}, false, err
 	}
 	return c, true, nil
+}
+
+// gatewayLine is a top-level key from before the rename; foremanTable is
+// the table header from before it. The loader does not accept either: a
+// key it does not know would be dropped, and the floor would run with a
+// router or a steward the owner did not choose. The owner edits the file
+// once.
+var (
+	gatewayLine  = regexp.MustCompile(`^[ \t]*gateway[ \t]*=`)          // names-ok: the old key
+	foremanTable = regexp.MustCompile(`^[ \t]*\[[ \t]*foreman[ \t]*\]`) // names-ok: the old table
+)
+
+// staleNames names the first key or table that the rename moved.
+func staleNames(text string) error {
+	top := true
+	for _, ln := range strings.Split(text, "\n") {
+		ln = strings.TrimSuffix(ln, "\r")
+		if foremanTable.MatchString(ln) {
+			return errors.New("coppice.toml: [foreman] is now [steward]") // names-ok: the old table
+		}
+		if t := strings.TrimSpace(ln); strings.HasPrefix(t, "[") {
+			top = false
+		}
+		if top && gatewayLine.MatchString(ln) {
+			return errors.New("coppice.toml: gateway is now router") // names-ok: the old key
+		}
+	}
+	return nil
 }
 
 // fenceLine is a top-level `fence = ...` line.

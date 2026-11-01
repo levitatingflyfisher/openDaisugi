@@ -1,6 +1,6 @@
 /-
 Direct ports of the small pure functions in verify.py that decide shell-head
-allowlisting, file-scope glob matching, the metacharacter gate, the simple-
+allowlisting, file-scope glob matching, the metacharacter check, the simple-
 command head classifier, and strict-mode resolution. These are unit-tested
 against `clients/fixtures/semantics.json` (see `TestSemantics.lean`).
 
@@ -147,7 +147,7 @@ def pathMatchesAny (path : String) (globs : List String) : Bool :=
   let normalized := normpath path
   globs.any (matchGlobOne normalized)
 
-/-- `[;|&`<>\n\r]|\$\(` — the metachar gate, scanned on the RAW (unstripped)
+/-- `[;|&`<>\n\r]|\$\(` — the metachar check, scanned on the RAW (unstripped)
 command string. -/
 partial def hasMetachar (s : String) : Bool :=
   let rec go : List Char → Bool

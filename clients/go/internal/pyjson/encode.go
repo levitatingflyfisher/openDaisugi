@@ -275,7 +275,7 @@ func FloatRepr(f float64) string {
 	return out
 }
 
-// Round is Python's round(x, n) for the small n the gate uses: the float
+// Round is Python's round(x, n) for the small n the warden uses: the float
 // nearest the correctly rounded decimal, half to even.
 func Round(x float64, n int) float64 {
 	s := strconv.FormatFloat(x, 'f', n, 64) // correctly rounded, half to even on exact ties

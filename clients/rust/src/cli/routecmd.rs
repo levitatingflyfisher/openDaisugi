@@ -3,12 +3,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::{lower, repr, strip};
-use crate::gate::pyjson::{self, Object, Value};
-use crate::gateway::report::format_f;
-use crate::gateway::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
+use crate::warden::py::text::{lower, repr, strip};
+use crate::warden::pyjson::{self, Object, Value};
+use crate::router::report::format_f;
+use crate::router::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
 use crate::pathways::find::{select_matcher, Cache, FindErr};
 use crate::pathways::store::Store;
 use crate::pathways::PwErr;
@@ -44,7 +44,7 @@ impl Env {
             Opt::val(&["--harness"], "TEXT", "Host harness: claude-code, codex, ollama/local, hermes, openclaw."),
             Opt::flag(
                 &["--knn"],
-                "Also show the knn router's choice and its nearest past turns (reads <data-dir>/gateway/routing.db).",
+                "Also show the knn router's choice and its nearest past turns (reads <data-dir>/router/routing.db).",
             ),
             Opt::flag(&["--json"], "Machine-readable JSON output."),
         ];
@@ -72,7 +72,7 @@ impl Env {
         let advisor_tool = matches!(harness.as_str(), "claude-code" | "claude" | "anthropic");
         let db = format!("{data_dir}/pathways.db");
         let has_store = std::fs::metadata(&db).is_ok();
-        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
+        let cfg = match super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
         };
@@ -119,7 +119,7 @@ impl Env {
                             None => {
                                 return self.refuse(
                                     CMD,
-                                    &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::gate::py::text::repr(&pyw)),
+                                    &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::warden::py::text::repr(&pyw)),
                                 )
                             }
                             Some(true) => self.errf(&format!("UserWarning: {}\n", r.warning)),
@@ -207,7 +207,7 @@ impl Env {
         }
         self.out(&format!("  why:        {}\n", a.reason));
         if let Some(v) = &view {
-            for ln in crate::gateway::knn::view_lines(v) {
+            for ln in crate::router::knn::view_lines(v) {
                 self.out(&format!("{ln}\n"));
             }
         }

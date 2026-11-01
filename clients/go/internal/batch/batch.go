@@ -188,7 +188,7 @@ func strListRepr(xs []string) string {
 }
 
 // Prove is prove_footprint: every write each item resolves to checked
-// with the runtime gate's own path matcher against the envelope's
+// with the runtime warden's own path matcher against the envelope's
 // file_write globs and the declared footprint. envFileWrite is the
 // envelope's file_write list.
 func Prove(d Decl, envFileWrite []string) (*Proof, error) {

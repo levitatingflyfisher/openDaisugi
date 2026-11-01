@@ -134,7 +134,7 @@ func TestAPISystemPromptIsMinimal(t *testing.T) {
 
 func TestNewAPIModelHonorsBaseURLOverride(t *testing.T) {
 	// So the real `sprig` binary can be pointed at a local mock, an Anthropic-
-	// compatible proxy, or the openDaisugi gateway — not only api.anthropic.com.
+	// compatible proxy, or the openDaisugi router — not only api.anthropic.com.
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9999/")
 	m, err := NewAPIModel()

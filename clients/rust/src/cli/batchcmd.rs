@@ -2,11 +2,11 @@
 //! proved before any item runs. The Go client's `cli/batchcmd.go` is the
 //! reference.
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::registrycmd::read_text;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::batch;
-use crate::gate::pyjson::Value;
+use crate::warden::pyjson::Value;
 use crate::pathways::pmodel::{validate_json, Id};
 
 const BATCH_HELP: &str = "Usage: daisugi batch [OPTIONS] COMMAND [ARGS]...

@@ -50,10 +50,10 @@ test('the journal rows are the server entries, newest first, for one agent or al
   const odd = journalRows([
     { at: 1, pane: 'a', decision: 'ask' },
     { at: 2, pane: 'a', decision: 'x" onclick="y' },
-    { at: 3, pane: 'a', decision: 'deny gate-allow' },
+    { at: 3, pane: 'a', decision: 'deny warden-allow' },
   ]);
   assert.deepEqual(odd.map((e) => e.kind), ['other', 'other', 'ask']);
-  assert.equal(odd[0].decision, 'deny gate-allow');
+  assert.equal(odd[0].decision, 'deny warden-allow');
 });
 
 test('the journal shows at most what the server keeps, and says what it lists', () => {
@@ -62,7 +62,7 @@ test('the journal shows at most what the server keeps, and says what it lists', 
   const rows = journalRows(many);
   assert.equal(rows.length, JOURNAL_KEPT);
   assert.equal(rows[0].ts, JOURNAL_KEPT + 6);
-  assert.match(JOURNAL_SOURCE, /verdicts the gate and each agent's loop report/);
+  assert.match(JOURNAL_SOURCE, /verdicts the warden and each agent's loop report/);
   assert.match(JOURNAL_SOURCE, /100 per agent, 500 in all, oldest first/);
   assert.match(JOURNAL_SOURCE, /restart/);
 });

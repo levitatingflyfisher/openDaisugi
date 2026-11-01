@@ -56,6 +56,7 @@ class Server:
     def __init__(self, routes):
         self.routes = routes
         self.hits: dict[str, int] = {}
+        self.bodies: list[bytes] = []
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -63,7 +64,7 @@ class Server:
                 outer.hits[self.path] = outer.hits.get(self.path, 0) + 1
                 n = int(self.headers.get("content-length") or 0)
                 if n:
-                    self.rfile.read(n)
+                    outer.bodies.append(self.rfile.read(n))
                 status, body = outer.routes.get(self.path, (404, "{}"))
                 data = body if isinstance(body, bytes) else str(body).encode()
                 self.send_response(status)
@@ -123,6 +124,7 @@ def test_endpoint_ignores_claude_on_path(box, tmp_path):
     res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "m")
     assert res.exit_code == 0, res.output
     assert srv.hits["/v1/chat/completions"] == 3
+    assert srv.hits["/api/tags"] == 1
     assert "PASSED" in res.output and "3/3" in res.output
 
 
@@ -161,7 +163,7 @@ def test_declined_and_cut_reasons(box, tmp_path):
         }
     )
     res = setup(tmp_path, "--endpoint", cut.url + "/v1", "--model", "m")
-    assert "token budget" in res.output
+    assert "First failure (truncated)" in res.output
 
 
 def test_endpoint_reports_served_context(box, tmp_path):
@@ -190,7 +192,17 @@ def test_progress_goes_to_stderr_and_json_stdout_stays_clean(box, tmp_path):
     assert "probe 1/3: error: " in res.stderr and "boom" in res.stderr
     quiet = runner.invoke(
         app,
-        ["-q", "tiers", "setup", "--data-dir", str(tmp_path / "d"), "--endpoint", ep, "--model", "m"],
+        [
+            "-q",
+            "tiers",
+            "setup",
+            "--data-dir",
+            str(tmp_path / "d"),
+            "--endpoint",
+            ep,
+            "--model",
+            "m",
+        ],
     )
     assert "qualifying" not in quiet.stderr and "probe 1/3" not in quiet.stderr
 
@@ -223,7 +235,10 @@ def test_remote_context_from_models_meta(box, tmp_path):
 def test_remote_context_falls_back_to_props(box, tmp_path):
     srv = box(
         {
-            "/v1/models": (200, json.dumps({"data": [{"id": "m", "meta": {"n_ctx_train": 262144}}]})),
+            "/v1/models": (
+                200,
+                json.dumps({"data": [{"id": "m", "meta": {"n_ctx_train": 262144}}]}),
+            ),
             "/props": (200, json.dumps({"default_generation_settings": {"n_ctx": 8192}})),
         }
     )
@@ -236,3 +251,86 @@ def test_remote_context_never_the_training_length(box, tmp_path):
     srv = box({"/v1/models": (200, json.dumps({"data": [{"id": "m", "n_ctx_train": 4096}]}))})
     res = setup(tmp_path, "--remote", srv.url.removeprefix("http://"), "--kind", "openai")
     assert "4096" not in res.output
+
+
+TAGS = (200, json.dumps({"models": [{"name": "gemma4:latest"}]}))
+
+
+def test_ollama_endpoint_gets_reasoning_effort_none(box, tmp_path):
+    srv = box(
+        {"/api/tags": TAGS, "/v1/chat/completions": chat({"role": "assistant", "content": VALID})}
+    )
+    res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "gemma4", "--json")
+    assert res.exit_code == 0, res.output
+    assert srv.hits["/api/tags"] == 1
+    posted = [json.loads(b) for b in srv.bodies if b]
+    assert posted and all(b.get("reasoning_effort") == "none" for b in posted)
+    assert list(posted[0])[-1] == "reasoning_effort"
+    doc = json.loads(res.stdout)
+    assert doc["qualification"]["host_kind"] == "ollama"
+    assert doc["recommendation"]["runtime"] == "ollama"
+    keys = list(doc["qualification"])
+    assert keys.index("wired") + 1 == keys.index("host_kind") < keys.index("outcomes")
+    assert "host: ollama, thinking off (reasoning_effort none)" in res.stderr
+
+
+def test_openai_endpoint_sends_no_reasoning_effort(box, tmp_path):
+    srv = box({"/v1/chat/completions": chat({"role": "assistant", "content": VALID})})
+    res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "m")
+    assert res.exit_code == 0, res.output
+    assert srv.hits["/api/tags"] == 1
+    assert all("reasoning_effort" not in json.loads(b) for b in srv.bodies if b)
+    assert "via llamafile" in res.output and "Host kind: openai" in res.output
+    assert "thinking off" not in res.stderr
+
+
+def test_ollama_endpoint_text_says_ollama_not_llamafile(box, tmp_path):
+    srv = box(
+        {"/api/tags": TAGS, "/v1/chat/completions": chat({"role": "assistant", "content": VALID})}
+    )
+    res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "gemma4")
+    assert "via ollama" in res.output and "llamafile" not in res.output
+    assert "Host kind: ollama (thinking off: reasoning_effort none)" in res.output
+
+
+def test_kind_flag_overrides_the_question(box, tmp_path):
+    srv = box(
+        {"/api/tags": TAGS, "/v1/chat/completions": chat({"role": "assistant", "content": VALID})}
+    )
+    setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "m", "--kind", "openai")
+    assert "/api/tags" not in srv.hits
+    assert all("reasoning_effort" not in json.loads(b) for b in srv.bodies if b)
+    srv2 = box({"/v1/chat/completions": chat({"role": "assistant", "content": VALID})})
+    setup(tmp_path, "--endpoint", srv2.url + "/v1", "--model", "m", "--kind", "ollama")
+    assert "/api/tags" not in srv2.hits
+    assert all(json.loads(b)["reasoning_effort"] == "none" for b in srv2.bodies if b)
+
+
+def test_kind_anthropic_does_not_apply_to_endpoint(box, tmp_path):
+    srv = box({})
+    res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "m", "--kind", "anthropic")
+    assert res.exit_code == 2
+    assert "--kind 'anthropic' does not apply to --endpoint" in res.output
+    assert srv.hits == {}
+
+
+def test_truncated_probe_is_named_and_advised(box, tmp_path):
+    cut = box({"/v1/chat/completions": chat({"role": "assistant", "content": ""}, "length")})
+    js = setup(tmp_path, "--endpoint", cut.url + "/v1", "--model", "m", "--json")
+    outcomes = json.loads(js.stdout)["qualification"]["outcomes"]
+    assert {o["outcome"] for o in outcomes} == {"truncated"}
+    assert "spends the limit on thinking" in outcomes[0]["reason"]
+    res = setup(tmp_path, "--endpoint", cut.url + "/v1", "--model", "m")
+    assert "First failure (truncated)" in res.output
+    assert "Every failed probe was truncated" in res.output
+    assert "Not promoted" not in res.output and "ALL attempts errored" not in res.output
+
+
+def test_wire_records_host_kind(box, tmp_path):
+    srv = box(
+        {"/api/tags": TAGS, "/v1/chat/completions": chat({"role": "assistant", "content": VALID})}
+    )
+    res = setup(tmp_path, "--endpoint", srv.url + "/v1", "--model", "gemma4", "--wire")
+    assert res.exit_code == 0, res.output
+    cfg = json.loads((tmp_path / "d" / "local_tier1.json").read_text())
+    assert cfg == {"model": "gemma4", "base_url": srv.url + "/v1", "host_kind": "ollama"}

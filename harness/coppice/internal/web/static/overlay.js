@@ -16,7 +16,7 @@ export const PIN_KEY = 'coppice.colony.pinned';
 export const JOURNAL_KEPT = 500;
 
 // JOURNAL_SOURCE says where the journal's lines come from.
-export const JOURNAL_SOURCE = "This lists the verdicts the gate and each agent's loop report, newest first. The journal keeps 100 per agent, 500 in all, oldest first. They stay across a server restart.";
+export const JOURNAL_SOURCE = "This lists the verdicts the warden and each agent's loop report, newest first. The journal keeps 100 per agent, 500 in all, oldest first. They stay across a server restart.";
 
 // overlayNext is the overlay after one action. state is {open, sel, pane,
 // pinned}: open is a view id, JOURNAL, or ''; sel the panes a view was
@@ -58,10 +58,10 @@ export function panelEsc(screen, keys) {
   return isPanel(screen) && keys !== 'window';
 }
 
-// GATE_KINDS are the decisions a row's class name may carry. Any other
+// WARDEN_KINDS are the decisions a row's class name may carry. Any other
 // decision gets the class 'other', so a text from a file never becomes a
 // class.
-const GATE_KINDS = ['allow', 'deny', 'ask'];
+const WARDEN_KINDS = ['allow', 'deny', 'ask'];
 
 // journalRows are the entries floor.journal returned as rows, newest
 // first, at most JOURNAL_KEPT. pane, when given, keeps only that agent's.
@@ -71,7 +71,7 @@ export function journalRows(entries, pane) {
   for (const e of Array.isArray(entries) ? entries : []) {
     if (!e || typeof e.pane !== 'string' || typeof e.decision !== 'string' || !Number.isFinite(e.at)) continue;
     if (pane && e.pane !== pane) continue;
-    out.push({ pane: e.pane, ts: e.at, decision: e.decision, kind: GATE_KINDS.includes(e.decision) ? e.decision : 'other', tool: String(e.tool || ''), clause: String(e.clause || ''), mode: String(e.mode || '') });
+    out.push({ pane: e.pane, ts: e.at, decision: e.decision, kind: WARDEN_KINDS.includes(e.decision) ? e.decision : 'other', tool: String(e.tool || ''), clause: String(e.clause || ''), mode: String(e.mode || '') });
   }
   return out.sort((a, b) => b.ts - a.ts).slice(0, JOURNAL_KEPT);
 }
@@ -161,7 +161,7 @@ export function mountOverlay(d) {
     }
     const list = journalRows(rows, st.pane);
     if (list.length === 0) {
-      if (!readErr) box.append(make('p', 'muted', 'No gate verdicts yet.'));
+      if (!readErr) box.append(make('p', 'muted', 'No warden verdicts yet.'));
       return;
     }
     const ol = make('ol', 'journal-list');
@@ -169,7 +169,7 @@ export function mountOverlay(d) {
       const li = make('li', 'journal-row');
       li.append(
         make('span', 'muted when', clock(e.ts)),
-        make('span', 'gate-mark gate-' + e.kind, GLYPH[e.kind] || '?'),
+        make('span', 'warden-mark warden-' + e.kind, GLYPH[e.kind] || '?'),
         make('span', 'who', d.labelOf(e.pane)),
         make('span', 'what', [e.decision, e.tool, e.clause ? 'clause ' + e.clause : ''].filter(Boolean).join(' · ')),
       );
@@ -273,9 +273,9 @@ export function mountOverlay(d) {
       if (!d.onFloor() && st.open) apply({ type: 'close' });
       else placeStrip();
     },
-    // onEvent reads the journal again when a gate reports while it shows.
+    // onEvent reads the journal again when a warden reports while it shows.
     onEvent: (msg) => {
-      if (st.open === JOURNAL && msg && msg.event === 'state' && msg.source === 'gate') readJournal();
+      if (st.open === JOURNAL && msg && msg.event === 'state' && msg.source === 'warden') readJournal();
     },
     place: () => { if (st.open) d.place(d.el); placeStrip(); },
   };

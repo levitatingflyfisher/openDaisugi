@@ -1,9 +1,9 @@
 //! The per-agent daisugi mode (F11), the Rust twin of mode.go. The owner
 //! lowers one agent from enforcing to watching from its stack bar; coppice
-//! writes a marker the gate reads on that agent's next tool call:
-//! `<gate root>/agents/<floor>/<pane>.mode`. The gate lowers an enforce hook to
+//! writes a marker the warden reads on that agent's next tool call:
+//! `<warden root>/agents/<floor>/<pane>.mode`. The warden lowers an enforce hook to
 //! audit only when the marker holds exactly "watching" (F11-R-1). Turning
-//! the gate off stays a typed command, so this verb never offers off.
+//! the warden off stays a typed command, so this verb never offers off.
 
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -22,12 +22,12 @@ pub const MODE_REFUSAL: &str = "only the operator sets an agent's daisugi mode."
 
 /// What agent.set_mode says to a mode it does not take.
 pub const MODE_WORDS_REFUSAL: &str =
-    "mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm";
+    "mode must be enforcing or watching. Turning the warden off stays a command: daisugi warden disarm";
 
 /// The marker's whole text.
 const MODE_WATCHING: &str = "watching\n";
 
-/// The shape of a pane id a marker may be named for, the shape the gate
+/// The shape of a pane id a marker may be named for, the shape the warden
 /// checks before it reads one: `w<1-9 digits>:p<1-9 digits>`.
 pub fn marker_pane_id(id: &str) -> bool {
     fn digits(s: &str) -> bool {
@@ -39,25 +39,25 @@ pub fn marker_pane_id(id: &str) -> bool {
     }
 }
 
-/// The marker value the stack shows when the gate would refuse a path on
-/// the way to the pane's marker. The gate then lowers nothing, and refuses
+/// The marker value the stack shows when the warden would refuse a path on
+/// the way to the pane's marker. The warden then lowers nothing, and refuses
 /// the root or a directory outright, so every call is denied. `markerNote`
-/// carries the gate's one line and the fix.
+/// carries the warden's one line and the fix.
 pub const MARKER_REFUSED: &str = "refused";
 
-/// The largest marker read, as the gate's AGENT_MODE_MAX_BYTES.
+/// The largest marker read, as the warden's AGENT_MODE_MAX_BYTES.
 const MARKER_MAX: u64 = 64;
 
-/// Reads one marker as the gate does (F11-R-7, F11-R-9, GR-R-1): the gate
+/// Reads one marker as the warden does (F11-R-7, F11-R-9, GR-R-1): the warden
 /// root, agents/ and the floor's directory opened as directories without
 /// following a symlink, each owned by this user and writable by no group and
 /// no other user, the marker opened by name in the floor's directory without
 /// following a symlink and without blocking, and only a regular file this
 /// user owns, with one link, writable by no group and no other user, of at
-/// most MARKER_MAX bytes. Err says why not: missing, or the gate's one line
-/// (`<path>: <why> (fix: ...)`) for a path the gate would refuse.
-fn read_marker(root: &std::path::Path, floor: &str, name: &str) -> Result<Vec<u8>, super::gatefs::Miss> {
-    super::gatefs::read(root, &["agents", floor], name, Some(MARKER_MAX))
+/// most MARKER_MAX bytes. Err says why not: missing, or the warden's one line
+/// (`<path>: <why> (fix: ...)`) for a path the warden would refuse.
+fn read_marker(root: &std::path::Path, floor: &str, name: &str) -> Result<Vec<u8>, super::wardenfs::Miss> {
+    super::wardenfs::read(root, &["agents", floor], name, Some(MARKER_MAX))
 }
 
 /// The error for a symlink or a file where a marker directory belongs.
@@ -91,7 +91,7 @@ impl Server {
 
     /// This floor's marker directory.
     fn floor_dir(&self) -> PathBuf {
-        self.gate_root().join("agents").join(self.floor_key())
+        self.warden_root().join("agents").join(self.floor_key())
     }
 
     /// True when agents/ and this floor's directory are both real
@@ -137,26 +137,26 @@ impl Server {
         marker_pane_id(id).then(|| self.floor_dir().join(format!("{id}.mode")))
     }
 
-    /// "watching" when pane id's marker reads as the gate reads it
-    /// (read_marker) and holds the marker text, "refused" with the gate's
-    /// one line when the gate would refuse a path on the way to it (the
-    /// gate root, agents/, the floor's directory or the marker file), and
+    /// "watching" when pane id's marker reads as the warden reads it
+    /// (read_marker) and holds the marker text, "refused" with the warden's
+    /// one line when the warden would refuse a path on the way to it (the
+    /// warden root, agents/, the floor's directory or the marker file), and
     /// "" with no line otherwise. The read is by fd from the root down,
     /// never a path read after a check, so the stack shows "watching" only
-    /// when the gate would lower the agent (F11-R-9, GR-R-11).
+    /// when the warden would lower the agent (F11-R-9, GR-R-11).
     pub fn mode_marker(&self, id: &str) -> (&'static str, String) {
         if self.marker_path(id).is_none() {
             return ("", String::new());
         }
-        match read_marker(&self.gate_root(), &self.floor_key(), &format!("{id}.mode")) {
-            Err(super::gatefs::Miss::Refused(line)) => (MARKER_REFUSED, line),
+        match read_marker(&self.warden_root(), &self.floor_key(), &format!("{id}.mode")) {
+            Err(super::wardenfs::Miss::Refused(line)) => (MARKER_REFUSED, line),
             Ok(b) if b == MODE_WATCHING.as_bytes() || b == b"watching" => ("watching", String::new()),
             _ => ("", String::new()),
         }
     }
 
     /// Writes the watching marker for pane id: a new file 0600 in the
-    /// agents directory (0700), renamed over the old one, so the gate reads
+    /// agents directory (0700), renamed over the old one, so the warden reads
     /// either the old marker or the whole new one.
     fn write_mode_marker(&self, id: &str) -> std::io::Result<()> {
         let p = self.marker_path(id).ok_or_else(|| {
@@ -256,7 +256,7 @@ impl Server {
             return proto::err_resp(
                 &r.id,
                 proto::ERR_PANE_CLOSED,
-                &format!("{} has ended, so no gate checks it.", self.label_of(&id)),
+                &format!("{} has ended, so no warden checks it.", self.label_of(&id)),
             );
         }
         if rec.harness.is_empty() {
@@ -264,7 +264,7 @@ impl Server {
                 &r.id,
                 proto::ERR_BAD_REQUEST,
                 &format!(
-                    "{} runs no harness, so no gate checks it.",
+                    "{} runs no harness, so no warden checks it.",
                     self.label_of(&id)
                 ),
             );
@@ -305,7 +305,7 @@ mod tests {
             data_dir: d.join("data"),
             start_dir: d.clone(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         (d, s)
     }
@@ -344,14 +344,14 @@ mod tests {
     }
 
     /// F11-R-9 (M2), GR-R-11: the stack shows "watching" only when the
-    /// marker reads as the gate reads it, and "refused" with the gate's one
-    /// line when the gate would refuse a path on the way.
+    /// marker reads as the warden reads it, and "refused" with the warden's one
+    /// line when the warden would refuse a path on the way.
     #[test]
-    fn the_marker_shows_only_when_the_gate_would_read_it() {
+    fn the_marker_shows_only_when_the_warden_would_read_it() {
         use std::os::unix::fs::PermissionsExt;
         use std::path::{Path, PathBuf};
         type Spoil = fn(&Path, &Path);
-        // (name, which path is spoiled, how, the gate's reason)
+        // (name, which path is spoiled, how, the warden's reason)
         type Which = fn(&Server, &Path) -> PathBuf;
         let link: Spoil = |d, p| {
             std::fs::rename(p, d.join("moved")).unwrap();
@@ -361,7 +361,7 @@ mod tests {
         let marker: Which = |_, p| p.to_path_buf();
         let floor: Which = |_, p| p.parent().unwrap().to_path_buf();
         let agents: Which = |_, p| p.parent().unwrap().parent().unwrap().to_path_buf();
-        let root: Which = |s, _| s.gate_root();
+        let root: Which = |s, _| s.warden_root();
         let hard: Spoil = |d, p| std::fs::hard_link(p, d.join("second")).unwrap();
         let group: Spoil = |_, p| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o620)).unwrap();
         let spoils: &[(&str, Which, Spoil, &str)] = &[

@@ -1,13 +1,13 @@
-"""`daisugi bench loop`: nine gate cases per loop, in that loop's vocabulary.
+"""`daisugi bench loop`: nine warden cases per loop, in that loop's vocabulary.
 
 The cases are a contract, not a live run: nine tool calls against one
 committed envelope, replayed with the tool names and input keys each loop
 delivers. That is the axis `docs/harness/harness-comparison.md` found to
 matter. The envelope classifies by tool name, so a loop whose vocabulary the
-gate does not speak has every call refused until something translates.
+warden does not speak has every call refused until something translates.
 
 These cases are ours. They are not the 3x3 battery in docs/harness, which
-used stand-in gates and measured the harness rather than the gate.
+used stand-in checks and measured the harness rather than the warden.
 
 A loop with no tool for a case counts as not applicable and prints as such. A
 loop whose vocabulary is not pinned yet prints absent with its install
@@ -26,12 +26,12 @@ from opendaisugi.bench.corpus import (
     load_jsonl,
     resolve_corpus,
 )
-from opendaisugi.bench.layers.gate_path import battery_envelope_ref
-from opendaisugi.bench.options import GATE_PATHS, LOOPS, loop_is_installed
+from opendaisugi.bench.layers.warden_path import battery_envelope_ref
+from opendaisugi.bench.options import LOOPS, WARDEN_PATHS, loop_is_installed
 from opendaisugi.bench.registry import BenchOpts, BenchSpec, register
 from opendaisugi.bench.table import Column, Row, Table
-from opendaisugi.gate import evaluate_call
 from opendaisugi.models import Envelope
+from opendaisugi.warden import evaluate_call
 
 CORPUS = "loop-vocabulary-cases.jsonl"
 VOCABULARY = "loop-vocabulary.json"
@@ -39,15 +39,15 @@ VOCABULARY = "loop-vocabulary.json"
 COLUMNS: tuple[Column, ...] = (
     Column("option", "option"),
     Column("installed", "installed"),
-    Column("gate_cases", "gate cases"),
-    Column("gate_path", "gate path"),
+    Column("warden_cases", "warden cases"),
+    Column("warden_path", "warden path"),
     Column("fail_open", "fail-open class"),
     Column("source", "source"),
 )
 
 
 def payload_format(loop: str, vocab: dict) -> str:
-    """The gate's `--format` for this loop's payloads. Claude's unless the vocabulary says."""
+    """The warden's `--format` for this loop's payloads. Claude's unless the vocabulary says."""
     entry = vocab.get(loop) or {}
     return str(entry.get("fmt") or "claude")
 
@@ -74,8 +74,8 @@ def run_vocabulary_cases(
 ) -> tuple[int, int, int]:
     """(passed, applicable, not_applicable) for one loop over the cases.
 
-    Each payload is judged under the loop's own gate format, the one its hook
-    or extension passes to the gate, so a lowercase pi name classifies the
+    Each payload is judged under the loop's own warden format, the one its hook
+    or extension passes to the warden, so a lowercase pi name classifies the
     way it does in production.
     """
     fmt = payload_format(loop, vocab)
@@ -129,9 +129,9 @@ def run(opts: BenchOpts) -> Table:
                 cells={
                     "option": name,
                     "installed": "yes" if installed else "no",
-                    "gate_cases": cell,
-                    "gate_path": spec.gate_path,
-                    "fail_open": GATE_PATHS[spec.gate_path].fail_open_class,
+                    "warden_cases": cell,
+                    "warden_path": spec.warden_path,
+                    "fail_open": WARDEN_PATHS[spec.warden_path].fail_open_class,
                     "source": "replay",
                 },
             )
@@ -145,13 +145,13 @@ def run(opts: BenchOpts) -> Table:
         reproduce=f"uv run --no-sync daisugi bench loop --corpus {ref.rel}",
         notes=(
             "these cases are ours; they are not the 3x3 battery in docs/harness, which used "
-            "stand-in gates and measured the harness rather than the gate",
+            "stand-in checks and measured the harness rather than the warden",
             "the corpus path is repo-relative, so run the reproduce line from the checkout root",
             "the cases replay recorded payload shapes; nothing here spawns a harness",
             "n/a means the loop has no tool for that case, not that the case passed",
-            "each loop is judged under its own gate format; pi's lowercase names classify "
+            "each loop is judged under its own warden format; pi's lowercase names classify "
             "only under --format pi",
-            "sprig's row uses the names its DaisugiGate translates to before we see them",
+            "sprig's row uses the names its DaisugiWarden translates to before we see them",
         ),
     )
 

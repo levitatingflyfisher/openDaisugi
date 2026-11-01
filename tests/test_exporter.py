@@ -12,11 +12,11 @@ import urllib.request
 from opendaisugi.exporter import make_metrics_server, render_prometheus
 
 
-def _seed_gateway(data_dir, *, input_tokens, output_tokens):
-    from opendaisugi.gateway_journal import GatewayJournal, GatewayTurnRecord
+def _seed_router(data_dir, *, input_tokens, output_tokens):
+    from opendaisugi.router_journal import RouterJournal, RouterTurnRecord
 
-    GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").append(
-        GatewayTurnRecord(
+    RouterJournal(path=data_dir / "router" / "turns.jsonl").append(
+        RouterTurnRecord(
             created_at="2026-08-22T00:00:00+00:00",
             signature="sig",
             task="t",
@@ -41,18 +41,18 @@ def test_empty_data_dir_still_exposes_up_and_is_well_formed(tmp_path):
     assert "daisugi_up 1" in text
     assert text.endswith("\n")  # exposition must end with a newline
     # no store -> no store series (a scraper simply sees no such metric)
-    assert "daisugi_gateway" not in text
+    assert "daisugi_router" not in text
     # every emitted sample line has a preceding TYPE line for its metric
     _assert_types_precede_samples(text)
 
 
-def test_gateway_numbers_are_exported(tmp_path):
-    _seed_gateway(tmp_path, input_tokens=1000, output_tokens=117)
-    _seed_gateway(tmp_path, input_tokens=1000, output_tokens=117)
+def test_router_numbers_are_exported(tmp_path):
+    _seed_router(tmp_path, input_tokens=1000, output_tokens=117)
+    _seed_router(tmp_path, input_tokens=1000, output_tokens=117)
     text = render_prometheus(tmp_path)
-    assert "daisugi_gateway_frontier_tokens_saved_total 2234" in text
-    assert "# TYPE daisugi_gateway_frontier_tokens_saved_total counter" in text
-    assert "daisugi_gateway_turns_total 2" in text
+    assert "daisugi_router_frontier_tokens_saved_total 2234" in text
+    assert "# TYPE daisugi_router_frontier_tokens_saved_total counter" in text
+    assert "daisugi_router_turns_total 2" in text
     _assert_types_precede_samples(text)
 
 

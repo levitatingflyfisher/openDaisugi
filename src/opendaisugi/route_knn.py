@@ -1,13 +1,13 @@
 """The knn router: send a turn to the model that did well on similar past tasks.
 
-This is a fourth choice for the gateway's router slot (``gateway_router: knn``).
-The gateway records one row per routed turn: a hash of the task, its vector, the
+This is a fourth choice for the router's routing mode slot (``routing_mode: knn``).
+The router records one row per routed turn: a hash of the task, its vector, the
 model, the cost, the latency and an outcome. To route a new turn it embeds the
 task, finds the nearest past rows, and scores each candidate model by the
 similarity-weighted share of good outcomes, less a cost term.
 
 Rulings RT-R-1 to RT-R-7 in ``clients/ADJUDICATIONS.md`` fix every number here.
-The Go and Rust gateways use the same rules, and the three are compared on a
+The Go and Rust routers use the same rules, and the three are compared on a
 fixed outcome table.
 
 The text of a task is never stored. Only its SHA-256 and its vector are.
@@ -30,7 +30,7 @@ GOOD = "good"
 BAD = "bad"
 UNKNOWN = "unknown"
 OUTCOMES = (GOOD, BAD, UNKNOWN)
-# Who wrote an outcome: the gateway (auto), a person (human), or a later grader model.
+# Who wrote an outcome: the router (auto), a person (human), or a later grader model.
 SOURCES = ("auto", "human", "grader")
 # Human feedback beats the grader, and the grader beats the automatic labels.
 SOURCE_RANK = {"auto": 0, "grader": 1, "human": 2}
@@ -159,7 +159,7 @@ class KnnDecision:
 
 
 class OutcomeStore:
-    """The routing table, in ``<data-dir>/gateway/routing.db``."""
+    """The routing table, in ``<data-dir>/router/routing.db``."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -292,7 +292,7 @@ def candidate_models(
     A rung is a candidate only when the price table shows it strictly cheaper than
     the requested model. knn never picks a model above the requested one.
     """
-    from opendaisugi.gateway import _strictly_cheaper
+    from opendaisugi.router import _strictly_cheaper
 
     out = [requested]
     for rung in (local_model, cheap_model):
@@ -302,7 +302,7 @@ def candidate_models(
 
 
 def _unit_price(model: str, prices: dict[str, tuple[float, float]]) -> float:
-    from opendaisugi.gateway import _FALLBACK_PRICE
+    from opendaisugi.router import _FALLBACK_PRICE
 
     per_in, per_out = prices.get(model, _FALLBACK_PRICE)
     return per_in + per_out
@@ -421,9 +421,9 @@ def label_previous(
 
 
 class KnnRouter:
-    """What a gateway needs to route and to learn: a store, an embedder and a threshold.
+    """What a router needs to route and to learn: a store, an embedder and a threshold.
 
-    ``embed`` takes text and returns ``(vector, identity)``. It may raise; the gateway
+    ``embed`` takes text and returns ``(vector, identity)``. It may raise; the router
     then falls back to the rules router for that turn.
     """
 
@@ -499,7 +499,7 @@ def knn_view(
     Read-only: it books nothing. ``route --knn`` prints it.
     """
     from opendaisugi._search import active_threshold
-    from opendaisugi.gateway import _PRICES_PER_MTOK
+    from opendaisugi.router import _PRICES_PER_MTOK
 
     prices = _PRICES_PER_MTOK if prices is None else prices
     try:
@@ -507,7 +507,7 @@ def knn_view(
         cut = active_threshold() if threshold is None else threshold
     except Exception:
         return {"error": "could not embed the task"}
-    store = OutcomeStore(Path(data_dir) / "gateway" / "routing.db")
+    store = OutcomeStore(Path(data_dir) / "router" / "routing.db")
     cands = candidate_models(requested, cheap_model=cheap_model, local_model=None, prices=prices)
     kd = decide(
         vec,

@@ -124,7 +124,7 @@ class ModelHostUnknownError(OpenDaisugiError):
     Raised by ``opendaisugi.model_host.record``. It refuses to persist a host
     as ollama, openai, or anthropic when the probe came back ``kind="unknown"``.
     A guessed kind would misroute every later reader of ``llm_host_kind``:
-    the gateway's count-tokens shim, ``daisugi modules``, and the harness env
+    the router's count-tokens shim, ``daisugi modules``, and the harness env
     lines. Unmarked provenance is the same fault the matcher backends guard
     against, applied to the model host.
     """

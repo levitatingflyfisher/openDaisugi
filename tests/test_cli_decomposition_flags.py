@@ -1,6 +1,6 @@
 """One opt-in, one persisted default, one override — across every command.
 
-ADR-0010's opt-in became reachable on `gate init`, but the bulk paths that
+ADR-0010's opt-in became reachable on `warden init`, but the bulk paths that
 actually replay history (`onboard`, `journal ingest`, `hook to-trace`,
 `hook auto-tend`) had no way to ask for it. `hook auto-tend` is the reason the
 default has to live in config.yaml at all: it runs from cron and from a
@@ -134,14 +134,14 @@ def test_auto_tend_honours_the_config_default(tmp_path: Path):
     assert _trace_ok(tmp_path, traces[0]) is True
 
 
-# --- gate: same resolver, config beside the gate root ---------------------------
+# --- warden: same resolver, config beside the warden root ---------------------------
 
 
 @_needs_parser
-def test_gate_init_takes_its_default_from_config(tmp_path: Path):
-    root = tmp_path / ".opendaisugi" / "gate"
+def test_warden_init_takes_its_default_from_config(tmp_path: Path):
+    root = tmp_path / ".opendaisugi" / "warden"
     save_config(Config(shell_allow_decomposition=True), tmp_path / ".opendaisugi" / "config.yaml")
-    res = runner.invoke(app, ["gate", "init", "--workspace", str(tmp_path), "--root", str(root)])
+    res = runner.invoke(app, ["warden", "init", "--workspace", str(tmp_path), "--root", str(root)])
     assert res.exit_code == 0, res.output
     env = json.loads((root / "envelopes" / "default.json").read_text())
     assert env["permissions"]["shell_allow_decomposition"] is True
@@ -158,7 +158,7 @@ def test_gate_init_takes_its_default_from_config(tmp_path: Path):
         ["hook", "to-trace", "--help"],
         ["hook", "auto-tend", "--help"],
         ["generate-envelope", "--help"],
-        ["gate", "init", "--help"],
+        ["warden", "init", "--help"],
         ["install", "--help"],
     ],
     ids=lambda a: "-".join(a[:-1]),

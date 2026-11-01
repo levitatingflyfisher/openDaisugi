@@ -1,12 +1,12 @@
 """The config fields that hold a Switchyard router choice, and the adapters that
-turn config or a TOML file into the two target ids the gateway meters by."""
+turn config or a TOML file into the two target ids the router meters by."""
 
 from __future__ import annotations
 
 import pytest
 
 from opendaisugi.config import default_config, load_config, save_config
-from opendaisugi.router_switchyard import (
+from opendaisugi.routing_switchyard import (
     SwitchyardConfigError,
     render_switchyard_toml,
     route_targets_from_toml,
@@ -27,7 +27,7 @@ def test_a_key_is_used_only_when_config_names_its_variable():
 def test_config_defaults_to_the_rules_router():
     cfg = default_config()
     assert cfg.switchyard_api_key_env is None
-    assert cfg.gateway_router == "rules"
+    assert cfg.routing_mode == "rules"
     assert cfg.switchyard_route_id == "daisugi"
     assert cfg.switchyard_capable_model == "claude-sonnet-5"
     assert cfg.switchyard_efficient_model is None
@@ -36,14 +36,14 @@ def test_config_defaults_to_the_rules_router():
 def test_config_round_trips_switchyard_fields(tmp_path):
     cfg = default_config().model_copy(
         update={
-            "gateway_router": "switchyard",
+            "routing_mode": "switchyard",
             "switchyard_efficient_model": "qwen3-coder:30b",
         }
     )
     path = tmp_path / "config.yaml"
     save_config(cfg, path)
     loaded = load_config(path)
-    assert loaded.gateway_router == "switchyard"
+    assert loaded.routing_mode == "switchyard"
     assert loaded.switchyard_efficient_model == "qwen3-coder:30b"
 
 

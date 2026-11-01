@@ -8,6 +8,8 @@
 // agent's sheet in over it; the overview stays drawn and live under it.
 
 import { mountRoster } from './roster.js';
+import { changed } from './reconcile.js';
+import { mountEnvelopes } from './envcard.js';
 import { mountFloor, endedMessage, stripFits } from './floor.js';
 import { mountPane, onEvent as paneEvent, detached, open as openPane, close as closePane, release as releasePane, runOnPane } from './pane.js';
 import { mountNew, mountNewButton } from './newpane.js';
@@ -65,7 +67,7 @@ let phone = false;
 // viewHostRef is the mounted view host, or null before boot runs. The
 // socket's close drops its attaches the way it drops the floor's.
 let viewHostRef = null;
-// chatRef is the phone's chat with the foreman, or null before boot runs.
+// chatRef is the phone's chat with the steward, or null before boot runs.
 let chatRef = null;
 // speechRef is the page's speech: replies read aloud. Null before boot runs.
 let speechRef = null;
@@ -370,6 +372,8 @@ async function api(path, options = {}) {
   if (!resp.ok) {
     const err = new Error(body.error || ('HTTP ' + resp.status));
     err.status = resp.status;
+    // The voice server's short code, for a caller that tells causes apart.
+    if (typeof body.code === 'string') err.code = body.code;
     throw err;
   }
   return body;
@@ -487,6 +491,8 @@ async function fix(action) {
       location.hash = '#/settings';
     } else if (kind === 'voice') {
       status(await retryVoice(api, status));
+    } else if (kind === 'run' && typeof action.run === 'function') {
+      await action.run();
     } else if (kind === 'open' && action.pane) {
       // Show the pane, so its question is in view.
       const want = '#/pane/' + encodeURIComponent(action.pane);
@@ -619,8 +625,17 @@ function boot() {
   window.coppice.back = goBack;
 
   mountRoster();
+  // An envelope the steward proposed waits as a card until the owner answers.
+  const envelopes = mountEnvelopes({
+    el: document.getElementById('envelopes'),
+    rpc,
+    connected: () => Boolean(state.ws && state.ws.readyState === WebSocket.OPEN),
+    onNote: (line) => status(line),
+  });
+  window.addEventListener('coppice:refresh', () => envelopes.read());
+  window.addEventListener('coppice:open', () => envelopes.read());
   // The header row reads the floor facts every few seconds, and on the
-  // same beat asks for a fresh pane list, since a gate report that keeps
+  // same beat asks for a fresh pane list, since a warden report that keeps
   // an agent working changes its row's verdict and tokens but sends no
   // state event.
   const factsEl = document.getElementById('facts');
@@ -640,7 +655,7 @@ function boot() {
     tick: () => window.dispatchEvent(new CustomEvent('coppice:refresh')),
     rows: () => state.panes,
     onAction: fix,
-    hintEl: document.getElementById('gate-hint'),
+    hintEl: document.getElementById('warden-hint'),
   }) : null;
   // Machines is a read-only panel of the tailnet's boxes; its button sits beside Settings.
   const machines = mountMachines({
@@ -788,6 +803,8 @@ function boot() {
     api,
     rpc,
     ring: (id) => ringViews.has(id),
+    // The cards view and the tree view are given daisugi's cards and tree.
+    wants: (id, kind) => id === kind && (kind === 'cards' || kind === 'tree'),
     panes: () => state.panes,
     go: (hash) => { location.hash = hash; },
     // The selection a view sets stays with the overlay; the address stays
@@ -836,13 +853,30 @@ function boot() {
   // The garden draws the panes the tiles show. A shoot opens its agent the
   // way a view does: in a window, and the overlay closes.
   const gardenEl = document.getElementById('garden');
+  // cardCount is how many review cards are open, read while the garden
+  // shows. The trunk's badge says so.
+  let cardCount = 0;
+  const readCards = async () => {
+    try {
+      const b = await api('/api/cards');
+      cardCount = Array.isArray(b && b.cards) ? b.cards.length : 0;
+    } catch (e) {
+      cardCount = 0;
+    }
+    if (typeof garden !== 'undefined' && garden) garden.changed();
+  };
   const garden = mountGarden(gardenEl, {
+    cards: () => cardCount,
+    refreshCards: readCards,
+    openCards: () => { location.hash = '#/view/cards'; },
+    every: (fn, ms) => setInterval(fn, ms),
+    cancel: (id) => clearInterval(id),
     panes: () => state.panes,
-    // The foreman comes through coppice.facts, the page's own read of the
+    // The steward comes through coppice.facts, the page's own read of the
     // floor facts, so a browser check can stand in for it.
-    foreman: () => {
+    steward: () => {
       const f = window.coppice && window.coppice.facts ? window.coppice.facts() : null;
-      return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+      return f && f.steward && typeof f.steward.pane === 'string' ? f.steward.pane : '';
     },
     expand: (on) => { if (overlayEl.classList) overlayEl.classList.toggle('wide', on); },
     // On a phone a pane opens on its own screen; the overlay closes there too.
@@ -882,11 +916,14 @@ function boot() {
   });
   if (dotsEl) {
     dotsEl.addEventListener('click', () => overlay.open('colony', []));
+    const dotSlot = {};
     const paintDots = () => {
+      const classes = state.panes.map((p) => 'dot dot-' + (p && p.state ? p.state : 'unknown'));
+      if (!changed(dotSlot, classes.join('|'), dotsEl)) return;
       dotsEl.textContent = '';
-      for (const p of state.panes) {
+      for (const cls of classes) {
         const dot = document.createElement('span');
-        dot.className = 'dot dot-' + (p && p.state ? p.state : 'unknown');
+        dot.className = cls;
         dotsEl.append(dot);
       }
     };
@@ -1020,22 +1057,24 @@ function boot() {
   mountSettings();
   window.addEventListener('coppice:panes', () => floor.paint(state.panes));
 
-  // The phone's home: the agents fold, then the chat with the foreman. A
+  // The phone's home: the agents fold, then the chat with the steward. A
   // chip in the chat opens its agent's sheet the way a row does, so going
   // back steps back. The chat is read while it is on screen and the socket
   // is up.
   const fold = mountFold(document.getElementById('agents-fold'), document.getElementById('rail'));
-  // floor.facts names the tracked foreman; its scratch directory is no
+  // floor.facts names the tracked steward; its scratch directory is no
   // project.
-  const foremanId = () => {
+  const stewardId = () => {
     const f = factsRow ? factsRow.facts() : null;
-    return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+    return f && f.steward && typeof f.steward.pane === 'string' ? f.steward.pane : '';
   };
-  fold.paint(state.panes, foremanId());
-  window.addEventListener('coppice:panes', () => fold.paint(state.panes, foremanId()));
+  fold.paint(state.panes, stewardId());
+  window.addEventListener('coppice:panes', () => fold.paint(state.panes, stewardId()));
   const chatOn = () => phone && overview() && Boolean(state.ws && state.ws.readyState === WebSocket.OPEN);
   chatRef = mountChat({
     list: document.getElementById('chat-list'),
+    // The chat scrolls in its own box, not the page.
+    scroller: () => document.getElementById('chat'),
     importBar: document.getElementById('import-bar'),
     rpc,
     panes: () => state.panes,
@@ -1043,6 +1082,8 @@ function boot() {
     me: () => state.me,
     on: chatOn,
     speak: (text) => speechRef.speak(text),
+    speech: () => speechRef,
+    tag: 'chat',
   });
   window.coppice.chat = chatRef;
   // The chips name the live agents, so a new pane list draws the chat
@@ -1053,6 +1094,8 @@ function boot() {
   window.addEventListener('coppice:route', () => {
     const now = chatOn();
     if (now && !chatWas) chatRef.read();
+    // Leaving the home view stops what its Listen started.
+    if (!now && chatWas) chatRef.stopListening();
     chatWas = now;
   });
 

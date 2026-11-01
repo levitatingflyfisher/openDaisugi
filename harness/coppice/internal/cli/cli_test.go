@@ -286,7 +286,7 @@ func TestPaneResumeStartsFreshFromTheCLI(t *testing.T) {
 	}
 }
 
-// A gate deny is exit 2, distinct from a user error.
+// A warden deny is exit 2, distinct from a user error.
 func TestAServerErrorMapsToExitOneAndPrintsTheCode(t *testing.T) {
 	sock, dir := liveServer(t)
 	code, _, errb := runCLI(t, sock, dir, "pane", "read", "w9:p9")

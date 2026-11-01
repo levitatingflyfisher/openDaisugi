@@ -27,7 +27,7 @@ fn server(dir: &std::path::Path) -> Arc<Server> {
         data_dir: dir.to_path_buf(),
         start_dir: dir.to_path_buf(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     })
 }
 

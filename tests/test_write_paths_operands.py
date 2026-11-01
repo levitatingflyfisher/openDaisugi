@@ -66,7 +66,7 @@ def _shell(command: str) -> dict:
         ("sed -i -e 's/a/b/' src/a.py", ["src/a.py"]),
         ("sed -i.bak 's/a/b/' a.py", ["a.py", "a.py.bak"]),
         ("sed -ie 's/a/b/' a.py", ["a.py", "a.pye"]),
-        ("sed --in-place=.orig -f fix.sed a.py", ["a.py", "a.py.orig"]),
+        ("sed --in-place=.orig -f fix.sed a.py", None),
         ("sed -i'*.bak' 's/a/b/' a.py", None),
         ("sed -ni 's/a/b/p' a.py", ["a.py"]),
         # dd writes its of= operand.
@@ -119,7 +119,7 @@ def test_operand_writes(command, expected):
         ("ls | xargs sh -c 'rm a'", None),
         # Interpreters stay out of scope.
         ("python -c 'import os'", []),
-        ("sudo rm -rf /", []),
+        ("sudo rm -rf /", None),
     ],
 )
 def test_operand_writes_in_wrappers(command, expected):
@@ -129,12 +129,15 @@ def test_operand_writes_in_wrappers(command, expected):
 @pytest.mark.parametrize(
     ("command", "expected"),
     [
-        ("cd src && echo x > a.py", None),
-        ("cd src && touch a.py", None),
+        ("cd src && echo x > a.py", ["a.py", "src/a.py"]),
+        ("cd src && touch a.py", ["a.py", "src/a.py"]),
+        ("pushd src && touch a.py", None),
+        ("cd src; cd .. && touch a.py", None),
         ("cd /repo && echo x > /repo/a.py", ["/repo/a.py"]),
-        ("pushd src; ls", []),
+        ("pushd /repo; ls /repo", []),
+        ("pushd src; ls", None),
         ("sh -c 'cd src' && touch a", ["a"]),
-        ("cd src && sh -c 'touch a'", None),
+        ("cd src && sh -c 'touch a'", ["a", "src/a"]),
     ],
 )
 def test_a_line_that_moves_its_cwd(command, expected):
@@ -165,7 +168,7 @@ def test_resolved_against_a_base(step, base, expected):
 
 
 def test_every_writer_has_a_rule_and_closed_flag_sets():
-    rules = {"all", "dest", "move", "install", "sed", "dd", "rsync"}
+    rules = {"all", "dest", "move", "install", "sed", "dd", "rsync", "tar", "inout"}
     for name, spec in WRITERS.items():
         assert spec["rule"] in rules, name
         for key in ("short", "short_value", "short_optional"):

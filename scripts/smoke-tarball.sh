@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # scripts/smoke-tarball.sh TARBALL [SCRATCH]
 # The install smoke test: from the release tarball scripts/release.sh
-# writes to the first gate decision, in a scratch HOME with PATH limited to
+# writes to the first warden decision, in a scratch HOME with PATH limited to
 # the unpacked binaries and /usr/bin:/bin. Nothing reaches a model or the
 # network, and the real HOME is never read.
 #
 # It checks, and stops on the first failure:
 #   - the tarball unpacks and each binary reports a version;
-#   - `daisugi gate init` and `daisugi install --gate --enforce --runtime
+#   - `daisugi warden init` and `daisugi install --enforce --runtime
 #     claude --yes` succeed and write the PreToolUse hook into
 #     $HOME/.claude/settings.json;
 #   - the hook command allows a Read inside the workspace (exit 0);
@@ -39,20 +39,20 @@ for b in daisugi coppice sprig; do
   echo "version: $v"
 done
 
-run sh -c 'cd "$HOME/work" && daisugi gate init --workspace "$HOME/work"' > "$S/init.out" 2>&1 ||
-  { cat "$S/init.out" >&2; fail "daisugi gate init"; }
-run daisugi install --gate --enforce --runtime claude --yes > "$S/install.out" 2>&1 ||
-  { cat "$S/install.out" >&2; fail "daisugi install --gate"; }
+run sh -c 'cd "$HOME/work" && daisugi warden init --workspace "$HOME/work"' > "$S/init.out" 2>&1 ||
+  { cat "$S/init.out" >&2; fail "daisugi warden init"; }
+run daisugi install --enforce --runtime claude --yes > "$S/install.out" 2>&1 ||
+  { cat "$S/install.out" >&2; fail "daisugi install"; }
 [ -f "$S/.claude/settings.json" ] || fail "install wrote no .claude/settings.json"
 # install also writes the capture hook (`daisugi hook record`) beside the
-# gate's, as the Python CLI does; the gate's is the one that is not it.
+# warden's, as the Python CLI does; the warden's is the one that is not it.
 cmd="$(python3 -c '
 import json, sys
 cmds = [h["command"] for e in json.load(open(sys.argv[1]))["hooks"]["PreToolUse"] for h in e["hooks"]]
-gate = [c for c in cmds if "hook record" not in c]
-assert len(gate) == 1, cmds
-print(gate[0])' "$S/.claude/settings.json")" ||
-  fail "settings.json has not exactly one PreToolUse gate hook command"
+warden = [c for c in cmds if "hook record" not in c]
+assert len(warden) == 1, cmds
+print(warden[0])' "$S/.claude/settings.json")" ||
+  fail "settings.json has not exactly one PreToolUse warden hook command"
 echo "hook command: $cmd"
 
 allow="{\"session_id\":\"s1\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$S/work/a.txt\"},\"cwd\":\"$S/work\",\"hook_event_name\":\"PreToolUse\"}"
@@ -72,7 +72,7 @@ grep -q '"deny"' "$S/allow.out" && fail "the hook printed a deny for a Read in t
 if [ "$de" -ne 2 ] && ! grep -q '"permissionDecision": *"deny"' "$S/deny.out"; then
   fail "the hook did not deny rm -rf /etc (exit $de)"
 fi
-echo "unpack to first gate decision: $(( (t1 - t0) / 1000000 )) ms"
+echo "unpack to first warden decision: $(( (t1 - t0) / 1000000 )) ms"
 
 top=(--socket "$S/c.sock" --data-dir "$S/data")
 run coppice "${top[@]}" server start > "$S/coppice.out" 2>&1 || { cat "$S/coppice.out" >&2; fail "coppice server start"; }

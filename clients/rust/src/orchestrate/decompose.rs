@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{Object, Value};
 use crate::llm::{Call, CallError, Client, Schema};
 use crate::pathways::pmodel::{steps, validate_model, Id, Mode};
 use crate::pathways::verify::Outcome;

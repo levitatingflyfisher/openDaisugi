@@ -6,13 +6,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::gardencmd::{now_seconds, read_stamp};
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::journalparse::journal_result;
 use super::tendcmd::{CheckStop, TendReport, DEFAULT_MODEL};
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::capture::{infer_envelope, list_sessions, plan, records, CapErr, Session};
+use crate::capture::{infer_envelope, list_sessions_in, plan, records, CapErr, Session};
 use crate::distill::token_hex;
-use crate::gate::pyjson::{float_repr, Object};
+use crate::warden::pyjson::{float_repr, Object};
 use crate::pathways::PwErr;
 use crate::shell_decompose::ShellParser;
 use crate::tracejournal::{iso_seconds, Journal};
@@ -101,10 +101,10 @@ impl Env {
     fn auto_tend(&mut self, args: &[String]) -> Res {
         const CMD: &str = "hook auto-tend";
         let opts = [
-            Opt::val(&["--captures-root"], "PATH", "Where the captured sessions are."),
+            super::hookcapcmd::CAPTURES_ROOT,
             Opt::val(&["--data-dir"], "PATH", "Daisugi data directory."),
             Opt::val(&["--min-interval"], "INTEGER", "Skip if last auto-tend was newer than this many seconds."),
-            Opt::flag(&["--force"], "Ignore the min-interval gate."),
+            Opt::flag(&["--force"], "Ignore the min-interval warden."),
             Opt::flag(&["--skip-distill"], "Convert captures-to-traces but don't run tend afterwards."),
             Opt::pair(&["--allow-shell-decomposition"], "--no-allow-shell-decomposition", "Let the envelope admit compound shell (ADR-0010)."),
         ];
@@ -113,8 +113,8 @@ impl Env {
             return self.cmd_help(CMD, "", "Close the captures->traces->distillation loop in one cron-friendly call.", &opts);
         }
         let min_interval = self.click_int(CMD, &p, "--min-interval", 3600)?;
-        let root = p.str("--captures-root", &super::gateroot::join(&self.data_home(), "captures"));
         let data_dir = p.str("--data-dir", &self.data_home());
+        let roots = self.capture_roots(&p, &data_dir);
         let force = p.flag("--force");
         let cfg = match super::config::load(&format!("{data_dir}/config.yaml")) {
             Ok(c) => c,
@@ -142,7 +142,7 @@ impl Env {
             if p.flag_set("--allow-shell-decomposition") { p.flag("--allow-shell-decomposition") } else { cfg.shell_allow_decomposition };
         // Everything this run would convert is read and checked first, so a
         // capture this binary cannot convert changes nothing.
-        let sessions = list_sessions(&root).map_err(|e| self.cap_err(CMD, e))?;
+        let sessions = list_sessions_in(&roots).map_err(|e| self.cap_err(CMD, e))?;
         // Read only: the journal is made or migrated after every refusal.
         let jr = if std::fs::metadata(format!("{data_dir}/journal/index.db")).is_ok() {
             Some(Journal::open_read_only(&data_dir).map_err(|e| self.pw_err(CMD, e))?)
@@ -157,7 +157,7 @@ impl Env {
                     continue;
                 }
             }
-            let c = prepare_conversion(&mut parser, s, &root, decompose).map_err(|e| self.cap_err(CMD, e))?;
+            let c = prepare_conversion(&mut parser, s, &s.root, decompose).map_err(|e| self.cap_err(CMD, e))?;
             todo.push(c);
         }
         drop(jr);

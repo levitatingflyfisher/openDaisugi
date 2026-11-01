@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 import posixpath
 import re
 import time
+from typing import Any
 from urllib.parse import urlparse
 
 from opendaisugi import conformance
@@ -62,7 +64,7 @@ def is_z3_timeout_warning(text: str) -> bool:
     """True when `text` is one of verify()'s Z3-timeout warning strings.
 
     Every warning verify() keeps for a caught VerificationTimeout has this
-    shape ("Z3 <check> exceeded <N>ms"). Callers (the gate, pathway import)
+    shape ("Z3 <check> exceeded <N>ms"). Callers (the warden, pathway import)
     use this to tell a Z3-timeout warning apart from any other message in
     VerificationResult.warnings.
     """
@@ -111,7 +113,7 @@ def _extract_shell_head(stripped: str) -> str | None:
 
     **Safety invariant:** this classifier only decides *which string to use
     as the allowlist key*. It does not decide whether the raw command is
-    safe. The metachar gate still runs on the unmodified command string,
+    safe. The metachar warden still runs on the unmodified command string,
     so ``A=$(rm -rf /) cmd`` is still rejected for the ``$(`` substring
     even if this function returns ``cmd``.
     """
@@ -128,7 +130,7 @@ def _extract_shell_head(stripped: str) -> str | None:
 
 
 def _build_decomposition_remediation(step_id: str, command: str) -> str | None:
-    """Produce a suggested-remediation string for a metachar-gate rejection
+    """Produce a suggested-remediation string for a metachar-warden rejection
     when the command decomposes cleanly into atomic pieces joined by
     &&/||/;. Returns None when the command carries $( or backticks (no
     safe decomposition). v0.18.0+.
@@ -212,7 +214,7 @@ def _check_shell_command(
     stripped = command.strip()
     if not stripped:
         return violations
-    # INVARIANT: metachar gate runs on the raw command FIRST. Head-classifier
+    # INVARIANT: metachar warden runs on the raw command FIRST. Head-classifier
     # decisions below cannot soften it — env-prefix skipping, glob allowlist,
     # and comment detection all run after the raw command has been cleared
     # of ;, |, &, `, <, >, $(, newlines. This is the guarantee the tests
@@ -239,7 +241,6 @@ def _check_shell_command(
 
             decomp = decompose_command(command)
             if decomp.ok:
-                violations.extend(_check_redirect_scopes(decomp, step_id, perms))
                 for simple in decomp.commands:
                     violations.extend(_verify_simple_command(simple, step_id, perms, policy, depth))
                 return violations
@@ -271,50 +272,98 @@ def _check_shell_command(
 # Shell-level write sinks and read sources that cannot persist or exfiltrate
 # anything: the null device and the process's own standard streams. Rejecting
 # `> /dev/null` would fail half of real-world shell for zero safety.
+#: The start of a verify warning that records a shell file access a fenced
+#: call made outside the envelope's file scopes, or could not place
+#: (ADR-0028). The kernel fence stops the access; the warden records it.
+FENCE_PREFIX = "fence-enforced: "
+
 _SANCTIONED_WRITE_SINKS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr"})
 _SANCTIONED_READ_SOURCES = frozenset({"/dev/null", "/dev/stdin"})
 
 
-def _check_redirect_scopes(decomp, step_id: str, perms: Permission) -> list[Violation]:
-    """Check a decomposition's literal redirect targets against the envelope's
-    file scopes (ADR-0014). A redirect is a file access spelled in shell, so a
-    write target faces ``file_write`` and a read target faces ``file_read`` —
-    exactly the scopes a FileWriteStep/FileReadStep would face."""
+def _names_net_device(v: Violation) -> bool:
+    """True when a shell-access finding is for a path under /dev/tcp or /dev/udp.
+    Bash opens those with socket and connect, which Landlock never sees."""
+    for key, value in v.detail.items():
+        if key.startswith(("shell_", "redirect_")) and isinstance(value, str):
+            for dev in ("/dev/tcp", "/dev/udp"):
+                if value == dev or value.startswith(dev + "/"):
+                    return True
+    return False
+
+
+def _check_shell_accesses(
+    command: str, step_id: str, perms: Permission, base: str | None
+) -> list[Violation]:
+    """Check every file a shell line reads or writes against the envelope's
+    file scopes (SG-1 to SG-6, ADR-0014 for redirects). An operand is a file
+    access spelled in shell, so a write faces ``file_write`` and a read faces
+    ``file_read``: exactly the scopes a FileWriteStep or FileReadStep faces.
+    A tree needs a covering ``/**`` glob. What cannot be placed is a
+    violation unless the scope is everything."""
+    from opendaisugi.write_paths import shell_accesses
+
+    acc = shell_accesses(command, base)
     violations: list[Violation] = []
-    for path in decomp.writes:
-        if path in _SANCTIONED_WRITE_SINKS:
-            continue
-        if not _path_matches_any(path, perms.file_write):
+    for verb, scope_name, accesses in (
+        ("writes", "file_write", acc.writes),
+        ("reads", "file_read", acc.reads),
+    ):
+        scope = perms.file_write if verb == "writes" else perms.file_read
+        noun = verb[:-1]
+        for access in accesses:
+            path = access.path
+            if access.tree:
+                if covers_tree(path, scope):
+                    continue
+                message = (
+                    f"Step '{step_id}' shell {verb} under '{path}' (recursive) "
+                    f"outside {scope_name} scope {scope}"
+                )
+                detail: dict = {"step": step_id, f"shell_{noun}_tree": path}
+                remediation = f"Add '{path}/**' to permissions.{scope_name}"
+            else:
+                if _path_matches_any(path, scope):
+                    continue
+                if access.via == "redirect":
+                    message = (
+                        f"Step '{step_id}' shell redirect {verb} '{path}' "
+                        f"outside {scope_name} scope {scope}"
+                    )
+                    detail = {"step": step_id, f"redirect_{noun}": path}
+                else:
+                    message = (
+                        f"Step '{step_id}' shell {verb} '{path}' outside {scope_name} scope {scope}"
+                    )
+                    detail = {"step": step_id, f"shell_{noun}": path}
+                remediation = f"Add '{path}' (or a covering glob) to permissions.{scope_name}"
             violations.append(
                 Violation(
                     stage="permissions",
-                    message=(
-                        f"Step '{step_id}' shell redirect writes '{path}' "
-                        f"outside file_write scope {perms.file_write}"
-                    ),
-                    detail={"step": step_id, "redirect_write": path},
-                    suggested_remediation=(
-                        f"Add '{path}' (or a covering glob) to permissions.file_write"
-                    ),
+                    message=message,
+                    detail=detail,
+                    suggested_remediation=remediation,
                 )
             )
-    for path in decomp.reads:
-        if path in _SANCTIONED_READ_SOURCES:
+    for verb, scope_name, scope, unknown in (
+        ("write", "file_write", perms.file_write, acc.writes_unknown),
+        ("read", "file_read", perms.file_read, acc.reads_unknown),
+    ):
+        if unknown is None or covers_everything(scope):
             continue
-        if not _path_matches_any(path, perms.file_read):
-            violations.append(
-                Violation(
-                    stage="permissions",
-                    message=(
-                        f"Step '{step_id}' shell redirect reads '{path}' "
-                        f"outside file_read scope {perms.file_read}"
-                    ),
-                    detail={"step": step_id, "redirect_read": path},
-                    suggested_remediation=(
-                        f"Add '{path}' (or a covering glob) to permissions.file_read"
-                    ),
-                )
+        violations.append(
+            Violation(
+                stage="permissions",
+                message=(
+                    f"Step '{step_id}' shell {verb} targets cannot be placed ({unknown}) "
+                    f"and {scope_name} scope {scope} is not everything"
+                ),
+                detail={"step": step_id, f"shell_{verb}s_unknown": unknown},
+                suggested_remediation=(
+                    f"Name each file the command {verb}s, without xargs, globs or variables"
+                ),
             )
+        )
     return violations
 
 
@@ -328,9 +377,9 @@ def _verify_simple_command(
     """The single-simple-command check: head allowlist + interpreter policy.
 
     Callers guarantee ``command`` is one simple command — either the raw
-    command cleared the metachar gate, or the bash grammar decomposed it and
+    command cleared the metachar warden, or the bash grammar decomposed it and
     vouched for this piece. Interpreter payloads (``sh -c '…'``) recurse back
-    through :func:`_check_shell_command` at depth+1, where the full gate
+    through :func:`_check_shell_command` at depth+1, where the full warden
     (including decomposition, if opted in) applies to the payload string.
     """
     violations: list[Violation] = []
@@ -386,6 +435,33 @@ def _verify_simple_command(
 def _path_matches_any(path: str, globs: list[str]) -> bool:
     normalized = posixpath.normpath(path)
     return any(_match_glob(normalized, g) for g in globs)
+
+
+def covers_everything(globs: list[str]) -> bool:
+    """True when a scope glob is exactly ``**`` or ``/**``: every path.
+    A glob such as ``/**/*`` or ``/home/**`` is not everything."""
+    return any(g in ("**", "/**") for g in globs)
+
+
+def covers_tree(directory: str, globs: list[str]) -> bool:
+    """True when ``directory`` and everything under it is in scope (SG-2).
+
+    Only a glob that ends in ``/**`` covers a tree: the directory must
+    match the glob or the glob without its trailing ``/**``. A glob that
+    does not end in ``/**`` never covers a tree. A glob too complex to
+    match (``GlobTooComplex``) covers nothing."""
+    if covers_everything(globs):
+        return True
+    normalized = posixpath.normpath(directory)
+    for g in globs:
+        if not g.endswith("/**"):
+            continue
+        try:
+            if _match_glob(normalized, g) or _match_glob(normalized, g[: -len("/**")]):
+                return True
+        except GlobTooComplex:
+            continue
+    return False
 
 
 # The matcher below is exponential in the number of ``**`` segments. It stops
@@ -462,7 +538,7 @@ def _match_glob(
 
 # Built-in step types that HAVE a verification story: a permission-stage case
 # below, a dedicated Z3/robotics handler (joint_move/cartesian_move/gripper/
-# sim_reset/vla via z3_checks + robot-capability subsumption), or gating
+# sim_reset/vla via z3_checks + robot-capability subsumption), or checking
 # elsewhere (task = contained leaf; skill = check_skill_delegations). Any type
 # NOT here is a custom @step_type with no verification story — an unknown effect.
 _KNOWN_STEP_TYPES: frozenset[str] = frozenset(
@@ -486,7 +562,7 @@ _KNOWN_STEP_TYPES: frozenset[str] = frozenset(
 
 # Host tool name → the Permission capability that must back it before an
 # AgenticStep may request it. Deny-by-default: a requested tool not in this
-# map is a violation, mirroring the gate's unknown-tool denial.
+# map is a violation, mirroring the warden's unknown-tool denial.
 _AGENTIC_TOOL_CAPABILITIES: dict[str, str] = {
     "Bash": "shell",
     "Read": "file_read",
@@ -497,12 +573,12 @@ _AGENTIC_TOOL_CAPABILITIES: dict[str, str] = {
     "MultiEdit": "file_write",
     "WebFetch": "network",
     "WebSearch": "network",
-    # sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which the
+    # sprig's spawn tool: the warden sees it as mcp__sprig__spawn, which the
     # envelope admits only when mcp_allowlist names sprig/spawn.
     "Spawn": "mcp_allowlist",
 }
 
-#: The mcp_allowlist key of the Spawn tool, as the gate keys mcp__sprig__spawn.
+#: The mcp_allowlist key of the Spawn tool, as the warden keys mcp__sprig__spawn.
 SPAWN_MCP_KEY = "sprig/spawn"
 
 
@@ -522,7 +598,7 @@ def _check_agentic_step(step, perms: Permission) -> list[Violation]:
     wall of its defense in depth. Each requested host tool must map to a
     capability the envelope grants; the workspace must be readable under the
     envelope's globs; an unknown or empty tool request fails closed. The
-    dynamic inner wall (the call-time gate in the sub-agent's own hook
+    dynamic inner wall (the call-time warden in the sub-agent's own hook
     config) is the executor's job, not this check's.
     """
     violations: list[Violation] = []
@@ -579,8 +655,90 @@ def _check_agentic_step(step, perms: Permission) -> list[Violation]:
     return violations
 
 
+#: The key of the delegate's spawn tool. The warden checks its ``path`` as a read
+#: of its own (``_spawn_effects``), so the generic read rule leaves that argument.
+_SPAWN_TOOL_KEY = "opendaisugi/spawn"
+
+
+def _check_mcp_step(step: Any, key: str, perms: Any, call_cwd: str | None) -> list[Violation]:
+    """The permission stage for one MCP call (MP-2, MP-3, MP-4, MP-10).
+
+    A tool some ``mcp_rules`` entry names is decided by its rules alone. Any
+    other tool is decided by ``mcp_allowlist`` on its name. Then each string
+    argument that names an existing absolute path is a read, which
+    ``file_read`` must admit.
+    """
+    from opendaisugi import mcp_rules
+
+    def deny(message: str, **detail: Any) -> Violation:
+        return Violation(
+            stage="permissions",
+            message=f"Step '{step.id}' {message}",
+            detail={"step": step.id, "mcp_tool": key, **detail},
+        )
+
+    call_args = step.call_arguments()
+    capped = mcp_rules.check_caps(call_args)
+    if capped is not None:
+        return [deny(f"MCP tool '{key}': {capped}")]
+    matching = mcp_rules.matching_rules(perms.mcp_rules, key)
+    if matching:
+        found = mcp_rules.evaluate_rules(
+            matching,
+            step.server,
+            step.tool,
+            call_args,
+            perms=perms,
+            cwd=call_cwd,
+            # A host that joins the server and tool names (OpenCode, pi) hides
+            # the rule a flat name belongs to: those rules apply too.
+            host_rules=mcp_rules.host_named_rules(perms, key),
+        )
+        if found:
+            return [deny(m) for m in found]
+    elif not _head_allowed(key, perms.mcp_allowlist):
+        return [deny(f"MCP tool '{key}' not in mcp_allowlist {perms.mcp_allowlist}")]
+    else:
+        ruled = mcp_rules.ruled_under_host_name(perms, key)
+        if ruled is not None:
+            return [
+                deny(
+                    f"MCP tool '{key}' has an argument rule under '{ruled}'; the host names "
+                    f"the tool '{key}', so write the rule with that name"
+                )
+            ]
+    out: list[Violation] = []
+    home = os.environ.get("HOME")
+    for name, placed in mcp_rules.path_shaped_strings(step.arguments, home):
+        if key == _SPAWN_TOOL_KEY and name == "path":
+            continue  # the warden's spawn check reads this file, with its own tier and words
+        if not os.path.lexists(placed):
+            continue
+        norm = posixpath.normpath(placed)
+        if os.path.isdir(placed):
+            ok = _path_matches_any(norm, perms.file_read) and _path_matches_any(
+                norm + "/_/_", perms.file_read
+            )
+        else:
+            ok = _path_matches_any(norm, perms.file_read)
+        if not ok:
+            out.append(
+                deny(
+                    f"MCP tool '{key}': argument '{name}' reads {placed} outside file_read "
+                    f"{perms.file_read}; name it in mcp_rules with path_in to allow it",
+                    argument=name,
+                )
+            )
+    return out
+
+
 def check_permissions(
-    plan: ActionPlan, envelope: Envelope, *, strict: bool = False
+    plan: ActionPlan,
+    envelope: Envelope,
+    *,
+    strict: bool = False,
+    base: str | None = None,
+    fence_log: list[str] | None = None,
 ) -> list[Violation]:
     """Check that every step in the plan is permitted by the envelope.
 
@@ -591,6 +749,12 @@ def check_permissions(
     Under ``strict`` mode (default-on for high/physical stakes) an UNKNOWN step
     type — a custom ``@step_type`` with no permission surface or handler — is
     rejected: an unverifiable effect cannot be admitted in a high-stakes plan.
+
+    ``fence_log`` is for a fenced call (ADR-0028). When it is a list, the
+    shell-access findings (a shell read or write outside ``file_read`` /
+    ``file_write``, or one that cannot be placed) go into it as messages and
+    are not violations: the kernel fence is the file boundary. Every other
+    check is the same.
     """
     violations: list[Violation] = []
     perms = envelope.permissions
@@ -607,14 +771,28 @@ def check_permissions(
                         )
                     )
                     continue
-                violations.extend(
-                    _check_shell_command(
-                        step.command,
-                        step.id,
-                        perms,
-                        envelope.shell_interpreter_policy,
-                    )
+                shell_violations = _check_shell_command(
+                    step.command,
+                    step.id,
+                    perms,
+                    envelope.shell_interpreter_policy,
                 )
+                violations.extend(shell_violations)
+                # A head the allowlist refused already denies the step; naming
+                # its files too would only repeat it. Every other refusal (a
+                # metacharacter line, an interpreter) still names the files.
+                if not any("command_head" in v.detail for v in shell_violations):
+                    accesses = _check_shell_accesses(step.command, step.id, perms, base)
+                    if fence_log is None:
+                        violations.extend(accesses)
+                    else:
+                        # The kernel fence does not limit the network, so a
+                        # /dev/tcp or /dev/udp access is never relaxed.
+                        for v in accesses:
+                            if _names_net_device(v):
+                                violations.append(v)
+                            else:
+                                fence_log.append(v.message)
             case "network":
                 if not perms.network:
                     violations.append(
@@ -684,21 +862,11 @@ def check_permissions(
                 # empty allowlist admits nothing, so an MCPStep never verifies
                 # vacuously against an envelope that didn't name its tool.
                 key = f"{step.server}/{step.tool}"
-                if not _head_allowed(key, perms.mcp_allowlist):
-                    violations.append(
-                        Violation(
-                            stage="permissions",
-                            message=(
-                                f"Step '{step.id}' MCP tool '{key}' "
-                                f"not in mcp_allowlist {perms.mcp_allowlist}"
-                            ),
-                            detail={"step": step.id, "mcp_tool": key},
-                        )
-                    )
+                violations.extend(_check_mcp_step(step, key, perms, base))
             case "agentic":
                 violations.extend(_check_agentic_step(step, perms))
             # task/skill steps carry no permission-stage surface here: a TaskStep
-            # is a contained pure-reasoning leaf (gated by _check_delegation_safety),
+            # is a contained pure-reasoning leaf (checked by _check_delegation_safety),
             # and a SkillStep's surface is the subsumption stage
             # (check_skill_delegations), not this per-step permission match.
             case _:
@@ -843,6 +1011,7 @@ def verify(
     aliases: AliasRegistry | None = None,
     dialect_pin: str | None = None,
     dialect_base: str | None = None,
+    fenced: bool = False,
 ) -> VerificationResult:
     """Run the full verification pipeline: permissions → Z3 → DAG.
 
@@ -866,9 +1035,13 @@ def verify(
     enforces the words. Any other pin makes every use of a word a violation.
 
     ``dialect_base`` is the directory a word's relative target and the
-    plan's relative write paths are placed from (the gate passes the call's
+    plan's relative write paths are placed from (the warden passes the call's
     cwd). Only an absolute path counts; it is normalized. None places
     nothing.
+
+    ``fenced`` is true for a call the resident warden found under a fence run
+    (ADR-0028). The shell-access findings are then warnings that start with
+    ``FENCE_PREFIX``, not violations, and the rest of the pipeline runs.
     """
     base = _dialect_base(dialect_base)
     result = _verify(
@@ -879,6 +1052,7 @@ def verify(
         aliases=aliases,
         dialect_pin=dialect_pin,
         dialect_base=base,
+        fenced=fenced,
     )
     if aliases is None:
         options: dict = {"strict": strict, "z3_timeout_ms": z3_timeout_ms}
@@ -886,6 +1060,8 @@ def verify(
             options["dialect_pin"] = dialect_pin
         if base is not None:
             options["dialect_base"] = base
+        if fenced:
+            options["fenced"] = True
         conformance.record_verify(plan, envelope, options, result)
     return result
 
@@ -899,6 +1075,7 @@ def _verify(
     aliases: AliasRegistry | None = None,
     dialect_pin: str | None = None,
     dialect_base: str | None = None,
+    fenced: bool = False,
 ) -> VerificationResult:
     """The pipeline behind ``verify()``: permissions → Z3 → DAG.
 
@@ -935,13 +1112,19 @@ def _verify(
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 1: permissions
-    violations.extend(check_permissions(plan, envelope, strict=effective_strict))
+    fence_log: list[str] | None = [] if fenced else None
+    violations.extend(
+        check_permissions(
+            plan, envelope, strict=effective_strict, base=dialect_base, fence_log=fence_log
+        )
+    )
+    warnings.extend(FENCE_PREFIX + m for m in fence_log or [])
     if violations:
         return _result(plan, envelope, violations, warnings, t0)
 
     # Stage 1b (v0.32): skill-delegation subsumption. Each SkillStep's contract
     # envelope must be subsumed by the caller's — proved via Z3, opaque skills
-    # gated by strict. Its own stage so check_permissions stays Z3-free.
+    # checked by strict. Its own stage so check_permissions stays Z3-free.
     violations.extend(
         check_skill_delegations(
             plan,
@@ -1023,8 +1206,8 @@ def verify_step(
     ``check_plan_against_envelope``) — both are pure functions of the
     envelope, so re-running them per step on a singleton plan re-proves
     the same thing the whole-plan ``verify()`` already proved. Keeps the
-    per-step gates that *do* depend on the step: delegation safety,
-    permissions (the actual safety gate), robotics trajectory checks, and a
+    per-step checks that *do* depend on the step: delegation safety,
+    permissions (the actual safety check), robotics trajectory checks, and a
     (trivially-singleton) DAG.
 
     Predicate-algebra invariants/postconditions are plan-level and are NOT
@@ -1032,7 +1215,7 @@ def verify_step(
     (opaque-invariant rejection, vacuity, alias resolution), which ride that
     same path. They are the whole-plan ``verify()``'s responsibility; the
     caller MUST run ``verify(plan, envelope, strict=...)`` once up front to
-    get strict enforcement. ``verify_step`` is the per-step hot-path gate, not
+    get strict enforcement. ``verify_step`` is the per-step hot-path warden, not
     a substitute for it.
 
     Drops per-step verify cost from ~3.5ms to ~0.1-0.3ms on a 20-step plan,
@@ -1365,11 +1548,17 @@ def _check_predicate_item(
             (label == "invariant" and type_name in RECOGNIZED_OPAQUE_TYPES)
             # v0.28.3: stage2 has concrete handlers for exit_code /
             # file_exists / file_size_range — those postcondition types
-            # are discharged at the post-execution gate, not "opaque
+            # are discharged at the post-execution check, not "opaque
             # unverifiable" at Stage 1.
             or (label == "postcondition" and type_name in RECOGNIZED_STAGE2_POSTCONDITION_TYPES)
         )
-        if strict and not discharged_elsewhere:
+        if discharged_elsewhere:
+            return []
+        if word is not None:
+            # A dialect word with no pin is audited (warning above): below
+            # strict stakes it passes, at strict stakes it is rejected.
+            if not strict:
+                return []
             return [
                 Violation(
                     stage="predicate",
@@ -1383,7 +1572,21 @@ def _check_predicate_item(
                     },
                 )
             ]
-        return []
+        # SG-8: a safety property nothing can check is never a silent pass,
+        # at any stakes.
+        return [
+            Violation(
+                stage="predicate",
+                message=f"{label} '{type_name}' declares a safety property with no "
+                f"verifiable expr and no definition; nothing can discharge it",
+                detail={
+                    label: type_name,
+                    "reason": "opaque_unrecognized",
+                    "suggested_remediation": "add an `expr` to make it verifiable, "
+                    "or set enforce=False to keep it as documentation",
+                },
+            )
+        ]
 
     # Resolve alias references through the registry (if provided). An unresolved
     # AliasRef with no registry is a loud Violation, not a silent pass — that

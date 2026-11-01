@@ -6,7 +6,7 @@ embedder) · **Scale:** 3 tasks × 3 repeats (a *pilot*, not the ≥20×5 bar).
 This is the first time the distillation-fidelity question — *does reusing a
 distilled pathway actually pay?* — has been run on real tool-using agentic
 transcripts with a local model, rather than asserted. It is a pilot: the job is
-to see whether the two gates are passable and what the effect looks like, not
+to see whether the two checks are passable and what the effect looks like, not
 to settle the question. It is reported here whether or not it flatters (it
 doesn't, much).
 

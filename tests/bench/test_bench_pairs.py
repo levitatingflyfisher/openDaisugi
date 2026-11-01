@@ -9,7 +9,7 @@ from opendaisugi.bench.pairs import (
     PAIRS,
     backend_x_envelope,
     index_of,
-    loop_x_gate_path,
+    loop_x_warden_path,
     matcher_x_distiller,
     router_x_models,
     run,
@@ -32,7 +32,7 @@ def test_exactly_five_pairs():
         "verifier-x-shell",
         "matcher-x-distiller",
         "router-x-models",
-        "loop-x-gate-path",
+        "loop-x-warden-path",
         "backend-x-envelope",
     )
 
@@ -258,8 +258,8 @@ def test_router_x_models_crosses_routers_with_cheap_model_choices():
     assert names == {"prices.json", "switchyard-targets.json"}
 
 
-def test_loop_x_gate_path_carries_the_fail_open_class():
-    table = loop_x_gate_path(BenchOpts())
+def test_loop_x_warden_path_carries_the_fail_open_class():
+    table = loop_x_warden_path(BenchOpts())
     present = [r for r in table.rows if r.absent is None]
     assert present
     assert all(r.cells["fail_open"] for r in present)

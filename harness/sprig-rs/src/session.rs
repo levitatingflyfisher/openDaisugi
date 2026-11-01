@@ -1,6 +1,6 @@
 //! The session tree: one append-only JSONL file per session, an id and a
 //! parentId on every entry, the head as the last write wins. The rows are
-//! the shape daisugi's gate writes on its own path.
+//! the shape daisugi's warden writes on its own path.
 
 use crate::json::{encode, jmap, jmap_any, Any, Map, J};
 use std::cell::RefCell;
@@ -343,7 +343,7 @@ pub fn head_path(path: &[u8]) -> Result<Vec<Entry>, Vec<u8>> {
 /// The model-facing history a resume rebuilds from the head path.
 pub fn history_from_entries(entries: &[Entry]) -> Vec<crate::agent::Message> {
     use crate::agent::Message;
-    use crate::gate::ToolCall;
+    use crate::warden::ToolCall;
     let str_at = |m: &Map, k: &str| match m.get(k) {
         Some(Any::Str(x)) => x.clone(),
         _ => String::new(),

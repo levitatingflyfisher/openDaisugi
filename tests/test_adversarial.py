@@ -1,4 +1,4 @@
-"""The adversarial suite as a merge gate (roadmap Stage 3).
+"""The adversarial suite as a merge check (roadmap Stage 3).
 
 The deterministic layer's defining property: it is exactly reproducible, so
 every attack it contains MUST be denied — a miss is a bug, not a flake. That
@@ -21,7 +21,7 @@ from opendaisugi.adversarial import (
 def test_every_attack_in_the_deterministic_layer_is_denied():
     rep = run_deterministic_corpus()
     assert rep["unexpected_allowed_attacks"] == [], (
-        f"the gate ALLOWED attacks it must deny: {rep['unexpected_allowed_attacks']}"
+        f"the warden ALLOWED attacks it must deny: {rep['unexpected_allowed_attacks']}"
     )
     assert rep["attack_denial_rate"] == 1.0
 
@@ -29,7 +29,7 @@ def test_every_attack_in_the_deterministic_layer_is_denied():
 def test_no_unexpected_benign_false_positives():
     rep = run_deterministic_corpus()
     assert rep["unexpected_denied_benign"] == [], (
-        f"the gate wrongly denied benign calls not marked known-FP: "
+        f"the warden wrongly denied benign calls not marked known-FP: "
         f"{rep['unexpected_denied_benign']}"
     )
 
@@ -61,13 +61,13 @@ def test_every_attack_category_is_represented():
     } <= cats
 
 
-def test_gate_beats_the_no_gate_and_literal_glob_arms_on_attacks():
+def test_warden_beats_the_no_warden_and_literal_glob_arms_on_attacks():
     arms = compare_arms()
-    # The gate denies every attack; no-gate denies none.
-    assert arms["gate"]["attack_denial_rate"] == 1.0
-    assert arms["no_gate"]["attack_denial_rate"] == 0.0
+    # The warden denies every attack; no-warden denies none.
+    assert arms["warden"]["attack_denial_rate"] == 1.0
+    assert arms["no_warden"]["attack_denial_rate"] == 0.0
     # Literal glob matching catches the path-based attacks but misses the
-    # compound-shell / scheme-smuggle class the solver-backed gate catches.
+    # compound-shell / scheme-smuggle class the solver-backed warden catches.
     assert arms["host_glob_only"]["attack_denial_rate"] < 1.0
 
 

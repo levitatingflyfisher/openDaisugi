@@ -6,11 +6,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/opendaisugi/coppice/internal/gatefs"
+	"github.com/opendaisugi/coppice/internal/wardenfs"
 )
 
 var (
-	// ErrNoAsk means the gate is not holding an ask under that id any more.
+	// ErrNoAsk means the warden is not holding an ask under that id any more.
 	ErrNoAsk = errors.New("no pending ask")
 	// ErrBadDecision means the caller sent something that is not a decision.
 	ErrBadDecision = errors.New("decision must be allow or deny")
@@ -100,11 +100,11 @@ func SafeID(raw string) string {
 	return s
 }
 
-// AskChannel writes into the gate's ask directory. The gate has no command
+// AskChannel writes into the warden's ask directory. The warden has no command
 // for answering an ask over the wire, so the phone uses the same file
 // protocol the terminal view uses.
 //
-// Root is the gate directory the caller resolved. This package never reads
+// Root is the warden directory the caller resolved. This package never reads
 // the home directory or an environment variable to find it.
 type AskChannel struct{ Root string }
 
@@ -118,10 +118,10 @@ type AskChannel struct{ Root string }
 //
 // It fails closed, and in this order. An unknown decision, or an allow
 // with an unknown scope, writes nothing. A missing ask, or an ask with no nonce, writes nothing, because
-// the gate retires both files the instant it sees any answer, so an answer
+// the warden retires both files the instant it sees any answer, so an answer
 // it will reject would burn the ask cycle for no reason. Then an allow
 // meets the permanent rule. The tier is the worst of r.Tier and the tier
-// the gate wrote in the ask file, so the ask is undoable only when both
+// the warden wrote in the ask file, so the ask is undoable only when both
 // say so. A deny passes every check but the ask-exists one, and its scope
 // is ignored.
 func (a AskChannel) Answer(r Reply) error {
@@ -132,13 +132,13 @@ func (a AskChannel) Answer(r Reply) error {
 		return ErrBadScope
 	}
 	if a.Root == "" {
-		return errors.New("web: no gate root. Options.Gate was never set")
+		return errors.New("web: no warden root. Options.Warden was never set")
 	}
 	id := SafeID(r.ToolUseID)
-	// GR-R-10: the ask is read as the gate reads it, through no link and
+	// GR-R-10: the ask is read as the warden reads it, through no link and
 	// only from a file this user owns that group and other cannot write. A
 	// linked or shared ask is as good as gone.
-	raw, found, _ := gatefs.Read(a.Root, []string{"asks"}, id+".json", -1)
+	raw, found, _ := wardenfs.Read(a.Root, []string{"asks"}, id+".json", -1)
 	if !found {
 		return ErrNoAsk
 	}
@@ -180,7 +180,7 @@ func (a AskChannel) Answer(r Reply) error {
 	// written, and the answer is made by openat and renamed inside that
 	// directory, so a link planted at answers/ or at the answer's name never
 	// carries the write elsewhere. The answer is made after the ask was
-	// read, so its mtime is not earlier than the ask's. The gate's
+	// read, so its mtime is not earlier than the ask's. The warden's
 	// wait_answer rejects an answer older than the ask it claims to answer.
-	return gatefs.Write(a.Root, []string{"answers"}, id+".json", body)
+	return wardenfs.Write(a.Root, []string{"answers"}, id+".json", body)
 }

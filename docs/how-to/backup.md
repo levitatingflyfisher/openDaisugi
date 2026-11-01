@@ -22,7 +22,8 @@ if you set one; else `~/.opendaisugi`; else `$XDG_DATA_HOME/opendaisugi` when
 - `config.yaml`, which also holds your agent profiles
 - `pathways.db`
 - `journal/`, the traces and the index
-- `gate/envelopes/` and `gate/audit/`
+- `warden/envelopes/` and `warden/audit/`
+- your conversation memory: every Pando R2 store in `pando/` (see below)
 
 The two SQLite files, `pathways.db` and `journal/index.db`, go in as a clean
 copy that SQLite makes (`VACUUM INTO`). A running session cannot tear it, and
@@ -30,12 +31,22 @@ the `-wal` and `-shm` files are not needed.
 
 `coppice backup` holds:
 
-- the foreman log and memory tree (`foreman/main`, `foreman/tree`, `view.json`).
-  With the default data dir, these come from the data home's `foreman/`
-  directory, not from the coppice data dir
+- your conversation memory: every Pando R2 store (see below). With the default
+  data dir, the stores come from `pando/` in the data home. With `--data-dir X`,
+  they come from `X/pando`
+- a chat that `daisugi pando migrate` has not moved yet (its `main`, `tree`,
+  `view.json` and `import.json`)
 - `layout.json` and `recent-dirs.json` from the coppice data dir
 - `coppice.toml` and `pools.toml` from the XDG config dir (`~/.config/coppice/`).
   They always come from there, even when you pass `--data-dir`
+
+Both tools hold the same parts of each store, from one list that the pando
+code keeps: `main/` (the log), `tree/`, `view.json`, `import.json` (the import
+queue and its `--map`), and `children/` (each worker's transcript store). A
+store's `lock` is never in a backup. Every store is in it, not only `work` and
+`home`. A restore puts back each store the archive holds, also one that the
+target does not have yet. An archive that `coppice backup` made before the move
+holds the chat as `foreman/`; a restore puts it into the `work` store.
 
 Each file is on a list of paths that a backup may hold. A file that is not on
 the list is not in the backup. Keys, tokens, credentials, sockets and locks are
@@ -96,14 +107,17 @@ staging folder, and the error line names it. If an undo step fails too, the
 error names the paths that could not be moved back. They are still under their
 `.broken-TIME` names.
 
-`daisugi restore` refuses while a gate answers on `gate/gate.sock` in the data
-home. A live gate writes the journal and the audit on every call. Stop agent
-sessions, or run `daisugi gate disarm`, first.
+`daisugi restore` refuses while a warden answers on `warden/warden.sock` in the data
+home. A live warden writes the journal and the audit on every call. Stop agent
+sessions, or run `daisugi warden disarm`, first.
 
 The restore prints each directory it wrote into. For coppice, the config files
 go to the XDG config dir even when you pass `--data-dir`. `backup` and
 `restore` work on local files only. `coppice --remote` refuses them.
 
 `coppice restore` needs the server stopped, because the server holds the
-layout and foreman files open. It says so in one line if the server runs.
+layout and steward files open. It says so in one line if the server runs.
 After a restore, run `coppice server start`.
+
+A store that Pando moved aside after damage is kept on disk as `<store>.broken-TIME`.
+The backup does not hold these directories. Copy them out by hand if you want them.

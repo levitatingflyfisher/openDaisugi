@@ -1,6 +1,6 @@
 """`daisugi agent-profiles bundle --fd N`: the operator's table, with its
 keys, written once to a descriptor. It is for an operator-side root starter,
-so the gate denies it to an agent."""
+so the warden denies it to an agent."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def test_operator_bundle_lists_each_left_out_profile_once():
         "daisugi agent-profiles list",
     ],
 )
-def test_the_gate_denies_the_verb_to_an_agent(command):
+def test_the_warden_denies_the_verb_to_an_agent(command):
     assert names_tree_write(command)
 
 

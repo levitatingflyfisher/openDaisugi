@@ -92,7 +92,7 @@ git layer adds `pull()`, `publish()`, `status()`.
 
 ## Trust boundaries
 
-- **Signature gate**: `pull()` refuses bundles whose signing pubkey is
+- **Signature warden**: `pull()` refuses bundles whose signing pubkey is
   not in `trusted-signers.json`. Adding a new signer is a PR to the
   registry repo — the team's normal review flow becomes the trust
   onboarding flow.

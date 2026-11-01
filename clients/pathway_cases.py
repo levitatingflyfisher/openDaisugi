@@ -2131,7 +2131,8 @@ def build_verify_cases() -> list[dict[str, Any]]:
                 plan(sh("s1", "make test")), env(postconditions=[{"type": "odd"}]), strict=strict
             )
         )
-    # Python's == holds True == 1 == 1.0, in lists and dicts too.
+    # Python's == holds True == 1 == 1.0, in lists and dicts too. At the top of
+    # a comparison a bool is never a number (MP-9), so the first four flip.
     flagged = sh("s1", "make test", metadata={"n": 1, "b": True, "l": [1, True], "z": 0})
     for pred in [
         {"op": "not_equals", "path": "metadata.n", "value": True},

@@ -6,7 +6,7 @@ import "strings"
 // oracle's help --all this binary does not carry, a top-level command or
 // "group sub". Their lines are left out (ruling HP-1).
 var helpNotPorted = map[string]bool{
-	"bench": true, "conformance": true, "coppice": true, "gate audit": true,
+	"bench": true, "conformance": true, "coppice": true, "warden audit": true,
 }
 
 // helpCmd is `daisugi help [--all]`: the start-here text, or every

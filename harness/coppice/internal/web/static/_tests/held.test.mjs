@@ -6,8 +6,8 @@ import { titleFor, rowFromEvent } from '../floor.js';
 import { needsYou, heldLine } from '../pane.js';
 import { phoneQueue } from '../dock.js';
 
-// A held ask is one a foreman hears first. It waits under working as
-// waiting on the task's foreman, and it is not the operator's until the
+// A held ask is one a steward hears first. It waits under working as
+// waiting on the task's steward, and it is not the operator's until the
 // hold ends.
 
 const HELD = { by: 'w1:p9', task: 't1', task_label: 'review-team', since: 40, until: 160 };
@@ -22,7 +22,7 @@ function p(id, state, held) {
 
 const PANES = [p('a', 'blocked', HELD), p('b', 'blocked'), p('c', 'working')];
 
-test('needsYou is a blocked pane whose ask no foreman holds', () => {
+test('needsYou is a blocked pane whose ask no steward holds', () => {
   assert.equal(needsYou(PANES[0]), false);
   assert.equal(needsYou(PANES[1]), true);
   assert.equal(needsYou(PANES[2]), false);
@@ -30,24 +30,24 @@ test('needsYou is a blocked pane whose ask no foreman holds', () => {
 });
 
 test('the waiting line names the task and how long the ask has waited', () => {
-  assert.equal(heldLine(HELD, 100), "waiting on review-team's foreman · 1m");
-  assert.equal(heldLine({ task: 't7' }, 100), "waiting on t7's foreman");
+  assert.equal(heldLine(HELD, 100), "waiting on review-team's steward · 1m");
+  assert.equal(heldLine({ task: 't7' }, 100), "waiting on t7's steward");
 });
 
 test('a held pane is a working row with its waiting line, never an ask card', () => {
   reset();
   const root = element('screen-roster');
-  root.append(element('queue-head'), element('roster'), element('roster-empty'));
+  root.append(element('queue-head'), element('needs'), element('roster'), element('roster-empty'));
   element('queue-head').append(element('queue-title'), element('queue-sub'));
   const rows = paneRows(PANES, 100);
   assert.equal(rows[0].state, 'working');
-  assert.equal(rows[0].held, "waiting on review-team's foreman · 1m");
+  assert.equal(rows[0].held, "waiting on review-team's steward · 1m");
   render(rows);
   assert.equal(element('queue-title').textContent, '1 needs you');
   const cards = root.querySelectorAll('.ask').map((li) => li.dataset.row);
   assert.deepEqual(cards, ['b']);
   const held = root.querySelector('[data-row="a"]');
-  assert.match(held.textContent, /waiting on review-team's foreman/);
+  assert.match(held.textContent, /waiting on review-team's steward/);
 });
 
 test('the tab title and the phone queue count only what needs the operator', () => {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/pystr"
 )
 
 // translatePyRegex bridges the escapes where Python's `re` and Go's RE2
@@ -63,6 +64,30 @@ func compilePyRegex(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(translatePyRegex(pattern))
 }
 
+// ruleRefused is predicate_z3.RuleRefused: a rule that cannot run on this
+// input. The message is the deny reason.
+type ruleRefused struct{ msg string }
+
+func (e ruleRefused) Error() string { return e.msg }
+
+// tooLongForRule is the 4096-character cap on a string an argument rule's
+// regex reads (pc is set only inside an argument rule).
+func tooLongForRule(s, path string, pc *pathContext) error {
+	if pc != nil && pystr.Len(s) > MaxRuleStringChars {
+		return ruleRefused{fmt.Sprintf("argument rule refused: argument '%s' is longer than %d characters", path, MaxRuleStringChars)}
+	}
+	return nil
+}
+
+// compileRuleRegex compiles for a test: whole-string inside an argument
+// rule (pc set), a search elsewhere.
+func compileRuleRegex(pattern string, pc *pathContext) (*regexp.Regexp, error) {
+	if pc != nil {
+		return ruleRegex(pattern)
+	}
+	return compilePyRegex(pattern)
+}
+
 // resolvePath ports predicate_z3._resolve_path for the dict-only case (our
 // scopes are always JSON-decoded maps, never Python objects with
 // attributes — the getattr fallback branch never applies here).
@@ -100,7 +125,7 @@ func jsonLen(v interface{}) (int, bool) {
 // evaluator. LLMCheck and AliasRef are not evaluable here — matches the
 // oracle raising ValueError, surfaced as an error the caller turns into a
 // "predicate ... evaluation error" violation (verify._check_predicate_item).
-func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
+func evalScalar(expr Expression, scope map[string]interface{}, pc *pathContext) (bool, error) {
 	switch e := expr.(type) {
 	case ForallWrites:
 		// Only a step record has write paths (predicate_z3._scope_writes).
@@ -112,25 +137,27 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 			return false, nil
 		}
 		for _, p := range writes {
-			holds, err := evalScalar(e.Pred, map[string]interface{}{"path": p})
+			holds, err := evalScalar(e.Pred, map[string]interface{}{"path": p}, nil)
 			if err != nil || !holds {
 				return false, err
 			}
 		}
 		return true, nil
+	case PathIn:
+		return evalPathIn(e, scope, pc)
 	case Equals:
 		v, _ := resolvePath(scope, e.Path)
-		return pyEqual(v, e.Value), nil
+		return kindEq(v, e.Value), nil
 	case NotEquals:
 		v, present := resolvePath(scope, e.Path)
-		return present && !pyEqual(v, e.Value), nil
+		return present && !kindEq(v, e.Value), nil
 	case InSet:
 		v, present := resolvePath(scope, e.Path)
 		if !present {
 			return false, nil
 		}
 		for _, want := range e.Values {
-			if pyEqual(v, want) {
+			if kindEq(v, want) {
 				return true, nil
 			}
 		}
@@ -141,7 +168,7 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 			return false, nil
 		}
 		for _, want := range e.Values {
-			if pyEqual(v, want) {
+			if kindEq(v, want) {
 				return false, nil
 			}
 		}
@@ -152,7 +179,15 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		if !present || !ok {
 			return false, nil
 		}
-		re, err := compilePyRegex(e.Regex)
+		if err := tooLongForRule(s, e.Path, pc); err != nil {
+			return false, err
+		}
+		if pc != nil {
+			if msg := RuleTextRefusal(e.Regex, s, e.Path); msg != "" {
+				return false, ruleRefused{msg}
+			}
+		}
+		re, err := compileRuleRegex(e.Regex, pc)
 		if err != nil {
 			return false, fmt.Errorf("regex %q: %w", e.Regex, err)
 		}
@@ -163,7 +198,15 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		if !present || !ok {
 			return true, nil
 		}
-		re, err := compilePyRegex(e.Regex)
+		if err := tooLongForRule(s, e.Path, pc); err != nil {
+			return false, err
+		}
+		if pc != nil {
+			if msg := RuleTextRefusal(e.Regex, s, e.Path); msg != "" {
+				return false, ruleRefused{msg}
+			}
+		}
+		re, err := compileRuleRegex(e.Regex, pc)
 		if err != nil {
 			return false, fmt.Errorf("regex %q: %w", e.Regex, err)
 		}
@@ -178,9 +221,8 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		var f float64
 		switch x := v.(type) {
 		case bool:
-			if x {
-				f = 1
-			}
+			// MP-9: a bool is never a number.
+			return false, nil
 		case float64:
 			f = x
 		case json.Number:
@@ -226,7 +268,7 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		return false, nil
 	case And:
 		for _, c := range e.Children {
-			ok, err := evalScalar(c, scope)
+			ok, err := evalScalar(c, scope, pc)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -234,7 +276,7 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		return true, nil
 	case Or:
 		for _, c := range e.Children {
-			ok, err := evalScalar(c, scope)
+			ok, err := evalScalar(c, scope, pc)
 			if err != nil {
 				return false, err
 			}
@@ -244,17 +286,17 @@ func evalScalar(expr Expression, scope map[string]interface{}) (bool, error) {
 		}
 		return false, nil
 	case Not:
-		ok, err := evalScalar(e.Child, scope)
+		ok, err := evalScalar(e.Child, scope, pc)
 		return !ok, err
 	case Implies:
-		a, err := evalScalar(e.A, scope)
+		a, err := evalScalar(e.A, scope, pc)
 		if err != nil {
 			return false, err
 		}
 		if !a {
 			return true, nil
 		}
-		return evalScalar(e.B, scope)
+		return evalScalar(e.B, scope, pc)
 	case LLMCheck:
 		return false, fmt.Errorf("LLMCheck must be evaluated via evaluate_llm_check, not _eval_scalar")
 	case AliasRef:
@@ -422,7 +464,7 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 	switch expr := e.(type) {
 	case ForallSteps:
 		for _, s := range stepDicts {
-			ok, err := evalScalar(expr.Pred, s)
+			ok, err := evalScalar(expr.Pred, s, nil)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -430,7 +472,7 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 		return true, nil
 	case ExistsStep:
 		for _, s := range stepDicts {
-			ok, err := evalScalar(expr.Pred, s)
+			ok, err := evalScalar(expr.Pred, s, nil)
 			if err != nil {
 				return false, err
 			}
@@ -451,7 +493,7 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 			}
 		}
 		for _, o := range outputs {
-			ok, err := evalScalar(expr.Pred, o)
+			ok, err := evalScalar(expr.Pred, o, nil)
 			if err != nil || !ok {
 				return false, err
 			}
@@ -535,7 +577,7 @@ func evalPredicateGo(e Expression, plan ActionPlan, env Envelope, stepDicts []ma
 		return evalPredicateGo(expr.B, plan, env, stepDicts)
 	default:
 		synthetic := map[string]interface{}{"steps": toAnySlice(stepDicts)}
-		return evalScalar(e, synthetic)
+		return evalScalar(e, synthetic, nil)
 	}
 }
 

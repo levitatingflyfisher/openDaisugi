@@ -2,10 +2,10 @@
 //! journal's successful traces as JSONL (`lora.dataset.emit_jsonl`). The
 //! Go client's `cli/loraexport.go` is the twin.
 
-use super::gateroot::{mkdir_all, parent, path_str};
+use super::wardenroot::{mkdir_all, parent, path_str};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::{len, repr, strip};
-use crate::gate::pyjson::{dumps, dumps_indent, Object, Value};
+use crate::warden::py::text::{len, repr, strip};
+use crate::warden::pyjson::{dumps, dumps_indent, Object, Value};
 use crate::pathways::pathway::dump_json;
 
 impl Env {
@@ -95,7 +95,7 @@ impl Env {
             b.push('\n');
             written += 1;
         }
-        if let Err(e) = super::gateroot::write_file(&out, &b) {
+        if let Err(e) = super::wardenroot::write_file(&out, &b) {
             return self.fail(CMD, &e.to_string());
         }
         let stats = Object::new()

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start here | openDaisugi</title>
+<meta name="description" content="openDaisugi runs your coding agents side by side in one terminal, and shows which one needs you. The warden watches each tool call. With enforce on, it also stops calls outside your envelope.">
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.className+=" js"</script>
+</head>
+<body>
+<div class="vert" lang="ja" aria-hidden="true">台杉</div>
+<header class="top"><div class="col">
+  <a class="mark" href="index.html" style="text-decoration:none;color:inherit"><span class="seal" lang="ja" aria-hidden="true">台杉</span><span>openDaisugi</span></a>
+  <nav class="sc" aria-label="Site pages">
+    <a href="index.html">Home</a>
+    <a href="whitepaper.html">Whitepaper</a>
+    <a href="yellow-paper.html">Yellow paper</a>
+    <a href="start-here.html" aria-current="page">Start here</a>
+    <a href="index.html#try">Install</a>
+  </nav>
+</div></header>
+<main class="paper">
+<nav class="toc" aria-label="Contents">
+<p class="cap sc">Contents</p>
+<ol>
+<li><a href="#install">Install</a></li>
+<li><a href="#first-run">First run</a></li>
+<li><a href="#try-next">Try next</a></li>
+<li><a href="#after-the-rename-one-time">After the rename (one time)</a></li>
+<li><a href="#if-something-goes-wrong">If something goes wrong</a></li>
+</ol>
+</nav>
+<article>
+<p class="srcline"><a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/start-here.md">Source on GitHub</a></p>
+<h1 id="start-here">Start here</h1>
+<p>openDaisugi runs your coding agents side by side in one terminal, and shows which one needs you.
+The warden watches each tool call. With enforce on, it also stops calls outside your envelope.</p>
+<h2 id="install">Install</h2>
+<p>You need Linux and these packages first. <code>install.sh</code> fetches zig, cmake and a new enough Go
+toolchain by itself (no sudo).</p>
+<ul>
+<li>Omarchy and Arch: <code>sudo pacman -S --needed git base-devel pkgconf go curl python</code></li>
+<li>Fedora: <code>sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config golang curl python3 binutils</code></li>
+<li>Debian and Ubuntu: <code>sudo apt install git build-essential pkg-config golang-go curl python3 binutils xz-utils</code>
+This needs Debian 13 or Ubuntu 24.04 or later. Older ones ship a Go below 1.21, which cannot
+fetch the new one. Install a newer Go from <a href="https://go.dev/dl">https://go.dev/dl</a> first.</li>
+</ul>
+<pre><code class="language-sh">git clone https://github.com/levitatingflyfisher/openDaisugi.git
+cd openDaisugi &amp;&amp; scripts/install.sh &amp;&amp; daisugi install
+</code></pre>
+<ul>
+<li>
+<p><code>install.sh</code> checks your tools first and names any that are missing. Then it builds, and puts
+<code>coppice</code>, <code>sprig</code> and <code>daisugi</code> in <code>~/.local/bin</code>. The first build compiles Z3. It happens once, and later builds reuse it.
+Z3 is the slow step. The build uses as many jobs as your cores and free memory allow; set <code>DAISUGI_NATIVE_JOBS</code> to change that. It prints one line per step and keeps the compiler output in a log file
+(it prints the path). If a step fails, it shows the last 30 lines of that log.</p>
+</li>
+<li>
+<p>Voice engines are not built. Add them later with <code>scripts/install.sh --voice</code>.</p>
+</li>
+<li>
+<p><code>daisugi install</code> asks before it writes. It writes five things for Claude Code:</p>
+<ul>
+<li>the warden hook in <code>~/.claude/settings.json</code>, watching only: it logs calls and blocks none;</li>
+<li>a capture hook in <code>~/.claude/settings.json</code>, which records tool calls for later study;</li>
+<li>the <code>opendaisugi</code> MCP server in <code>~/.claude.json</code>;</li>
+<li>the <code>opendaisugi-checklist</code> skill, copied into <code>~/.claude/skills</code> for Claude Code (Codex: <code>~/.agents/skills</code>);</li>
+<li>a short note on pathways, appended to <code>~/.claude/CLAUDE.md</code>.</li>
+</ul>
+<p>Add <code>--dry-run</code> to see the list for your machine. Codex gets four of the five, in its own files (no capture hook).</p>
+</li>
+<li>
+<p>With no envelope, audit mode allows every call and logs it as &quot;would deny&quot;. Run
+<code>daisugi warden init</code> once, in your workspace directory, to register a starter envelope. Then
+<code>daisugi warden report</code> shows what enforce mode would block.</p>
+</li>
+<li>
+<p>To make the warden block, run <code>daisugi install --enforce</code>. It needs an envelope first.</p>
+</li>
+<li>
+<p>Make sure <code>~/.local/bin</code> is on your PATH.</p>
+</li>
+<li>
+<p>Remove it: <code>daisugi install --uninstall</code> reverses all five writes. A file or directory that
+install made and that is now empty goes too, so the config is as install found it. The
+<code>.bak&lt;number&gt;</code> backups stay: each run makes one for each file it changes. Then delete the
+three files from <code>~/.local/bin</code>.</p>
+</li>
+</ul>
+<h2 id="first-run">First run</h2>
+<p>Type <code>coppice</code>. It finds your agent (<code>claude</code>, <code>codex</code>, <code>opencode</code>, <code>pi</code>) and asks once if
+there are several. Press Enter to open it in the current directory. Now you type in the agent.</p>
+<div class="scroll" tabindex="0" role="region" aria-label="Table"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Enter</code></td>
+<td>open the agent under the cursor in a window and type there</td>
+</tr>
+<tr>
+<td><code>ctrl-space</code></td>
+<td>give the keys back to the list of agents</td>
+</tr>
+<tr>
+<td><code>n</code></td>
+<td>start another agent in the same directory</td>
+</tr>
+<tr>
+<td><code>shift-tab</code></td>
+<td>jump to the next agent that needs you</td>
+</tr>
+<tr>
+<td><code>g</code></td>
+<td>in the web page: the Garden, a picture of your agents</td>
+</tr>
+</tbody>
+</table>
+</div><p>On your phone: <code>coppice web serve</code>, then read <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/phone.md">the phone guide</a>.</p>
+<blockquote>
+<p><strong>Sandbox.</strong> In coppice the fence is on by default while the warden is on. The kernel (Landlock)
+keeps the agent out of <code>~/.ssh</code>, the rest of your home and the memory stores. A plain shell pane
+stays bare. See the rules with <code>daisugi fence --print</code>. Outside coppice, run
+<code>daisugi fence -- claude</code>. Set <code>fence = &quot;off&quot;</code> in <code>~/.config/coppice/coppice.toml</code> to turn it off;
+the status commands and the floor then say that files are not confined. One limit: checkpoints
+are off inside the fence. Details: <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/fence.md">fence</a>.</p>
+</blockquote>
+<blockquote>
+<p><strong>Models.</strong> Your agent uses its own model and account. The steward, the chat that watches
+your agents, can use any model: <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/steward-any-model.md">steward on any model</a>. To use
+a local model on another machine over Tailscale, put this in <code>~/.config/coppice/pools.toml</code>:</p>
+<pre><code class="language-toml">[pool.desk]                 # a profile name from your agent profiles
+model = &quot;llama3.3:70b&quot;
+
+[[pool.desk.entries]]
+name = &quot;gpu&quot;
+base_url = &quot;http://gpu.your-tailnet.ts.net:11434/v1&quot;
+</code></pre>
+<p>A model never changes on its own. A pool serves one model, and when a machine is down, work
+waits or moves to another machine with the same model.</p>
+</blockquote>
+<h2 id="try-next">Try next</h2>
+<ul>
+<li><strong>Talk to the steward.</strong> Set <code>[steward] mode = &quot;chat&quot;</code> in <code>coppice.toml</code>, restart coppice,
+press <code>ctrl-t</code> and type. See <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/steward-any-model.md">steward on any model</a>.</li>
+<li><strong>Import old chats.</strong> <code>coppice steward import --dry-run</code> counts them and reads nothing else.
+See <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/import-old-chats.md">import old chats</a>.</li>
+<li><strong>See the Garden.</strong> Press <code>g</code> in the web page. <code>Save picture</code> writes a PNG, and <code>Hide words</code>
+leaves out names so you can share it.</li>
+<li><strong>Turn on enforce.</strong> Read <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/warden.md">the warden guide</a>. Audit mode shows what enforce
+would block.</li>
+</ul>
+<h2 id="after-the-rename-one-time">After the rename (one time)</h2>
+<p>The parts have new names: the gate is the warden, the gateway is the router,
+the foreman is the steward, and the chat memory is Pando R2. Commands, config
+keys and environment variables changed with them. There are no aliases. Do
+this once:</p>
+<ol>
+<li>Stop coppice (<code>coppice server stop</code>, with your usual <code>--socket</code> if you set
+one) and close any <code>daisugi start</code> window.</li>
+<li>Build and install the new binaries: <code>scripts/install.sh --replace-daisugi</code>.
+Until step 3, your old hook calls a verb that no longer exists. It blocks
+every call and says &quot;daisugi gate is now daisugi warden; run daisugi
+install&quot;. A Claude Code session that is open now will see that line. It is
+the expected state for a few minutes.</li>
+<li>Run <code>daisugi install</code> (add <code>--enforce</code> if you had it, <code>--router</code> if you used
+the gateway). Read the plan first with <code>--dry-run</code>. It prints one line for
+each thing it moves: <code>~/.opendaisugi/gate</code> becomes <code>~/.opendaisugi/warden</code>,
+<code>~/.opendaisugi/gateway</code> becomes <code>~/.opendaisugi/router</code>, the old keys in
+<code>config.yaml</code> get their new names, the old hook line in
+<code>~/.claude/settings.json</code> is replaced (its mode stays, and its <code>--root</code>
+follows the moved directory), and an old pi or
+OpenCode extension is moved under <code>~/.opendaisugi/moved-aside/</code>. Nothing is
+deleted. If it refuses, it says why on one line; fix that and run it again.
+If an envelope allows <code>opendaisugi/delegate</code>, it names the envelope: add
+<code>opendaisugi/spawn</code> there yourself, since the tool was renamed.</li>
+<li>Edit <code>coppice.toml</code> by hand: <code>[foreman]</code> is now <code>[steward]</code>, and
+<code>gateway = </code> is now <code>router = </code>. coppice refuses to start until you do and
+names the key.</li>
+<li>Start coppice. The steward's log stays where it was (<code>foreman/</code> beside the
+coppice data dir); ADR-0023 moves it into daisugi later, in one step. If
+the floor had a named steward, name it again with <code>floor talk</code> or
+<code>coppice task set-steward</code>; the old <code>foreman.json</code> is left in place.</li>
+<li>Check: <code>daisugi warden status</code> shows your mode and no stale key (it names
+an old directory or an old config key if one is left);
+<code>daisugi router status</code> answers if you installed the router.</li>
+</ol>
+<h2 id="if-something-goes-wrong">If something goes wrong</h2>
+<ul>
+<li>
+<p>A saved <code>claude --settings &quot;$(daisugi gate settings ...)&quot;</code> line from before the
+rename now fails with the same &quot;run daisugi install&quot; line. Use
+<code>daisugi warden settings</code> instead.</p>
+</li>
+<li>
+<p>Logs: <code>server.log</code> in the coppice data dir. That dir is <code>$OPENDAISUGI_HOME/coppice</code> when you
+set that, else <code>$XDG_DATA_HOME/opendaisugi/coppice</code> when you set <code>XDG_DATA_HOME</code>, else
+<code>~/.opendaisugi/coppice</code>. If <code>~/.opendaisugi/coppice</code> holds data and the XDG one does not,
+coppice uses the old one and says so.</p>
+</li>
+<li>
+<p>The warden blocks too much: <code>daisugi warden disarm</code> turns it off. <code>daisugi warden arm</code> turns it on.</p>
+</li>
+<li>
+<p>Stop everything: <code>coppice server stop</code>.</p>
+</li>
+<li>
+<p>Save your history: <code>daisugi backup</code> and <code>coppice backup</code> each write one .tgz. No key, token or credential files go in. Your chat and logs do, so keep the file as private as the data.</p>
+</li>
+<li>
+<p>Put it back: <code>daisugi restore FILE</code> and <code>coppice restore FILE</code> (stop the server first). See <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/how-to/backup.md">backup</a>.</p>
+</li>
+<li>
+<p>Report a bug as a GitHub issue. Give the command, the error and your Linux version. Remove
+chat text, paths with your name, and keys from logs first.</p>
+</li>
+</ul>
+</article>
+</main>
+<footer><div class="col">MIT license. This page loads only its own files. <a href="index.html">Back to the overview</a>.</div></footer>
+</body>
+</html>

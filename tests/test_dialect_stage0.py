@@ -138,7 +138,7 @@ def test_glob_regex_shapes():
 def test_the_dialect_hash_is_pinned():
     # A change to any definition is a new hash. Update this only with the
     # definitions, and say so in the release notes.
-    assert DIALECT_HASH == "108a89a256798dfc"
+    assert DIALECT_HASH == "6013ab8ed0063f7d"
     assert json.loads(dialect.DIALECT_JSON)["words"] == dialect.WORDS
 
 
@@ -257,9 +257,12 @@ def test_what_the_audit_reads(inv, warned):
 
 
 def test_a_word_in_a_postcondition_is_not_a_word():
+    # A word is an invariant. In a postcondition the type is just an unknown
+    # name, and a safety property nothing can check is a violation (SG-8).
     env = _env(postconditions=[{"type": "file_unchanged", "path": "src/a"}])
     r = verify(_plan(_shell("s1", "echo x > src/a")), env)
-    assert r.ok and r.warnings == []
+    assert not r.ok and r.warnings == []
+    assert r.violations[0].detail["reason"] == "opaque_unrecognized"
 
 
 def test_an_unsupported_target_says_why():
@@ -296,13 +299,13 @@ def test_a_verify_case_carries_the_pin():
     assert verdict["ok"] is False and compare_verdict(case, verdict) is None
 
 
-# --- the gate ---------------------------------------------------------------
+# --- the warden ---------------------------------------------------------------
 
 
-def _gate_env(tmp_path, stakes="medium"):
-    from opendaisugi.gate import register_envelope, starter_envelope
+def _warden_env(tmp_path, stakes="medium"):
+    from opendaisugi.warden import register_envelope, starter_envelope
 
-    root = tmp_path / "data" / "gate"
+    root = tmp_path / "data" / "warden"
     env = starter_envelope(tmp_path, stakes=stakes)
     env.invariants = [
         Invariant(type="file_unchanged", target=f"{tmp_path.resolve()}/src/**", description="d")
@@ -312,7 +315,7 @@ def _gate_env(tmp_path, stakes="medium"):
 
 
 def _call(tmp_path, root, path, mode="audit"):
-    from opendaisugi.gate import gate_and_contract
+    from opendaisugi.warden import warden_and_contract
 
     payload = {
         "session_id": "s1",
@@ -320,20 +323,20 @@ def _call(tmp_path, root, path, mode="audit"):
         "tool_input": {"file_path": str(path), "content": "x"},
         "cwd": str(tmp_path),
     }
-    return gate_and_contract(json.dumps(payload).encode(), root=root, mode=mode)
+    return warden_and_contract(json.dumps(payload).encode(), root=root, mode=mode)
 
 
 def _log(root):
     return [json.loads(x) for x in (root / "audit" / "s1.jsonl").read_text().splitlines()]
 
 
-def test_the_gate_logs_a_word_would_deny_and_allows(tmp_path):
-    from opendaisugi.gate import audit_report
+def test_the_warden_logs_a_word_would_deny_and_allows(tmp_path):
+    from opendaisugi.warden import audit_report
 
-    root = _gate_env(tmp_path)
-    out = _call(tmp_path, root, tmp_path / "src" / "a.py", mode="enforce")
+    root = _warden_env(tmp_path)
+    out = _call(tmp_path, root, tmp_path / "src" / "a.py", mode="audit")
     assert out.exit_code == 0
-    _call(tmp_path, root, tmp_path / "doc.md", mode="enforce")
+    _call(tmp_path, root, tmp_path / "doc.md", mode="audit")
     recs = _log(root)
     assert recs[0]["allow"] is True and recs[0]["word_audit"][0].startswith(AUDIT_PREFIX)
     assert "word_audit" not in recs[1]
@@ -342,8 +345,16 @@ def test_the_gate_logs_a_word_would_deny_and_allows(tmp_path):
     assert rep["word_denied"] == [recs[0]]
 
 
-def test_the_gate_enforces_the_word_when_config_pins_the_hash(tmp_path):
-    root = _gate_env(tmp_path)
+def test_enforce_mode_enforces_the_word_without_a_pin(tmp_path):
+    root = _warden_env(tmp_path)
+    out = _call(tmp_path, root, tmp_path / "src" / "a.py", mode="enforce")
+    assert out.exit_code == 2
+    assert "keep_unchanged" in _log(root)[0]["reason"]
+    assert _call(tmp_path, root, tmp_path / "doc.md", mode="enforce").exit_code == 0
+
+
+def test_the_warden_enforces_the_word_when_config_pins_the_hash(tmp_path):
+    root = _warden_env(tmp_path)
     (root.parent / "config.yaml").write_text(f"dialect_enforce: {DIALECT_HASH}\n")
     out = _call(tmp_path, root, tmp_path / "src" / "a.py", mode="enforce")
     assert out.exit_code == 2
@@ -352,37 +363,39 @@ def test_the_gate_enforces_the_word_when_config_pins_the_hash(tmp_path):
     assert "word_audit" not in rec
 
 
-def test_gate_status_and_report_show_the_word_count(tmp_path, monkeypatch):
+def test_warden_status_and_report_show_the_word_count(tmp_path, monkeypatch):
     from typer.testing import CliRunner
 
     from opendaisugi.cli import app
 
-    root = _gate_env(tmp_path)
+    root = _warden_env(tmp_path)
     _call(tmp_path, root, tmp_path / "src" / "a.py")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()
-    res = runner.invoke(app, ["gate", "status", "--root", str(root)])
-    assert f"dialect: {DIALECT_HASH} · words: audit · word would-denies: 1" in res.output
-    res = runner.invoke(app, ["gate", "status", "--root", str(root), "--json"])
+    res = runner.invoke(app, ["warden", "status", "--root", str(root)])
+    assert f"dialect {DIALECT_HASH}: audit (warden mode audit) · word would-denies: 1" in res.output
+    res = runner.invoke(app, ["warden", "status", "--root", str(root), "--json"])
     assert json.loads(res.output.splitlines()[0])["dialect"] == {
         "hash": DIALECT_HASH,
         "pin": None,
         "mode": "audit",
+        "source": "none",
         "word_would_deny": 1,
     }
-    res = runner.invoke(app, ["gate", "report", "--root", str(root)])
+    res = runner.invoke(app, ["warden", "report", "--root", str(root)])
     assert res.output.splitlines()[0].endswith("word_would_deny=1")
     assert "  WORD Write " in res.output
     (root.parent / "config.yaml").write_text('dialect_enforce: "0000"\n')
-    res = runner.invoke(app, ["gate", "status", "--root", str(root)])
-    assert "pinned 0000, not this build's: every word use denies" in res.output
+    res = runner.invoke(app, ["warden", "status", "--root", str(root)])
+    assert f"pin mismatch: 0000 is not this build's {DIALECT_HASH}" in res.output
+    assert f"set dialect_enforce: {DIALECT_HASH} or remove it" in res.output
 
 
 def test_the_word_count_reads_what_it_can(tmp_path):
-    from opendaisugi.gate import audit_report, word_would_deny
+    from opendaisugi.warden import audit_report, word_would_deny
 
-    root = tmp_path / "gate"
+    root = tmp_path / "warden"
     (root / "audit").mkdir(parents=True)
     (root / "audit" / "s1.jsonl").write_text(
         '{"tool_name": "Write", "detail": "/w/src/a", "would_deny": false, '
@@ -394,7 +407,7 @@ def test_the_word_count_reads_what_it_can(tmp_path):
     (root / "audit" / "s3.jsonl").write_text('{"would_deny": true, "reason": 5}\n')
     assert word_would_deny(root=root) == 1
     # The report itself fails on such a log (a bad UTF-8 file); the count
-    # that gate status shows does not.
+    # that warden status shows does not.
     with pytest.raises(UnicodeDecodeError):
         audit_report(root=root)
     (root / "audit" / "s2.jsonl").unlink()

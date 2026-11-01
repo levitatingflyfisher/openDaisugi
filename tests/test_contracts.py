@@ -26,7 +26,12 @@ def test_delegation_allowed_when_skill_envelope_is_narrow():
     caller = Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo", "ls", "pytest"]),
+        permissions=Permission(
+            shell=True,
+            shell_allowlist=["echo", "ls", "pytest"],
+            file_read=["**"],
+            file_write=["**"],
+        ),
     )
     skill = _contract("echo-skill", ["echo"])
     d = verify_delegation(caller, skill)
@@ -39,7 +44,9 @@ def test_delegation_rejected_when_skill_wider_with_counterexample():
     caller = Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     skill = _contract("dangerous", ["echo", "rm"])
     d = verify_delegation(caller, skill)
@@ -53,7 +60,9 @@ def test_delegation_surfaces_unverified_invariants():
     caller = Envelope(
         generated_by="o",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
         invariants=[opaque],
     )
     skill = _contract("echo", ["echo"])
@@ -68,7 +77,9 @@ def test_delegation_rejects_signed_contract_without_trusted_signers():
     caller = Envelope(
         generated_by="o",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     skill = _contract("echo", ["echo"], signature="deadbeef")
     d = verify_delegation(caller, skill)
@@ -81,7 +92,9 @@ def test_unsigned_contract_signature_valid_is_none():
     caller = Envelope(
         generated_by="o",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     skill = _contract("echo", ["echo"])
     d = verify_delegation(caller, skill)
@@ -95,11 +108,19 @@ def test_unsigned_contract_denied_when_trusted_signers_supplied():
     from opendaisugi.models import Envelope, Permission
 
     env = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     contract = Contract(contract_id="c", skill_id="s", envelope=env)  # unsigned
     caller = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     # No trusted_signers → unsigned is allowed (caller opted not to require signing)
     assert verify_delegation(caller, contract).allowed

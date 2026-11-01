@@ -1,6 +1,6 @@
 //! The chat read path: pane.messages reads one pane's transcript, and
 //! floor.chat reads the owner's lines from the chat files merged with the
-//! foreman's own replies. A messages event tells subscribers that new
+//! steward's own replies. A messages event tells subscribers that new
 //! messages may exist. See PROTOCOL.md, "The chat".
 
 use std::collections::{HashMap, HashSet};
@@ -30,9 +30,9 @@ pub const CHAT_REFUSAL: &str = "the chat is for the owner's own sign-in.";
 /// coppice.toml.
 pub const CONFIG_REFUSAL: &str = "the project list is for the owner's own sign-in.";
 
-/// The chat line the server writes when it starts a foreman after an
+/// The chat line the server writes when it starts a steward after an
 /// earlier one.
-pub const NEW_FOREMAN_NOTE: &str = "A new foreman started.";
+pub const NEW_STEWARD_NOTE: &str = "A new steward started.";
 
 /// The most bytes one read of a transcript takes, from its end, and the
 /// most bytes floor.chat reads from the chat files in all.
@@ -41,7 +41,7 @@ const MESSAGES_DEFAULT: i64 = 100;
 const MESSAGES_MAX: i64 = 500;
 const MESSAGE_RUNES: usize = 2000;
 pub(super) const TOOL_RUNES: usize = 200;
-const CHAT_FOREMEN: usize = 4;
+const CHAT_STEWARDS: usize = 4;
 const CHAT_FILES_MAX: usize = 31;
 const MESSAGES_EVERY: Duration = Duration::from_millis(500);
 
@@ -59,7 +59,7 @@ pub struct Message {
     pub text: String,
     pub tool: String,
     pub pane: String,
-    /// Set on floor.chat's owner lines only: true once that foreman's
+    /// Set on floor.chat's owner lines only: true once that steward's
     /// transcript records the line as the owner's.
     pub read: Option<bool>,
     /// Set on floor.chat's owner lines in chat mode: "delivered mid-turn"
@@ -93,7 +93,7 @@ impl Message {
 }
 
 /// Sets read on each owner line of the chat. A line is read when its
-/// foreman's transcript records the same words as the owner's, at or after
+/// steward's transcript records the same words as the owner's, at or after
 /// the time the line was written. Each recorded message reads one line at
 /// most, in order, so an older message with the same words never reads a
 /// new line, and a line typed while a turn holds stays unread until its
@@ -109,11 +109,11 @@ fn mark_read(lines: &mut [Message], heard: &mut HashMap<String, Vec<Message>>) {
             continue;
         }
         let mut read = false;
-        let key = super::foreman::talk_text(&line.text);
+        let key = super::steward::talk_text(&line.text);
         if let Some(h) = heard.get(&line.pane) {
             let from = next.get(&line.pane).copied().unwrap_or(0);
             for (j, m) in h.iter().enumerate().skip(from) {
-                if m.at >= line.at && super::foreman::talk_text(&m.text) == key {
+                if m.at >= line.at && super::steward::talk_text(&m.text) == key {
                     read = true;
                     next.insert(line.pane.clone(), j + 1);
                     break;
@@ -288,6 +288,9 @@ fn is_true(m: &serde_json::Map<String, Value>, k: &str) -> bool {
 /// the read did not start at the start of the file. A missing file has no
 /// messages.
 pub fn read_messages(path: &str, kind: Kind) -> Result<(Vec<Message>, bool), ()> {
+    if kind == Kind::Hermes {
+        return hermes_messages(path);
+    }
     if kind == Kind::Claude && super::facts::verify_real(path).is_err() {
         return Err(());
     }
@@ -306,7 +309,7 @@ fn read_messages_in(path: &str, kind: Kind, window: u64) -> Result<(Vec<Message>
     for l in &lines {
         let mut got = match kind {
             Kind::Sprig => sprig_messages(&l.b),
-            Kind::Claude => claude_messages(&l.b),
+            Kind::Claude | Kind::Hermes => claude_messages(&l.b),
         };
         for (i, m) in got.iter_mut().enumerate() {
             m.id = l.off.to_string();
@@ -317,6 +320,390 @@ fn read_messages_in(path: &str, kind: Kind, window: u64) -> Result<(Vec<Message>
         out.extend(got);
     }
     Ok((out, start > 0))
+}
+
+/// Whether pane p runs Hermes Agent: its command is hermes, or its
+/// harness is named for it.
+pub fn is_hermes(p: &crate::layout::Pane) -> bool {
+    let base = p
+        .argv
+        .as_ref()
+        .and_then(|a| a.first())
+        .map(|a| a.rsplit('/').next().unwrap_or(a.as_str()).to_string())
+        .unwrap_or_default();
+    base == "hermes" || p.harness == "hermes" || p.harness.starts_with("hermes-")
+}
+
+/// How many rows one read of a Hermes session takes.
+const HERMES_ROWS: usize = 2000;
+
+impl super::Server {
+    /// "db#session" for the Hermes session pane p shows. Only a live pane
+    /// reads a session into the lane: a closed pane that never bound shows
+    /// nothing, because its history is in Hermes and in Pando. A pane binds
+    /// once and keeps the session: a closed pane reads only that one, never
+    /// the newest.
+    ///
+    /// A pane that resumes (-r, -c) binds to the session the flags name, or
+    /// to the newest terminal session of the profile for a bare -c. Any
+    /// other pane binds at its first prompt, which the server saw because
+    /// the input passes through it: the session of the profile whose first
+    /// user message is that prompt, written then. Until the first prompt the
+    /// pane shows nothing. A session held by another pane is passed over.
+    /// When a prompting pane and a resuming pane hold one session, the
+    /// prompting pane owns it; between two of a kind the newer pane does.
+    /// "" when no session matches yet.
+    pub fn hermes_ref(&self, p: &crate::layout::Pane) -> String {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let argv = p.argv.clone().unwrap_or_default();
+        let h = crate::adapters::hermes::home(&argv, &p.env, &home);
+        if h.is_empty() {
+            return String::new();
+        }
+        let db = crate::adapters::hermes::state_path(&h);
+        let mut bound = p.hermes_session.clone();
+        if bound.is_empty() {
+            if p.closed {
+                return String::new();
+            }
+            let picked = if hermes_resumed(p) {
+                let name = crate::adapters::hermes::session_name(&argv);
+                let ws = crate::adapters::hermes::workspace_key(&p.cwd);
+                crate::adapters::hermes::pick(&db, &name, &ws)
+            } else if !p.hermes_prompt.is_empty() {
+                let taken = self.hermes_taken(p, &db, &home);
+                let at = p.hermes_prompt_at as f64 / 1000.0;
+                let mut r = crate::adapters::hermes::pick_by_prompt(&db, &p.hermes_prompt, at, &taken);
+                if matches!(&r, Ok(id) if id.is_empty()) && self.clock_seconds() > at + crate::adapters::hermes::PROMPT_SPAN {
+                    // The window is over and no text matched: the terminal
+                    // showed one thing and Hermes stored another. Bind by time.
+                    let skip = self.hermes_other_prompts(p, &db, &home);
+                    r = crate::adapters::hermes::pick_by_time(&db, at, &taken, &skip);
+                }
+                r
+            } else {
+                return String::new();
+            };
+            match picked {
+                Ok(id) if !id.is_empty() => bound = id,
+                _ => return String::new(),
+            }
+            let id = bound.clone();
+            let _ = self.update_pane(&p.id, move |r| {
+                if r.hermes_session.is_empty() {
+                    r.hermes_session = id;
+                }
+            });
+        }
+        let tip = crate::adapters::hermes::tip(&db, &bound);
+        if self.hermes_owner_is_newer(p, &db, &tip, &home) {
+            return String::new();
+        }
+        format!("{db}#{tip}")
+    }
+
+    /// Sees bytes written to Hermes pane `id`. It keeps the line being
+    /// typed, and when a line ends it records the first prompt of a pane that
+    /// does not resume: the text and the moment. A line that starts with "/"
+    /// is a command to Hermes and starts no session, so it is not a prompt. A
+    /// pane with a prompt, a bound session, or a resume flag keeps no line.
+    pub(super) fn note_input(&self, id: &str, data: &[u8], now_ms: i64) {
+        let Some(p) = self.tree.pane(id) else { return };
+        if !is_hermes(&p) || p.closed || !p.hermes_prompt.is_empty() || !p.hermes_session.is_empty() || hermes_resumed(&p) {
+            return;
+        }
+        let lines = {
+            let mut m = self.hermes_line.lock().unwrap_or_else(|e| e.into_inner());
+            m.entry(id.to_string()).or_default().feed(data)
+        };
+        for line in lines {
+            if line.is_empty() || line.starts_with('/') {
+                continue;
+            }
+            let _ = self.update_pane(id, move |r| {
+                if r.hermes_prompt.is_empty() {
+                    r.hermes_prompt = line;
+                    r.hermes_prompt_at = now_ms;
+                }
+            });
+            self.hermes_line.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+            return;
+        }
+    }
+
+    /// The state database a Hermes pane reads, or "".
+    fn hermes_state_path(p: &crate::layout::Pane, home: &str) -> String {
+        let argv = p.argv.clone().unwrap_or_default();
+        let h = crate::adapters::hermes::home(&argv, &p.env, home);
+        if h.is_empty() {
+            String::new()
+        } else {
+            crate::adapters::hermes::state_path(&h)
+        }
+    }
+
+    /// The sessions that other Hermes panes of the same database hold, each
+    /// pane with its live tip. The tips are read with one open of the
+    /// database.
+    fn hermes_others(&self, p: &crate::layout::Pane, db: &str, home: &str) -> Vec<(crate::layout::Pane, String)> {
+        let others: Vec<crate::layout::Pane> = self
+            .tree
+            .panes()
+            .into_iter()
+            .filter(|o| o.id != p.id && !o.hermes_session.is_empty() && is_hermes(o) && Self::hermes_state_path(o, home) == db)
+            .collect();
+        let ids: Vec<String> = others.iter().map(|o| o.hermes_session.clone()).collect();
+        others.into_iter().zip(crate::adapters::hermes::tips(db, &ids)).collect()
+    }
+
+    /// The captured first prompts, with white space folded, of the other
+    /// live Hermes panes of the same database that have not bound yet. A
+    /// session whose first message is one of these is theirs to take.
+    fn hermes_other_prompts(&self, p: &crate::layout::Pane, db: &str, home: &str) -> Vec<String> {
+        self.tree
+            .panes()
+            .into_iter()
+            .filter(|o| {
+                o.id != p.id && !o.closed && o.hermes_session.is_empty() && !o.hermes_prompt.is_empty() && is_hermes(o) && Self::hermes_state_path(o, home) == db
+            })
+            .map(|o| o.hermes_prompt.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect()
+    }
+
+    /// The live tips of the sessions that other Hermes panes of the same
+    /// database hold. A pane that picks a session of its own passes over
+    /// these.
+    fn hermes_taken(&self, p: &crate::layout::Pane, db: &str, home: &str) -> Vec<String> {
+        self.hermes_others(p, db, home).into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// Whether another Hermes pane of the same database holds the session
+    /// whose live tip is `tip` and owns it over p. A live pane owns it over
+    /// a closed one. Of two panes alike, a pane that sent the
+    /// prompt that began the session owns it over one that resumed it;
+    /// otherwise the newer pane owns it. Panes compare tips, not stored ids:
+    /// a compression can leave the older pane bound to the parent and the
+    /// newer one to the child, and both show the child.
+    fn hermes_owner_is_newer(&self, p: &crate::layout::Pane, db: &str, tip: &str, home: &str) -> bool {
+        self.hermes_others(p, db, home).iter().any(|(o, t)| {
+            if t != tip {
+                return false;
+            }
+            // A closed pane never owns a session over a live one.
+            if p.closed != o.closed {
+                return p.closed;
+            }
+            let (po, oo) = (prompt_owner(p), prompt_owner(o));
+            if po != oo {
+                return oo;
+            }
+            pane_newer(o, p)
+        })
+    }
+}
+
+/// True when pane p continues an older session: it carries -c, --continue,
+/// -r or --resume, with a name or without.
+fn hermes_resumed(p: &crate::layout::Pane) -> bool {
+    let argv = p.argv.clone().unwrap_or_default();
+    !crate::adapters::hermes::session_name(&argv).is_empty() || hermes_resumes(&argv)
+}
+
+/// True when pane p began its session with a prompt it was sent, as opposed
+/// to resuming an older session.
+fn prompt_owner(p: &crate::layout::Pane) -> bool {
+    !p.hermes_prompt.is_empty() && !hermes_resumed(p)
+}
+
+/// The line being typed into one Hermes pane: the text so far, whether a
+/// bracketed paste is open, and the head of a UTF-8 character that a write
+/// cut in two.
+#[derive(Default)]
+pub(super) struct LineIn {
+    buf: Vec<char>,
+    paste: bool,
+    pend: Vec<u8>,
+}
+
+impl LineIn {
+    /// Adds terminal input to the line and returns each line that ended. It
+    /// drops escape sequences, honours backspace and Ctrl-U, and ignores
+    /// other control bytes. A line break inside a bracketed paste counts as
+    /// a space: the paste is one message. A bare line feed (Ctrl-J) outside
+    /// a paste is a new line inside the message in Hermes, not Enter, so it
+    /// counts as a space too. Only a carriage return outside a paste ends
+    /// the line. A character split across two writes is joined first.
+    pub(super) fn feed(&mut self, data: &[u8]) -> Vec<String> {
+        let mut all = std::mem::take(&mut self.pend);
+        all.extend_from_slice(data);
+        let mut cut = all.len();
+        for k in 1..=3usize.min(all.len()) {
+            let c = all[all.len() - k];
+            if c & 0xC0 == 0x80 {
+                continue;
+            }
+            if c >= 0xC0 {
+                let need = if c >= 0xF0 { 4 } else if c >= 0xE0 { 3 } else { 2 };
+                if k < need {
+                    cut = all.len() - k;
+                }
+            }
+            break;
+        }
+        self.pend = all[cut..].to_vec();
+        let text = String::from_utf8_lossy(&all[..cut]).into_owned();
+        let mut lines = Vec::new();
+        let rs: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < rs.len() {
+            let r = rs[i];
+            match r {
+                '\x1b' => {
+                    if i + 1 < rs.len() && (rs[i + 1] == '[' || rs[i + 1] == 'O') {
+                        let start = i + 2;
+                        i += 2;
+                        while i < rs.len() && !(('\u{40}'..='\u{7e}').contains(&rs[i])) {
+                            i += 1;
+                        }
+                        if i < rs.len() && rs[i] == '~' {
+                            match rs[start..i].iter().collect::<String>().as_str() {
+                                "200" => self.paste = true,
+                                "201" => self.paste = false,
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                '\r' | '\n' => {
+                    if self.paste || r == '\n' {
+                        self.buf.push(' ');
+                    } else {
+                        lines.push(self.buf.iter().collect::<String>().trim().to_string());
+                        self.buf.clear();
+                    }
+                }
+                '\x7f' | '\x08' => {
+                    self.buf.pop();
+                }
+                '\x15' => self.buf.clear(),
+                c if c < ' ' => {}
+                c => self.buf.push(c),
+            }
+            i += 1;
+        }
+        lines
+    }
+}
+
+/// True when argv carries -c, --continue, -r or --resume, with a session
+/// name or without: the pane continues an older session.
+fn hermes_resumes(argv: &[String]) -> bool {
+    for a in argv.iter().skip(1) {
+        if a == "--" {
+            return false;
+        }
+        if a == "-c" || a == "--continue" || a == "-r" || a == "--resume" || a.starts_with("--continue=") || a.starts_with("--resume=") {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when a began after b. Records with no start time sort by their id,
+/// which counts up inside a workspace.
+fn pane_newer(a: &crate::layout::Pane, b: &crate::layout::Pane) -> bool {
+    if a.started_at != b.started_at {
+        return a.started_at > b.started_at;
+    }
+    pane_seq(&a.id) > pane_seq(&b.id)
+}
+
+/// The number in a pane id like "w1:p28".
+fn pane_seq(id: &str) -> i64 {
+    id.rfind(":p").and_then(|i| id[i + 2..].parse().ok()).unwrap_or(0)
+}
+
+/// The database file of a "db#session" reference.
+pub fn hermes_file(r: &str) -> &str {
+    r.rfind('#').map_or(r, |i| &r[..i])
+}
+
+/// The tool calls of an assistant row's tool_calls column. Hermes writes it
+/// with json.dumps of the OpenAI list: [{function: {name, arguments}}, ...]
+/// (hermes_state_messages.py), and that is the only shape read.
+fn hermes_calls(raw: &str) -> Vec<(String, Option<Value>)> {
+    let Ok(Value::Array(list)) = serde_json::from_str::<Value>(raw) else { return Vec::new() };
+    let mut out = Vec::new();
+    for c in list {
+        let f = c.get("function");
+        let name = f.and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+        let mut args = f.and_then(|f| f.get("arguments")).filter(|a| !a.is_null()).cloned();
+        if let Some(Value::String(sv)) = &args {
+            if let Ok(m @ Value::Object(_)) = serde_json::from_str::<Value>(sv) {
+                args = Some(m);
+            }
+        }
+        out.push((name, args));
+    }
+    out
+}
+
+/// The stand-in text Hermes keeps in the content of an assistant row that
+/// only calls tools, such as "[terminal]" (_STALE_TOOL_CALL_MARKER_RE in
+/// hermes_state.py). Hermes blanks it when it restores a session; it is not
+/// the agent's words.
+fn is_hermes_marker(t: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"^\[[A-Za-z_][A-Za-z0-9_.-]*\]$").expect("a fixed pattern")).is_match(t)
+}
+
+/// Reads the messages of a "db#session" reference. A row's id is its row
+/// number, which only rises; a tool call on an assistant row gets the row
+/// id with ".n".
+fn hermes_messages(r: &str) -> Result<(Vec<Message>, bool), ()> {
+    let Some(i) = r.rfind('#') else {
+        return Ok((Vec::new(), false));
+    };
+    let (rows, cut) = crate::adapters::hermes::messages(&r[..i], &r[i + 1..], HERMES_ROWS)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let mut got: Vec<Message> = Vec::new();
+        match row.role.as_str() {
+            "user" => {
+                let t = clean_message(&row.content);
+                if !t.is_empty() {
+                    got.push(Message { at: row.at, role: "owner".into(), text: t, ..Default::default() });
+                }
+            }
+            "assistant" => {
+                let calls = hermes_calls(&row.tool_calls);
+                let t = clean_message(&row.content);
+                if !t.is_empty() && !(!calls.is_empty() && is_hermes_marker(&t)) {
+                    got.push(Message { at: row.at, role: "agent".into(), text: t, ..Default::default() });
+                }
+                for (name, args) in calls {
+                    got.push(Message {
+                        at: row.at,
+                        role: "agent".into(),
+                        text: tool_summary(args.as_ref(), ""),
+                        tool: one_line(&name, TOOL_RUNES),
+                        ..Default::default()
+                    });
+                }
+            }
+            _ => {}
+        }
+        for (k, m) in got.iter_mut().enumerate() {
+            m.id = row.id.to_string();
+            if k > 0 {
+                m.id.push_str(&format!(".{k}"));
+            }
+        }
+        out.extend(got);
+    }
+    Ok((out, cut))
 }
 
 /// The leads of an owner text that records a command and its output.
@@ -740,9 +1127,9 @@ impl Server {
         None
     }
 
-    fn is_tracked_foreman(&self, id: &str) -> bool {
+    pub(super) fn is_tracked_steward(&self, id: &str) -> bool {
         let mut t = self.talk_lock();
-        !id.is_empty() && self.tracked_foreman(&mut t) == id
+        !id.is_empty() && self.tracked_steward(&mut t) == id
     }
 
     fn handle_pane_messages(self: &Arc<Server>, c: &Arc<Client>, r: &Request) -> Response {
@@ -835,7 +1222,7 @@ impl Server {
         if res.is_err() {
             self.note(
                 &format!(
-                    "cannot write the chat file {}. The words still go to the foreman.",
+                    "cannot write the chat file {}. The words still go to the steward.",
                     path.display()
                 ),
                 pane,
@@ -1055,12 +1442,19 @@ impl Server {
         Ok((out, cut, unread))
     }
 
-    /// The transcripts floor.chat reads for foreman id, each with its
+    /// The transcripts floor.chat reads for steward id, each with its
     /// number among the pane's transcripts, oldest 0: a sprig pane's
     /// session tree, else every transcript the pane claimed, kept in the
-    /// data dir across a restart, the newest CHAT_FOREMEN of them.
+    /// data dir across a restart, the newest CHAT_STEWARDS of them.
     fn chat_sources(&self, id: &str) -> Vec<(String, Kind, String)> {
         if let Some(p) = self.tree.pane(id) {
+            if is_hermes(&p) {
+                let (path, kind) = self.transcript_of(&p);
+                if path.is_empty() {
+                    return Vec::new();
+                }
+                return vec![(path, kind, "0".into())];
+            }
             if p.harness == "sprig" && p.kind == crate::layout::KIND_HEADLESS {
                 let (path, kind) = self.transcript_of(&p);
                 if path.is_empty() {
@@ -1072,7 +1466,7 @@ impl Server {
         let claimed = self.claimed_by(id);
         let mut out = Vec::new();
         for k in (0..claimed.len()).rev() {
-            if out.len() >= CHAT_FOREMEN {
+            if out.len() >= CHAT_STEWARDS {
                 break;
             }
             out.insert(0, (claimed[k].clone(), Kind::Claude, k.to_string()));
@@ -1097,33 +1491,33 @@ impl Server {
                 unread.join(", ")
             ));
         }
-        // The tracked foreman comes first even when no line names it yet,
-        // as for one that floor.foreman or the terminal floor started.
-        let mut foremen: Vec<String> = Vec::new();
+        // The tracked steward comes first even when no line names it yet,
+        // as for one that floor.steward or the terminal floor started.
+        let mut stewards: Vec<String> = Vec::new();
         let tracked = {
             let mut t = self.talk_lock();
-            self.tracked_foreman(&mut t)
+            self.tracked_steward(&mut t)
         };
         if !tracked.is_empty() {
-            foremen.push(tracked);
+            stewards.push(tracked);
         }
         for m in lines.iter().rev() {
-            if foremen.len() >= CHAT_FOREMEN {
+            if stewards.len() >= CHAT_STEWARDS {
                 break;
             }
-            if !m.pane.is_empty() && !foremen.contains(&m.pane) {
-                foremen.push(m.pane.clone());
+            if !m.pane.is_empty() && !stewards.contains(&m.pane) {
+                stewards.push(m.pane.clone());
             }
         }
         let mut lines = lines;
         let mut replies: Vec<Message> = Vec::new();
         let mut heard: HashMap<String, Vec<Message>> = HashMap::new();
-        for id in foremen.iter().rev() {
+        for id in stewards.iter().rev() {
             for (path, kind, n) in self.chat_sources(id) {
                 let Ok((msgs, tcut)) = read_messages(&path, kind) else {
                     cut = true;
                     self.note_once(&format!(
-                        "cannot read the foreman's transcript {path}. The chat shows the rest."
+                        "cannot read the steward's transcript {path}. The chat shows the rest."
                     ));
                     continue;
                 };
@@ -1176,10 +1570,20 @@ impl Server {
             let (path, _) = self.transcript_of(&p);
             let mut m = (path.clone(), 0u64, 0i64);
             if !path.is_empty() {
-                if let Ok(md) = std::fs::symlink_metadata(&path) {
+                let file = if is_hermes(&p) { hermes_file(&path).to_string() } else { path.clone() };
+                if let Ok(md) = std::fs::symlink_metadata(&file) {
                     if md.file_type().is_file() {
                         m.1 = md.len();
                         m.2 = md.mtime() * 1_000_000_000 + md.mtime_nsec();
+                    }
+                }
+                if is_hermes(&p) {
+                    // Hermes keeps new rows in the -wal file until a checkpoint.
+                    if let Ok(md) = std::fs::symlink_metadata(format!("{file}-wal")) {
+                        if md.file_type().is_file() {
+                            m.1 += md.len();
+                            m.2 = m.2.max(md.mtime() * 1_000_000_000 + md.mtime_nsec());
+                        }
                     }
                 }
             }
@@ -1189,7 +1593,7 @@ impl Server {
                 None => !path.is_empty(),
             };
             if send && changed {
-                self.send_messages_event(&p.id, self.is_tracked_foreman(&p.id));
+                self.send_messages_event(&p.id, self.is_tracked_steward(&p.id));
             }
         }
         marks.retain(|id, _| live.contains(id));
@@ -1199,6 +1603,350 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Hermes keeps "[terminal]" as the content of a tool-only assistant row.
+    // It is not the agent's words.
+    #[test]
+    fn a_marker_beside_tool_calls_is_not_an_agent_message() {
+        let dir = scratch("marker");
+        let db = dir.join("state.db");
+        {
+            let c = rusqlite::Connection::open(&db).unwrap();
+            c.execute_batch(
+                "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, parent_session_id TEXT, started_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1);
+                 INSERT INTO sessions (id, source, started_at) VALUES ('sess1','cli',1);
+                 INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES ('sess1','assistant','[terminal]','[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"arguments\":\"{\\\"command\\\":\\\"coppice pane list\\\"}\"}}]',1);
+                 INSERT INTO messages (session_id, role, content, timestamp) VALUES ('sess1','assistant','[terminal]',2);",
+            )
+            .unwrap();
+        }
+        let r = format!("{}#sess1", db.display());
+        let (msgs, _) = read_messages(&r, Kind::Hermes).unwrap();
+        assert_eq!(ids(&msgs), vec![w("1", "agent", "coppice pane list", "terminal"), w("2", "agent", "[terminal]", "")]);
+        assert!(hermes_calls("").is_empty());
+        assert!(hermes_calls("null").is_empty());
+    }
+
+    /// A Server with a Hermes state database and a function that makes a
+    /// Hermes pane of the steward profile with a start time and a bound
+    /// session.
+    fn hermes_floor(name: &str, sql: &str) -> (Arc<Server>, PathBuf) {
+        let dir = scratch(name);
+        let home = dir.join("hh");
+        std::fs::create_dir_all(&home).unwrap();
+        let c = rusqlite::Connection::open(home.join("state.db")).unwrap();
+        c.execute_batch(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, parent_session_id TEXT, started_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0, end_reason TEXT);
+             CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1);",
+        )
+        .unwrap();
+        c.execute_batch(sql).unwrap();
+        (server(&dir), home)
+    }
+
+    fn hermes_pane(s: &Server, home: &Path, argv: &[&str], started: i64, bound: &str) -> String {
+        let ws = s.tree.workspaces().into_iter().next().unwrap_or_else(|| s.tree.create_workspace("w", "/"));
+        let tab = s.tree.tabs(&ws.id).unwrap_or_default().into_iter().next().unwrap_or_else(|| s.tree.create_tab(&ws.id, "t").unwrap());
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HERMES_HOME".to_string(), home.display().to_string());
+        let p = s
+            .tree
+            .create_pane(
+                &ws.id,
+                &tab.id,
+                crate::layout::Pane {
+                    harness: "hermes-steward".into(),
+                    argv: Some(argv.iter().map(|a| a.to_string()).collect()),
+                    env,
+                    started_at: started,
+                    hermes_session: bound.into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        p.id
+    }
+
+    fn ref_of(s: &Server, id: &str) -> String {
+        s.hermes_ref(&s.tree.pane(id).unwrap())
+    }
+
+    // After a compression the older pane holds the parent and the newer one
+    // the child. Both resolve to the child, so only the newer pane shows it.
+    #[test]
+    fn a_compression_does_not_make_two_panes_show_the_same_session() {
+        let (s, home) = hermes_floor(
+            "compress",
+            "INSERT INTO sessions (id, source, started_at, end_reason) VALUES ('X','cli',100,'compression');
+             INSERT INTO sessions (id, source, parent_session_id, started_at) VALUES ('X2','cli','X',200);
+             INSERT INTO messages (session_id, role, content, timestamp) VALUES ('X','assistant','old',101);
+             INSERT INTO messages (session_id, role, content, timestamp) VALUES ('X2','assistant','new',201);",
+        );
+        let argv = ["hermes", "-c"];
+        let a = hermes_pane(&s, &home, &argv, 50, "X");
+        let b = hermes_pane(&s, &home, &argv, 300, "X2");
+        assert!(ref_of(&s, &b).ends_with("#X2"));
+        assert_eq!(ref_of(&s, &a), "", "the older pane must not repeat the child session");
+    }
+
+    /// Tells the server that text went into pane id at unix second at.
+    fn prompt_at(s: &Server, id: &str, text: &str, at: f64) {
+        s.note_input(id, format!("{text}\r").as_bytes(), (at * 1000.0) as i64);
+    }
+
+    /// What current Hermes leaves for a first turn: the session row and the
+    /// messages appear together, stamped with the moment of the turn.
+    fn turn(home: &Path, session: &str, prompt: &str, reply: &str, at: f64) {
+        let c = rusqlite::Connection::open(home.join("state.db")).unwrap();
+        c.execute("INSERT INTO sessions (id, source, started_at) VALUES (?1,'cli',?2)", rusqlite::params![session, at]).unwrap();
+        c.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1,'user',?2,?3)",
+            rusqlite::params![session, prompt, at],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?1,'assistant',?2,?3)",
+            rusqlite::params![session, reply, at + 1.0],
+        )
+        .unwrap();
+    }
+
+    // Current Hermes writes a session at the first prompt. Two flagless
+    // panes: A opened, B opened, A typed, B typed. Each pane shows its own
+    // session whichever is read first.
+    #[test]
+    fn two_flagless_hermes_panes_bind_at_their_first_prompt() {
+        for b_first in [false, true] {
+            let (s, home) = hermes_floor(if b_first { "flagless-b" } else { "flagless-a" }, "");
+            let argv = ["hermes"];
+            let a = hermes_pane(&s, &home, &argv, 100, "");
+            let b = hermes_pane(&s, &home, &argv, 200, "");
+            assert_eq!(ref_of(&s, &a), "");
+            assert_eq!(ref_of(&s, &b), "");
+            prompt_at(&s, &a, "what is in the garden", 300.0);
+            turn(&home, "SA", "what is in the garden", "reply of A", 300.3);
+            prompt_at(&s, &b, "how tall is the fence", 310.0);
+            turn(&home, "SB", "how tall is the fence", "reply of B", 310.3);
+            let (ra, rb) = if b_first {
+                let rb = ref_of(&s, &b);
+                (ref_of(&s, &a), rb)
+            } else {
+                let ra = ref_of(&s, &a);
+                (ra, ref_of(&s, &b))
+            };
+            assert!(ra.ends_with("#SA"), "{ra}");
+            assert!(rb.ends_with("#SB"), "{rb}");
+        }
+    }
+
+    // A pane that sent nothing shows nothing, even when another pane's
+    // session is the newest one of the profile. A slash command is no prompt.
+    #[test]
+    fn a_hermes_pane_that_has_not_prompted_shows_nothing() {
+        let (s, home) = hermes_floor("no-prompt", "");
+        turn(&home, "SB", "hello there", "b", 250.0);
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        assert_eq!(ref_of(&s, &a), "");
+        prompt_at(&s, &a, "/help", 260.0);
+        assert_eq!(s.tree.pane(&a).unwrap().hermes_prompt, "");
+    }
+
+    // The same words in two panes: each pane gets the session written
+    // closest to its own prompt, in either read order.
+    #[test]
+    fn two_panes_that_send_the_same_words_each_get_their_own_session() {
+        for b_first in [false, true] {
+            let (s, home) = hermes_floor(if b_first { "same-b" } else { "same-a" }, "");
+            let argv = ["hermes"];
+            let a = hermes_pane(&s, &home, &argv, 100, "");
+            let b = hermes_pane(&s, &home, &argv, 101, "");
+            prompt_at(&s, &a, "hi", 300.0);
+            prompt_at(&s, &b, "hi", 303.0);
+            turn(&home, "SA", "hi", "a", 300.2);
+            turn(&home, "SB", "hi", "b", 303.2);
+            let order = if b_first { [&b, &a] } else { [&a, &b] };
+            for id in order {
+                let want = if *id == b { "#SB" } else { "#SA" };
+                assert!(ref_of(&s, id).ends_with(want), "{id}");
+            }
+        }
+    }
+
+    // A closed pane that never bound shows nothing new.
+    #[test]
+    fn a_closed_hermes_pane_that_never_bound_shows_nothing() {
+        let (s, home) = hermes_floor("closed-unbound", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        prompt_at(&s, &a, "hello", 300.0);
+        s.update_pane(&a, |r| r.closed = true).unwrap();
+        turn(&home, "SA", "hello", "r", 300.2);
+        assert_eq!(ref_of(&s, &a), "");
+    }
+
+    // The pane that sent the prompt owns its session over a pane that
+    // resumes it with -c.
+    #[test]
+    fn a_prompting_pane_owns_its_session_over_a_resuming_one() {
+        let (s, home) = hermes_floor("prompt-owner", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        prompt_at(&s, &a, "plan the week", 300.0);
+        turn(&home, "SA", "plan the week", "r", 300.2);
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+        let b = hermes_pane(&s, &home, &["hermes", "-c"], 400, "");
+        assert_eq!(ref_of(&s, &b), "");
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+    }
+
+    // The bound session ends in a compression: the pane follows to the tip.
+    #[test]
+    fn a_prompt_bound_pane_follows_a_compression_to_the_tip() {
+        let (s, home) = hermes_floor("prompt-compress", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        prompt_at(&s, &a, "start the long job", 300.0);
+        turn(&home, "X", "start the long job", "early", 300.2);
+        assert!(ref_of(&s, &a).ends_with("#X"));
+        let c = rusqlite::Connection::open(home.join("state.db")).unwrap();
+        c.execute_batch(
+            "UPDATE sessions SET end_reason='compression' WHERE id='X';
+             INSERT INTO sessions (id, source, parent_session_id, started_at) VALUES ('X2','cli','X',400);",
+        )
+        .unwrap();
+        assert!(ref_of(&s, &a).ends_with("#X2"));
+    }
+
+    #[test]
+    fn feed_line_keeps_the_typed_line() {
+        let mut l = LineIn::default();
+        assert!(l.feed(b"helo\x7fl").is_empty());
+        assert_eq!(l.buf.iter().collect::<String>(), "hell");
+        let lines = l.feed(b"o\x1b[200~ world\x1b[201~\r");
+        assert!(l.buf.is_empty());
+        assert_eq!(lines, vec!["hello world".to_string()]);
+        let mut m = LineIn::default();
+        assert_eq!(m.feed(b"a\x15b\x1b[Ac\r"), vec!["bc".to_string()]);
+    }
+
+    // A line break inside a bracketed paste is part of one message, and
+    // Ctrl-J is a new line inside the message, not Enter.
+    #[test]
+    fn feed_line_counts_a_break_inside_a_paste_as_a_space() {
+        let mut l = LineIn::default();
+        assert!(l.feed(b"\x1b[200~first line\nsecond line\r\nthird\x1b[201~").is_empty());
+        let lines = l.feed(b"\r");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].split_whitespace().collect::<Vec<_>>().join(" "), "first line second line third");
+        let mut m = LineIn::default();
+        assert_eq!(m.feed(b"one\ntwo\r"), vec!["one two".to_string()]);
+    }
+
+    #[test]
+    fn feed_line_joins_a_character_split_across_writes() {
+        let mut l = LineIn::default();
+        let b = "caf\u{e9} \u{65e5}\u{672c}\r".as_bytes();
+        let mut last = Vec::new();
+        for i in 0..b.len() {
+            last = l.feed(&b[i..i + 1]);
+        }
+        assert_eq!(last, vec!["caf\u{e9} \u{65e5}\u{672c}".to_string()]);
+    }
+
+    // A closed pane that sent the prompt does not keep the session over a
+    // live pane that resumes it.
+    #[test]
+    fn a_closed_prompting_pane_does_not_take_the_session_from_a_live_resuming_pane() {
+        let (s, home) = hermes_floor("closed-prompter", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        prompt_at(&s, &a, "plan the week", 300.0);
+        turn(&home, "SA", "plan the week", "r", 300.2);
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+        s.update_pane(&a, |r| r.closed = true).unwrap();
+        let b = hermes_pane(&s, &home, &["hermes", "-c"], 400, "");
+        assert!(ref_of(&s, &b).ends_with("#SA"), "the live pane shows it");
+        assert_eq!(ref_of(&s, &a), "", "the closed pane goes empty");
+    }
+
+    // With both panes closed the pane that sent the prompt keeps it.
+    #[test]
+    fn with_both_panes_closed_the_prompter_keeps_the_session() {
+        let (s, home) = hermes_floor("both-closed", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        prompt_at(&s, &a, "plan the week", 300.0);
+        turn(&home, "SA", "plan the week", "r", 300.2);
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+        let b = hermes_pane(&s, &home, &["hermes", "-c"], 400, "");
+        assert_eq!(ref_of(&s, &b), "");
+        s.update_pane(&a, |r| r.closed = true).unwrap();
+        s.update_pane(&b, |r| r.closed = true).unwrap();
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+        assert_eq!(ref_of(&s, &b), "");
+    }
+
+    // A prompt whose text Hermes stored differently binds by time once the
+    // window is over.
+    #[test]
+    fn a_cursor_edited_prompt_binds_by_time_after_the_window() {
+        let (s, home) = hermes_floor("cursor-edit", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        // Typed "helo", Left, "l": Hermes stored "hello".
+        s.note_input(&a, b"helo\x1b[Dl\r", 300_000);
+        turn(&home, "SA", "hello", "reply of A", 300.5);
+        set_clock(&s, 380.0);
+        assert_eq!(ref_of(&s, &a), "", "inside the window the pane waits for a text match");
+        set_clock(&s, 420.0);
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+    }
+
+    // The fallback leaves alone the sessions other panes hold or typed.
+    #[test]
+    fn the_time_fallback_leaves_other_panes_sessions_alone() {
+        let (s, home) = hermes_floor("fallback-others", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        let b = hermes_pane(&s, &home, &["hermes"], 110, "");
+        s.note_input(&a, b"helo\x1b[Dl\r", 300_000);
+        s.note_input(&b, b"something else\r", 300_001);
+        turn(&home, "SB", "something else", "reply of B", 300.8);
+        turn(&home, "SA", "hello", "reply of A", 300.9);
+        set_clock(&s, 420.0);
+        assert!(ref_of(&s, &a).ends_with("#SA"));
+        assert!(ref_of(&s, &b).ends_with("#SB"));
+    }
+
+    // The fallback takes the session closest to the first prompt, not the
+    // earliest one in the window.
+    #[test]
+    fn the_time_fallback_takes_the_session_closest_to_the_prompt() {
+        let (s, home) = hermes_floor("fallback-closest", "");
+        let a = hermes_pane(&s, &home, &["hermes"], 100, "");
+        s.note_input(&a, b"helo\x1b[Dl\r", 300_000);
+        turn(&home, "SEARLY", "unrelated early", "reply of early", 297.0);
+        turn(&home, "SNEAR", "hello", "reply of near", 300.4);
+        set_clock(&s, 420.0);
+        assert!(ref_of(&s, &a).ends_with("#SNEAR"));
+    }
+
+    /// Makes the server's clock read `secs` unix seconds.
+    fn set_clock(s: &Server, secs: f64) {
+        let skew = ((secs - Server::now_seconds()) * 1e9) as i64;
+        s.clock_skew.store(skew, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn the_newer_pane_is_the_one_with_the_later_start_or_id() {
+        let mk = |id: &str, at: i64| crate::layout::Pane { id: id.into(), started_at: at, ..Default::default() };
+        assert!(pane_newer(&mk("w1:p9", 20), &mk("w1:p22", 10)));
+        assert!(pane_newer(&mk("w1:p28", 0), &mk("w1:p22", 0)));
+        assert!(!pane_newer(&mk("w1:p22", 0), &mk("w1:p28", 0)));
+    }
+
+    #[test]
+    fn only_a_pane_with_a_resume_flag_continues_an_older_session() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(hermes_resumes(&s(&["hermes", "-p", "steward", "-c"])));
+        assert!(hermes_resumes(&s(&["hermes", "--resume=abc"])));
+        assert!(!hermes_resumes(&s(&["hermes", "-p", "steward"])));
+        assert!(!hermes_resumes(&s(&["hermes", "--", "-c"])));
+    }
 
     fn fixture(name: &str) -> String {
         format!(
@@ -1338,20 +2086,52 @@ mod tests {
             data_dir: dir.to_path_buf(),
             start_dir: dir.to_path_buf(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         })
+    }
+
+    #[test]
+    fn a_hermes_session_gives_messages_with_row_ids() {
+        let dir = scratch("hermes");
+        let db = dir.join("state.db");
+        {
+            let c = rusqlite::Connection::open(&db).unwrap();
+            c.execute_batch(
+                "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, parent_session_id TEXT, started_at REAL NOT NULL, archived INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL, _compressed_summary INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1);
+                 INSERT INTO sessions (id, source, started_at) VALUES ('sess1','cli',1);
+                 INSERT INTO messages (session_id, role, content, timestamp) VALUES ('sess1','user','open the garden gate',100);
+                 INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES ('sess1','assistant','Looking.','[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"arguments\":\"{\\\"command\\\":\\\"ls -la\\\"}\"}}]',101);
+                 INSERT INTO messages (session_id, role, content, tool_name, timestamp) VALUES ('sess1','tool','FAKE-total 0','terminal',102);
+                 INSERT INTO messages (session_id, role, content, timestamp) VALUES ('sess1','system','FAKE-system prompt',103);
+                 INSERT INTO messages (session_id, role, content, timestamp) VALUES ('sess1','assistant','Done.',104);",
+            )
+            .unwrap();
+        }
+        let r = format!("{}#sess1", db.display());
+        let (msgs, cut) = read_messages(&r, Kind::Hermes).unwrap();
+        assert!(!cut);
+        assert_eq!(
+            ids(&msgs),
+            vec![
+                w("1", "owner", "open the garden gate", ""),
+                w("2", "agent", "Looking.", ""),
+                w("2.1", "agent", "ls -la", "terminal"),
+                w("5", "agent", "Done.", ""),
+            ]
+        );
     }
 
     #[test]
     fn a_chat_line_is_written_0600_in_a_0700_dir() {
         let dir = scratch("write");
         let s = server(&dir);
-        s.write_chat("user", "w1:p1", "hello <foreman>");
+        s.write_chat("user", "w1:p1", "hello <steward>");
         let (lines, cut, _) = s.read_chat().unwrap();
         assert!(!cut);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].role, "owner");
-        assert_eq!(lines[0].text, "hello <foreman>");
+        assert_eq!(lines[0].text, "hello <steward>");
         assert_eq!(lines[0].pane, "w1:p1");
         let chat = dir.join("chat");
         assert_eq!(std::fs::metadata(&chat).unwrap().mode() & 0o777, 0o700);
@@ -1364,7 +2144,7 @@ mod tests {
         assert_eq!(std::fs::metadata(&f).unwrap().mode() & 0o777, 0o600);
         let text = std::fs::read_to_string(&f).unwrap();
         // Go escapes < and > in a JSON string; so must the line here.
-        let want = format!("\"text\":\"hello {b}u003cforeman{b}u003e\"", b = '\\');
+        let want = format!("\"text\":\"hello {b}u003csteward{b}u003e\"", b = '\\');
         assert!(text.contains(&want), "{text}");
         assert!(text.starts_with(r#"{"kind":"user","date":""#), "{text}");
         let _ = std::fs::remove_dir_all(&dir);

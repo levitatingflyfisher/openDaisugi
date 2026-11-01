@@ -3,10 +3,10 @@
 package verify
 
 // DialectJSON is dialect.DIALECT_JSON: the canonical JSON the hash is taken over.
-const DialectJSON = "{\"glob_regex\":1,\"synonyms\":{\"file_content_preservation\":\"keep_unchanged\",\"file_immutability\":\"keep_unchanged\",\"file_immutable\":\"keep_unchanged\",\"file_preservation\":\"keep_unchanged\",\"file_unchanged\":\"keep_unchanged\",\"files_not_modified\":\"keep_unchanged\",\"filesystem_readonly\":\"keep_unchanged\",\"immutable_source\":\"keep_unchanged\",\"no_file_modification\":\"keep_unchanged\",\"no_file_modifications\":\"keep_unchanged\",\"no_file_mutations\":\"keep_unchanged\",\"no_file_writes\":\"keep_unchanged\",\"no_filesystem_mutation\":\"keep_unchanged\",\"no_local_modification\":\"keep_unchanged\",\"no_local_modifications\":\"keep_unchanged\",\"no_modification\":\"keep_unchanged\",\"no_modifications\":\"keep_unchanged\",\"no_project_modification\":\"keep_unchanged\",\"no_source_modification\":\"keep_unchanged\",\"read_only\":\"keep_unchanged\",\"read_only_access\":\"keep_unchanged\",\"read_only_operation\":\"keep_unchanged\",\"read_only_operations\":\"keep_unchanged\"},\"version\":1,\"words\":{\"keep_unchanged\":{\"body\":{\"op\":\"forall_steps\",\"pred\":{\"op\":\"forall_writes\",\"pred\":{\"op\":\"not_matches\",\"path\":\"path\",\"regex\":\"$target\"}}},\"params\":[{\"default\":\"**\",\"name\":\"target\",\"sort\":\"glob\"}]}},\"write_paths\":2}"
+const DialectJSON = "{\"glob_regex\":1,\"synonyms\":{\"file_content_preservation\":\"keep_unchanged\",\"file_immutability\":\"keep_unchanged\",\"file_immutable\":\"keep_unchanged\",\"file_preservation\":\"keep_unchanged\",\"file_unchanged\":\"keep_unchanged\",\"files_not_modified\":\"keep_unchanged\",\"filesystem_readonly\":\"keep_unchanged\",\"immutable_source\":\"keep_unchanged\",\"no_file_modification\":\"keep_unchanged\",\"no_file_modifications\":\"keep_unchanged\",\"no_file_mutations\":\"keep_unchanged\",\"no_file_writes\":\"keep_unchanged\",\"no_filesystem_mutation\":\"keep_unchanged\",\"no_local_modification\":\"keep_unchanged\",\"no_local_modifications\":\"keep_unchanged\",\"no_modification\":\"keep_unchanged\",\"no_modifications\":\"keep_unchanged\",\"no_project_modification\":\"keep_unchanged\",\"no_source_modification\":\"keep_unchanged\",\"read_only\":\"keep_unchanged\",\"read_only_access\":\"keep_unchanged\",\"read_only_operation\":\"keep_unchanged\",\"read_only_operations\":\"keep_unchanged\"},\"version\":1,\"words\":{\"keep_unchanged\":{\"body\":{\"op\":\"forall_steps\",\"pred\":{\"op\":\"forall_writes\",\"pred\":{\"op\":\"not_matches\",\"path\":\"path\",\"regex\":\"$target\"}}},\"params\":[{\"default\":\"**\",\"name\":\"target\",\"sort\":\"glob\"}]}},\"write_paths\":3}"
 
 // DialectHash is dialect.DIALECT_HASH.
-const DialectHash = "108a89a256798dfc"
+const DialectHash = "6013ab8ed0063f7d"
 
 // DialectAuditPrefix is dialect.AUDIT_PREFIX.
 const DialectAuditPrefix = "dialect audit: "
@@ -75,11 +75,172 @@ var writerList = []writerSpec{
 	{Name: "rsync", Rule: "rsync", Short: "0346aAbcCdDEgHhiIkKlLmnoOpPqrRsStuUvWxXyz", ShortValue: "Bef", Long: []string{"--acls", "--append", "--archive", "--backup", "--checksum", "--compress", "--copy-links", "--cvs-exclude", "--delete", "--delete-after", "--delete-before", "--delete-delay", "--delete-during", "--delete-excluded", "--devices", "--dirs", "--dry-run", "--executability", "--existing", "--force", "--fuzzy", "--group", "--hard-links", "--human-readable", "--ignore-existing", "--ignore-times", "--inplace", "--itemize-changes", "--links", "--list-only", "--mkpath", "--no-group", "--no-owner", "--no-perms", "--no-relative", "--no-times", "--no-whole-file", "--numeric-ids", "--omit-dir-times", "--one-file-system", "--owner", "--partial", "--perms", "--progress", "--protect-args", "--prune-empty-dirs", "--quiet", "--recursive", "--relative", "--remove-source-files", "--safe-links", "--size-only", "--sparse", "--specials", "--stats", "--times", "--update", "--verbose", "--whole-file", "--xattrs"}, LongValue: []string{"--block-size", "--bwlimit", "--chmod", "--chown", "--compress-level", "--contimeout", "--debug", "--exclude", "--exclude-from", "--files-from", "--filter", "--include", "--include-from", "--info", "--max-delete", "--max-size", "--min-size", "--modify-window", "--out-format", "--port", "--rsh", "--suffix", "--timeout"}},
 	{Name: "sed", Rule: "sed", Short: "Enrsuz", ShortValue: "efl", ShortOptional: "i", Long: []string{"--debug", "--follow-symlinks", "--null-data", "--posix", "--quiet", "--regexp-extended", "--sandbox", "--separate", "--silent", "--unbuffered"}, LongValue: []string{"--expression", "--file", "--line-length"}, LongOptional: []string{"--in-place"}},
 	{Name: "shred", Rule: "all", Short: "fuvxz", ShortValue: "ns", Long: []string{"--exact", "--force", "--verbose", "--zero"}, LongValue: []string{"--iterations", "--size"}, LongOptional: []string{"--remove"}},
+	{Name: "tar", Rule: "tar"},
 	{Name: "tee", Rule: "all", Short: "aip", Long: []string{"--append", "--ignore-interrupts"}, LongOptional: []string{"--output-error"}},
 	{Name: "touch", Rule: "all", Short: "acm", ShortValue: "dtr", LongValue: []string{"--date", "--reference"}},
 	{Name: "truncate", Rule: "all", Short: "co", ShortValue: "rs", Long: []string{"--io-blocks", "--no-create"}, LongValue: []string{"--reference", "--size"}},
+	{Name: "uniq", Rule: "inout", Short: "cdDiuz", ShortValue: "fsw", Long: []string{"--count", "--repeated", "--unique", "--ignore-case", "--zero-terminated"}, LongValue: []string{"--skip-fields", "--skip-chars", "--check-chars"}},
 	{Name: "unlink", Rule: "all"},
+	{Name: "xxd", Rule: "inout", Short: "abCEeipruv", ShortValue: "cglnos"},
 }
 
 // ddKeyList is write_paths.DD_KEYS.
 var ddKeyList = []string{"bs", "cbs", "conv", "count", "ibs", "if", "iflag", "iseek", "obs", "of", "oflag", "oseek", "seek", "skip", "status"}
+
+// readerList is write_paths.READERS, by name. A command in both
+// tables (cp, mv, ...) takes its flags from writerList; its entry here
+// names the rule only.
+var readerList = []writerSpec{
+	{Name: "base64", Rule: "files", Short: "di", ShortValue: "w", Long: []string{"--decode", "--ignore-garbage"}, LongValue: []string{"--wrap"}},
+	{Name: "cat", Rule: "files", Short: "AbeEnstTuv", Long: []string{"--show-all", "--number-nonblank", "--show-ends", "--number", "--squeeze-blank", "--show-tabs", "--show-nonprinting"}},
+	{Name: "cksum", Rule: "files"},
+	{Name: "cmp", Rule: "files", Short: "bls", ShortValue: "in"},
+	{Name: "cp", Rule: "dest"},
+	{Name: "cut", Rule: "files", Short: "nsz", ShortValue: "bcfd", Long: []string{"--complement", "--only-delimited", "--zero-terminated"}, LongValue: []string{"--bytes", "--characters", "--fields", "--delimiter", "--output-delimiter"}},
+	{Name: "dd", Rule: "dd"},
+	{Name: "diff", Rule: "diff", Short: "abBcdeEilnNpqrstTuwyZ", ShortValue: "UCWxFID", Long: []string{"--brief", "--recursive", "--ignore-all-space", "--ignore-case", "--new-file", "--text", "--ignore-space-change", "--ignore-blank-lines", "--ignore-trailing-space", "--ignore-tab-expansion", "--expand-tabs", "--initial-tab", "--minimal", "--side-by-side", "--suppress-common-lines", "--left-column", "--report-identical-files", "--show-c-function", "--strip-trailing-cr", "--no-dereference", "--normal", "--ed", "--rcs", "--paginate", "--speed-large-files", "--suppress-blank-empty", "--unidirectional-new-file", "--ignore-file-name-case", "--no-ignore-file-name-case"}, LongValue: []string{"--exclude", "--width", "--label", "--tabsize", "--horizon-lines", "--show-function-line", "--ifdef", "--ignore-matching-lines", "--palette"}, LongOptional: []string{"--unified", "--context", "--color"}},
+	{Name: "egrep", Rule: "grep", Short: "abcEFGhHiIlLnoPqrRsTUvwxyzZ0123456789", ShortValue: "ABCdDefm", Long: []string{"--count", "--extended-regexp", "--fixed-strings", "--ignore-case", "--files-with-matches", "--files-without-match", "--line-number", "--only-matching", "--perl-regexp", "--quiet", "--silent", "--recursive", "--dereference-recursive", "--no-messages", "--invert-match", "--word-regexp", "--line-regexp", "--null", "--text", "--binary", "--with-filename", "--no-filename", "--null-data", "--byte-offset", "--initial-tab", "--line-buffered", "--no-ignore-case", "--no-group-separator"}, LongValue: []string{"--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context", "--include", "--exclude", "--exclude-dir", "--binary-files", "--directories", "--devices", "--label", "--group-separator"}, LongOptional: []string{"--color", "--colour"}},
+	{Name: "fgrep", Rule: "grep", Short: "abcEFGhHiIlLnoPqrRsTUvwxyzZ0123456789", ShortValue: "ABCdDefm", Long: []string{"--count", "--extended-regexp", "--fixed-strings", "--ignore-case", "--files-with-matches", "--files-without-match", "--line-number", "--only-matching", "--perl-regexp", "--quiet", "--silent", "--recursive", "--dereference-recursive", "--no-messages", "--invert-match", "--word-regexp", "--line-regexp", "--null", "--text", "--binary", "--with-filename", "--no-filename", "--null-data", "--byte-offset", "--initial-tab", "--line-buffered", "--no-ignore-case", "--no-group-separator"}, LongValue: []string{"--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context", "--include", "--exclude", "--exclude-dir", "--binary-files", "--directories", "--devices", "--label", "--group-separator"}, LongOptional: []string{"--color", "--colour"}},
+	{Name: "file", Rule: "files", Short: "bhiLNnprsz"},
+	{Name: "find", Rule: "find"},
+	{Name: "grep", Rule: "grep", Short: "abcEFGhHiIlLnoPqrRsTUvwxyzZ0123456789", ShortValue: "ABCdDefm", Long: []string{"--count", "--extended-regexp", "--fixed-strings", "--ignore-case", "--files-with-matches", "--files-without-match", "--line-number", "--only-matching", "--perl-regexp", "--quiet", "--silent", "--recursive", "--dereference-recursive", "--no-messages", "--invert-match", "--word-regexp", "--line-regexp", "--null", "--text", "--binary", "--with-filename", "--no-filename", "--null-data", "--byte-offset", "--initial-tab", "--line-buffered", "--no-ignore-case", "--no-group-separator"}, LongValue: []string{"--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context", "--include", "--exclude", "--exclude-dir", "--binary-files", "--directories", "--devices", "--label", "--group-separator"}, LongOptional: []string{"--color", "--colour"}},
+	{Name: "head", Rule: "files", Short: "qvz0123456789", ShortValue: "nc", Long: []string{"--quiet", "--silent", "--verbose", "--zero-terminated"}, LongValue: []string{"--lines", "--bytes"}},
+	{Name: "hexdump", Rule: "files", Short: "bcCdovx", ShortValue: "ens"},
+	{Name: "install", Rule: "install"},
+	{Name: "less", Rule: "files", Short: "NSRFXieqsEM"},
+	{Name: "ls", Rule: "ls", Short: "aAbBcCdDfFgGhHiklLmnNopqQrRsStuUvxXZ1", ShortValue: "IwT", Long: []string{"--all", "--almost-all", "--recursive", "--directory", "--long", "--human-readable", "--reverse", "--dereference", "--classify", "--group-directories-first", "--full-time", "--si", "--file-type", "--author", "--inode", "--size", "--numeric-uid-gid", "--escape", "--literal", "--quote-name", "--hide-control-chars", "--show-control-chars", "--no-group", "--zero", "--dired", "--context", "--kibibytes", "--ignore-backups"}, LongValue: []string{"--ignore", "--width", "--tabsize", "--sort", "--time", "--time-style", "--format", "--hide", "--block-size", "--quoting-style", "--indicator-style"}, LongOptional: []string{"--color", "--hyperlink"}},
+	{Name: "md5sum", Rule: "files", Short: "btwz", Long: []string{"--binary", "--text", "--tag", "--zero"}},
+	{Name: "more", Rule: "files", Short: "dlfpcsu"},
+	{Name: "mv", Rule: "move"},
+	{Name: "nl", Rule: "files", Short: "p", ShortValue: "bdfhilnsvw"},
+	{Name: "od", Rule: "files", Short: "abcdfiloxv", ShortValue: "AjNtS", ShortOptional: "w"},
+	{Name: "paste", Rule: "files", Short: "sz", ShortValue: "d"},
+	{Name: "rev", Rule: "files"},
+	{Name: "rg", Rule: "rg", Short: "acFhHiIlLnNopPqsSuUvwxz", ShortValue: "ABCdegjmMrtT", Long: []string{"--count", "--fixed-strings", "--files-with-matches", "--line-number", "--no-filename", "--with-filename", "--only-matching", "--quiet", "--smart-case", "--case-sensitive", "--ignore-case", "--word-regexp", "--line-regexp", "--invert-match", "--hidden", "--no-ignore", "--files", "--follow", "--heading", "--no-heading", "--column", "--trim", "--stats", "--json", "--vimgrep", "--no-messages", "--no-line-number"}, LongValue: []string{"--regexp", "--file", "--type", "--type-not", "--glob", "--iglob", "--max-depth", "--max-count", "--context", "--after-context", "--before-context", "--replace", "--threads", "--encoding", "--color", "--sort", "--sortr", "--max-filesize"}},
+	{Name: "rsync", Rule: "rsync"},
+	{Name: "sed", Rule: "sed"},
+	{Name: "sha1sum", Rule: "files", Short: "btwz", Long: []string{"--binary", "--text", "--tag", "--zero"}},
+	{Name: "sha256sum", Rule: "files", Short: "btwz", Long: []string{"--binary", "--text", "--tag", "--zero"}},
+	{Name: "sha512sum", Rule: "files", Short: "btwz", Long: []string{"--binary", "--text", "--tag", "--zero"}},
+	{Name: "sort", Rule: "files", Short: "bcCdfgiMhmnRrsuVz", ShortValue: "ktS", Long: []string{"--stable", "--unique", "--reverse", "--numeric-sort", "--ignore-case", "--zero-terminated", "--version-sort", "--human-numeric-sort", "--general-numeric-sort", "--month-sort", "--random-sort", "--dictionary-order", "--ignore-leading-blanks", "--ignore-nonprinting", "--merge"}, LongValue: []string{"--key", "--field-separator", "--sort", "--buffer-size"}},
+	{Name: "stat", Rule: "files", Short: "fLt", ShortValue: "c", Long: []string{"--dereference", "--file-system", "--terse"}, LongValue: []string{"--format", "--printf"}},
+	{Name: "strings", Rule: "files", Short: "adfwoh", ShortValue: "ntTesU"},
+	{Name: "tac", Rule: "files"},
+	{Name: "tail", Rule: "files", Short: "qvzfF0123456789", ShortValue: "ncs", Long: []string{"--quiet", "--silent", "--verbose", "--zero-terminated", "--retry"}, LongValue: []string{"--lines", "--bytes", "--sleep-interval", "--pid", "--max-unchanged-stats"}, LongOptional: []string{"--follow"}},
+	{Name: "tar", Rule: "tar"},
+	{Name: "uniq", Rule: "inout"},
+	{Name: "wc", Rule: "files", Short: "cmlwL", Long: []string{"--bytes", "--chars", "--lines", "--words", "--max-line-length"}, LongValue: []string{"--total"}},
+	{Name: "xxd", Rule: "inout"},
+}
+
+// findArgList is write_paths.FIND_ARGS in order: a test or action and its
+// argument count (-1: an -exec style clause, consumed through ; or +).
+var findArgList = []struct {
+	Name  string
+	Count int
+}{
+	{"-name", 1},
+	{"-iname", 1},
+	{"-path", 1},
+	{"-ipath", 1},
+	{"-wholename", 1},
+	{"-iwholename", 1},
+	{"-regex", 1},
+	{"-iregex", 1},
+	{"-type", 1},
+	{"-xtype", 1},
+	{"-newer", 1},
+	{"-anewer", 1},
+	{"-cnewer", 1},
+	{"-newermt", 1},
+	{"-mtime", 1},
+	{"-mmin", 1},
+	{"-atime", 1},
+	{"-amin", 1},
+	{"-ctime", 1},
+	{"-cmin", 1},
+	{"-size", 1},
+	{"-perm", 1},
+	{"-user", 1},
+	{"-group", 1},
+	{"-uid", 1},
+	{"-gid", 1},
+	{"-links", 1},
+	{"-inum", 1},
+	{"-maxdepth", 1},
+	{"-mindepth", 1},
+	{"-printf", 1},
+	{"-fprint", 1},
+	{"-fprint0", 1},
+	{"-fls", 1},
+	{"-empty", 0},
+	{"-nouser", 0},
+	{"-nogroup", 0},
+	{"-readable", 0},
+	{"-writable", 0},
+	{"-executable", 0},
+	{"-true", 0},
+	{"-false", 0},
+	{"-prune", 0},
+	{"-print", 0},
+	{"-print0", 0},
+	{"-ls", 0},
+	{"-quit", 0},
+	{"-depth", 0},
+	{"-xdev", 0},
+	{"-mount", 0},
+	{"-noleaf", 0},
+	{"-not", 0},
+	{"!", 0},
+	{"-a", 0},
+	{"-and", 0},
+	{"-o", 0},
+	{"-or", 0},
+	{"(", 0},
+	{")", 0},
+	{"-L", 0},
+	{"-H", 0},
+	{"-P", 0},
+	{"-follow", 0},
+	{"-delete", 0},
+	{"-fprintf", 2},
+	{"-exec", -1},
+	{"-execdir", -1},
+	{"-ok", -1},
+	{"-okdir", -1},
+}
+
+// The tar flag sets (write_paths.TAR).
+const (
+	tarModes = "cxt"
+	tarFlags = "vzjJa"
+	tarValue = "fC"
+)
+
+var tarLong = []string{"--create", "--extract", "--list", "--gzip", "--bzip2", "--xz", "--auto-compress", "--verbose"}
+var tarLongValue = []string{"--file", "--directory", "--strip-components"}
+
+// cwdMoverList is write_paths.CWD_MOVERS.
+var cwdMoverList = []string{".", "builtin", "cd", "command", "eval", "exec", "popd", "pushd", "source"}
+
+// unknownReasons is write_paths.UNKNOWN_REASONS, in order. {head} is the command.
+var unknownReasons = []string{
+	"the shell grammar refused the line",
+	"the shell extra is missing",
+	"wrappers nest past depth 4",
+	"a word the shell cannot split",
+	"a word the shell would change ($, a backtick, a glob, a brace, ~user)",
+	"a flag outside the closed set of {head}",
+	"{head} runs under xargs, which adds operands the line does not show",
+	"a writer runs under find -exec, which adds operands the line does not show",
+	"a relative path with .. under find -execdir",
+	"the line moves its cwd and names a relative path",
+	"a path under ~",
+	"a find test or action outside the closed set",
+	"tar without one of c, x, t and one -f",
+	"a head that runs a command the placer cannot read (exec, eval, source, sudo, watch, ssh, tmux, git -c, and the others in RUNNERS)",
+	"a find -exec operand that wraps the found file in a longer word",
+	"a tar archive on another host (HOST:PATH)",
+	"a wrapper option the placer cannot match (an unknown or ambiguous long option)",
+	"a sed script with a command that reads, writes or runs a file the placer cannot place",
+}

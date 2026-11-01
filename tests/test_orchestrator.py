@@ -42,7 +42,11 @@ def _synth_client(answer):
 
 def _echo_envelope():
     return Envelope(
-        generated_by="t", task="demo", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="demo",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 
@@ -253,7 +257,11 @@ async def test_orchestrate_binds_a_typed_pathway_on_reuse():
     from opendaisugi.pathway_bind import Bindings
 
     grep_env = Envelope(
-        generated_by="t", task="find", permissions=Permission(shell=True, shell_allowlist=["grep"])
+        generated_by="t",
+        task="find",
+        permissions=Permission(
+            shell=True, shell_allowlist=["grep"], file_read=["**"], file_write=["**"]
+        ),
     )
     # Use /dev/null as the grep target so execution is instant (no recursion).
     template = ActionPlan(
@@ -332,10 +340,10 @@ async def test_orchestrate_synth_llm_false_is_fully_inference_free_on_reuse():
     assert result.budget.spent == 0  # zero tokens across the whole run
 
 
-async def test_budget_gates_routing_across_steps_during_run():
+async def test_budget_checks_routing_across_steps_during_run():
     # Two hard task steps that each want the frontier (~4500 est). With a 5000
     # budget, step 1 runs at the frontier and spends it; step 2 — sized live
-    # against what's left — must downgrade. This is during-run gating, not a
+    # against what's left — must downgrade. This is during-run checking, not a
     # static up-front decision.
     hard = "prove this concurrency algorithm is deadlock-free and race-free under partition"
     env = Envelope(generated_by="t", task="demo", permissions=Permission(), stakes="low")
@@ -502,7 +510,7 @@ async def test_reused_pathway_verified_against_caller_envelope_not_pathway_envel
 
 
 async def test_strict_budget_overrun_keeps_work_and_stops_spending():
-    # H3: pre-gate allows the step by estimate, but ACTUAL usage exceeds the strict
+    # H3: pre-warden allows the step by estimate, but ACTUAL usage exceeds the strict
     # ceiling. The completed step's output must be kept (not discarded as an error),
     # its spend counted, and synthesis must NOT fire another LLM call.
 
@@ -513,7 +521,7 @@ async def test_strict_budget_overrun_keeps_work_and_stops_spending():
         result = await orch.orchestrate(
             "one step that overruns",
             envelope=env,
-            budget_tokens=2500,  # cheap est (2000) fits the pre-gate...
+            budget_tokens=2500,  # cheap est (2000) fits the pre-warden...
             strict_budget=True,  # ...but 5000 actual crosses the strict ceiling
             decompose_client=_decompose_client(
                 DecomposedStep(id="t1", type="task", prompt="do it")

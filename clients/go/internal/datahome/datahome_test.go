@@ -82,6 +82,18 @@ func TestATildeIsExpandedAndARelativeValueIgnored(t *testing.T) {
 	}
 }
 
+func TestCoppiceDirKeepsTheLegacyDirForAnOldForemanStore(t *testing.T) { // names-ok: the on-disk store name
+	has := func(p string) bool { return p == "/h/.opendaisugi/foreman" }
+	both := func(p string) bool { return p == "/h/.opendaisugi/foreman" || p == "/x/opendaisugi/foreman" }
+	env := envOf(map[string]string{"XDG_DATA_HOME": "/x"})
+	if got := CoppiceDir(env, "/h", has); got != "/h/.opendaisugi" {
+		t.Fatalf("old foreman data not kept: %q", got) // names-ok: the on-disk store name
+	}
+	if got := CoppiceDir(env, "/h", both); got != "/x/opendaisugi" {
+		t.Fatalf("xdg foreman data did not win: %q", got) // names-ok: the on-disk store name
+	}
+}
+
 func TestCoppiceDirIgnoresWhetherTheDotDirExists(t *testing.T) {
 	home := t.TempDir()
 	if err := os.Mkdir(filepath.Join(home, ".opendaisugi"), 0o755); err != nil {

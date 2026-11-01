@@ -10,12 +10,12 @@ import (
 	"syscall"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/switchyard"
 	"daisugi-verify/internal/voice"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is opendaisugi.modules: the module map `daisugi modules`
@@ -60,7 +60,7 @@ func (g glyphSet) state(s string) string {
 // stageEffect is swap.STAGE_EFFECT: how a choice at each stage takes
 // effect.
 var stageEffect = map[string]string{
-	"harness": "cfg", "gate": "cfg", "verifier": "live", "shell": "live", "envelope": "cfg",
+	"harness": "cfg", "warden": "cfg", "verifier": "live", "shell": "live", "envelope": "cfg",
 	"backend": "live", "matcher": "live", "router": "live", "distill": "live", "stores": "planned",
 	"floor_report": "cfg", "floor_backend": "live", "voice_engine": "cfg",
 }
@@ -181,19 +181,19 @@ func isDir(p string) bool {
 
 // opencodePluginPath is install.opencode_plugin_path.
 func (e *Env) opencodePluginPath() string {
-	base := gateroot.Join(e.home, ".config")
+	base := wardenroot.Join(e.home, ".config")
 	if xdg := e.env["XDG_CONFIG_HOME"]; xdg != "" && strings.HasPrefix(xdg, "/") {
-		base = gateroot.PathStr(xdg)
+		base = wardenroot.PathStr(xdg)
 	}
-	return gateroot.Join(base, "opencode/plugins/daisugi-gate.ts")
+	return wardenroot.Join(base, "opencode/plugins/daisugi-warden.ts")
 }
 
 // coppiceSocketPresent is modules._coppice_socket_present: a socket this
 // user owns at the coppice server path, not followed through a link.
 func (e *Env) coppiceSocketPresent() bool {
-	base := gateroot.Join(e.dataHome(), "coppice")
+	base := wardenroot.Join(e.dataHome(), "coppice")
 	if rt := e.env["XDG_RUNTIME_DIR"]; rt != "" {
-		base = gateroot.Join(gateroot.PathStr(rt), "coppice")
+		base = wardenroot.Join(wardenroot.PathStr(rt), "coppice")
 	}
 	st, err := os.Lstat(filepath.Join(base, "server.sock"))
 	if err != nil {
@@ -246,7 +246,7 @@ func (e *Env) wiringRead(cmd, dataDir string) (*wiringPre, error) {
 	pre := &wiringPre{}
 	// gather_status first asks the matcher's threshold, which loads the
 	// config in the default data directory.
-	hcfg, herr := config.Load(gateroot.Join(e.dataHome(), "config.yaml"))
+	hcfg, herr := config.Load(wardenroot.Join(e.dataHome(), "config.yaml"))
 	if herr != nil {
 		return nil, e.configLoadErr(cmd, herr)
 	}
@@ -255,14 +255,14 @@ func (e *Env) wiringRead(cmd, dataDir string) (*wiringPre, error) {
 		e.errf("matcher_model=%s is not a built embedder.\n", pystr.Repr(hcfg.MatcherModel))
 		return nil, exit(1)
 	}
-	pre.dataCfg, pre.dataErr = config.Load(gateroot.Join(dataDir, "config.yaml"))
+	pre.dataCfg, pre.dataErr = config.Load(wardenroot.Join(dataDir, "config.yaml"))
 	if pre.dataErr != nil && !errors.Is(pre.dataErr, config.ErrInvalid) {
 		var attr *config.AttributeError
 		if !errors.As(pre.dataErr, &attr) {
 			return nil, e.refuse(cmd, fmt.Errorf("the config file is not one this binary reads: %w", pre.dataErr))
 		}
 	}
-	h, err := readHookSettings(gateroot.Join(e.home, ".claude/settings.json"))
+	h, err := readHookSettings(wardenroot.Join(e.home, ".claude/settings.json"))
 	if err != nil {
 		return nil, e.refuse(cmd, err)
 	}
@@ -312,11 +312,11 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 			present[r.harness] = true
 		}
 	}
-	piInstalled := exists(gateroot.Join(e.home, ".pi/agent/extensions/daisugi-gate/index.ts"))
-	piPresent := isDir(gateroot.Join(e.home, ".pi"))
+	piInstalled := exists(wardenroot.Join(e.home, ".pi/agent/extensions/daisugi-warden/index.ts"))
+	piPresent := isDir(wardenroot.Join(e.home, ".pi"))
 	ocPath := e.opencodePluginPath()
 	ocInstalled := exists(ocPath)
-	ocPresent := which("opencode") || isDir(gateroot.Parent(gateroot.Parent(ocPath)))
+	ocPresent := which("opencode") || isDir(wardenroot.Parent(wardenroot.Parent(ocPath)))
 	harness := func(name, hid string) wModule {
 		if present[hid] {
 			return wModule{name, modActive, "transcripts found"}
@@ -324,9 +324,9 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 		return wModule{name, modPossible, "not detected on this box"}
 	}
 	backend := pystr.Strip(e.env["OPENDAISUGI_LLM_BACKEND"])
-	gatewayOn := e.env["OPENDAISUGI_GATEWAY_BASE_URL"] != "" || pre.hooks.installed("gateway", "PreToolUse")
+	routerOn := e.env["OPENDAISUGI_ROUTER_BASE_URL"] != "" || pre.hooks.installed("router", "PreToolUse")
 	matcherSel := cfg.MatcherModel
-	switchyardRow := switchyardModule(cfg.GatewayRouter, which("switchyard-server"))
+	switchyardRow := switchyardModule(cfg.RoutingMode, which("switchyard-server"))
 	herdrStopOn := pre.hooks.installed("--event stop", "Stop")
 	herdrNotifOn := pre.hooks.installed("--event notification", "Notification")
 	herdrHooksOn := herdrStopOn && herdrNotifOn
@@ -340,9 +340,9 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 	case herdrHooksOn:
 		herdrState, herdrNote = modActive, "hooks installed; Herdr CLI contract unverified"
 	case herdrHooksPartial:
-		herdrState, herdrNote = modAvailable, "one of two hooks installed; run `daisugi install --gate --report herdr`"
+		herdrState, herdrNote = modAvailable, "one of two hooks installed; run `daisugi install --report herdr`"
 	case herdrBinary:
-		herdrState, herdrNote = modAvailable, "run `daisugi install --gate --report herdr`"
+		herdrState, herdrNote = modAvailable, "run `daisugi install --report herdr`"
 	default:
 		herdrState, herdrNote = modPossible, "install Herdr first"
 	}
@@ -444,7 +444,7 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 		}
 		return modPossible
 	}
-	gateHook := pre.hooks.installed("daisugi hook", "PreToolUse")
+	wardenHook := pre.hooks.installed("daisugi hook", "PreToolUse")
 	cond := func(b bool, yes, no string) string {
 		if b {
 			return yes
@@ -455,7 +455,7 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 	piNote := "not detected on this box"
 	switch {
 	case piInstalled:
-		piState, piNote = modActive, "gate extension installed"
+		piState, piNote = modActive, "warden extension installed"
 	case piPresent:
 		piState, piNote = modAvailable, "pi detected. Run `daisugi install --harness pi`"
 	}
@@ -463,7 +463,7 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 	ocNote := "not detected on this box"
 	switch {
 	case ocInstalled:
-		ocState, ocNote = modActive, "gate plugin installed: in-process deny-only hook; fail-closed"
+		ocState, ocNote = modActive, "warden plugin installed: in-process deny-only hook; fail-closed"
 	case ocPresent:
 		ocState, ocNote = modAvailable, "opencode detected. Run `daisugi install --harness opencode`"
 	}
@@ -488,15 +488,15 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 			{"openclaw", modPossible, "adapter designed, not built"},
 			{"<any via AGENTS.md>", modPossible, "vendor-neutral hook contract"},
 		}},
-		{"gate", "gate (call-time)", "checks each proposed action BEFORE it runs; fail-closed", []wModule{
-			{"claude PreToolUse", cond(gateHook, modActive, modPossible), cond(gateHook, "installed", "run `daisugi install`")},
-			{"codex hooks.json", modAvailable, "fail-open class — soft gate"},
+		{"warden", "warden (call-time)", "checks each proposed action BEFORE it runs; fail-closed", []wModule{
+			{"claude PreToolUse", cond(wardenHook, modActive, modPossible), cond(wardenHook, "installed", "run `daisugi install`")},
+			{"codex hooks.json", modAvailable, "fail-open class — soft warden"},
 			{"pi tool_call (in-process)", cond(piInstalled, modActive, modPossible),
 				cond(piInstalled, "native block, no exit-2 convention, no fail-open outer timeout",
 					"run `daisugi install --harness pi`")},
 			{"opencode tool.execute.before, in-process", cond(ocInstalled, modActive, modPossible),
-				cond(ocInstalled, opencodeGateNote, "run `daisugi install --harness opencode`")},
-			{"audit / off", modAvailable, "config: gate mode"},
+				cond(ocInstalled, opencodeWardenNote, "run `daisugi install --harness opencode`")},
+			{"audit / off", modAvailable, "config: warden mode"},
 		}},
 		{"verifier", "verifier (the checker)", "proves the action stays inside the envelope (SMT-backed)", []wModule{
 			{"python (in-process)", modActive, "the oracle; always runs"},
@@ -522,11 +522,11 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 			{"int8 / fp16 onnx", embState("int8", carriesInt8), int8Reason},
 			{"lexical / intent", lexicalState, lexicalDesc},
 		}},
-		{"router", "token router / gateway", "routes turns to cheap vs frontier models to save tokens", []wModule{
-			{"daisugi gateway", cond(gatewayOn, modActive, modPossible), cond(gatewayOn, "base_url wired", "daisugi install --gateway")},
+		{"router", "router", "routes turns to cheap vs frontier models to save tokens", []wModule{
+			{"daisugi router serve", cond(routerOn, modActive, modPossible), cond(routerOn, "base_url wired", "daisugi install --router")},
 			switchyardRow,
-			knnModule(cfg.GatewayRouter),
-			{"off (direct)", modAvailable, "default; start routing with `daisugi gateway`"},
+			knnModule(cfg.RoutingMode),
+			{"off (direct)", modAvailable, "default; start routing with `daisugi router serve`"},
 		}},
 		{"distill", "distillation (the gardener)", "clusters verified traces into reusable pathways (`tend`)", []wModule{
 			{"sentence-transformers", embState("all-MiniLM-L6-v2", carriesMiniLM), "needs [search]"},
@@ -560,9 +560,9 @@ func (e *Env) detectStages(cmd, dataDir string) ([]wStage, error) {
 	}, nil
 }
 
-const opencodeGateNote = "in-process deny-only hook; fail-closed on every call. apply_patch is " +
+const opencodeWardenNote = "in-process deny-only hook; fail-closed on every call. apply_patch is " +
 	"checked path by path. Writes to OpenCode's config, to .opencode plugin and tool " +
-	"directories and to any opencode.json are hard-denied. Every ask is permanent: the gate has no fixed " +
+	"directories and to any opencode.json are hard-denied. Every ask is permanent: the warden has no fixed " +
 	"project root for OpenCode. A coppice pane will not start without the " +
 	"plugin or with --pure. Outside coppice, OpenCode runs ungated if the " +
 	"plugin fails to load or with --pure. Plugins under OPENCODE_CONFIG_DIR " +
@@ -573,7 +573,7 @@ func knnModule(router string) wModule {
 	if router == "knn" {
 		return wModule{"knn", modActive, "selected; routes by past outcomes. See `daisugi router status`"}
 	}
-	return wModule{"knn", modAvailable, "learns from outcomes: daisugi install --gateway --router knn"}
+	return wModule{"knn", modAvailable, "learns from outcomes: daisugi install --router --routing-mode knn"}
 }
 
 // switchyardModule is modules._switchyard_module.
@@ -581,13 +581,13 @@ func switchyardModule(router string, present bool) wModule {
 	selected := router == "switchyard"
 	switch {
 	case selected && present:
-		return wModule{"NeMo Switchyard", modActive, "selected; `daisugi gateway` starts it. The gateway row says " +
+		return wModule{"NeMo Switchyard", modActive, "selected; `daisugi router serve` starts it. The router row says " +
 			"if turns flow. See `daisugi router status`"}
 	case selected:
 		return wModule{"NeMo Switchyard", modPossible, "selected, but the binary is missing: " + switchyard.InstallCmd}
 	case present:
 		return wModule{"NeMo Switchyard", modAvailable,
-			"binary found: daisugi install --gateway --router switchyard --efficient-model <id>"}
+			"binary found: daisugi install --router --routing-mode switchyard --efficient-model <id>"}
 	}
 	return wModule{"NeMo Switchyard", modPossible, "needs the binary: " + switchyard.InstallCmd}
 }

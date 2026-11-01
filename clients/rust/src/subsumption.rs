@@ -239,6 +239,23 @@ fn permission_scope_violates(outer: &Permission, inner: &Permission, timeout_ms:
             return Ok(true);
         }
     }
+    if !inner.mcp_rules.is_empty() || !outer.mcp_rules.is_empty() {
+        let failed = std::cell::RefCell::new(None);
+        let covers = |pattern: &str, outer_p: &[String]| match patterns_subsume_violates(&[pattern.to_string()], outer_p, timeout_ms) {
+            Ok(v) => !v,
+            Err(e) => {
+                *failed.borrow_mut() = Some(e);
+                false
+            }
+        };
+        let violates = crate::mcp_rules::rules_violate(inner, outer, &covers);
+        if let Some(e) = failed.into_inner() {
+            return Err(e);
+        }
+        if violates {
+            return Ok(true);
+        }
+    }
     Ok(network_scope_violation(outer, inner))
 }
 

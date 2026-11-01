@@ -261,7 +261,7 @@ def test_check_prints_the_reasons_and_exits_by_the_verdict(tmp_path):
     assert res.exit_code == 2 and "There is no such file." in res.stderr
 
 
-def test_spawn_reserves_end_returns_and_the_gate_root_holds_the_child(tmp_path):
+def test_spawn_reserves_end_returns_and_the_warden_root_holds_the_child(tmp_path):
     d = tmp_path / "d"
     root_env = _write(tmp_path / "r.json", _env(id="env_root"))
     child_env = _write(tmp_path / "c.json", _env(id="env_kid", shell_allowlist=["git"]))
@@ -289,7 +289,7 @@ def test_spawn_reserves_end_returns_and_the_gate_root_holds_the_child(tmp_path):
         "4",
     )
     assert res.exit_code == 0, res.output
-    reg = json.loads((d / "gate" / "envelopes" / "kid.json").read_text())
+    reg = json.loads((d / "warden" / "envelopes" / "kid.json").read_text())
     assert reg["parent_envelope"] == "env_root"
     res = _tree(
         tmp_path,
@@ -312,7 +312,7 @@ def test_spawn_reserves_end_returns_and_the_gate_root_holds_the_child(tmp_path):
     res = _tree(tmp_path, "end", "kid", "--tokens-used", "100", "--turns-used", "1")
     assert res.exit_code == 0
     assert "tokens: used 100 of 600; 500 go back to top." in res.stdout
-    assert not (d / "gate" / "envelopes" / "kid.json").exists()
+    assert not (d / "warden" / "envelopes" / "kid.json").exists()
     doc = json.loads(_tree(tmp_path, "status", "--json").stdout)
     assert doc["nodes"][0]["tokens"]["left"] == 900
     assert [r["event"] for r in _rows(tmp_path)] == ["root", "refused", "spawn", "refused", "end"]
@@ -401,12 +401,12 @@ def test_session_ids_and_reuse_are_refused(tmp_path):
     assert _tree(tmp_path, "status").stdout.startswith("top (running) tokens -, turns -")
 
 
-def test_gate_register_with_a_parent_proves_the_edge(tmp_path):
+def test_warden_register_with_a_parent_proves_the_edge(tmp_path):
     root = tmp_path / "g"
     parent = _write(tmp_path / "p.json", _env(id="env_p", deadline=50))
     child = _write(tmp_path / "c.json", _env(shell_allowlist=["git"]))
     wide = _write(tmp_path / "w.json", _env(shell_allowlist=["rm"]))
-    run = lambda *a: CliRunner().invoke(app, ["gate", "register", *a, "--root", str(root)])  # noqa: E731
+    run = lambda *a: CliRunner().invoke(app, ["warden", "register", *a, "--root", str(root)])  # noqa: E731
     assert run(parent, "--session", "p").exit_code == 0
     res = run(wide, "--session", "c", "--parent", "p")
     assert res.exit_code == 1
@@ -423,7 +423,7 @@ def test_gate_register_with_a_parent_proves_the_edge(tmp_path):
     assert "already" in run(child, "--session", "c", "--parent", "p").stderr
 
 
-# ---- GR r1: the tree reads envelopes as the gate does (GR-R-7) -------------------
+# ---- GR r1: the tree reads envelopes as the warden does (GR-R-7) -------------------
 
 
 def _physical_mid_with_ask(tmp_path):
@@ -440,7 +440,7 @@ def _physical_mid_with_ask(tmp_path):
     for _ in range(4):
         res = _tree(tmp_path, "spawn", kid, "--parent", "mid", "--session", "kid")
     assert res.exit_code == 3, res.output
-    return os, _rows(tmp_path)[-1]["ask_id"], tmp_path / "d" / "gate" / "envelopes"
+    return os, _rows(tmp_path)[-1]["ask_id"], tmp_path / "d" / "warden" / "envelopes"
 
 
 def test_an_allow_is_refused_when_the_parents_envelope_cannot_be_read(tmp_path):
@@ -457,7 +457,7 @@ def test_a_spawn_is_refused_under_a_hard_linked_or_shared_parent(tmp_path):
     root_env = _write(tmp_path / "r.json", _env(id="env_root"))
     kid = _write(tmp_path / "k.json", _env(id="env_kid", shell_allowlist=["git"]))
     assert _tree(tmp_path, "root", root_env, "--session", "top").exit_code == 0
-    envs = tmp_path / "d" / "gate" / "envelopes"
+    envs = tmp_path / "d" / "warden" / "envelopes"
     (envs / "top.json").chmod(0o664)
     res = _tree(tmp_path, "spawn", kid, "--parent", "top", "--session", "kid")
     assert res.exit_code == 1
@@ -468,10 +468,10 @@ def test_a_spawn_is_refused_under_a_hard_linked_or_shared_parent(tmp_path):
 def test_end_removes_the_envelope_through_the_directory_fd(tmp_path):
     root_env = _write(tmp_path / "r.json", _env(id="env_root"))
     assert _tree(tmp_path, "root", root_env, "--session", "top").exit_code == 0
-    gate = tmp_path / "d" / "gate"
+    warden = tmp_path / "d" / "warden"
     real = tmp_path / "elsewhere"
-    gate_envs = gate / "envelopes"
-    gate_envs.rename(real)
-    gate_envs.symlink_to(real)
+    warden_envs = warden / "envelopes"
+    warden_envs.rename(real)
+    warden_envs.symlink_to(real)
     res = _tree(tmp_path, "end", "top")
     assert (real / "top.json").exists(), res.output

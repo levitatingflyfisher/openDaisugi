@@ -265,7 +265,7 @@ def _split_compound_shell(command: str) -> list[str]:
 
     Intentionally does NOT recurse into ``$(`` or backtick substitution —
     those stay as a single part and continue to be rejected by the v0.17
-    metachar gate. This is a 'structural decomposition of clearly-safe
+    metachar warden. This is a 'structural decomposition of clearly-safe
     operators' helper, not a shell parser. v0.18.0+.
     """
     if not command:

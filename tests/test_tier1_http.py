@@ -79,7 +79,7 @@ async def test_base_url_and_api_key_forwarded() -> None:
 def test_local_endpoint_bare_model_gets_openai_prefix() -> None:
     # The headline v0.30 bug: a bare --model + local endpoint must route via
     # the openai/ provider prefix, else the model client has no wire and the qualification
-    # gate rejects every model for the wrong reason.
+    # warden rejects every model for the wrong reason.
     p = HTTPTier1Provider("qwen2.5-1.5b", base_url="http://localhost:8080/v1")
     assert p.model == "openai/qwen2.5-1.5b"
 
@@ -108,3 +108,39 @@ def test_custom_name_override() -> None:
 
 def test_satisfies_protocol() -> None:
     assert isinstance(HTTPTier1Provider("ollama/foo"), Tier1Provider)
+
+
+def test_cut_reply_is_truncated_not_declined() -> None:
+    from opendaisugi.llm_client import CUT_TEXT, ModelCallError
+    from opendaisugi.tier1 import TRUNCATED_ADVICE, classify_failure
+
+    outcome, reason = classify_failure(ModelCallError(CUT_TEXT))
+    assert outcome == "truncated"
+    assert reason == CUT_TEXT + TRUNCATED_ADVICE
+    assert len(reason) <= 200
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_reaches_the_client_call() -> None:
+    provider = HTTPTier1Provider("m", base_url="http://localhost:11434/v1", reasoning_effort="none")
+    with patch("opendaisugi.llm.get_model_client") as factory:
+        create = AsyncMock(return_value=_mk_envelope())
+        factory.return_value.chat.completions.create = create
+        await provider.generate_envelope("t")
+        assert create.await_args.kwargs["reasoning_effort"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_no_reasoning_effort_by_default() -> None:
+    provider = HTTPTier1Provider("m", base_url="http://localhost:8080/v1")
+    with patch("opendaisugi.llm.get_model_client") as factory:
+        create = AsyncMock(return_value=_mk_envelope())
+        factory.return_value.chat.completions.create = create
+        await provider.generate_envelope("t")
+        assert create.await_args.kwargs["reasoning_effort"] is None
+
+
+def test_ollama_provider_turns_thinking_off() -> None:
+    from opendaisugi.tier1 import OllamaTier1Provider
+
+    assert OllamaTier1Provider("llama3.2:3b").reasoning_effort == "none"

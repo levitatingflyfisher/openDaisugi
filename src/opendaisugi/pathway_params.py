@@ -3,7 +3,7 @@
 Given the concrete plans of a cluster's successful traces, find the typed *data
 holes* — fields that vary across members while their capability head stays fixed.
 An empty result means a frozen pathway (no safe hole). The same-shape (identical
-step-type sequence) plus capability-head gate keeps holes to data slots only, so
+step-type sequence) plus capability-head warden keeps holes to data slots only, so
 a differing program / directory / host refuses parameterization rather than
 producing a free ``{command}`` slot.
 """
@@ -172,7 +172,7 @@ __all__ = ["apply_bindings", "diff_plans_for_parameters", "rekey_to_template"]
 # representative's concrete step, replaying an action most members never took.
 # The honest template for such a position is a *delegated leaf*: an AgenticStep
 # prompted with the observed variants, executed under the same envelope through
-# the call-time gate (ADR-0007), so delegation widens nothing. Invariant steps
+# the call-time warden (ADR-0007), so delegation widens nothing. Invariant steps
 # stay concrete (zero-token replay); typed holes stay typed; only the genuinely
 # varying-in-kind positions cost LLM tokens at reuse — and the Gardener can
 # promote a leaf back to concrete once its variance collapses.

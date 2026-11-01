@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use num_bigint::BigInt;
 
 use super::{float_of, list_of, obj, str_list};
-use crate::gate::py::text::{repr, repr_list};
-use crate::gate::pyjson::{py_repr, Object, Value};
+use crate::warden::py::text::{repr, repr_list};
+use crate::warden::pyjson::{py_repr, Object, Value};
 use crate::pathways::pathway::dump_json;
 
 /// `EnvelopeInheritanceError`: the violation messages.

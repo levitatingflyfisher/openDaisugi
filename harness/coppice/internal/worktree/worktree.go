@@ -6,6 +6,7 @@ package worktree
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -36,10 +37,16 @@ func Path(repo, name string) string {
 	return filepath.Join(filepath.Clean(repo)+"-worktrees", name)
 }
 
+// safeGit are the flags every git call of coppice's starts with.
+var safeGit = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
+
 // git runs one git command in dir and returns trimmed stdout. On failure the
 // error carries git's stderr.
 func git(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// coppice runs git as the owner, outside any fence, in a dir an agent
+	// may have written: no hook and no fsmonitor command of that repo runs
+	// (review fix 3, H3).
+	cmd := exec.Command("git", append(append(safeGit[:len(safeGit):len(safeGit)], "-C", dir), args...)...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -165,4 +172,111 @@ func Repo(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Dir(common), nil
+}
+
+// registered reports whether path is a worktree git knows for repo.
+func registered(repo, path string) bool {
+	out, err := git(repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false
+	}
+	want := filepath.Clean(path)
+	for _, line := range strings.Split(out, "\n") {
+		if p, ok := strings.CutPrefix(line, "worktree "); ok && filepath.Clean(p) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// branchExists reports whether repo has a local branch called name.
+func branchExists(repo, name string) bool {
+	_, err := git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
+}
+
+// EnsureClone is a lead's own clone of repo at Path(repo, name), on a
+// branch called name (review fix 3, H1: a clone, never a linked worktree,
+// so the lead's git never writes the owner's repo). It is a `git clone
+// --shared`: objects come from repo's object store, which a fenced lead
+// reads only. A clone that is there is used again; a dir at the path that
+// is not a clone of repo is an error, never taken over. The owner brings
+// the work over with `git fetch <clone> name:name`.
+func EnsureClone(repo, name string) (string, error) {
+	return EnsureCloneFrom(repo, name, "")
+}
+
+// EnsureCloneFrom is EnsureClone for a lead's nested lead (review fix 5,
+// K1, and the L1 ruling): the clone is always of the owner's repo, and
+// nothing of the parent's clone is ever read, fetched or granted. A new
+// clone starts from origin/<fromBranch> (the parent's branch) when the
+// owner has fetched it into the repo already, else from the repo's branch
+// as EnsureClone does.
+func EnsureCloneFrom(repo, name, fromBranch string) (string, error) {
+	if err := ValidName(name); err != nil {
+		return "", err
+	}
+	path := Path(repo, name)
+	if _, err := os.Lstat(path); err == nil {
+		origin, oerr := git(path, "config", "--get", "remote.origin.url")
+		if oerr != nil || filepath.Clean(origin) != filepath.Clean(repo) {
+			return "", fmt.Errorf("%s exists and is not a clone of %s; move it aside", path, repo)
+		}
+		return path, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if _, err := git(filepath.Dir(path), "clone", "--quiet", "--shared", "--no-checkout", repo, path); err != nil {
+		return "", err
+	}
+	base, err := currentBranch(repo)
+	if err != nil {
+		_ = os.RemoveAll(path)
+		return "", err
+	}
+	// The lead's branch starts at the repo's current branch, or at its own
+	// branch when the repo has one left from an earlier lead.
+	start := "origin/" + base
+	if branchExists(repo, name) {
+		start = "origin/" + name
+	} else if fromBranch != "" && ValidName(fromBranch) == nil && branchExists(repo, fromBranch) {
+		start = "origin/" + fromBranch
+	}
+	if _, err := git(path, "checkout", "--quiet", "-b", name, start); err != nil {
+		_ = os.RemoveAll(path)
+		return "", err
+	}
+	return path, nil
+}
+
+// ObjectsDir is the object store of the repo at dir, as git itself names
+// it (a linked worktree resolves to its common dir), absolute. It is asked
+// on the owner's side; nothing a lead writes is read (review fix 4, J1).
+func ObjectsDir(dir string) (string, error) {
+	out, err := git(dir, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(out) {
+		return "", fmt.Errorf("git named %q as the objects dir of %s", out, dir)
+	}
+	// Defence in depth (K1): the store must be <common dir>/objects, both
+	// real dirs with no link on the way. git follows a link at objects and
+	// answers its target; that answer is refused, never granted.
+	common, err := git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	want := filepath.Join(filepath.Clean(common), "objects")
+	if filepath.Clean(out) != want {
+		return "", fmt.Errorf("git named %s as the objects dir of %s, not %s; it is not granted", out, dir, want)
+	}
+	if r, err := filepath.EvalSymlinks(out); err != nil || r != want {
+		return "", fmt.Errorf("the objects dir %s of %s goes through a symbolic link; it is not granted", out, dir)
+	}
+	if st, err := os.Stat(out); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("the objects dir %s of %s is not there", out, dir)
+	}
+	return filepath.Clean(out), nil
 }

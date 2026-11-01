@@ -9,10 +9,10 @@
 //! pass.
 
 use super::PwErr;
-use crate::gate::envelope::from_dump;
-use crate::gate::predicate::Stage;
-use crate::gate::pyjson::{Object, Value};
-use crate::gate::Fault;
+use crate::warden::envelope::from_dump;
+use crate::warden::predicate::Stage;
+use crate::warden::pyjson::{Object, Value};
+use crate::warden::Fault;
 use crate::models::{self, ActionPlan, Envelope};
 use crate::shell_decompose::ShellParser;
 use crate::violation::Violation;
@@ -466,16 +466,16 @@ mod tests {
         // envelope is inconsistent, as in the oracle. An int past 64 bits
         // elsewhere is carried, not refused.
         let big = "1".to_string() + &"0".repeat(400);
-        let plan = format!(r#"{{"id":"p","source":"s","task":"t","steps":[{{"id":"a","type":"shell","command":"ls","metadata":{{"n":{big}}}}}]}}"#);
+        let plan = format!(r#"{{"id":"p","source":"s","task":"t","steps":[{{"id":"a","type":"shell","command":"echo","metadata":{{"n":{big}}}}}]}}"#);
         let p = validate_json(Id::ActionPlan, &plan).unwrap();
         for t in ["100000000000000000000", "-100000000000000000000", big.as_str()] {
-            let env = format!(r#"{{"generated_by":"g","task":"t","permissions":{{"shell":true,"shell_allowlist":["ls"],"max_execution_time_s":{t},"max_output_size_mb":{t}}}}}"#);
+            let env = format!(r#"{{"generated_by":"g","task":"t","permissions":{{"shell":true,"shell_allowlist":["echo"],"max_execution_time_s":{t},"max_output_size_mb":{t}}}}}"#);
             let e = validate_json(Id::Envelope, &env).unwrap();
             let o = verify(&p, &e, None, 500).unwrap_or_else(|e| panic!("{e}"));
             let msgs: Vec<String> = o.violations.iter().map(|v| v.message.clone()).collect();
             assert_eq!(msgs, vec!["Envelope is internally inconsistent".to_string()]);
         }
-        let env = r#"{"generated_by":"g","task":"t","permissions":{"shell":true,"shell_allowlist":["ls"],"max_execution_time_s":3600}}"#;
+        let env = r#"{"generated_by":"g","task":"t","permissions":{"shell":true,"shell_allowlist":["echo"],"max_execution_time_s":3600}}"#;
         let e = validate_json(Id::Envelope, env).unwrap();
         assert!(verify(&p, &e, None, 500).unwrap().violations.is_empty());
     }
@@ -493,7 +493,7 @@ mod tests {
 /// Lets a test make the per-step check answer as it chooses.
 pub type StepCheck = fn(&Value, &Value, u32) -> Result<Outcome, PwErr>;
 
-/// `verify.verify_step`, the supervisor's per-step gate on a one-step plan:
+/// `verify.verify_step`, the supervisor's per-step warden on a one-step plan:
 /// delegation safety, permissions, skill delegations, the robotics checks
 /// and the (trivial) DAG, each stopping at the first stage with a
 /// violation. The envelope's own Z3 checks and the plan-level predicates
@@ -578,7 +578,7 @@ pub fn stage2_refusal(env: &Value) -> String {
 /// yet".
 fn stage2_llm(task: &Value, step: &Value) -> impl Fn(&str) -> Result<bool, String> {
     let payload = Object::new().with("task", task.clone()).with("steps", Value::List(vec![dumped_step(step)]));
-    move |rule: &str| match crate::gate::llm::command_llm_check(rule, &payload) {
+    move |rule: &str| match crate::warden::llm::command_llm_check(rule, &payload) {
         None => Err("llm_check is not reproducible offline (network/model call)".into()),
         Some(Ok(res)) if res.errored => Err(res.reason),
         Some(Ok(res)) => Ok(res.satisfied),
@@ -615,7 +615,7 @@ fn int_holds(bound: &Value, n: i128, below: bool) -> bool {
 }
 
 /// One of stage 2's opaque postcondition handlers: true when discharged.
-fn stage2_handler(kind: &str, pc: &crate::gate::pyjson::Object, step: &crate::gate::pyjson::Object) -> bool {
+fn stage2_handler(kind: &str, pc: &crate::warden::pyjson::Object, step: &crate::warden::pyjson::Object) -> bool {
     match kind {
         "exit_code" => {
             let rc = step.value("metadata").as_obj().map(|m| m.value("rc").clone()).unwrap_or(Value::Null);
@@ -681,7 +681,7 @@ pub fn verify_completed_step(step: &Value, env: &Value, strict: Option<bool>) ->
         if expr.as_obj().is_none() {
             out.push(format!(
                 "postcondition '{kind}' evaluation error: unknown predicate op: '{}'",
-                crate::gate::pyjson::py_type_name(expr)
+                crate::warden::pyjson::py_type_name(expr)
             ));
             continue;
         }
@@ -881,7 +881,7 @@ pub fn stage2_violations(step: &Object, env: &Object) -> Result<Vec<Value>, Stri
         return Err("a step the verifier does not read".into());
     }
     let step_id = step.value("id").clone();
-    let id_text = crate::gate::pyjson::py_str(&step_id).unwrap_or_default();
+    let id_text = crate::warden::pyjson::py_str(&step_id).unwrap_or_default();
     let mut out = vec![];
     for pc in list_of(env.value("postconditions")) {
         let Some(pc) = pc.as_obj() else { continue };
@@ -932,7 +932,7 @@ pub fn stage2_violations(step: &Object, env: &Object) -> Result<Vec<Value>, Stri
         if expr.as_obj().is_none() {
             // _normalize_expr passes a non-dict through; evaluation then
             // raises on its Python type.
-            out.push(eval_error(format!("unknown predicate op: '{}'", crate::gate::pyjson::py_type_name(expr))));
+            out.push(eval_error(format!("unknown predicate op: '{}'", crate::warden::pyjson::py_type_name(expr))));
             continue;
         }
         let step_v = Value::Obj(step.clone());

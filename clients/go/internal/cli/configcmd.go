@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // configLoadErr ends a command whose config.yaml load_config raises on:
@@ -44,7 +44,7 @@ func (e *Env) configCmd(args []string) error {
 	if p.help {
 		return e.cmdHelp("config", "", "Show every setting as daisugi will use it, and where each one came from.", opts)
 	}
-	path := gateroot.Join(e.dataHome(), "config.yaml")
+	path := wardenroot.Join(e.dataHome(), "config.yaml")
 	rows, unknown, cfg, err := config.Rows(path, e.home)
 	if err != nil {
 		return e.configLoadErr("config", err)
@@ -76,22 +76,22 @@ func (e *Env) configCmd(args []string) error {
 		return e.refuse("config", fmt.Errorf("a Claude Code settings.json holds hooks this binary does not read yet"))
 	}
 	if eff.Mode != "" {
-		rows = append(rows, config.Row{Key: "gate_mode (resolved)", Value: eff.Mode, Source: config.SourceLabel(eff)})
+		rows = append(rows, config.Row{Key: "warden_mode (resolved)", Value: eff.Mode, Source: config.SourceLabel(eff)})
 		if eff.CwdMode != "" && eff.GlobalMode != "" {
 			rows = append(rows,
-				config.Row{Key: "gate_mode (project)", Value: eff.CwdMode, Source: "project"},
-				config.Row{Key: "gate_mode (global)", Value: eff.GlobalMode, Source: "global"},
-				config.Row{Key: "gate_mode (coexistence)",
+				config.Row{Key: "warden_mode (project)", Value: eff.CwdMode, Source: "project"},
+				config.Row{Key: "warden_mode (global)", Value: eff.GlobalMode, Source: "global"},
+				config.Row{Key: "warden_mode (coexistence)",
 					Value: "both fire; the verdict is the intersection — either one enforcing denies", Source: "info"})
 		}
 	} else {
 		src := "default"
 		for _, r := range rows {
-			if r.Key == "gate_mode" {
+			if r.Key == "warden_mode" {
 				src = r.Source
 			}
 		}
-		rows = append(rows, config.Row{Key: "gate_mode (resolved)", Value: cfg.GateMode, Source: src})
+		rows = append(rows, config.Row{Key: "warden_mode (resolved)", Value: cfg.WardenMode, Source: src})
 	}
 	if p.flag("--json") {
 		body := pyjson.NewObject()

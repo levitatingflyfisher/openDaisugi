@@ -17,3 +17,19 @@
 {"id":"$id","ok":false,"error":{"code":"bad_request","message":"*"}}
 {"id":"9","cmd":"task.close","task":"$child"}
 {"id":"$id","ok":true,"result":{"task":"$child","closed":true,"panes":[]}}
+{"id":"10","cmd":"task.create","label":"guarded","envelope":{"id":"env_1","generated_by":"t","task":"t","permissions":{}}}
+{"id":"$id","ok":true,"result":{"task":"$guarded","worktree":""}}
+{"id":"11","cmd":"task.create","label":"both","envelope":{"id":"env_1"},"project":"p"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"task.create takes envelope or project, not both."}}
+{"id":"12","cmd":"task.create","label":"flat","envelope":[1]}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"the envelope must be a JSON object."}}
+{"id":"13","cmd":"task.create","label":"nopath","project":"../etc"}
+{"id":"$id","ok":false,"error":{"code":"bad_request","message":"\"../etc\" is not a project name."}}
+{"id":"14","cmd":"task.close","task":"$guarded"}
+{"id":"$id","ok":true,"result":{"task":"$guarded","closed":true,"panes":[]}}
+{"id":"15","cmd":"task.create","label":"plainone"}
+{"id":"$id","ok":true,"result":{"task":"$plainone","worktree":""}}
+{"id":"16","cmd":"hello","role":"pane","pane":"w9:p9"}
+{"id":"$id","ok":true,"result":{"role":"pane","pane":"w9:p9"}}
+{"id":"17","cmd":"task.create","label":"sneak","parent":"$plainone","envelope":{"id":"env_1","generated_by":"t","task":"t","permissions":{}}}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator makes a root task."}}

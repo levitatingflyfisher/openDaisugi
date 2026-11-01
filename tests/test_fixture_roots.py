@@ -1,10 +1,10 @@
 """A case's fixture text does not depend on the length of the scratch path.
 
-The gate cuts a record's detail and verdict clause at 200 characters, and
+The warden cuts a record's detail and verdict clause at 200 characters, and
 YAML folds a long line at a space. Both happen after the path is in the
 text, so a longer scratch directory used to move the cut or the fold and
 leave a machine path in a fixture (GR-R-3). Every case root now has one
-length, and a root the gate cut short is written as {ROOT-CUT}.
+length, and a root the warden cut short is written as {ROOT-CUT}.
 """
 
 import json
@@ -18,9 +18,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients"))
 
 from fixture_paths import LEAK, ROOT_LEN, fixed_root  # noqa: E402
-from gate_cases import DETAIL_MAX, FIXTURE_DIR, _norm_value, python_gate_cmd, run_case  # noqa: E402
+from warden_cases import (  # noqa: E402
+    DETAIL_MAX,
+    FIXTURE_DIR,
+    _norm_value,
+    python_warden_cmd,
+    run_case,
+)
 
-DOTDOT = "graft delegate call dotdot out"
+DOTDOT = "graft spawn call dotdot out"
 
 
 def test_fixed_root_has_one_length():
@@ -70,9 +76,18 @@ def test_dotdot_case_matches_its_fixture_under_a_long_scratch_path():
         if room < 8:
             pytest.skip("the temp directory is too long for a long scratch path")
         for base in (top / "s", top / ("L" * room)):
-            got, _ = run_case(case, python_gate_cmd(), fixed_root(base, "g/0000"))
+            got, _ = run_case(case, python_warden_cmd(), fixed_root(base, "g/0000"))
             assert not LEAK.search(json.dumps(got))
             for field in ("exit", "audit", "tree", "coppice", "stderr"):
                 assert got[field] == case["expect"][field], (base, field)
     finally:
         shutil.rmtree(top, ignore_errors=True)
+
+
+def test_a_pando_store_named_home_is_not_a_machine_path():
+    # The owner's pando store is named home: <data>/pando/home/main/... is
+    # a synthetic path, not /home/<name>.
+    assert not LEAK.search("/home/user/.opendaisugi/pando/home/main/2026-10-24.jsonl")
+    assert not LEAK.search('"pando/home/tree/": "0o700"')
+    assert LEAK.search("/home/alice/notes")
+    assert LEAK.search("/x/pando/y/home/alice/notes")

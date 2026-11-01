@@ -68,7 +68,7 @@ func TestPhoneSmoke(t *testing.T) {
 // TestTheCheckedInScreenshotsExist is the eyeballing record. If a picture is
 // gone, or the wrong size, nobody has actually looked at this client in a
 // while. It reads five committed files and needs no browser, so it runs
-// unconditionally: gating it on Playwright would make it skip on exactly the
+// unconditionally: checking it on Playwright would make it skip on exactly the
 // machines that never installed a browser to begin with, CI included.
 func TestTheCheckedInScreenshotsExist(t *testing.T) {
 	for _, name := range []string{"roster.png", "pane.png", "new.png", "settings.png", "https-roster.png"} {

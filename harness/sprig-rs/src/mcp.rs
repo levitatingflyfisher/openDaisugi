@@ -1,7 +1,7 @@
 //! sprig-mcp: sprig's tools over the Model Context Protocol, JSON-RPC 2.0
-//! on stdio. Every tools/call runs through the same gated executor.
+//! on stdio. Every tools/call runs through the same checked executor.
 
-use crate::gate::{Executor, ToolCall};
+use crate::warden::{Executor, ToolCall};
 use crate::json::{encode, jmap, Map, J};
 use std::io::{BufRead, Write};
 
@@ -189,7 +189,7 @@ impl Server {
         });
         let (text, is_err) = if !res.allowed {
             (
-                [b"REFUSED by the gate: ".as_slice(), &res.reason].concat(),
+                [b"REFUSED by the warden: ".as_slice(), &res.reason].concat(),
                 true,
             )
         } else if let Some(e) = &res.err {
@@ -218,7 +218,7 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::AllowAll;
+    use crate::warden::AllowAll;
 
     fn server() -> Server {
         Server {
@@ -274,7 +274,7 @@ mod tests {
         let call = h(&s, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call"}"#);
         assert_eq!(
             call.unwrap(),
-            r#"{"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"REFUSED by the gate: unknown tool: ","type":"text"}],"isError":true}}"#
+            r#"{"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"REFUSED by the warden: unknown tool: ","type":"text"}],"isError":true}}"#
         );
         let _ = (
             Map::new(),

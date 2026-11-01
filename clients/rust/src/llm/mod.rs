@@ -23,8 +23,8 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::gate::py::text::{decode_utf8_replace, repr, strip};
-use crate::gate::pyjson::{loads_py, py_repr, Object, Value};
+use crate::warden::py::text::{decode_utf8_replace, repr, strip};
+use crate::warden::pyjson::{loads_py, py_repr, Object, Value};
 use crate::pathways::pmodel::{self, model, non_finite, Id, Loc, Mode, ValidationError};
 
 /// Why a call failed.
@@ -144,7 +144,7 @@ const MAX_REASKS: usize = 3;
 
 /// Python's `s[:n]` of a str: the first n code points.
 fn head(s: &str, n: usize) -> &str {
-    crate::gate::py::text::head(s, n)
+    crate::warden::py::text::head(s, n)
 }
 
 fn model_err(msg: impl Into<String>) -> CallError {
@@ -174,7 +174,7 @@ impl Client {
     }
 
     fn which_claude(&self) -> Option<std::path::PathBuf> {
-        crate::gate::dispatch::py_which("claude", Some(self.env.get("PATH").map(|s| s.as_str()).unwrap_or("")))
+        crate::warden::dispatch::py_which("claude", Some(self.env.get("PATH").map(|s| s.as_str()).unwrap_or("")))
     }
 
     /// `resolve_backend(None)`: OPENDAISUGI_LLM_BACKEND, then the
@@ -323,8 +323,21 @@ impl Client {
         opts: &wire::Opts,
         timeout: f64,
     ) -> Result<wire::Reply, CallError> {
+        self.complete_with(model, base_url, "", msgs, opts, timeout)
+    }
+
+    /// `llm_client.complete` with a base URL and an api key ("" for none).
+    pub fn complete_with(
+        &self,
+        model: &str,
+        base_url: &str,
+        api_key: &str,
+        msgs: &[(String, String)],
+        opts: &wire::Opts,
+        timeout: f64,
+    ) -> Result<wire::Reply, CallError> {
         let get = |k: &str| self.env.get(k).cloned();
-        let w = wire::resolve(model, base_url, "", &get).map_err(CallError::Model)?;
+        let w = wire::resolve(model, base_url, api_key, &get).map_err(CallError::Model)?;
         let payload = wire::body(&w, msgs, opts);
         let (status, text) = wire::post(&w, payload.as_bytes(), timeout, &self.proxies).map_err(|e| match e {
             wire::PostErr::Model(m) => CallError::Model(m),
@@ -373,7 +386,7 @@ impl Client {
             None => {
                 return Err(model_err(format!(
                     "claude -p timed out after {}s",
-                    crate::gate::pyjson::float_repr(timeout_s)
+                    crate::warden::pyjson::float_repr(timeout_s)
                 )))
             }
         };
@@ -412,7 +425,7 @@ impl Client {
         let o = match v {
             Value::Obj(o) => o,
             other => {
-                return Err(model_err(format!("'{}' object has no attribute 'get'", crate::gate::pyjson::py_type_name(&other))));
+                return Err(model_err(format!("'{}' object has no attribute 'get'", crate::warden::pyjson::py_type_name(&other))));
             }
         };
         if o.get("is_error").is_some_and(|e| e.truthy()) {
@@ -476,11 +489,15 @@ impl Client {
         limit: Duration,
         grace: bool,
     ) -> Result<Option<(i32, Vec<u8>, Vec<u8>)>, CallError> {
+        // Under a spawner's skip list the session is listed before it exists.
+        let mut args = args.to_vec();
+        args.extend(pando::live::session_args(self.env.get(pando::live::SKIP_LIST_VAR).map(String::as_str), "1"));
         let mut child = match Command::new(bin)
-            .args(args)
+            .args(&args)
             .current_dir(dir)
             .env_clear()
             .envs(&self.env)
+            .env(pando::live::SKIP_VAR, "1") // a model call of ours, not the owner's chat
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -621,11 +638,14 @@ impl Client {
             None => return Err(model_err("claude binary not found: 'claude'")),
         };
         let dir = self.cwd()?;
+        let mut args = self.claude_args();
+        args.extend(pando::live::session_args(self.env.get(pando::live::SKIP_LIST_VAR).map(String::as_str), "1"));
         let mut child = match Command::new(&bin)
-            .args(self.claude_args())
+            .args(&args)
             .current_dir(&dir)
             .env_clear()
             .envs(&self.env)
+            .env(pando::live::SKIP_VAR, "1") // a model call of ours, not the owner's chat
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -803,7 +823,7 @@ pub fn first_json_object(text: &str) -> Result<Object, CallError> {
         Ok(Value::Obj(o)) => Ok(o),
         Ok(_) => Err(CallError::Unported("a reply json.loads reads as no dict".into())),
         Err(e) => {
-            if crate::gate::pyjson::py_decode_error(body, 900).is_some_and(|f| matches!(f, crate::gate::pyjson::PyDecodeFail::TooDeep)) {
+            if crate::warden::pyjson::py_decode_error(body, 900).is_some_and(|f| matches!(f, crate::warden::pyjson::PyDecodeFail::TooDeep)) {
                 return Err(CallError::Unported("a reply nested past what json.loads reads".into()));
             }
             let d = pmodel::decode_dict_text(body);
@@ -988,5 +1008,75 @@ mod tests {
             Err(CallError::Model(m)) => assert_eq!(m, "claude -p stdout was not its JSON envelope: 'not json'"),
             other => panic!("{other:?}"),
         }
+    }
+
+    // A fake claude that records its argv and its skip variable.
+    fn fake_claude() -> (std::path::PathBuf, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!("llm-skip-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let rec = d.join("rec");
+        let bin = d.join("claude");
+        std::fs::write(
+            &bin,
+            format!("#!/bin/sh\necho \"$@\" > '{r}'\necho \"skip=$DAISUGI_PANDO_SKIP\" >> '{r}'\necho ok\n", r = rec.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (d, rec)
+    }
+
+    // Another test's fork can hold the script's write descriptor for a moment
+    // (ETXTBSY), so a call that cannot start is tried again.
+    fn call_with_retry(env: &HashMap<String, String>) {
+        let mut last = String::new();
+        for _ in 0..20 {
+            let mut c = Client::new(env.clone(), "/h");
+            match c.sync_text("hi", "haiku", 10.0, &[]) {
+                Ok(_) => return,
+                Err(e) => last = format!("{e:?}"),
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("the fake claude never ran: {last}");
+    }
+
+    // A spawner that names a skip list gets each call's session listed before
+    // the call runs, and the id is the one passed to claude.
+    #[test]
+    fn a_call_lists_its_session_when_a_skip_list_is_named() {
+        let (d, rec) = fake_claude();
+        let list = d.join("pando").join("skip.sessions");
+        let env: HashMap<String, String> = [
+            ("PATH".to_string(), format!("{}:/usr/bin:/bin", d.display())),
+            (pando::live::SKIP_LIST_VAR.to_string(), list.display().to_string()),
+        ]
+        .into();
+        for _ in 0..2 {
+            call_with_retry(&env);
+        }
+        let got = std::fs::read_to_string(&rec).unwrap();
+        let ids: Vec<String> = std::fs::read_to_string(&list).unwrap().split_whitespace().map(String::from).collect();
+        // A start that failed and was tried again also listed its id.
+        assert!(ids.len() >= 2, "{ids:?}");
+        let mut uniq = ids.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), ids.len(), "an id was used twice");
+        assert!(got.contains(&format!("--session-id {}", ids[ids.len() - 1])) && got.contains("skip=1"), "{got}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // Without a skip list the argv is the oracle's and nothing is written.
+    #[test]
+    fn a_call_with_no_skip_list_keeps_the_oracles_argv() {
+        let (d, rec) = fake_claude();
+        let env: HashMap<String, String> = [("PATH".to_string(), format!("{}:/usr/bin:/bin", d.display()))].into();
+        call_with_retry(&env);
+        let got = std::fs::read_to_string(&rec).unwrap();
+        assert!(!got.contains("--session-id") && got.contains("skip=1"), "{got}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

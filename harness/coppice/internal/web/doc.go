@@ -3,7 +3,7 @@
 // with a ban list for the guesser, and the four ways this box can get a
 // TLS certificate a phone will trust, including a local CA the phone
 // installs once. It also serves four JSON paths under /api behind the
-// same guard, and answers a gate ask by writing the file the gate reads.
+// same guard, and answers a warden ask by writing the file the warden reads.
 // The installable PWA itself is served at / with no token, since the shell
 // has to load before the operator has one to send.
 //

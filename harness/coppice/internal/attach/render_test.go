@@ -111,10 +111,10 @@ func TestRenderToClearsTheScreenOnResize(t *testing.T) {
 }
 
 func TestStatusLineShowsIdLabelHarnessStateAndSource(t *testing.T) {
-	ev := &proto.PaneStateEvent{State: proto.StateBlocked, Source: proto.SrcGate,
+	ev := &proto.PaneStateEvent{State: proto.StateBlocked, Source: proto.SrcWarden,
 		Ask: &proto.Ask{Tool: "Bash", Summary: "rm -rf build/"}}
 	got := StatusLine("w1:p3", "auth fix", "claude-code", ev, 120, "ctrl-]")
-	for _, want := range []string{"w1:p3", "auth fix", "claude-code", "blocked", "gate", "Bash"} {
+	for _, want := range []string{"w1:p3", "auth fix", "claude-code", "blocked", "warden", "Bash"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("StatusLine = %q, want it to contain %q", got, want)
 		}

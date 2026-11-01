@@ -2,7 +2,7 @@
 
 tmux has no agent state, so this backend earns its state twice over. Every poll
 merges what it learns into a per-pane cache with `opendaisugi.floor.merge`, the
-same precedence rule the rest of the floor uses: master §5.1 says a gate fact
+same precedence rule the rest of the floor uses: master §5.1 says a warden fact
 outranks a screen guess, and a terminal `done` absorbs everything after it.
 
 A rule that matches nothing, and a rule that matches but sets
@@ -125,21 +125,21 @@ class TmuxBackend:
         socket: str | None = None,
         *,
         manifest_dirs: Sequence[Path] | None = None,
-        gate_states: Callable[[], dict[str, PaneStateEvent]] | None = None,
+        warden_states: Callable[[], dict[str, PaneStateEvent]] | None = None,
     ) -> None:
         self._socket = socket
         self._manifest_dirs = tuple(manifest_dirs or DEFAULT_MANIFEST_DIRS)
-        self._gate_states = gate_states or (lambda: {})
+        self._warden_states = warden_states or (lambda: {})
         self._manifests: dict | None = None
         self._version: tuple[int, int] | None = None
         # The backend's own idea of each pane's current state, kept up to
         # date by merge() rather than recomputed from scratch every poll.
         # tmux has no notion of this on its own.
         self._current: dict[str, PaneStateEvent] = {}
-        # The ts of the last gate event actually merged in for each pane, so
-        # a gate_states() callback that keeps returning the same snapshot
+        # The ts of the last warden event actually merged in for each pane, so
+        # a warden_states() callback that keeps returning the same snapshot
         # does not get re-applied every poll. See _state_for.
-        self._gate_seen: dict[str, float] = {}
+        self._warden_seen: dict[str, float] = {}
         # subscribe() polls forever until this is set. close_connection()
         # is the only way to set it from outside the loop.
         self._stopped = False
@@ -192,7 +192,7 @@ class TmuxBackend:
     def available(self) -> bool:
         """tmux on PATH. Never raises. Master spec 3.2 requires that.
 
-        Deliberately NOT gated on the version: `tmux master` and other unparsable
+        Deliberately NOT checked on the version: `tmux master` and other unparsable
         spellings parse to (0, 0), and refusing a working tmux over a version
         string would skip the contract suite on a perfectly good box. The
         version tuple decides `-e` versus an `env` wrapper, nothing else.
@@ -300,9 +300,9 @@ class TmuxBackend:
                 # left to remember a cached state for. An unproven
                 # failure leaves the cache alone: it might still be true.
                 self._current.clear()
-                self._gate_seen.clear()
+                self._warden_seen.clear()
             return proven, []
-        gate = self._gate_states()
+        warden = self._warden_states()
         now = time.time()
         out: list[PaneInfo] = []
         alive_ids: set[str] = set()
@@ -330,12 +330,12 @@ class TmuxBackend:
                     # too. The operator's tmux.conf may set remain-on-exit
                     # on. Every live tmux pane is a pty.
                     kind="dead" if is_dead else "pty",
-                    state=None if is_dead else self._state_for(ref, current, title, gate, now),
+                    state=None if is_dead else self._state_for(ref, current, title, warden, now),
                 )
             )
         for stale_id in set(self._current) - alive_ids:
             self._current.pop(stale_id, None)
-            self._gate_seen.pop(stale_id, None)
+            self._warden_seen.pop(stale_id, None)
         return True, out
 
     def send_text(self, pane: PaneRef, text: str, *, enter: bool = True) -> None:
@@ -417,7 +417,7 @@ class TmuxBackend:
         raise RuntimeError(f"tmux kill-pane: {proc.stderr.strip()}")
 
     def report_state(self, pane: PaneRef, ev: PaneStateEvent) -> None:
-        """tmux holds no state of its own. The gate's own event store is the sink."""
+        """tmux holds no state of its own. The warden's own event store is the sink."""
         return None
 
     def _poll(
@@ -534,14 +534,14 @@ class TmuxBackend:
         ref: PaneRef,
         current_command: str,
         title: str,
-        gate: dict[str, PaneStateEvent],
+        warden: dict[str, PaneStateEvent],
         now: float,
     ) -> PaneStateEvent | None:
         """The pane's current state: the last fact merge() decided, updated with
         whatever new evidence this poll has.
 
-        A gate fact is merged in once per event, keyed by its own timestamp, so
-        a gate_states() callback that keeps returning the same already-resolved
+        A warden fact is merged in once per event, keyed by its own timestamp, so
+        a warden_states() callback that keeps returning the same already-resolved
         snapshot does not get re-applied and reassert a stale hold. A manifest
         match is merged in only when a rule actually won and did not ask to
         stay silent. Master §5.1 says so; see the module docstring too. A
@@ -549,10 +549,10 @@ class TmuxBackend:
         cached state exactly as it was.
         """
         prior = self._current.get(ref.id)
-        gate_event = gate.get(ref.id)
-        if gate_event is not None and gate_event.ts > self._gate_seen.get(ref.id, 0.0):
-            self._gate_seen[ref.id] = gate_event.ts
-            prior = merge(prior, gate_event, now=now)
+        warden_event = warden.get(ref.id)
+        if warden_event is not None and warden_event.ts > self._warden_seen.get(ref.id, 0.0):
+            self._warden_seen[ref.id] = warden_event.ts
+            prior = merge(prior, warden_event, now=now)
         if self._manifests is None:
             self._manifests = load_manifests(self._manifest_dirs)
         if self._manifests:

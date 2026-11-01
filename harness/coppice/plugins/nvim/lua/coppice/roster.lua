@@ -142,7 +142,7 @@ local function fit(line, width, measure)
 end
 
 -- state_of is the state the roster shows. A blocked row whose ask a
--- foreman holds reads as working, since it waits on the foreman first.
+-- steward holds reads as working, since it waits on the steward first.
 local function state_of(row)
   local s = row.state
   if s == "blocked" and type(row.held) == "table" then

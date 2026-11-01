@@ -1,5 +1,5 @@
-// rpc.mjs: speak coppice's socket protocol the way a gate hook does, so the
-// suite can put gate facts on the floor with no real agent behind them.
+// rpc.mjs: speak coppice's socket protocol the way a warden hook does, so the
+// suite can put warden facts on the floor with no real agent behind them.
 //
 //   node rpc.mjs SOCK report PANE FIELDS_JSON [STATE] [DETAIL]
 //   node rpc.mjs SOCK call CMD FIELDS_JSON
@@ -64,7 +64,7 @@ if (what === 'report') {
     harness: 'claude-code',
     pane,
     state,
-    source: 'gate',
+    source: 'warden',
     detail,
     ...JSON.parse(fields || '{}'),
   };

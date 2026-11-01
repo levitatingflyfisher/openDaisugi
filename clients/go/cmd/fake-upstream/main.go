@@ -1,7 +1,7 @@
-// Command fake-upstream is a test instrument for gateway_compare.py
+// Command fake-upstream is a test instrument for router_compare.py
 // --speed: an Anthropic-shaped upstream on 127.0.0.1 that answers every
 // request at once with one fixed buffered message, so a timing measures
-// the gateway and not the upstream.
+// the router and not the upstream.
 package main
 
 import (

@@ -129,13 +129,13 @@ def main() -> int:
     s = summarize(results)
 
     reuse_rate = (stats["warm_reused"] / stats["warm_total"]) if stats["warm_total"] else 0.0
-    print("\n=== gates ===")
+    print("\n=== checks ===")
     print(
-        f"gate 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
+        f"warden 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
         f"({reuse_rate:.0%})  {'PASS' if reuse_rate > 0.5 else 'FAIL — warm≈cold, void'}"
     )
     print(
-        f"gate 2 — cold success rate: {s['cold_success_rate']:.0%}  "
+        f"warden 2 — cold success rate: {s['cold_success_rate']:.0%}  "
         f"{'PASS' if s['cold_success_rate'] > 0 else 'FAIL'}"
     )
     print("\n=== results (reliable executor) ===")

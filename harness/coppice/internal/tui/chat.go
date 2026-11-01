@@ -7,7 +7,7 @@ import (
 	"github.com/opendaisugi/coppice/internal/textwidth"
 )
 
-// ChatMsg is one line of the chat with the foreman, from floor.chat. Role
+// ChatMsg is one line of the chat with the steward, from floor.chat. Role
 // is owner, agent, note, work or past. Tool is set on a tool use line.
 type ChatMsg struct {
 	ID, Role, Text, Tool string
@@ -16,46 +16,46 @@ type ChatMsg struct {
 // chatLimit is how many messages one floor.chat read asks for.
 const chatLimit = 50
 
-// chatPlaceholder is the foot line of the foreman's window while its
-// input line is empty. The words go to the foreman, not to its terminal.
-const chatPlaceholder = "Tell the foreman. Type and press Enter."
+// chatPlaceholder is the foot line of the steward's window while its
+// input line is empty. The words go to the steward, not to its terminal.
+const chatPlaceholder = "Tell the steward. Type and press Enter."
 
-// chatEmpty is what the foreman's window says before any message.
-const chatEmpty = "No messages yet. Type a sentence below. It goes to the foreman."
+// chatEmpty is what the steward's window says before any message.
+const chatEmpty = "No messages yet. Type a sentence below. It goes to the steward."
 
-// chatRefused is what the foreman's window says when the server refuses
+// chatRefused is what the steward's window says when the server refuses
 // floor.chat: it counts a process inside one of its own panes as a pane,
 // and a pane may not read the chat.
-const chatRefused = "The server will not show this chat here. This floor runs inside a coppice pane, and a pane may not read the chat or talk to the foreman. Run the floor outside a coppice pane."
+const chatRefused = "The server will not show this chat here. This floor runs inside a coppice pane, and a pane may not read the chat or talk to the steward. Run the floor outside a coppice pane."
 
-// replyMark is the state word of the foreman's rail row while it holds a
+// replyMark is the state word of the steward's rail row while it holds a
 // reply and no window shows it.
 const replyMark = "reply"
 
-// Screen and Chat are the header words that switch the foreman's window
+// Screen and Chat are the header words that switch the steward's window
 // between its chat and its terminal.
 const (
 	screenWord = "Screen"
 	chatWord   = "Chat"
 )
 
-// chatWindow reports whether pane id is the foreman and its window draws
-// the chat. Screen turns it to the foreman's terminal.
+// chatWindow reports whether pane id is the steward and its window draws
+// the chat. Screen turns it to the steward's terminal.
 func (m *Model) chatWindow(id string) bool {
-	return id != "" && id == m.ForemanID && !m.ChatScreen && m.has(id)
+	return id != "" && id == m.StewardID && !m.ChatScreen && m.has(id)
 }
 
 // takesLine reports whether pane id's window takes whole lines in an input
-// line of its own: a headless agent, and the foreman's chat.
+// line of its own: a headless agent, and the steward's chat.
 func (m *Model) takesLine(id string) bool {
 	return m.isHeadless(id) || m.chatWindow(id)
 }
 
-// toggleWord is the header word of the foreman's window: Screen while it
+// toggleWord is the header word of the steward's window: Screen while it
 // draws the chat, Chat while it draws the terminal. Other windows have none.
 func (m *Model) toggleWord(id string) string {
 	switch {
-	case id == "" || id != m.ForemanID || !m.has(id):
+	case id == "" || id != m.StewardID || !m.has(id):
 		return ""
 	case m.ChatScreen:
 		return chatWord
@@ -63,7 +63,7 @@ func (m *Model) toggleWord(id string) string {
 	return screenWord
 }
 
-// lastReply is the id of the newest message the foreman wrote in words, or
+// lastReply is the id of the newest message the steward wrote in words, or
 // "". A tool use is not a reply, and neither is the owner's line.
 func lastReply(msgs []ChatMsg) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
@@ -74,10 +74,10 @@ func lastReply(msgs []ChatMsg) string {
 	return ""
 }
 
-// chatUnseen reports whether the foreman has a reply no chat window showed.
+// chatUnseen reports whether the steward has a reply no chat window showed.
 func (m *Model) chatUnseen() bool {
 	last := lastReply(m.Chat)
-	return m.ForemanID != "" && last != "" && last != m.ChatSeen
+	return m.StewardID != "" && last != "" && last != m.ChatSeen
 }
 
 // decodeChat reads the messages of a floor.chat reply.
@@ -104,7 +104,7 @@ func chatRows(msgs []ChatMsg, w int) []string {
 		case "owner":
 			who = "you "
 		case "agent":
-			who = "foreman "
+			who = "steward "
 		}
 		if c.Tool != "" {
 			out = append(out, sgrFaint+textwidth.Pad(textwidth.Truncate("  · "+textwidth.Printable(c.Tool, 0), w), w)+sgrReset)
@@ -145,7 +145,7 @@ func styleWho(who, line string) string {
 	return sgrAccent + who + sgrReset + line[len(who):]
 }
 
-// chatLines is the body of the foreman's window: the newest messages that
+// chatLines is the body of the steward's window: the newest messages that
 // fit h lines, w cells wide.
 func chatLines(m *Model, w, h int) []string {
 	if h <= 0 {
@@ -167,18 +167,18 @@ func chatLines(m *Model, w, h int) []string {
 	return rows
 }
 
-// toggleScreen turns the foreman's window between its chat and its
+// toggleScreen turns the steward's window between its chat and its
 // terminal. The caller gives the keys to the window after it.
 func (f *floor) toggleScreen() {
 	f.m.ChatScreen = !f.m.ChatScreen
 }
 
 // readChat asks floor.chat for the newest messages. A failed read keeps the
-// last chat, so one slow answer never empties the window. With no foreman
+// last chat, so one slow answer never empties the window. With no steward
 // it reads nothing. A reply no window showed then claims a window.
 func (f *floor) readChat() {
 	m := f.m
-	if m.ForemanID == "" {
+	if m.StewardID == "" {
 		m.Chat, m.ImportLine = nil, ""
 		return
 	}
@@ -220,16 +220,16 @@ func (f *floor) readImport() {
 	f.m.ImportLine = importLine(res)
 }
 
-// foremanFirst reports whether pane id is the foreman and holds a reply no
+// stewardFirst reports whether pane id is the steward and holds a reply no
 // window showed, so it fills right after the agents that need you.
-func (m *Model) foremanFirst(id string) bool {
-	return id != "" && id == m.ForemanID && m.chatUnseen() && !m.ChatScreen
+func (m *Model) stewardFirst(id string) bool {
+	return id != "" && id == m.StewardID && m.chatUnseen() && !m.ChatScreen
 }
 
-// replyWaiting reports whether pane id is the foreman with an unseen reply
+// replyWaiting reports whether pane id is the steward with an unseen reply
 // and no window to show it. Its rail row says so.
 func (m *Model) replyWaiting(id string) bool {
-	if !m.foremanFirst(id) {
+	if !m.stewardFirst(id) {
 		return false
 	}
 	if m.Tiles == nil {
@@ -239,13 +239,13 @@ func (m *Model) replyWaiting(id string) bool {
 	return !shown
 }
 
-// setForeman names pane id as the floor's foreman, or none for "". The
+// setSteward names pane id as the floor's steward, or none for "". The
 // chat and the Screen choice start over. A window that has the keys and
 // now takes lines, or no longer does, gets its key reader set again.
-func (f *floor) setForeman(id string) {
+func (f *floor) setSteward(id string) {
 	m := f.m
-	old := m.ForemanID
-	m.ForemanID, m.ChatScreen, m.Chat, m.ChatErr = id, false, nil, ""
+	old := m.StewardID
+	m.StewardID, m.ChatScreen, m.Chat, m.ChatErr = id, false, nil, ""
 	if m.Typing != "" && (m.Typing == old || m.Typing == id) {
 		f.setTyping(m.Typing)
 	}

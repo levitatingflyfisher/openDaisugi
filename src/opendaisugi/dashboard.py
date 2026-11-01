@@ -11,8 +11,8 @@ it; the map itself is always :func:`detect_stages`, so nothing drifts.
 Three rules keep it honest, the same instinct behind the modules view:
 
 * **Read-only.** Looking never conjures a store into being — every read is
-  gated on the file already existing, so a 2-second refresh loop writes nothing.
-* **No fabrication.** A stage with no passive counter (the gate's per-call
+  checked on the file already existing, so a 2-second refresh loop writes nothing.
+* **No fabrication.** A stage with no passive counter (the warden's per-call
   throughput, the verifier's latency) shows a blank gauge that *says why* it is
   blank, rather than an invented number or a silent gap.
 * **Graceful.** A missing or unreadable store degrades to a dash, never a raise;
@@ -73,12 +73,12 @@ class RawMetrics:
     journal_failed: int | None = None
     pathway_count: int | None = None
     pathway_hits: int | None = None
-    gateway_turns: int | None = None
-    gateway_downgraded: int | None = None
-    gateway_frontier_tokens_saved: int | None = None
-    gateway_dollars_saved: float | None = None
-    gateway_multiplier: float | None = None
-    gateway_cache_hit_rate: float | None = None
+    router_turns: int | None = None
+    router_downgraded: int | None = None
+    router_frontier_tokens_saved: int | None = None
+    router_dollars_saved: float | None = None
+    router_multiplier: float | None = None
+    router_cache_hit_rate: float | None = None
 
 
 def read_raw(data_dir: Path) -> RawMetrics:
@@ -111,17 +111,17 @@ def read_raw(data_dir: Path) -> RawMetrics:
             pass
 
     try:
-        from opendaisugi.gateway_journal import GatewayJournal, summarize
+        from opendaisugi.router_journal import RouterJournal, summarize
 
-        recs = GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").load()
+        recs = RouterJournal(path=data_dir / "router" / "turns.jsonl").load()
         if recs:
             g = summarize(recs)
-            raw.gateway_turns = g.turns
-            raw.gateway_downgraded = g.downgraded_turns
-            raw.gateway_frontier_tokens_saved = g.frontier_tokens_saved
-            raw.gateway_dollars_saved = g.dollars_saved
-            raw.gateway_multiplier = g.blended_multiplier
-            raw.gateway_cache_hit_rate = g.cache_hit_rate
+            raw.router_turns = g.turns
+            raw.router_downgraded = g.downgraded_turns
+            raw.router_frontier_tokens_saved = g.frontier_tokens_saved
+            raw.router_dollars_saved = g.dollars_saved
+            raw.router_multiplier = g.blended_multiplier
+            raw.router_cache_hit_rate = g.cache_hit_rate
     except Exception:
         pass
 
@@ -157,21 +157,21 @@ def collect_metrics(data_dir: Path) -> dict[str, list[Gauge]]:
             "pathways", f"{raw.pathway_count:,}", f"{raw.pathway_hits:,} lifetime reuse hit(s)"
         )
 
-    if raw.gateway_turns is None:
-        router = _blank("tokens saved", "no gateway turns recorded yet")
+    if raw.router_turns is None:
+        router = _blank("tokens saved", "no router turns recorded yet")
     else:
         router = Gauge(
             "tokens saved",
-            f"{raw.gateway_frontier_tokens_saved:,}",
-            f"${raw.gateway_dollars_saved:,.2f} · {raw.gateway_multiplier:.2f}x · "
-            f"cache {raw.gateway_cache_hit_rate:.0%} · "
-            f"{raw.gateway_downgraded}/{raw.gateway_turns} downgraded",
-            fraction=_ratio(raw.gateway_downgraded, raw.gateway_turns),
+            f"{raw.router_frontier_tokens_saved:,}",
+            f"${raw.router_dollars_saved:,.2f} · {raw.router_multiplier:.2f}x · "
+            f"cache {raw.router_cache_hit_rate:.0%} · "
+            f"{raw.router_downgraded}/{raw.router_turns} downgraded",
+            fraction=_ratio(raw.router_downgraded, raw.router_turns),
         )
 
     return {
         "harness": [Gauge("detected", "see map", "active harnesses marked ● above")],
-        "gate": [_blank("throughput", "no passive counter yet")],
+        "warden": [_blank("throughput", "no passive counter yet")],
         "verifier": [_blank("latency", "benchmark-only — run `daisugi guard-cost`")],
         "matcher": [matcher],
         "distill": [distill],

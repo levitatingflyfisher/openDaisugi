@@ -4,7 +4,7 @@
 //! text goes through the general reader.
 
 use super::pmodel::{validate, Mode, Schema};
-use crate::gate::pyjson::{loads, Value};
+use crate::warden::pyjson::{loads, Value};
 
 /// A stored vector: its length, its entries that are not zero, and the
 /// sum of their squares in numpy's order.

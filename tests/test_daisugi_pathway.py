@@ -44,7 +44,9 @@ def _put_pathway(store):
     env = Envelope(
         generated_by="distilled",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="find /tmp")])
     p = CompiledPathway(

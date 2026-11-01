@@ -17,8 +17,8 @@ What this crate builds against, and why each one is pinned. The crate is
 | miniz_oxide | =0.8.9 | The gzip layer of `coppice backup` and `coppice restore` (deflate and inflate; the tar and the crc32 are local code). It brings adler2. MIT OR Zlib OR Apache-2.0, Frommi's port of miniz. Already in clients/rust. |
 | rustls-pki-types | =1.15.1, feature `std` | The key and certificate types rustls takes. MIT OR Apache-2.0, the rustls project. Already in clients/rust. |
 | The phone page | `harness/coppice/internal/web/static` | Embedded by `build.rs` as Go's `//go:embed static` embeds it: every file, with every name that starts with `.` or `_` left out at any depth. One copy of the page for both binaries; a unit test holds the list and the bytes to the Go tree. |
-| The manifests and the foreman pages | `harness/coppice/internal/detect/manifests/*.toml`, `harness/coppice/skills/foreman/SKILL.md`, `harness/coppice/skills/foreman-turn/SKILL.md`, `harness/coppice/internal/foreman/prompt_compress.txt` and `prompt_merge.txt` | Compiled in with `include_str!` from the Go tree, so both ports carry the same bytes: the pane foreman's page, the system page of a chat-mode turn, and the compactor's two prompts. |
-| The foreman's golden fixtures | `harness/coppice/internal/foreman/testdata/golden` | Read by a Rust test, which plays `script.json` and must write every file under `out/` byte for byte. |
+| The manifests and the steward pages | `harness/coppice/internal/detect/manifests/*.toml`, `harness/coppice/skills/steward/SKILL.md`, `harness/coppice/skills/steward-turn/SKILL.md`, `harness/coppice/internal/steward/prompt_compress.txt` and `prompt_merge.txt` | Compiled in with `include_str!` from the Go tree, so both ports carry the same bytes: the pane steward's page, the system page of a chat-mode turn, and the compactor's two prompts. |
+| The steward's golden fixtures | `clients/fixtures/pando/golden` | Read by a Rust test, which plays `script.json` and must write every file under `out/` byte for byte. |
 
 Every other crate in `Cargo.lock` comes in through these. aho-corasick
 is there as regex's optional dependency; with `perf` off it is not

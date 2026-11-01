@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/router"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // thresholds is each carried backend's reuse threshold, as
@@ -28,7 +28,7 @@ func (e *Env) route(args []string) error {
 		{names: []string{"--frontier-model"}, value: true, metavar: "TEXT", help: "Model recommended for hard tasks."},
 		{names: []string{"--threshold"}, value: true, metavar: "FLOAT", help: "Pathway-match threshold (0-1); default: active backend's."},
 		{names: []string{"--harness"}, value: true, metavar: "TEXT", help: "Host harness: claude-code, codex, ollama/local, hermes, openclaw."},
-		{names: []string{"--knn"}, help: "Also show the knn router's choice and its nearest past turns (reads <data-dir>/gateway/routing.db)."},
+		{names: []string{"--knn"}, help: "Also show the knn router's choice and its nearest past turns (reads <data-dir>/router/routing.db)."},
 		{names: []string{"--json"}, help: "Machine-readable JSON output."},
 	}
 	p, err := parseArgs(args, opts, 1<<20)
@@ -53,9 +53,9 @@ func (e *Env) route(args []string) error {
 	if err != nil {
 		return e.usage(cmd, err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
-	cheap := p.str("--cheap-model", gateway.DefaultCheapModel)
-	frontier := p.str("--frontier-model", gateway.DefaultFrontierModel)
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
+	cheap := p.str("--cheap-model", router.DefaultCheapModel)
+	frontier := p.str("--frontier-model", router.DefaultFrontierModel)
 	harness := strings.ToLower(pystr.Strip(p.str("--harness", "claude-code")))
 	advisorTool := harness == "claude-code" || harness == "claude" || harness == "anthropic"
 	db := filepath.Join(dataDir, "pathways.db")
@@ -73,7 +73,7 @@ func (e *Env) route(args []string) error {
 		}
 		threshold = t
 	}
-	d := gateway.EstimateDifficulty(task)
+	d := router.EstimateDifficulty(task)
 	type advice struct {
 		tier, model, reason, pathway string
 		pairing                      bool
@@ -109,25 +109,25 @@ func (e *Env) route(args []string) error {
 		if ferr == nil && r.Match != nil {
 			id := r.Match.Pathway.ID()
 			a = &advice{tier: "tier0-pathway", pathway: id, reason: fmt.Sprintf("reuse distilled pathway %s (similarity %s); "+
-				"re-verified against its envelope — near-zero LLM cost, provably in policy", id, gateway.FormatF(r.Match.Similarity, 2))}
+				"re-verified against its envelope — near-zero LLM cost, provably in policy", id, router.FormatF(r.Match.Similarity, 2))}
 		}
 	}
 	if a == nil {
 		switch {
 		case d < 0.5:
 			a = &advice{tier: "tier1-cheap", model: cheap,
-				reason: fmt.Sprintf("novel but low-difficulty (%s); cheap model suffices", gateway.FormatF(d, 2))}
+				reason: fmt.Sprintf("novel but low-difficulty (%s); cheap model suffices", router.FormatF(d, 2))}
 		case !advisorTool:
 			a = &advice{tier: "tier2-frontier", model: frontier,
-				reason: fmt.Sprintf("novel and high-difficulty (%s); use the frontier model", gateway.FormatF(d, 2))}
+				reason: fmt.Sprintf("novel and high-difficulty (%s); use the frontier model", router.FormatF(d, 2))}
 		default:
 			a = &advice{tier: "tier2-frontier", model: frontier, pairing: true,
 				reason: fmt.Sprintf("novel and high-difficulty (%s); use the frontier — or pair a cheap executor with an "+
 					"Opus advisor (Anthropic advisor tool, beta advisor-tool-2026-03-01) for comparable quality at lower cost",
-					gateway.FormatF(d, 2))}
+					router.FormatF(d, 2))}
 		}
 	}
-	var view *gateway.KnnView
+	var view *router.KnnView
 	if p.flag("--knn") {
 		v, err := e.knnView(task, dataDir, frontier, cheap)
 		if err != nil {
@@ -154,13 +154,13 @@ func (e *Env) route(args []string) error {
 		line += "  →  " + a.model
 	}
 	e.out("%s\n", line)
-	e.out("  difficulty: %s\n", gateway.FormatF(d, 2))
+	e.out("  difficulty: %s\n", router.FormatF(d, 2))
 	if a.pathway != "" {
 		e.out("  pathway:    %s\n", a.pathway)
 	}
 	e.out("  why:        %s\n", a.reason)
 	if view != nil {
-		for _, ln := range gateway.KnnViewLines(*view) {
+		for _, ln := range router.KnnViewLines(*view) {
 			e.out("%s\n", ln)
 		}
 	}
@@ -168,17 +168,17 @@ func (e *Env) route(args []string) error {
 }
 
 // knnView is knn_view: the knn router's choice for a task, read only.
-func (e *Env) knnView(task, dataDir, requested, cheap string) (gateway.KnnView, error) {
+func (e *Env) knnView(task, dataDir, requested, cheap string) (router.KnnView, error) {
 	k := e.knnRouter(dataDir)
 	vec, identity, err := k.Embed(task)
 	if err != nil {
-		return gateway.KnnView{Err: "could not embed the task"}, nil
+		return router.KnnView{Err: "could not embed the task"}, nil
 	}
-	return gateway.KnnViewOf(vec, identity, k.Store, requested, cheap, gateway.DefaultPrices(), k.Threshold)
+	return router.KnnViewOf(vec, identity, k.Store, requested, cheap, router.DefaultPrices(), k.Threshold)
 }
 
 // knnViewObject is the knn key of route --json.
-func knnViewObject(v gateway.KnnView) any {
+func knnViewObject(v router.KnnView) any {
 	if v.Err != "" {
 		return pyjson.NewObject().Set("error", v.Err)
 	}
@@ -203,17 +203,17 @@ func (e *Env) routeFeedback(cmd string, p *parsed) error {
 		return e.usage(cmd, &usageError{"Invalid value: usage: daisugi route feedback <turn-id> good|bad"})
 	}
 	turnID, outcome := rest[0], rest[1]
-	if outcome != gateway.KnnGood && outcome != gateway.KnnBad {
+	if outcome != router.KnnGood && outcome != router.KnnBad {
 		return e.usage(cmd, &usageError{fmt.Sprintf("Invalid value: the outcome must be good or bad, not %s", pystr.Repr(outcome))})
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
-	store := &gateway.OutcomeStore{Path: filepath.Join(dataDir, "gateway", "routing.db")}
-	ok, err := store.SetOutcome(turnID, outcome, gateway.SourceHuman)
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
+	store := &router.OutcomeStore{Path: filepath.Join(dataDir, "router", "routing.db")}
+	ok, err := store.SetOutcome(turnID, outcome, router.SourceHuman)
 	if err != nil {
 		return e.fail(cmd, err)
 	}
 	if !ok {
-		e.errf("no booked turn %s.\nthe knn router books turns in <data-dir>/gateway/routing.db.\n"+
+		e.errf("no booked turn %s.\nthe knn router books turns in <data-dir>/router/routing.db.\n"+
 			"see the turn ids with: daisugi router status\n", pystr.Repr(turnID))
 		return exit(1)
 	}

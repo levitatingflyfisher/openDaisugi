@@ -1,4 +1,4 @@
-// The foreman answers aloud. One rule, on the desk and on the phone: a
+// The steward answers aloud. One rule, on the desk and on the phone: a
 // reply is spoken when the message it answers came by voice (the mic filled
 // the tell bar), and never otherwise, unless Settings has "Read replies
 // aloud" on. A tap on a reply's Listen button speaks that reply. Speech
@@ -78,13 +78,13 @@ export function parseFrame(buf) {
 
 // createSpeech holds the rules above. deps: say(text) asks the server for
 // one sentence and resolves {audio, type}; info() resolves speech.status;
-// chat(limit) resolves the foreman chat's messages; audio() is a WebAudio
+// chat(limit) resolves the steward chat's messages; audio() is a WebAudio
 // context or null; synth() is {speak(text) -> Promise, cancel(), unlock()}
 // or null; status(line) shows a line; storage is localStorage or a fake.
 export function createSpeech(deps) {
   const st = {
     mode: 'browser', url: '', model: '', voice: '', profile: '', line: '',
-    gen: 0, loop: -1, queue: [], source: null, unlocked: false, synthUnlocked: false, noted: false,
+    gen: 0, loop: -1, tag: '', queue: [], source: null, unlocked: false, synthUnlocked: false, noted: false,
     armed: false, voiced: false, want: '', anchored: false, seen: null, reading: false, again: false,
   };
   const listeners = new Set();
@@ -199,7 +199,11 @@ export function createSpeech(deps) {
     (async () => {
       while (gen === st.gen && st.queue.length > 0) {
         try {
-          await speakText(gen, st.queue.shift());
+          const item = st.queue.shift();
+          // The tag is the tag of the item that speaks now, so an untagged
+          // reply queued behind a Listen does not take its tag away.
+          st.tag = item.tag;
+          await speakText(gen, item.text);
         } catch (e) {
           say((e && e.message) || 'Speech stopped.');
         }
@@ -211,12 +215,15 @@ export function createSpeech(deps) {
     })();
   }
 
-  function enqueue(text) {
-    st.queue.push(String(text));
+  function enqueue(text, tag) {
+    // Speech with no tag is nobody's reply: it has the empty tag when its
+    // turn comes. It never changes the tag of what plays now.
+    st.queue.push({ text: String(text), tag: tag === undefined ? '' : String(tag) });
     start();
   }
 
   function stop() {
+    st.tag = '';
     st.gen += 1;
     st.queue = [];
     if (st.loop !== -1) st.loop = -1;
@@ -347,7 +354,7 @@ export function createSpeech(deps) {
       st.seen = null;
       readNew();
     },
-    // beforeSend runs when the owner sends a line to the foreman. The
+    // beforeSend runs when the owner sends a line to the steward. The
     // replies to it are spoken when the mic filled the line. It returns
     // what undoSend needs if the send fails.
     //
@@ -378,12 +385,16 @@ export function createSpeech(deps) {
     unlock,
     unlocked: () => st.unlocked,
     stop,
-    speak(text) {
+    // speak reads text aloud. tag names it, so a page can tell which reply
+    // is being read.
+    speak(text, tag) {
       unlock();
       stop();
-      enqueue(text);
+      enqueue(text, tag === undefined ? '' : tag);
     },
     speaking: () => st.loop !== -1,
+    // current is the tag of the speech running now, or '' when none runs.
+    current: () => (st.loop !== -1 ? st.tag : ''),
     readAloud,
     setReadAloud(on) {
       store.set(READ_ALOUD_KEY, on ? '1' : '0');

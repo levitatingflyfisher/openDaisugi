@@ -8,8 +8,8 @@
 //! client's `pyyaml/dumped.go` is the reference.
 
 use super::yamldump::{resolve_tag, resolvers, safe_dump, Unsupported};
-use crate::gate::py::text::cp_char;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::cp_char;
+use crate::warden::pyjson::{Object, Value};
 
 type R<T> = Result<T, Unsupported>;
 
@@ -23,7 +23,7 @@ fn unsupported<T>(why: &str) -> R<T> {
 fn non_printable(s: &str) -> bool {
     s.chars().any(|c| {
         let r = c as u32;
-        if crate::gate::py::text::as_surrogate(c).is_some() {
+        if crate::warden::py::text::as_surrogate(c).is_some() {
             return true;
         }
         !(r == 9

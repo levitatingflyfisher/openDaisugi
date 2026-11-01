@@ -97,7 +97,7 @@ func footerBase(m *Model) string {
 	switch {
 	case m.Typing != "":
 		back := ""
-		if m.Typing == m.ForemanID && m.ChatScreen {
+		if m.Typing == m.StewardID && m.ChatScreen {
 			back = "  click Chat to read the chat"
 		}
 		return config.KeyName(m.Leave) + " back to the rail, then ctrl-c quits  click another window to type there  " +
@@ -138,7 +138,7 @@ func footerBase(m *Model) string {
 		}
 	}
 	table := Table()
-	// m shows only on an agent it can act on, so a floor with no gate
+	// m shows only on an agent it can act on, so a floor with no warden
 	// keeps its footer short.
 	if r, ok := m.Selected(); !ok || !modeSettable(r) {
 		table = withoutMode(table)
@@ -663,9 +663,9 @@ func rowLine(r Row, cursor, dim, focused bool, tag string, cols int) string {
 	state, line := r.State, textwidth.Printable(r.Line, 0)
 	color := stateColor(r.State)
 	if r.Held != nil {
-		// A held ask waits on a foreman, not on the operator.
+		// A held ask waits on a steward, not on the operator.
 		state = "held"
-		line = "waiting on " + textwidth.Printable(r.Held.TaskLabel, 0) + "'s foreman · " + ageText(r.Held.Waited)
+		line = "waiting on " + textwidth.Printable(r.Held.TaskLabel, 0) + "'s steward · " + ageText(r.Held.Waited)
 		color = stateColor("working")
 	}
 	fields := []string{label, textwidth.Printable(r.Harness, 0), state, ageText(r.Age), line, lookingText(r.Looking),
@@ -748,7 +748,7 @@ func roster(m *Model, cols, height int) (lines []string, at []int) {
 			}
 			tag += strings.Repeat("  ", min(it.depth, maxIndent))
 			if m.replyWaiting(r.ID) {
-				// The foreman has a reply and no window to show it in.
+				// The steward has a reply and no window to show it in.
 				r.State = replyMark
 			}
 			lines = append(lines, rowLine(r, i == m.Cursor, m.Typing != "", focused, tag, cols))
@@ -882,7 +882,7 @@ func body(m *Model, cols, height int) (lines []string, at []int) {
 }
 
 // stackLines is how many lines the window of pane id gives its stack
-// line: one when the server sent a stack, gate or tokens field, else none.
+// line: one when the server sent a stack, warden or tokens field, else none.
 func (m *Model) stackLines(id string) int {
 	if r, ok := m.row(id); ok && r.Stack != "" {
 		return 1
@@ -1024,7 +1024,7 @@ func tileLines(m *Model, id string, i, w, h int) []string {
 		budget = h - 1
 	}
 	if m.chatWindow(id) {
-		// The window has shown the foreman's newest reply.
+		// The window has shown the steward's newest reply.
 		m.ChatSeen = lastReply(m.Chat)
 		lines = append(lines, chatLines(m, w, budget-len(lines))...)
 	} else if sc := m.Screens[id]; id != "" && sc != nil {
@@ -1153,10 +1153,10 @@ func Render(m *Model, cols, rows int) []string {
 	if m.Facts != nil && cols >= factsMinCols {
 		head = append(head, sgrFaint+textwidth.Pad(textwidth.Truncate(factsLine(m), cols), cols)+sgrReset)
 	}
-	// With no gate hook and no agent guarded, the floor says how to turn
-	// the gate on, on any screen wide enough for the line.
-	if gateHintShown(m.Facts) && cols >= hintMinCols {
-		head = append(head, textwidth.Pad(gateHint, cols))
+	// With no warden hook and no agent guarded, the floor says how to turn
+	// the warden on, on any screen wide enough for the line.
+	if wardenHintShown(m.Facts) && cols >= hintMinCols {
+		head = append(head, textwidth.Pad(wardenHint, cols))
 	}
 	var tail []string
 	for _, n := range m.Notes {
@@ -1178,6 +1178,9 @@ func Render(m *Model, cols, rows int) []string {
 		}
 		endedAt = len(tail)
 		tail = append(tail, color+textwidth.Pad(textwidth.Printable(m.EndedLine, 0), cols)+sgrReset)
+	}
+	if m.Unconfined != "" {
+		tail = append(tail, sgrAmber+textwidth.Pad(textwidth.Truncate(textwidth.Printable(m.Unconfined, 0), cols), cols)+sgrReset)
 	}
 	if m.Message != "" {
 		// The message can hold a label or a server's words, so it is drawn
@@ -1304,7 +1307,7 @@ func placeCursor(m *Model, cols, rows, bodyTop, bodyH int, prompt string) {
 }
 
 // peekLines lays the peek out in height lines: a header, the ask when the
-// pane holds one, the gate's verdict when the data carries one, then the
+// pane holds one, the warden's verdict when the data carries one, then the
 // last lines of the pane's text that fit.
 func peekLines(p *PeekView, cols, height int) []string {
 	if height <= 0 {
@@ -1314,7 +1317,7 @@ func peekLines(p *PeekView, cols, height int) []string {
 	if p.Ask != "" {
 		head = append(head, textwidth.Pad("asks: "+p.Ask, cols))
 	}
-	if p.HasGate {
+	if p.HasWarden {
 		head = append(head, textwidth.Pad(verdictText(p.Verdict, p.Rule), cols))
 	}
 	for _, line := range trustLines(p) {
@@ -1366,10 +1369,10 @@ func trustLines(p *PeekView) []string {
 // presses Esc, which ends Claude.
 const TrustKeys = "y trust this folder  n not now, which ends Claude"
 
-// verdictText is the one line that says what the gate decided.
+// verdictText is the one line that says what the warden decided.
 func verdictText(verdict string, rule int) string {
 	if verdict == "allow" {
-		return "The gate says yes"
+		return "The warden says yes"
 	}
-	return fmt.Sprintf("The gate says no, rule %d", rule)
+	return fmt.Sprintf("The warden says no, rule %d", rule)
 }

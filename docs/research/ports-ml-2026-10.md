@@ -60,7 +60,7 @@ The user asked which VLA openDaisugi already uses. This run could not answer: tw
 
 - Which VLA (if any) does openDaisugi currently use or reference? The repo grep timed out here; check the code and project memory directly.
 - Can Go bind MuJoCo headlessly with a small hand-written cgo layer, and is there any maintained community Go binding outside the official README? The exact C call surface was not verified (the related claim was refuted).
-- Do mujoco-rs offscreen rendering and vla.cpp GGUF inference actually work display-free on a Linux box with a 6 GB GTX 1060-class GPU or CPU only, and what is the real end-to-end latency there?
+- Do mujoco-rs offscreen rendering and vla.cpp GGUF inference actually work display-free on a Linux box with a small consumer GPU or CPU only, and what is the real end-to-end latency there?
 - Questions 3-5 are unanswered and need a fresh sourced pass: llama.cpp/candle/burn LoRA training maturity on CPU or 6 GB GPU; subprocess vs PyO3/cgo embedding plus python-build-standalone + uv --require-hashes packaging and AUR optdepends patterns; and license and provenance of non-Qwen 0.5-4B base models (SmolLM3, Granite 4, Phi-4-mini, OLMo, Gemma/Llama terms) for per-user skill LoRAs.
 
 ## Refuted claims
@@ -92,7 +92,7 @@ oracle's `GPT2Tokenizer` (transformers 5) does not run it; the ports follow the 
 In the pick-place closed loop the trust test the research asked for holds run by run: each
 replayed run is within 3.7e-6 of the oracle, the first free run matches, and Go and Rust agree
 bit for bit. The free trajectory against the oracle drifts after run 0, because a qpos gap in
-the 7th digit moves a few edge pixels of the next image (VL-R-7). Per chunk on a 4-core i5: Go
+the 7th digit moves a few edge pixels of the next image (VL-R-7). Per chunk on a laptop CPU: Go
 2.8 s and Rust 3.0 s; PyTorch 2.6 to 3.2 s on the check and golden inputs, and 6.7 s on the
 loop's dark frames, so the numbers are not a speed comparison between runtimes.
 

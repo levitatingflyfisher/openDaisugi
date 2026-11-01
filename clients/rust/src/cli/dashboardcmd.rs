@@ -12,15 +12,15 @@ use std::time::Duration;
 
 use num_bigint::BigInt;
 
-use super::gateroot::join;
+use super::wardenroot::join;
 use super::modulescmd::{
     box_line, module_rows, read_pathway_stats, stage_object, stdout_tty, Glyphs, Stage, WIDTH,
 };
 use super::statuscmd::{py_fixed, DATA_DIR_OPT};
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::paths::strerror;
-use crate::gate::pyjson::{dumps_indent, float_repr, Object, Value};
-use crate::gateway::report::{load_journal, summarize, JRecord, JournalErr, Summary};
+use crate::warden::paths::strerror;
+use crate::warden::pyjson::{dumps_indent, float_repr, Object, Value};
+use crate::router::report::{load_journal, summarize, JRecord, JournalErr, Summary};
 use crate::tracejournal::Journal;
 
 /// `dashboard.RawMetrics`: None where a store is absent or cannot be read.
@@ -30,14 +30,14 @@ struct Raw {
     pathway_count: Option<i64>,
     /// None with a count: int() of the hit sum raised.
     pathway_hits: Option<BigInt>,
-    gateway: Option<Summary>,
+    router: Option<Summary>,
 }
 
-/// The gateway's turn journal. A record of other types (GW-8) is an
+/// The router's turn journal. A record of other types (GW-8) is an
 /// error; a file that cannot be read or decoded is no records, as the
 /// oracle's read_raw swallows the error.
-fn load_gateway_records(data_dir: &str) -> Result<Vec<JRecord>, String> {
-    match load_journal(&join(data_dir, "gateway/turns.jsonl")) {
+fn load_router_records(data_dir: &str) -> Result<Vec<JRecord>, String> {
+    match load_journal(&join(data_dir, "router/turns.jsonl")) {
         Ok(r) => Ok(r),
         Err(JournalErr::Io(_)) => Ok(vec![]),
         Err(JournalErr::Unread(m)) if m.ends_with("a line json.loads raises on") => Ok(vec![]),
@@ -45,7 +45,7 @@ fn load_gateway_records(data_dir: &str) -> Result<Vec<JRecord>, String> {
     }
 }
 
-/// `dashboard.read_raw`, given the gateway records read first.
+/// `dashboard.read_raw`, given the router records read first.
 fn read_raw(data_dir: &str, recs: &[JRecord]) -> Raw {
     let mut raw = Raw::default();
     if std::fs::metadata(join(data_dir, "journal/index.db")).is_ok() {
@@ -64,7 +64,7 @@ fn read_raw(data_dir: &str, recs: &[JRecord]) -> Raw {
         }
     }
     if !recs.is_empty() {
-        raw.gateway = Some(summarize(recs));
+        raw.router = Some(summarize(recs));
     }
     raw
 }
@@ -183,8 +183,8 @@ fn collect_metrics(raw: &Raw) -> Result<Vec<(&'static str, Vec<Gauge>)>, &'stati
             )
         }
     };
-    let router = match &raw.gateway {
-        None => blank("tokens saved", "no gateway turns recorded yet"),
+    let router = match &raw.router {
+        None => blank("tokens saved", "no router turns recorded yet"),
         Some(g) => Gauge {
             label: "tokens saved",
             value: commas(&g.frontier_saved),
@@ -209,7 +209,7 @@ fn collect_metrics(raw: &Raw) -> Result<Vec<(&'static str, Vec<Gauge>)>, &'stati
                 fraction: None,
             }],
         ),
-        ("gate", vec![blank("throughput", "no passive counter yet")]),
+        ("warden", vec![blank("throughput", "no passive counter yet")]),
         (
             "verifier",
             vec![blank(
@@ -364,16 +364,16 @@ fn wait_int(sig: i32, other: Option<i32>, ms: i32) -> (bool, bool) {
 }
 
 impl Env {
-    /// The gateway records before anything is written: a record of other
+    /// The router records before anything is written: a record of other
     /// types is refused, as the report commands refuse it.
-    fn gateway_records(&mut self, cmd: &str, data_dir: &str) -> Result<Vec<JRecord>, Stop> {
-        load_gateway_records(data_dir).map_err(|m| self.refuse(cmd, &m).unwrap_err())
+    fn router_records(&mut self, cmd: &str, data_dir: &str) -> Result<Vec<JRecord>, Stop> {
+        load_router_records(data_dir).map_err(|m| self.refuse(cmd, &m).unwrap_err())
     }
 
     /// Reads the stores and draws one frame, in the oracle's order: the map
     /// first, then the gauges.
     fn dashboard_frame(&mut self, cmd: &str, data_dir: &str) -> Result<String, Stop> {
-        let recs = self.gateway_records(cmd, data_dir)?;
+        let recs = self.router_records(cmd, data_dir)?;
         let stages = self.detect_stages(cmd, data_dir)?;
         let metrics = collect_metrics(&read_raw(data_dir, &recs))
             .map_err(|e| self.fail(cmd, e).unwrap_err())?;
@@ -403,13 +403,13 @@ impl Env {
             return Ok(());
         }
         let sig = catch_int();
-        let mut recs = self.gateway_records(cmd, data_dir)?;
+        let mut recs = self.router_records(cmd, data_dir)?;
         let stages = self.detect_stages(cmd, data_dir)?;
         let g = self.glyphs();
         let mut i = 0usize;
         loop {
             if i > 0 {
-                recs = self.gateway_records(cmd, data_dir)?;
+                recs = self.router_records(cmd, data_dir)?;
             }
             let metrics = collect_metrics(&read_raw(data_dir, &recs))
                 .map_err(|e| self.fail(cmd, e).unwrap_err())?;
@@ -479,7 +479,7 @@ impl Env {
         self.click_int(CMD, &p, "--port", 8000)?;
         let data_dir = self.data_dir_of(&p);
         if p.flag("--json") {
-            let recs = self.gateway_records(CMD, &data_dir)?;
+            let recs = self.router_records(CMD, &data_dir)?;
             let stages = self.detect_stages(CMD, &data_dir)?;
             let metrics = collect_metrics(&read_raw(&data_dir, &recs))
                 .map_err(|e| self.fail(CMD, e).unwrap_err())?;
@@ -527,7 +527,7 @@ impl Env {
             let host = p.str("--host", "127.0.0.1");
             return self.serve_metrics(&data_dir, &host, port);
         }
-        let recs = self.gateway_records(CMD, &data_dir)?;
+        let recs = self.router_records(CMD, &data_dir)?;
         let text = render_prometheus(&read_raw(&data_dir, &recs))
             .map_err(|e| self.fail(CMD, e).unwrap_err())?;
         self.out(&text);
@@ -657,7 +657,7 @@ fn handle_scrape(mut s: TcpStream, data_dir: &str) {
     }
     // A record this binary does not read the oracle's way: no numbers
     // rather than other numbers (K4-6).
-    let text = match load_gateway_records(data_dir)
+    let text = match load_router_records(data_dir)
         .map_err(|m| m.to_string())
         .and_then(|recs| render_prometheus(&read_raw(data_dir, &recs)).map_err(|e| e.to_string()))
     {
@@ -757,39 +757,39 @@ fn render_prometheus(raw: &Raw) -> Result<String, &'static str> {
             &[("", h.to_string())],
         );
     }
-    if let Some(g) = &raw.gateway {
+    if let Some(g) = &raw.router {
         metric(
-            "daisugi_gateway_turns_total",
+            "daisugi_router_turns_total",
             "counter",
-            "Gateway turns routed.",
+            "Router turns routed.",
             &[("", g.turns.to_string())],
         );
         metric(
-            "daisugi_gateway_downgraded_turns_total",
+            "daisugi_router_downgraded_turns_total",
             "counter",
-            "Gateway turns routed to a cheaper model than requested.",
+            "Router turns routed to a cheaper model than requested.",
             &[("", g.downgraded.to_string())],
         );
         metric(
-            "daisugi_gateway_frontier_tokens_saved_total",
+            "daisugi_router_frontier_tokens_saved_total",
             "counter",
             "Tokens kept off the frontier model by routing.",
             &[("", g.frontier_saved.to_string())],
         );
         metric(
-            "daisugi_gateway_dollars_saved",
+            "daisugi_router_dollars_saved",
             "gauge",
             "Estimated dollars saved by routing (best-effort).",
             &[("", repr_float(g.dollars_saved))],
         );
         metric(
-            "daisugi_gateway_blended_multiplier",
+            "daisugi_router_blended_multiplier",
             "gauge",
             "Blended cost multiplier versus all-frontier routing.",
             &[("", repr_float(g.blended))],
         );
         metric(
-            "daisugi_gateway_cache_hit_rate",
+            "daisugi_router_cache_hit_rate",
             "gauge",
             "Share of input tokens served from cache (0..1).",
             &[("", repr_float(g.cache_hit_rate))],

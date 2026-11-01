@@ -111,7 +111,7 @@ region = "whole_recent"
 visible_blocker = true
 # MCP elicitation dialogs (elicitation/create) show Accept/Decline controls
 # with an "Esc to cancel" footer but no Enter hint, so live_blocked_form
-# cannot see them (issue #3283). Gate on the invariant header line, the
+# cannot see them (issue #3283). Match on the invariant header line, the
 # Accept/Decline control line, and the cancel footer.
 contains = ["esc to cancel"]
 line_regex = ['(?i)^\s*MCP server ["\x{201C}].+["\x{201D}] requests your input\s*$']

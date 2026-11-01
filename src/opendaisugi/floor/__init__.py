@@ -2,7 +2,7 @@
 PaneBackend, and the value types every later sub-project (coppice, the
 Herdr/tmux backends, the pi/OpenCode adapters) builds on.
 
-Not a layer module — the layer's gate.py and hook.py may not import this
+Not a layer module — the layer's warden.py and hook.py may not import this
 package (spec-01). The reverse (this package depending on opendaisugi's
 layer modules, e.g. opendaisugi._state_report) is fine.
 """

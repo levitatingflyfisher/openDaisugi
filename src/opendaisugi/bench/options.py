@@ -1,6 +1,6 @@
 """The facts the benches must not guess.
 
-Where each compiled verifier client lives and how it is built. What each gate
+Where each compiled verifier client lives and how it is built. What each warden
 path does when it breaks. Which package each matcher backend needs. Which loops
 we know how to look for.
 
@@ -131,13 +131,13 @@ def client_argv(spec: ClientSpec) -> list[str]:
     return [str(root / a) if a.startswith("clients/") else a for a in spec.argv]
 
 
-def gate_client_argv(spec: ClientSpec, env: "dict[str, str] | None" = None) -> list[str]:
-    """The argv the gate dispatches to for spec, or [] when this box has none.
+def warden_client_argv(spec: ClientSpec, env: "dict[str, str] | None" = None) -> list[str]:
+    """The argv the warden dispatches to for spec, or [] when this box has none.
 
-    The gate finds a compiled client only through OPENDAISUGI_<NAME>_CLIENT
+    The warden finds a compiled client only through OPENDAISUGI_<NAME>_CLIENT
     (a path to it) or as ``daisugi-conform-<name>`` on PATH, never through a
-    source checkout, so an installed gate, a gate run from a checkout and a
-    gate binary kept anywhere else all decide alike. Python needs no lookup.
+    source checkout, so an installed warden, a warden run from a checkout and a
+    warden binary kept anywhere else all decide alike. Python needs no lookup.
     A TypeScript client is a script run with ``node`` from PATH.
     """
     if spec.probe is None:
@@ -160,10 +160,10 @@ def build_hint(spec: ClientSpec) -> str:
 
 
 @dataclass(frozen=True)
-class GatePathSpec:
-    """One way a tool call reaches the gate, and what happens when that way breaks.
+class WardenPathSpec:
+    """One way a tool call reaches the warden, and what happens when that way breaks.
 
-    `fmt` is the gate's `--format` for this path, the one its hook or
+    `fmt` is the warden's `--format` for this path, the one its hook or
     extension passes. pi's built-in names are lowercase and classify only
     under `pi`; every other path speaks the Claude shape.
     """
@@ -177,8 +177,8 @@ class GatePathSpec:
     fmt: str = "claude"
 
 
-GATE_PATHS: dict[str, GatePathSpec] = {
-    "claude-hook": GatePathSpec(
+WARDEN_PATHS: dict[str, WardenPathSpec] = {
+    "claude-hook": WardenPathSpec(
         name="claude-hook",
         title="claude PreToolUse hook",
         fail_open_class="hard",
@@ -186,7 +186,7 @@ GATE_PATHS: dict[str, GatePathSpec] = {
         source="docs/harness/harness-comparison.md",
         quote="must exit 2",
     ),
-    "codex-hooks": GatePathSpec(
+    "codex-hooks": WardenPathSpec(
         name="codex-hooks",
         title="codex hooks.json",
         fail_open_class="soft",
@@ -194,16 +194,16 @@ GATE_PATHS: dict[str, GatePathSpec] = {
         source="docs/harness/harness-comparison.md",
         quote="hooks fail open",
     ),
-    "pi-ext": GatePathSpec(
+    "pi-ext": WardenPathSpec(
         name="pi-ext",
         title="pi extension",
         fail_open_class="hard",
         evidence="designed",
         source="docs/plans/2026-09-08-workshop/00-master-spec.md",
-        quote="unreachable gate",
+        quote="unreachable gate",  # names-ok: a quote from the dated plan, which keeps its words
         fmt="pi",
     ),
-    "opencode-plugin": GatePathSpec(
+    "opencode-plugin": WardenPathSpec(
         name="opencode-plugin",
         title="opencode plugin",
         fail_open_class="deny-only",
@@ -211,15 +211,15 @@ GATE_PATHS: dict[str, GatePathSpec] = {
         source="docs/plans/2026-09-08-workshop/00-master-spec.md",
         quote="deny-only by design",
     ),
-    "sprig-gate": GatePathSpec(
-        name="sprig-gate",
-        title="sprig in-process gate",
+    "sprig-warden": WardenPathSpec(
+        name="sprig-warden",
+        title="sprig in-process warden",
         fail_open_class="hard",
         evidence="measured",
         source="docs/harness/harness-comparison.md",
         quote="in-process `Executor`",
     ),
-    "mcp": GatePathSpec(
+    "mcp": WardenPathSpec(
         name="mcp",
         title="MCP bridge",
         fail_open_class="advisory",
@@ -270,16 +270,16 @@ MATCHER_BACKENDS: dict[str, MatcherSpec] = {
 
 @dataclass(frozen=True)
 class LoopSpec:
-    """One harness we can run in a pane, and the gate path it uses."""
+    """One harness we can run in a pane, and the warden path it uses."""
 
     name: str
     binary: str
     install: str
-    gate_path: str
+    warden_path: str
 
 
 LOOPS: dict[str, LoopSpec] = {
-    "sprig": LoopSpec("sprig", "sprig", "cd harness/sprig && go build ./cmd/sprig", "sprig-gate"),
+    "sprig": LoopSpec("sprig", "sprig", "cd harness/sprig && go build ./cmd/sprig", "sprig-warden"),
     "claude-code": LoopSpec(
         "claude-code", "claude", "npm install -g @anthropic-ai/claude-code", "claude-hook"
     ),

@@ -32,7 +32,7 @@ func TestSprigKillsItsToolGroupsWhenItEnds(t *testing.T) {
 	}
 	c := &CLI{Version: "9", NewModel: func(ModelOptions) (Model, error) { return &scriptModel{turns: turns}, nil }}
 	var out, errb bytes.Buffer
-	if code := c.Run([]string{"x"}, strings.NewReader(""), &out, &errb); code != 0 {
+	if code := c.Run([]string{"--warden=false", "x"}, strings.NewReader(""), &out, &errb); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	b, _ := os.ReadFile(pidFile)

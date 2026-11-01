@@ -9,8 +9,18 @@ import math
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    WithJsonSchema,
+    field_validator,
+    model_validator,
+)
 from pydantic.json_schema import SkipJsonSchema
+
+from opendaisugi.predicate import Expression
 
 
 def compute_evidence_hash(evidence: dict[str, Any]) -> str:
@@ -73,8 +83,48 @@ SHELL_INTERPRETERS: frozenset[str] = frozenset(
         "sudo",
         "doas",
         "watch",
+        # Wrappers whose inner command nothing unwraps: opaque like the above.
+        "chroot",
+        "flock",
+        "busybox",
+        "script",
+        "parallel",
+        "coproc",
+        "trap",
+        # Heads that run the command they are given and nothing unwraps.
+        "systemd-run",
+        "screen",
+        "unbuffer",
+        "expect",
+        "runuser",
+        "taskset",
+        "chrt",
+        "prlimit",
+        "unshare",
+        "nsenter",
+        "entr",
+        "batch",
     }
 )
+
+
+class McpRule(BaseModel):
+    """An argument rule for one MCP tool (or a glob of tools).
+
+    ``tool`` is a ``server/tool`` pattern. ``args`` are predicate expressions
+    that see the call's arguments object as their scope. ``known`` lists the
+    top-level argument keys the call may carry; ``None`` means the top-level
+    keys the expressions in ``args`` name.
+    """
+
+    tool: str
+    # The prompt schema shows plain objects: the predicate union is long, and
+    # the envelope prompt already teaches the algebra in prose.
+    args: Annotated[
+        list[Expression],
+        WithJsonSchema({"type": "array", "items": {"type": "object"}}),
+    ] = Field(default_factory=list)
+    known: list[str] | None = None
 
 
 class Permission(BaseModel):
@@ -111,6 +161,11 @@ class Permission(BaseModel):
     mcp_allowlist: list[str] = Field(
         default_factory=list,
         description="Allowed MCP tools as 'server/tool' (glob-able) for MCPStep. Empty = none permitted.",
+    )
+    mcp_rules: list[McpRule] = Field(
+        default_factory=list,
+        description="Per-tool argument rules for MCP calls (MP-1). A tool a rule names is "
+        "decided by its rules alone.",
     )
     custom_step_allowlist: list[str] = Field(
         default_factory=list,
@@ -492,7 +547,7 @@ class VLAStep(StepBase):
     produced a receipt.
 
     Two reasons for the opaque framing:
-    1. VLAs run at 30Hz; per-action verify would 50× the gate latency.
+    1. VLAs run at 30Hz; per-action verify would 50× the warden latency.
     2. The verifier doesn't have anything useful to say at the per-action
        level — the controller already enforces joint limits.
 
@@ -537,7 +592,7 @@ class AgenticStep(StepBase):
     depth (ADR-0007): statically, the verifier proves every requested tool
     maps to a capability the caller's envelope grants (the envelope is the
     authorization ceiling — the caller's, never the callee's); at run time,
-    the executor wires the call-time gate into the sub-agent's own hook
+    the executor wires the call-time warden into the sub-agent's own hook
     configuration, supplied from outside anything the sub-agent can write.
 
     ``tools`` are host tool names (``Read``, ``Bash``, ``Write``, ``Edit``,
@@ -600,6 +655,22 @@ class MCPStep(StepBase):
     server: str
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    #: What the host sent as the call's arguments when that was not an object
+    #: (a list, a string, a number, null). ``arguments`` stays ``{}`` then.
+    #: An argument rule reads this value, so it denies the call. Not a
+    #: field: it is never dumped or validated.
+    _raw_arguments: Any = PrivateAttr(default=None)
+    _has_raw_arguments: bool = PrivateAttr(default=False)
+
+    def keep_raw_arguments(self, value: Any) -> None:
+        """Record a non-object argument value for the rule check."""
+        self._raw_arguments = value
+        self._has_raw_arguments = True
+
+    def call_arguments(self) -> Any:
+        """The arguments an argument rule checks: the raw value when the host
+        sent a non-object, else ``arguments``."""
+        return self._raw_arguments if self._has_raw_arguments else self.arguments
 
 
 # ActionStep is a type alias (discriminated union) — not a class.
@@ -620,9 +691,6 @@ ActionStep = Annotated[
     | MCPStep,
     Field(discriminator="type"),
 ]
-
-
-from pydantic import field_validator
 
 
 class ActionPlan(BaseModel):
@@ -796,3 +864,37 @@ class Trace(BaseModel):
     ok: bool
     duration_ms: float
     violations: list[Violation] = Field(default_factory=list)
+
+
+def unchecked_items(envelope: Envelope) -> list[tuple[str, int, str]]:
+    """``(kind, index, type)`` of each enforced invariant or postcondition
+    that declares a safety property nothing can check (SG-8).
+
+    An item has no ``expr``, its type is not a word of the system dialect,
+    and its type is one that no other check discharges (the robotics
+    invariants, the stage-2 postconditions). Invariants first, then
+    postconditions, each in order."""
+    from opendaisugi._invariant_types import (
+        RECOGNIZED_OPAQUE_TYPES,
+        RECOGNIZED_STAGE2_POSTCONDITION_TYPES,
+    )
+    from opendaisugi.dialect import word_for
+
+    out: list[tuple[str, int, str]] = []
+    for i, inv in enumerate(envelope.invariants):
+        if not inv.enforce or inv.expr is not None:
+            continue
+        if word_for(inv.type) is None and inv.type not in RECOGNIZED_OPAQUE_TYPES:
+            out.append(("invariant", i, inv.type))
+    for i, post in enumerate(envelope.postconditions):
+        if not post.enforce or post.expr is not None:
+            continue
+        if post.type not in RECOGNIZED_STAGE2_POSTCONDITION_TYPES:
+            out.append(("postcondition", i, post.type))
+    return out
+
+
+def opaque_unrecognized(envelope: Envelope) -> list[str]:
+    """The type of each enforced item that declares a safety property
+    nothing can check (SG-8, SG-10), in order of appearance, duplicates kept."""
+    return [t for _kind, _i, t in unchecked_items(envelope)]

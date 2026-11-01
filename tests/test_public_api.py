@@ -30,7 +30,9 @@ def test_verify_works_from_top_level():
     env = Envelope(
         generated_by="test",
         task="test",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="test",

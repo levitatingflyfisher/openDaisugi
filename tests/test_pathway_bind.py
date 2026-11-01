@@ -24,7 +24,9 @@ def _env(*allow: str) -> Envelope:
     return Envelope(
         generated_by="t",
         task="x",
-        permissions=Permission(shell=True, shell_allowlist=list(allow) or ["grep"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=list(allow) or ["grep"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 

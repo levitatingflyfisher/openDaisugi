@@ -53,6 +53,37 @@ those rungs don't pay cache economics at all.
 | **FinOps / token observability** | `gateway-report`: tokens and dollars as separate first-class currencies (subscription quota is the binding constraint, dollars show how cheap the spared tokens were), counterfactuals flagged estimated, and cache-bucket totals so the cache hit rate is visible. | Shipped |
 | **Routers' missing column: verification** | The gate, the envelope, Tier-0 re-verification. "Route cheap, but fail closed when the cheap answer leaves the envelope" — the sentence no router vendor in the survey can say. | The product |
 
+## A baseline to beat: Ramp's routing controller
+
+Ramp described a router that learns, online, which model and service tier to use
+(Ramp engineering, "Thompson sampling model routing", through the ZenML LLMOps case
+study). It is the nearest published design to a router that learns from results. Its parts:
+
+- **Inputs per caller.** An ordered list of preferred models and a latency deadline.
+  Background jobs have no deadline.
+- **Failure model.** An exponentially weighted moving average of the failure rate. It counts
+  only provider failures (outages, rate limits, 5xx), not caller errors.
+- **Latency model.** A Bayesian model with a Normal-Inverse-Gamma prior on the mean and
+  variance of log-latency. The sufficient statistics are pooled and updated online.
+- **Decision rule.** For each candidate, sample the latency parameters. Compute
+  P(bad) = P(fail) + (1 - P(fail)) * P(latency > deadline). Combine P(bad) with relative
+  cost into a score. Try candidates in score order, with fallback.
+- **Reported results.** A 6 s deadline job went from 2 to 5 usable options. The router moved
+  around a rate-limited model and came back on recovery. It preferred a flex tier over the
+  standard tier at half the price. Overall cost fell by more than 25%. These are Ramp's
+  figures on Ramp's traffic, and we have not reproduced them.
+
+It has two named gaps, and both are ours to fill:
+
+- **No quality term.** Quality enters only through the human-set preference list. A router
+  that learns cost and latency alone can drive cost down while quality drifts. Quality is a
+  slow, noisy and delayed signal. The router model must include the delay.
+- **No cache term.** It does not price a warm prompt cache, so it can pay the switch cost
+  that [ADR-0015](../adr/0015-cache-aware-sticky-routing.md) describes.
+
+Running an external router in shadow mode beside ours gives a baseline to measure against.
+Cold start for new models, and slow learning on low-volume routes, are open for both.
+
 ## What "killer distillation" means against this landscape
 
 The survey's savings all shrink a model call. Rung 0 removes it. The distiller is

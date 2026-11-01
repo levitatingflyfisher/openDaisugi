@@ -5,7 +5,7 @@ never claim 'done', the ask sub-object is only valid when
 state == 'blocked', and detail is capped at 200 characters.
 opendaisugi._state_report has its OWN, independently-implemented, narrower
 validator for the one path that cannot import this package
-(`daisugi hook report`, reachable through gate.sock — gate_server.py is a
+(`daisugi hook report`, reachable through warden.sock — warden_server.py is a
 layer module and may not import opendaisugi.floor, which owns this
 contract). tests/floor/test_events.py::test_layer_validator_and_dataclass_agree
 pins the two to the same verdicts; this module does not import the layer's
@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass, replace
 
 STATES = ("idle", "working", "blocked", "done", "unknown")
-SOURCES = ("operator", "gate", "headless", "process", "manifest")  # precedence, highest first
+SOURCES = ("operator", "warden", "headless", "process", "manifest")  # precedence, highest first
 
 # The coppice-server wire's closed error-code enum. Master spec section 3.3
 # names it; the full list lives in spec-02. server_closed is what
@@ -92,8 +92,8 @@ class PaneStateEvent:
             raise ValueError(f"detail exceeds {_DETAIL_MAX} characters")
         if self.ask is not None and self.state != "blocked":
             raise ValueError("ask is only valid when state == 'blocked'")
-        if self.source == "gate" and self.state == "blocked" and self.ask is None:
-            raise ValueError("a gate blocked event needs an ask")
+        if self.source == "warden" and self.state == "blocked" and self.ask is None:
+            raise ValueError("a warden blocked event needs an ask")
         if self.who is not None and self.source != "operator":
             raise ValueError("who is only valid when source == 'operator'")
         if self.v != 1:
@@ -229,7 +229,7 @@ def merge(
     against.
 
     A terminal 'done' whose source is 'process' or 'headless' also wins at
-    once on the incoming side, ahead of the gate hold and ahead of the 2 s
+    once on the incoming side, ahead of the warden hold and ahead of the 2 s
     precedence window, checked right after the absorbing guard above.
     Nothing ever re-sends a 'done': the process has already exited, or the
     headless session has already ended, by the time this event exists. If
@@ -238,11 +238,11 @@ def merge(
     that stale state forever. No later event will ever arrive to correct
     it.
 
-    Once that terminal check has passed, a gate 'blocked' event holds
-    until a gate event explicitly clears it, or its ask's deadline passes.
+    Once that terminal check has passed, a warden 'blocked' event holds
+    until a warden event explicitly clears it, or its ask's deadline passes.
     Expiry only RELEASES the hold here — it does NOT synthesize a
-    'working' event. The gate always sends its own 'working' event the
-    moment `_maybe_ask`'s wait resolves (gate.py, task 3), by answer or by
+    'working' event. The warden always sends its own 'working' event the
+    moment `_maybe_ask`'s wait resolves (warden.py, task 3), by answer or by
     timeout, which arrives at (or a hair after) the same deadline; this
     function just stops holding the door shut once that deadline has
     passed, so that event — or, failing that, whatever the next real event
@@ -255,12 +255,12 @@ def merge(
     back ONLY an incoming `manifest` event — `manifest` is the fallback
     source with no real signal of its own, so it alone may lose a race to
     a fresher higher-precedence event. Every other source (`headless`,
-    `process`, `operator`, `gate`) is a FACT about what actually happened
+    `process`, `operator`, `warden`) is a FACT about what actually happened
     and always applies at once; holding one of those back — e.g. a real
-    headless 'idle' arriving a heartbeat after a gate 'working' — would
-    swallow a true state change and show a stale pane. The gate-blocked
+    headless 'idle' arriving a heartbeat after a warden 'working' — would
+    swallow a true state change and show a stale pane. The warden-blocked
     hold above is the only thing still allowed to delay a fact, and only
-    until it yields to a gate event, the ask's deadline, or a terminal
+    until it yields to a warden event, the ask's deadline, or a terminal
     'done'.
 
     Divergence from Go, named here on purpose: Go's twin measures the 2 s
@@ -269,7 +269,7 @@ def merge(
     TestTheHoldWindowIgnoresASkewedEventTimestamp pins that. This function
     measures the window against current.ts instead, the event's own
     self-reported timestamp. The Python floor has no separate receive
-    clock at this layer to compare against. A resident gate process that
+    clock at this layer to compare against. A resident warden process that
     later gains one, by timestamping arrivals itself, should pass that
     clock's reading as `now`, not current.ts, to close this gap. Until
     then this is a known, accepted difference between the two floors, not
@@ -285,11 +285,11 @@ def merge(
         return current
     if incoming.state == "done" and incoming.source in ("process", "headless"):
         return incoming
-    holding = current.source == "gate" and current.state == "blocked"
+    holding = current.source == "warden" and current.state == "blocked"
     if holding:
         deadline = current.ask.deadline if current.ask else None
         expired = deadline is not None and now >= deadline
-        if incoming.source == "gate":
+        if incoming.source == "warden":
             return incoming
         if not expired:
             return current
@@ -315,10 +315,10 @@ def merge(
 def effective_state(current: PaneStateEvent | None, *, now: float) -> PaneStateEvent | None:
     """Read-time counterpart to merge()'s expiry rule.
 
-    merge() only releases a gate 'blocked' hold when a FRESH incoming
+    merge() only releases a warden 'blocked' hold when a FRESH incoming
     event actually arrives. Two paths never send one at all:
-    gate_and_contract's is_disarmed early return emits no report, and any
-    crash of the gate process between post_ask and its own resolving
+    warden_and_contract's is_disarmed early return emits no report, and any
+    crash of the warden process between post_ask and its own resolving
     'working' report leaves the last stored event 'blocked' forever. A
     reader that has only a cached event (no fresh one to merge against —
     a coppice-server reading the last known state, a cockpit roster view)
@@ -328,10 +328,10 @@ def effective_state(current: PaneStateEvent | None, *, now: float) -> PaneStateE
     why) so a stale blocked hold never displays forever.
 
     Whole-branch review, Important 2: this expiry is no longer restricted
-    to ``source == "gate"``. ANY ``blocked`` event carrying an ask — gate
+    to ``source == "warden"``. ANY ``blocked`` event carrying an ask — warden
     or otherwise — expires the same way once its deadline passes; a
     headless- or process-sourced block with a stale ask is just as stale
-    as a gate one, and there is no reason a reader should keep showing it
+    as a warden one, and there is no reason a reader should keep showing it
     forever. A ``blocked`` event with no ask (``ask is None``) never
     expires here, matching merge()'s own hold.
     """

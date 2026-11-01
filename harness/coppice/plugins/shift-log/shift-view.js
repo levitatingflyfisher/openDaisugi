@@ -6,7 +6,7 @@
 import { connect, boot, STATE_COLORS } from '../_lib/view.js';
 import { cells, coverText, LEVEL, UNKNOWN } from './shift.js';
 
-// DENY_COLOR marks a cell where the gate said no. A deny is not a state,
+// DENY_COLOR marks a cell where the warden said no. A deny is not a state,
 // so it has a colour of its own.
 export const DENY_COLOR = '#c0392b';
 

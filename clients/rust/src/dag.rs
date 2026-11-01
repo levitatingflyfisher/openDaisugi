@@ -2,7 +2,7 @@
 //! dependencies, then a cycle check — each tier short-circuits the next.
 
 use crate::models::ActionPlan;
-use crate::gate::pyjson::Value;
+use crate::warden::pyjson::Value;
 use crate::violation::{kv, Violation};
 use std::collections::{HashMap, HashSet};
 

@@ -1,0 +1,12 @@
+# coppice server install writes a systemd user unit that carries the PATH of
+# the run, with ~/.local/bin first, and the socket and data dir of this
+# server. It runs no systemctl.
+{"id":"i1","cli":["server","install"],"env":{"XDG_CONFIG_HOME":"{WORK}/xdg"}}
+{"id":"$id","ok":true,"result":{"code":0,"stdout":"wrote {WORK}/xdg/systemd/user/coppice-server.service\nStart it: systemctl --user daemon-reload && systemctl --user enable --now coppice-server\n","stderr":""}}
+{"id":"i2","file":"{WORK}/xdg/systemd/user/coppice-server.service"}
+{"id":"$id","ok":true,"result":{"text":"[Unit]\nDescription=coppice server\n\n[Service]\nEnvironment=\"PATH={HOME}/.local/bin:/usr/bin:/bin\"\nExecStart={BIN} --socket {SOCK} --data-dir {DATA} server start --foreground\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n","mode":"0o644"}}
+# A PATH the unit cannot carry is refused and nothing is written.
+{"id":"i3","cli":["server","install"],"env":{"XDG_CONFIG_HOME":"{WORK}/xdg2","PATH":"/usr/bin:/a\"b"}}
+{"id":"$id","ok":true,"result":{"code":1,"stdout":"","stderr":"PATH holds a double quote or a newline, which a systemd unit cannot carry; fix PATH and run coppice server install again\n"}}
+{"id":"i4","file":"{WORK}/xdg2/systemd/user/coppice-server.service"}
+{"id":"$id","ok":true,"result":{"missing":true}}

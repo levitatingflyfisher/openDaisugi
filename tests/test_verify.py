@@ -28,7 +28,14 @@ def _plan(steps: list[ActionStep]) -> ActionPlan:
 
 
 def test_verify_happy_path():
-    env = _env(Permission(shell=True, shell_allowlist=["find"], file_read=["/var/log/**"]))
+    env = _env(
+        Permission(
+            shell=True,
+            shell_allowlist=["find"],
+            file_read=["/var/log/**"],
+            file_write=["/var/log/**"],
+        )
+    )
     plan = _plan(
         [
             ShellStep(id="s1", command="find /var/log -name '*.tmp' -delete"),
@@ -66,7 +73,9 @@ def test_verify_z3_catches_inconsistent_envelope():
 
 
 def test_verify_dag_catches_cycle():
-    env = _env(Permission(shell=True, shell_allowlist=["echo"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan(
         [
             ShellStep(id="s1", command="echo a", depends_on=["s2"]),
@@ -144,14 +153,14 @@ def test_network_hosts_allowlist_case_insensitive():
 
 
 def test_shell_allowlist_literal_exact_match_still_works():
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="git status")])
     assert check_permissions(plan, env) == []
 
 
 def test_shell_allowlist_literal_does_not_prefix_match():
     """Backward compat: literal 'git' must NOT match 'gitevil'."""
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="gitevil status")])
     violations = check_permissions(plan, env)
     assert len(violations) == 1
@@ -160,7 +169,9 @@ def test_shell_allowlist_literal_does_not_prefix_match():
 
 def test_shell_allowlist_glob_matches_venv_bin():
     """v0.17: path-qualified venv launchers should match ``.venv/bin/*``."""
-    env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=[".venv/bin/*"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan(
         [
             ShellStep(id="s1", command=".venv/bin/python -V"),
@@ -175,7 +186,9 @@ def test_shell_allowlist_glob_does_not_cross_path_separator():
     ``.venv/bin/subdir/python`` (prevents sneaking a nested binary
     through by burying it in a subdirectory the allowlist never named).
     """
-    env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=[".venv/bin/*"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan([ShellStep(id="s1", command=".venv/bin/subdir/python")])
     violations = check_permissions(plan, env)
     assert len(violations) == 1
@@ -186,7 +199,9 @@ def test_shell_allowlist_glob_does_not_match_absolute_path():
     ``/usr/local/.venv/bin/python`` is a different string and must not match
     a relative pattern.
     """
-    env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=[".venv/bin/*"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan([ShellStep(id="s1", command="/usr/local/.venv/bin/python -V")])
     violations = check_permissions(plan, env)
     assert len(violations) == 1
@@ -209,18 +224,21 @@ def test_shell_allowlist_glob_mixed_with_literals():
     assert check_permissions(plan, env) == []
 
 
-def test_shell_allowlist_glob_still_triggers_metachar_gate():
-    """INVARIANT: adding glob semantics must never soften the metachar gate.
+def test_shell_allowlist_glob_still_triggers_metachar_warden():
+    """INVARIANT: adding glob semantics must never soften the metachar warden.
     A pipeline is still rejected even when the head matches a glob pattern.
     """
-    env = _env(Permission(shell=True, shell_allowlist=[".venv/bin/*"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=[".venv/bin/*"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan(
         [
             ShellStep(id="s1", command=".venv/bin/python -c 'x' | tee out.log"),
         ]
     )
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    # The metacharacter reject comes first; the files it would have touched
+    # are named after it (SG-1).
     assert "metacharacter" in violations[0].message
 
 
@@ -232,7 +250,7 @@ def test_env_prefix_extracts_real_command_head():
     not ``FOO=1``. Real Claude Code transcripts routinely emit env-prefixed
     invocations (``GIT_DISCOVERY_ACROSS_FILESYSTEM=1 git status``).
     """
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan(
         [
             ShellStep(id="s1", command="GIT_DISCOVERY_ACROSS_FILESYSTEM=1 git status"),
@@ -244,7 +262,7 @@ def test_env_prefix_extracts_real_command_head():
 
 def test_env_prefix_still_rejects_unallowlisted_real_head():
     """Even with env prefixes, an unallowlisted real command must reject."""
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="FOO=1 rm -rf /tmp/x")])
     violations = check_permissions(plan, env)
     assert len(violations) == 1
@@ -256,27 +274,28 @@ def test_comment_line_is_no_op_no_violation():
     This can happen when a transcript captures an exploratory comment.
     Return no violation; no command ran.
     """
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="# note: inspect state first")])
     assert check_permissions(plan, env) == []
 
 
-def test_env_prefix_injection_still_caught_by_metachar_gate():
+def test_env_prefix_injection_still_caught_by_metachar_warden():
     """CRITICAL INVARIANT: smarter head extraction must never defeat the
-    raw-command metachar gate. ``A=$(rm -rf /) git`` resolves to head ``git``
+    raw-command metachar warden. ``A=$(rm -rf /) git`` resolves to head ``git``
     under the new classifier, but ``$(`` is still a dangerous metachar on
     the raw command and must still cause rejection.
     """
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="A=$(rm -rf /) git status")])
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    # The metacharacter reject comes first; the files it would have touched
+    # are named after it (SG-1).
     assert "metacharacter" in violations[0].message
 
 
 def test_bare_env_assignment_no_command_is_no_op():
     """``FOO=1`` alone is a bare env assignment — no command to run."""
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="FOO=1 BAR=2")])
     assert check_permissions(plan, env) == []
 
@@ -287,15 +306,16 @@ def test_comment_with_metachar_still_rejects():
     everything after it, because a transcript may have reconstructed a
     multi-line command as a single step.
     """
-    env = _env(Permission(shell=True, shell_allowlist=["git"]))
+    env = _env(Permission(shell=True, shell_allowlist=["git"], file_read=["**"], file_write=["**"]))
     plan = _plan([ShellStep(id="s1", command="# inline note; rm -rf /tmp")])
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    # The metacharacter reject comes first; the files it would have touched
+    # are named after it (SG-1).
     assert "metacharacter" in violations[0].message
 
 
-# v0.28.2 — regression tests for the metachar gate's redirect + newline
-# coverage. Prior to v0.28.2 the gate only matched ;, |, &, `, $( — so
+# v0.28.2 — regression tests for the metachar warden's redirect + newline
+# coverage. Prior to v0.28.2 the warden only matched ;, |, &, `, $( — so
 # `cat > /etc/passwd` with a `cat`-only allowlist passed verify and got
 # handed to SubprocessExecutor(shell=True). See REVIEW_FINDINGS.md C1.
 @pytest.mark.parametrize(
@@ -311,10 +331,13 @@ def test_comment_with_metachar_still_rejects():
     ],
 )
 def test_redirect_and_newline_metachars_rejected(command):
-    env = _env(Permission(shell=True, shell_allowlist=["cat", "echo"]))
+    env = _env(
+        Permission(shell=True, shell_allowlist=["cat", "echo"], file_read=["**"], file_write=["**"])
+    )
     plan = _plan([ShellStep(id="s1", command=command)])
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    # The metacharacter reject comes first; the files it would have touched
+    # are named after it (SG-1).
     assert "metacharacter" in violations[0].message
 
 

@@ -1,0 +1,928 @@
+"""Phase 4 (ADR-0013) — the WARDEN and BASE_URL install layers.
+
+`daisugi install` already wires skill + MCP + capture + instructions per
+harness (tests/test_install.py). This file covers the two new opt-in
+layers added on top of that:
+
+  - WARDEN: installs the ADR-0007 fail-closed verify hook (Claude Code only,
+    audit-by-default, `--enforce` an explicit opt-in).
+  - BASE_URL: points the harness at the local token-saving router
+    (Claude Code via env; OpenClaw via a registered provider block).
+
+Both are opt-in (`layers=` must include them explicitly) so the existing
+four-layer default install stays byte-identical. Every other (runtime,
+layer) combination that ADR-0013 does NOT wire is asserted to surface an
+honest reason rather than silently doing nothing.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shlex
+import sys
+import warnings
+from pathlib import Path
+
+from opendaisugi.install import (
+    DEFAULT_LAYERS,
+    ClaudeCodeRuntime,
+    CodexRuntime,
+    HermesRuntime,
+    InstallStep,
+    Layer,
+    OpenClawRuntime,
+    _format_summary,
+    install,
+    uninstall,
+)
+
+# The five layers without the pando memory, whose own hooks these tests do not count.
+WARDEN_LAYERS = (DEFAULT_LAYERS - {Layer.PANDO}) | {Layer.WARDEN}
+BASE_URL_LAYERS = DEFAULT_LAYERS | {Layer.BASE_URL}
+BOTH_LAYERS = DEFAULT_LAYERS | {Layer.WARDEN, Layer.BASE_URL}
+ROUTER_URL = "http://127.0.0.1:8787"
+
+
+def _settings(home):
+    return json.loads((home / ".claude" / "settings.json").read_text())
+
+
+def _pre_commands(settings: dict) -> list[str]:
+    pre = settings.get("hooks", {}).get("PreToolUse", [])
+    return [h["command"] for entry in pre for h in entry.get("hooks", [])]
+
+
+# ---------------------------------------------------------------------------
+# Default install is unchanged (back-compat)
+# ---------------------------------------------------------------------------
+
+
+def test_default_install_writes_the_audit_warden_and_no_base_url(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True)
+    settings = _settings(tmp_path)
+    commands = _pre_commands(settings)
+    assert any("opendaisugi.warden" in c and "--mode audit" in c for c in commands)
+    assert not any("--mode enforce" in c for c in commands)
+    assert "ANTHROPIC_BASE_URL" not in settings.get("env", {})
+
+
+def test_install_layers_none_defaults_to_the_six(tmp_path):
+    from opendaisugi.install import _resolve_layers
+
+    assert DEFAULT_LAYERS == {
+        Layer.SKILL,
+        Layer.MCP,
+        Layer.CAPTURE,
+        Layer.INSTRUCTIONS,
+        Layer.WARDEN,
+        Layer.PANDO,
+    }
+    assert _resolve_layers(None) == set(DEFAULT_LAYERS)
+    (tmp_path / ".claude").mkdir()
+    res = install(home=tmp_path, dry_run=True, runtimes=[ClaudeCodeRuntime()])
+    layers = {s.layer for s in res.planned}
+    assert layers == DEFAULT_LAYERS
+
+
+# ---------------------------------------------------------------------------
+# Claude Code — WARDEN
+# ---------------------------------------------------------------------------
+
+
+def test_claude_warden_audit_is_the_default(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    commands = _pre_commands(_settings(tmp_path))
+    warden_cmds = [c for c in commands if "opendaisugi.warden" in c]
+    assert len(warden_cmds) == 1
+    assert "--mode audit" in warden_cmds[0]
+    assert "|| exit 2" not in warden_cmds[0]
+
+
+def test_claude_warden_enforce_requires_explicit_flag(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+    )
+    commands = _pre_commands(_settings(tmp_path))
+    warden_cmds = [c for c in commands if "opendaisugi.warden" in c]
+    assert len(warden_cmds) == 1
+    assert "--mode enforce" in warden_cmds[0]
+    assert warden_cmds[0].rstrip().endswith("|| exit 2")
+
+
+def test_claude_warden_ask_bakes_the_flag_into_the_installed_hook(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+        ask=True,
+    )
+    commands = _pre_commands(_settings(tmp_path))
+    warden_cmds = [c for c in commands if "opendaisugi.warden" in c]
+    assert len(warden_cmds) == 1
+    assert "--ask" in warden_cmds[0]
+
+
+def test_claude_warden_without_ask_has_no_ask_flag(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+    )
+    commands = _pre_commands(_settings(tmp_path))
+    warden_cmds = [c for c in commands if "opendaisugi.warden" in c]
+    assert "--ask" not in warden_cmds[0]
+
+
+def test_claude_warden_coexists_with_capture_hook(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    commands = _pre_commands(_settings(tmp_path))
+    assert any("daisugi hook record" in c for c in commands)
+    assert any("opendaisugi.warden" in c for c in commands)
+
+
+def test_claude_warden_idempotent_on_rerun(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    before = (tmp_path / ".claude" / "settings.json").read_text()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    after = (tmp_path / ".claude" / "settings.json").read_text()
+    assert before == after
+    commands = _pre_commands(_settings(tmp_path))
+    assert sum("opendaisugi.warden" in c for c in commands) == 1
+
+
+def test_claude_warden_upgrade_rewrites_old_module_to_resident_client(tmp_path):
+    """ADR-0017: an install from before the resident warden wrote the old
+    `-m opendaisugi.warden` command directly. A plain re-run of
+    `daisugi install` must upgrade it to `-m opendaisugi.warden_client`
+    in place — not warn-and-skip, which would leave the one real user stuck
+    on the slow (~0.7s cold) path forever on every future re-install.
+    """
+    (tmp_path / ".claude").mkdir()
+    from opendaisugi.warden import warden_settings_json
+
+    new_command = json.loads(warden_settings_json(mode="audit"))["hooks"]["PreToolUse"][0]["hooks"][
+        0
+    ]["command"]
+    old_command = new_command.replace("opendaisugi.warden_client", "opendaisugi.warden", 1)
+    assert old_command != new_command  # sanity: the fixture actually differs
+
+    pre_existing = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": old_command, "timeout": 30}],
+                }
+            ]
+        }
+    }
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(pre_existing))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+
+    commands = _pre_commands(_settings(tmp_path))
+    assert any("opendaisugi.warden_client" in c for c in commands)
+    assert not any(c == old_command for c in commands)
+    assert sum("opendaisugi.warden" in c for c in commands) == 1  # still exactly one warden hook
+    assert not any("already installed" in str(w.message) for w in caught)
+
+
+def _warden_cmds(home, runtime_dir=".claude", name="settings.json"):
+    cfg = json.loads((home / runtime_dir / name).read_text())
+    return [c for c in _pre_commands(cfg) if "opendaisugi.warden" in c]
+
+
+def test_claude_warden_audit_steps_up_to_enforce_in_place(tmp_path):
+    # ADR-0017 and ADR-0025: a plain install writes the audit hook, and
+    # `install --enforce` must then turn it into the enforce hook. A
+    # silent no-op here would let a user believe the warden blocks.
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = install(
+            home=tmp_path,
+            yes=True,
+            runtimes=[ClaudeCodeRuntime()],
+            layers=WARDEN_LAYERS,
+            enforce=True,
+        )
+    warden_cmds = _warden_cmds(tmp_path)
+    assert len(warden_cmds) == 1
+    assert "--mode enforce" in warden_cmds[0] and "--mode audit" not in warden_cmds[0]
+    assert warden_cmds[0].endswith("|| exit 2")
+    assert not any("already installed" in str(w.message) for w in caught)
+    assert tmp_path / ".claude" / "settings.json" in result.modified_files
+    assert result.notes == [
+        f"Warden: the Claude Code hook in {tmp_path / '.claude' / 'settings.json'} "
+        "now runs in enforce mode (it was audit)."
+    ]
+
+
+def test_claude_warden_step_up_keeps_the_ask_and_its_timeout(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+        ask=True,
+    )
+    cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    hook = next(
+        h
+        for e in cfg["hooks"]["PreToolUse"]
+        for h in e["hooks"]
+        if "opendaisugi.warden" in h["command"]
+    )
+    assert "--mode enforce" in hook["command"] and "--ask --ask-timeout 90" in hook["command"]
+    assert hook["timeout"] > 60
+
+
+def test_claude_warden_plain_install_keeps_enforce_and_says_so(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = install(
+            home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS
+        )
+    warden_cmds = _warden_cmds(tmp_path)
+    assert len(warden_cmds) == 1 and "--mode enforce" in warden_cmds[0]
+    assert tmp_path / ".claude" / "settings.json" not in result.modified_files
+    assert not any("already installed" in str(w.message) for w in caught)
+    assert result.notes == [
+        f"Warden: the Claude Code hook in {tmp_path / '.claude' / 'settings.json'} "
+        "stays in enforce mode; a plain install never lowers it. To go back to audit, "
+        "run daisugi install --uninstall, then daisugi install."
+    ]
+
+
+def test_claude_warden_other_difference_still_warns(tmp_path):
+    # Only the mode may differ for the step-up; a different root is not ours to rewrite.
+    (tmp_path / ".claude").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    path = tmp_path / ".claude" / "settings.json"
+    cfg = json.loads(path.read_text())
+    hook = next(
+        h
+        for e in cfg["hooks"]["PreToolUse"]
+        for h in e["hooks"]
+        if "opendaisugi.warden" in h["command"]
+    )
+    hook["command"] = hook["command"].replace(" --root /", " --root /elsewhere/", 1)
+    path.write_text(json.dumps(cfg))
+    before = _warden_cmds(tmp_path)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = install(
+            home=tmp_path,
+            yes=True,
+            runtimes=[ClaudeCodeRuntime()],
+            layers=WARDEN_LAYERS,
+            enforce=True,
+        )
+    assert _warden_cmds(tmp_path) == before
+    assert "--mode audit" in before[0] and "/elsewhere/" in before[0]
+    assert result.notes == []
+    assert any("already installed" in str(w.message) for w in caught)
+
+
+def test_claude_warden_unparseable_settings_skip_and_warn(tmp_path):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    original = '{"permissions": {"deny": ["Read(./secrets/**)"]},}'  # trailing comma
+    (claude_dir / "settings.json").write_text(original)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        from opendaisugi.install import _patch_claude_warden
+
+        result = _patch_claude_warden(claude_dir / "settings.json", enforce=False)
+    assert result == []
+    assert (claude_dir / "settings.json").read_text() == original
+    assert any("not valid JSON" in str(w.message) for w in caught)
+
+
+# ---------------------------------------------------------------------------
+# Claude Code — BASE_URL
+# ---------------------------------------------------------------------------
+
+
+def test_claude_base_url_sets_env(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BASE_URL_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    settings = _settings(tmp_path)
+    assert settings["env"]["ANTHROPIC_BASE_URL"] == ROUTER_URL
+
+
+def test_claude_base_url_idempotent(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BASE_URL_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    before = (tmp_path / ".claude" / "settings.json").read_text()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BASE_URL_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    assert (tmp_path / ".claude" / "settings.json").read_text() == before
+
+
+def test_claude_base_url_unparseable_settings_skip_and_warn(tmp_path):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    original = '{"env": {"X": "y"},}'  # trailing comma
+    (claude_dir / "settings.json").write_text(original)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        from opendaisugi.install import _patch_claude_base_url
+
+        result = _patch_claude_base_url(claude_dir / "settings.json", ROUTER_URL)
+    assert result == []
+    assert (claude_dir / "settings.json").read_text() == original
+    assert any("not valid JSON" in str(w.message) for w in caught)
+
+
+# ---------------------------------------------------------------------------
+# No .bak spray across the three settings.json writers on idempotent rerun
+# ---------------------------------------------------------------------------
+
+
+def test_claude_warden_and_base_url_no_bak_spray_on_rerun(tmp_path):
+    # WARDEN, BASE_URL, and CAPTURE are three independent writers of the same
+    # settings.json; on the FIRST call each one backs up whatever the previous
+    # writer in that same call just wrote (matches the house pattern — see
+    # `_pop_json_hook` on reverse). What must NOT happen is the idempotent
+    # rerun adding MORE backups — every writer's second call is a true no-op.
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BOTH_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    before = set((tmp_path / ".claude").glob("settings.json.bak*"))
+    install(  # second run: everything already present, must be a true no-op
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BOTH_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    after = set((tmp_path / ".claude").glob("settings.json.bak*"))
+    assert after == before  # no NEW backups on the idempotent rerun
+
+
+# ---------------------------------------------------------------------------
+# reverse / uninstall
+# ---------------------------------------------------------------------------
+
+
+def test_reverse_removes_warden_and_base_url_keeps_unrelated(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[ClaudeCodeRuntime()],
+        layers=BOTH_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    # Add an unrelated user-owned hook and env key alongside ours.
+    sp = tmp_path / ".claude" / "settings.json"
+    settings = json.loads(sp.read_text())
+    settings["hooks"]["PreToolUse"].append(
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "my-own-hook"}]}
+    )
+    settings["env"]["MY_OWN_VAR"] = "keep-me"
+    sp.write_text(json.dumps(settings))
+
+    uninstall(home=tmp_path, runtimes=[ClaudeCodeRuntime()])
+
+    after = json.loads(sp.read_text())
+    commands = _pre_commands(after)
+    assert not any("opendaisugi.warden" in c for c in commands)
+    assert not any("daisugi hook record" in c for c in commands)
+    assert "my-own-hook" in commands  # unrelated hook preserved
+    assert "ANTHROPIC_BASE_URL" not in after.get("env", {})
+    assert after["env"]["MY_OWN_VAR"] == "keep-me"  # unrelated env preserved
+
+
+# ---------------------------------------------------------------------------
+# Honest gaps — Codex, Hermes, OpenClaw
+# ---------------------------------------------------------------------------
+
+
+def test_codex_warden_installs_pretooluse_hook_in_hooks_json(tmp_path):
+    # Codex v0.114+ hooks: same PreToolUse stdin shape and exit-2 deny as
+    # Claude Code — the same warden entry point serves both. One honest
+    # difference the step must state: Codex hooks fail OPEN on hook
+    # crash/timeout, so a dead warden does not block.
+    (tmp_path / ".codex").mkdir()
+    steps = CodexRuntime().plan(tmp_path, WARDEN_LAYERS)
+    warden_steps = [s for s in steps if s.layer is Layer.WARDEN]
+    assert len(warden_steps) == 1
+    assert warden_steps[0].supported is True
+    assert "fail OPEN" in warden_steps[0].description
+
+    CodexRuntime().apply(tmp_path, WARDEN_LAYERS)
+    hooks = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+    entries = hooks["hooks"]["PreToolUse"]
+    commands = [h["command"] for e in entries for h in e.get("hooks", [])]
+    assert any("opendaisugi.warden" in c for c in commands)
+    # Codex regex-matches matchers; Claude's '*' glob is not a valid regex.
+    assert all(
+        e["matcher"] == ".*"
+        for e in entries
+        if any("opendaisugi.warden" in h["command"] for h in e.get("hooks", []))
+    )
+
+
+def test_codex_warden_idempotent_and_reversible(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    CodexRuntime().apply(tmp_path, WARDEN_LAYERS)
+    CodexRuntime().apply(tmp_path, WARDEN_LAYERS)
+    hooks = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+    commands = [h["command"] for e in hooks["hooks"]["PreToolUse"] for h in e.get("hooks", [])]
+    assert sum("opendaisugi.warden" in c for c in commands) == 1
+
+    CodexRuntime().reverse(tmp_path)
+    hooks = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+    commands = [
+        h["command"]
+        for e in hooks.get("hooks", {}).get("PreToolUse", [])
+        for h in e.get("hooks", [])
+    ]
+    assert not any("opendaisugi.warden" in c for c in commands)
+
+
+def test_codex_warden_audit_steps_up_to_enforce_in_place(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[CodexRuntime()], layers=WARDEN_LAYERS)
+    result = install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[CodexRuntime()],
+        layers=WARDEN_LAYERS,
+        enforce=True,
+    )
+    warden_cmds = _warden_cmds(tmp_path, ".codex", "hooks.json")
+    assert len(warden_cmds) == 1
+    assert "--mode enforce" in warden_cmds[0] and "--mode audit" not in warden_cmds[0]
+    assert tmp_path / ".codex" / "hooks.json" in result.modified_files
+    assert result.notes == [
+        f"Warden: the Codex hook in {tmp_path / '.codex' / 'hooks.json'} "
+        "now runs in enforce mode (it was audit)."
+    ]
+
+
+def test_codex_warden_plain_install_keeps_enforce_and_says_so(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    install(home=tmp_path, yes=True, runtimes=[CodexRuntime()], layers=WARDEN_LAYERS, enforce=True)
+    result = install(home=tmp_path, yes=True, runtimes=[CodexRuntime()], layers=WARDEN_LAYERS)
+    warden_cmds = _warden_cmds(tmp_path, ".codex", "hooks.json")
+    assert len(warden_cmds) == 1 and "--mode enforce" in warden_cmds[0]
+    assert tmp_path / ".codex" / "hooks.json" not in result.modified_files
+    assert result.notes == [
+        f"Warden: the Codex hook in {tmp_path / '.codex' / 'hooks.json'} "
+        "stays in enforce mode; a plain install never lowers it. To go back to audit, "
+        "run daisugi install --uninstall, then daisugi install."
+    ]
+
+
+def test_codex_base_url_writes_model_provider_toml(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    steps = CodexRuntime().plan(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    bu_steps = [s for s in steps if s.layer is Layer.BASE_URL]
+    assert len(bu_steps) == 1 and bu_steps[0].supported is True
+
+    CodexRuntime().apply(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    text = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "[model_providers.opendaisugi]" in text
+    assert f'base_url = "{ROUTER_URL}/v1"' in text
+    assert 'wire_api = "chat"' in text
+    # The top-level selector must precede any table header or TOML nests it.
+    assert text.index('model_provider = "opendaisugi"') < text.index("[model_providers")
+
+
+def test_codex_base_url_idempotent_and_reversible(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "config.toml").write_text('model = "gpt-5.3-codex"\n')
+    CodexRuntime().apply(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    CodexRuntime().apply(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    text = (tmp_path / ".codex" / "config.toml").read_text()
+    assert text.count("[model_providers.opendaisugi]") == 1
+    assert text.count('model_provider = "opendaisugi"') == 1
+
+    CodexRuntime().reverse(tmp_path)
+    text = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "[model_providers.opendaisugi]" not in text
+    assert 'model_provider = "opendaisugi"' not in text
+    assert 'model = "gpt-5.3-codex"' in text  # user content untouched
+
+
+def test_hermes_base_url_unsupported_with_reason(tmp_path):
+    (tmp_path / ".hermes").mkdir()
+    steps = HermesRuntime().plan(tmp_path, BASE_URL_LAYERS)
+    bu_steps = [s for s in steps if s.layer is Layer.BASE_URL]
+    assert len(bu_steps) == 1
+    assert bu_steps[0].supported is False
+    assert "OpenAI" in bu_steps[0].description
+
+
+def test_hermes_warden_unsupported_with_reason(tmp_path):
+    (tmp_path / ".hermes").mkdir()
+    steps = HermesRuntime().plan(tmp_path, WARDEN_LAYERS)
+    warden_steps = [s for s in steps if s.layer is Layer.WARDEN]
+    assert len(warden_steps) == 1
+    assert warden_steps[0].supported is False
+    assert "not yet wired" in warden_steps[0].description
+
+
+def test_openclaw_warden_unsupported_with_reason(tmp_path):
+    (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
+    steps = OpenClawRuntime().plan(tmp_path, WARDEN_LAYERS)
+    warden_steps = [s for s in steps if s.layer is Layer.WARDEN]
+    assert len(warden_steps) == 1
+    assert warden_steps[0].supported is False
+    assert "not yet wired" in warden_steps[0].description
+
+
+def test_unsupported_layers_matrix():
+    assert ClaudeCodeRuntime().unsupported_layers() == {}
+    assert CodexRuntime().unsupported_layers() == {}  # warden + base_url both wired
+    hermes_gaps = HermesRuntime().unsupported_layers()
+    assert set(hermes_gaps) == {Layer.WARDEN, Layer.BASE_URL}
+    openclaw_gaps = OpenClawRuntime().unsupported_layers()
+    assert set(openclaw_gaps) == {Layer.WARDEN}  # BASE_URL IS wired for OpenClaw
+
+
+# ---------------------------------------------------------------------------
+# OpenClaw — BASE_URL IS wired (anthropic-messages)
+# ---------------------------------------------------------------------------
+
+
+def test_openclaw_base_url_registers_provider(tmp_path):
+    (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[OpenClawRuntime()],
+        layers=BASE_URL_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    cfg = json.loads((tmp_path / ".openclaw" / "openclaw.json").read_text())
+    provider = cfg["models"]["providers"]["opendaisugi"]
+    assert provider["api"] == "anthropic-messages"
+    assert provider["baseUrl"] == ROUTER_URL
+
+
+def test_openclaw_base_url_idempotent(tmp_path):
+    (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
+    OpenClawRuntime().apply(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    before = (tmp_path / ".openclaw" / "openclaw.json").read_text()
+    OpenClawRuntime().apply(tmp_path, BASE_URL_LAYERS, base_url=ROUTER_URL)
+    assert (tmp_path / ".openclaw" / "openclaw.json").read_text() == before
+
+
+def test_openclaw_reverse_removes_provider_keeps_mcp_and_other_providers(tmp_path):
+    (tmp_path / ".openclaw" / "workspace").mkdir(parents=True)
+    install(
+        home=tmp_path,
+        yes=True,
+        runtimes=[OpenClawRuntime()],
+        layers=BOTH_LAYERS,
+        base_url=ROUTER_URL,
+    )
+    cfg_path = tmp_path / ".openclaw" / "openclaw.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg.setdefault("models", {}).setdefault("providers", {})["other"] = {"baseUrl": "x"}
+    cfg_path.write_text(json.dumps(cfg))
+
+    uninstall(home=tmp_path, runtimes=[OpenClawRuntime()])
+
+    after = json.loads(cfg_path.read_text())
+    assert "opendaisugi" not in after.get("mcp", {}).get("servers", {})
+    assert "opendaisugi" not in after.get("models", {}).get("providers", {})
+    assert after["models"]["providers"]["other"] == {"baseUrl": "x"}  # unrelated preserved
+
+
+# ---------------------------------------------------------------------------
+# _format_summary must not count unsupported "gap" steps as real changes
+# ---------------------------------------------------------------------------
+
+
+def test_format_summary_excludes_unsupported_steps_from_change_counts():
+    planned = [
+        InstallStep(Layer.SKILL, "Symlink the skill", None, supported=True),
+        InstallStep(Layer.WARDEN, "Not wired: no external tool warden", None, supported=False),
+    ]
+    summary = _format_summary([ClaudeCodeRuntime()], planned, modified=[])
+    lines = [line.strip() for line in summary.splitlines()]
+    assert any(line == "[skill] 1 change(s)" for line in lines)
+    assert not any(line.startswith("[warden]") for line in lines)
+
+
+# ---------------------------------------------------------------------------
+# CLI — `daisugi install --router`
+# ---------------------------------------------------------------------------
+
+from typer.testing import CliRunner  # noqa: E402
+
+from opendaisugi.cli import app  # noqa: E402
+
+runner = CliRunner()
+
+
+def _cli_output(result) -> str:
+    combined = result.output.lower()
+    try:
+        combined += (result.stderr or "").lower()
+    except ValueError:
+        pass  # older click already mixed stderr into output above
+    return combined
+
+
+def test_cli_install_dry_run_warden_router_lists_both_steps(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(
+        app,
+        ["install", "--dry-run", "--router", "--runtime", "claude"],
+    )
+    assert result.exit_code == 0
+    out = _cli_output(result)
+    assert "warden" in out
+    assert "base_url" in out
+    assert "anthropic_base_url" in out or "router" in out
+
+
+def test_cli_install_warden_yes_writes_hook(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(
+        app,
+        ["install", "--yes", "--runtime", "claude"],
+    )
+    assert result.exit_code == 0
+    settings = _settings(tmp_path)
+    commands = _pre_commands(settings)
+    assert any("opendaisugi.warden" in c and "--mode audit" in c for c in commands)
+
+
+def _register_default_envelope(home: Path) -> None:
+    d = home / ".opendaisugi" / "warden" / "envelopes"
+    d.mkdir(parents=True)
+    (d / "default.json").write_text("{}")
+
+
+def test_cli_install_enforce_with_no_envelope_refuses_and_writes_nothing(tmp_path, monkeypatch):
+    """An enforce hook with no envelope denies every call, so install refuses."""
+    from opendaisugi.cli import ENFORCE_NEEDS_POLICY
+
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 1
+    assert ENFORCE_NEEDS_POLICY in result.output
+    assert "daisugi warden init --workspace DIR" in ENFORCE_NEEDS_POLICY
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    assert not (tmp_path / ".opendaisugi").exists()
+
+
+def test_cli_install_enforce_with_an_envelope_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert any("--mode enforce" in c for c in _pre_commands(_settings(tmp_path)))
+
+
+def test_cli_install_audit_with_no_envelope_still_installs(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert "Enforce needs a policy" not in result.output
+
+
+def test_cli_install_ask_flag_reaches_the_installed_hook(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(
+        app,
+        ["install", "--enforce", "--ask", "--yes", "--runtime", "claude"],
+    )
+    assert result.exit_code == 0
+    commands = _pre_commands(_settings(tmp_path))
+    assert any("opendaisugi.warden" in c and "--ask" in c for c in commands)
+
+
+def test_cli_install_ask_without_enforce_is_inert_and_not_baked_in(tmp_path, monkeypatch):
+    """Fix round 1, item 3: --ask without --enforce must not silently bake
+    --ask (and the widened 105s hook timeout) into a AUDIT install — the
+    printed 'no operator ask will be wired' note must match what's written."""
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(
+        app,
+        ["install", "--ask", "--yes", "--runtime", "claude"],
+    )
+    assert result.exit_code == 0
+    out = _cli_output(result)
+    assert "Note: --ask only applies with --enforce; no operator ask will be wired.".lower() in out
+    commands = _pre_commands(_settings(tmp_path))
+    warden_cmds = [c for c in commands if "opendaisugi.warden" in c]
+    assert len(warden_cmds) == 1
+    assert "--ask" not in warden_cmds[0]
+    assert "--mode audit" in warden_cmds[0]
+
+
+def test_cli_install_codex_warden_plans_the_hook_with_the_fail_open_caveat(tmp_path, monkeypatch):
+    (tmp_path / ".codex").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(
+        app,
+        ["install", "--dry-run", "--runtime", "codex"],
+    )
+    assert result.exit_code == 0
+    out = _cli_output(result)
+    assert "hooks.json" in out
+    assert "fail open" in out  # the honest Codex caveat, stated up front
+
+
+def test_cli_install_enforce_alone_arms_the_warden(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    _register_default_envelope(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0, result.output
+    assert "Note: --enforce only applies" not in result.output
+    commands = _pre_commands(_settings(tmp_path))
+    assert any("--mode enforce" in c and c.endswith("|| exit 2") for c in commands)
+
+
+def test_cli_install_enforce_with_no_envelope_names_the_plain_install(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 1
+    assert (
+        "Or run: daisugi install (audit mode records every call and blocks none)" in result.output
+    )
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+def test_cli_install_old_warden_flag_is_refused_in_one_line(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--warden", "--yes"])
+    assert result.exit_code == 2
+    # Typer draws the error in a box that wraps long lines: drop the box.
+    flat = " ".join(re.sub(r"[│╭╮╰╯─]", " ", _cli_output(result)).split())
+    assert (
+        "invalid value for '--warden': the warden hook is part of every install: "
+        "drop --warden (add --enforce to make it deny)"
+    ) in flat
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+    result = runner.invoke(app, ["install", "--no-warden"])
+    assert result.exit_code == 2 and "no such option: --no-warden" in _cli_output(result)
+
+
+def test_plain_install_reports_hermes_warden_as_a_gap(tmp_path, monkeypatch):
+    (tmp_path / ".hermes").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = runner.invoke(app, ["install", "--dry-run", "--runtime", "hermes"])
+    assert result.exit_code == 0, result.output
+    out = _cli_output(result)
+    assert "honest gaps" in out and "[hermes] warden: not wired" in out
+
+
+def test_cli_install_plain_then_enforce_rewrites_the_hook_and_says_so(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert runner.invoke(app, ["install", "--yes", "--runtime", "claude"]).exit_code == 0
+    _register_default_envelope(tmp_path)
+    result = runner.invoke(app, ["install", "--enforce", "--yes", "--runtime", "claude"])
+    assert result.exit_code == 0
+    assert "now runs in enforce mode (it was audit)." in result.output
+    assert "Done. Files modified:" in result.output
+    commands = [c for c in _pre_commands(_settings(tmp_path)) if "opendaisugi.warden" in c]
+    assert len(commands) == 1 and "--mode enforce" in commands[0]
+
+
+def test_cli_install_hook_sentence_only_when_a_hook_is_written(tmp_path, monkeypatch):
+    """On a harness with no warden, the gap list says so and the "this install
+    writes the hook" sentence stays out."""
+    sentence = "this install writes the hook, not the policy"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".hermes").mkdir()
+    hermes = runner.invoke(app, ["install", "--yes", "--runtime", "hermes"])
+    assert hermes.exit_code == 0
+    assert "Honest gaps" in hermes.output and sentence not in hermes.output
+    (tmp_path / ".claude").mkdir()
+    claude = runner.invoke(app, ["install", "--yes", "--runtime", "claude"])
+    assert sentence in claude.output
+
+
+_OLD_ENFORCE = (
+    "{py} -P -m opendaisugi.warden --mode enforce --root {root} --format claude "
+    "--verify-timeout 10.0 || exit 2"
+)
+
+
+def test_claude_warden_plain_install_over_an_old_enforce_hook_adds_isolation(tmp_path):
+    """An old non-isolated enforce hook is brought to the -I form with its mode
+    unchanged, and the keep note says so."""
+    from opendaisugi import warden as _warden
+
+    (tmp_path / ".claude").mkdir()
+    root = _warden.DEFAULT_WARDEN_ROOT
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": _OLD_ENFORCE.format(
+                                py=shlex.quote(sys.executable), root=root
+                            ),
+                            "timeout": 30,
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(settings))
+    result = install(home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS)
+    warden_cmds = _warden_cmds(tmp_path)
+    assert len(warden_cmds) == 1
+    assert " -I -m opendaisugi.warden_client" in warden_cmds[0]
+    assert "--mode enforce" in warden_cmds[0] and warden_cmds[0].endswith("|| exit 2")
+    assert len(result.notes) == 1 and "stays in enforce mode" in result.notes[0]
+    assert "brought up to today's form" in result.notes[0]
+
+
+def test_plan_line_says_enforce_kept_over_an_enforce_hook(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    install(
+        home=tmp_path, yes=True, runtimes=[ClaudeCodeRuntime()], layers=WARDEN_LAYERS, enforce=True
+    )
+    steps = ClaudeCodeRuntime().plan(tmp_path, WARDEN_LAYERS)
+    warden = [s for s in steps if s.layer is Layer.WARDEN]
+    assert "(ENFORCE, kept)" in warden[0].description
+    fresh = tmp_path / "fresh"
+    (fresh / ".claude").mkdir(parents=True)
+    plain = [s for s in ClaudeCodeRuntime().plan(fresh, WARDEN_LAYERS) if s.layer is Layer.WARDEN]
+    assert "(audit)" in plain[0].description
+
+
+def test_plan_survives_a_settings_file_that_is_not_a_mapping(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text("[1]")
+    steps = ClaudeCodeRuntime().plan(tmp_path, WARDEN_LAYERS)
+    assert "(audit)" in [s for s in steps if s.layer is Layer.WARDEN][0].description

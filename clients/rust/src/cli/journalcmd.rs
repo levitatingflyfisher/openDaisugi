@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use super::statuscmd::{load_json, py_fixed};
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{any_json, dumps_indent, Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{any_json, dumps_indent, Object, Value};
 use crate::pathways::find::{select_matcher, Embedder};
 use crate::pathways::pmodel::{validate_model, Id, Mode};
 use crate::pathways::store::Col;
@@ -240,7 +240,7 @@ impl Env {
         // matcher this binary does not carry is refused before Journal()
         // makes anything; an error Python raises comes after it, as in
         // Python.
-        let cfg = super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml"));
+        let cfg = super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml"));
         if let Err(e @ super::config::ConfigErr::Unsupported) = &cfg {
             return Err(self.config_load_err(CMD, &super::config::RowsErr::Config(e.clone())));
         }

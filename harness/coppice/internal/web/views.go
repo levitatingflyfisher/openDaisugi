@@ -39,6 +39,8 @@ func (s *Server) viewRoutes() {
 	s.mux.HandleFunc("GET /api/views", s.guard(s.handleViews))
 	s.mux.HandleFunc("GET /api/tasks", s.guard(s.handleTasks))
 	s.mux.HandleFunc("GET /api/events", s.guard(s.handleEvents))
+	s.cardsRoutes()
+	s.treeRoutes()
 }
 
 func (s *Server) viewByID(id string) (View, bool) {

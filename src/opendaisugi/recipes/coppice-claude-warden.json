@@ -1,0 +1,38 @@
+{
+  "name": "coppice-claude-warden",
+  "title": "coppice, Claude Code and the warden",
+  "doc": "docs/recipes/coppice-claude-warden.md",
+  "slots": {
+    "harness": "Claude Code (theirs)",
+    "multiplexer": "coppice (ours)",
+    "warden": "daisugi warden (ours)",
+    "router": "none"
+  },
+  "params": {
+    "workspace": {
+      "help": "the directory the starter envelope admits",
+      "required": false,
+      "metavar": "DIR"
+    }
+  },
+  "steps": [
+    {
+      "kind": "warden-init",
+      "workspace": "{workspace}",
+      "when": "workspace"
+    },
+    {
+      "kind": "install",
+      "only": [
+        "warden"
+      ],
+      "runtime": [
+        "claude"
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "Run coppice, or coppice web for the browser and the phone. To enforce: daisugi install --only warden --enforce, after an envelope exists."
+    }
+  ]
+}

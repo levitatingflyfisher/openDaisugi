@@ -1,8 +1,8 @@
 # ADR-0013 — One install that both saves and verifies, across harnesses
 
-**Status:** Accepted. Implemented (Phase 4) — `daisugi install --gate --gateway` wires the
-GATE and BASE_URL layers through the per-harness `Runtime` adapters, shadow-by-default, with
-the Codex/Hermes/OpenClaw gaps surfaced honestly in the install output. Builds on ADR-0004
+**Status:** Accepted. Superseded in part by ADR-0025: the gate hook is part of every install, in audit mode.
+Implemented (Phase 4): `--gateway` adds the BASE_URL layer through the per-harness `Runtime`
+adapters; the Codex, Hermes and OpenClaw gaps are named in the install output. Builds on ADR-0004
 (layer, not harness), ADR-0007 (call-time gate), ADR-0012 (gateway reuse).
 
 ## Context

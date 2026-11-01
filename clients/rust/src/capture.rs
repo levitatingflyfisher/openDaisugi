@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 use num_bigint::BigInt;
 use num_traits::FromPrimitive;
 
-use crate::cli::gateroot::{join, path_str as pathlib_str};
-use crate::gate::py::text::{lower, repr, strip};
-use crate::gate::pyjson::{loads, py_decode_error, py_type_name, Object, PyDecodeFail, Value};
-use crate::gate::pymodel::{decode_stream, universal_newlines};
+use crate::cli::wardenroot::{join, path_str as pathlib_str};
+use crate::warden::py::text::{lower, repr, strip};
+use crate::warden::pyjson::{loads, py_decode_error, py_type_name, Object, PyDecodeFail, Value};
+use crate::warden::pymodel::{decode_stream, universal_newlines};
 use crate::pathways::pmodel::{take_model, Id, Mode};
 use crate::pathways::PwErr;
 use crate::shell_decompose::ShellParser;
@@ -53,6 +53,23 @@ pub struct Session {
     pub first_at: Value,
     pub last_at: Value,
     pub path: String,
+    /// The captures root the row came from.
+    pub root: String,
+}
+
+/// `list_sessions_in(roots)`: one row per session id, from the first root
+/// that holds it, newest last_at first.
+pub fn list_sessions_in(roots: &[String]) -> Result<Vec<Session>, CapErr> {
+    let mut rows: Vec<Session> = vec![];
+    let mut seen = std::collections::HashSet::new();
+    for root in roots {
+        for r in list_sessions(root)? {
+            if seen.insert(r.id.clone()) {
+                rows.push(r);
+            }
+        }
+    }
+    sort_sessions(rows)
 }
 
 fn base_name(p: &str) -> &str {
@@ -294,8 +311,13 @@ pub fn list_sessions(root: &str) -> Result<Vec<Session>, CapErr> {
         let first_at = fo.get("captured_at").cloned().unwrap_or(Value::Null);
         let last_at = lo.get("captured_at").cloned().unwrap_or(Value::Null);
         let id = stem(base_name(&f)).to_string();
-        rows.push(Session { id, calls: nonblank.len(), first_at, last_at, path: f.clone() });
+        rows.push(Session { id, calls: nonblank.len(), first_at, last_at, path: f.clone(), root: base.clone() });
     }
+    sort_sessions(rows)
+}
+
+/// Orders rows newest last_at first, as `list_sessions` does.
+fn sort_sessions(rows: Vec<Session>) -> Result<Vec<Session>, CapErr> {
     let keys: Vec<Value> =
         rows.iter().map(|r| if r.last_at.truthy() { r.last_at.clone() } else { Value::Int("0".into()) }).collect();
     let order = sort_desc(&keys)?;
@@ -403,6 +425,39 @@ fn glob_for_path(path: &str) -> String {
 
 const MAX_OBSERVE_DEPTH: usize = 4;
 
+/// `hook._glob_for_access`: the file-scope glob that admits one shell
+/// access. A tree needs a `/**` glob (SG-2); a path takes its parent
+/// directory's glob.
+fn glob_for_access(path: &str, tree: bool) -> String {
+    if !tree {
+        return glob_for_path(path);
+    }
+    if path.is_empty() || path == "." {
+        return "./**".into();
+    }
+    format!("{}/**", path.trim_end_matches('/'))
+}
+
+/// `hook._observed_accesses`: the file-scope globs for the operand accesses
+/// of a command. An access that cannot be placed adds nothing, so the
+/// command stays rejected downstream.
+fn observed_accesses(command: &str) -> (Vec<String>, Vec<String>) {
+    let acc = crate::dialect::shell_accesses(command, None);
+    let reads = acc
+        .reads
+        .iter()
+        .filter(|a| a.via == "operand" && a.path != "/dev/null" && a.path != "/dev/stdin")
+        .map(|a| glob_for_access(&a.path, a.tree))
+        .collect();
+    let writes = acc
+        .writes
+        .iter()
+        .filter(|a| a.via == "operand" && !["/dev/null", "/dev/stdout", "/dev/stderr"].contains(&a.path.as_str()))
+        .map(|a| glob_for_access(&a.path, a.tree))
+        .collect();
+    (reads, writes)
+}
+
 /// `hook._observed_effects`.
 fn observed_effects(parser: &mut ShellParser, command: &str, decompose: bool) -> (Vec<String>, Vec<String>, Vec<String>) {
     let (mut heads, mut reads, mut writes) = (vec![], vec![], vec![]);
@@ -470,6 +525,11 @@ pub fn infer_envelope(parser: &mut ShellParser, recs: &[Object], task: &str, dec
                 }
                 let (h, rs, ws) = observed_effects(parser, cmd, decompose);
                 heads.extend(h);
+                if decompose || !crate::verify::shell_metachar_hit(cmd) {
+                    let (ors, ows) = observed_accesses(cmd);
+                    reads.extend(ors);
+                    writes.extend(ows);
+                }
                 for p in rs {
                     if p != "/dev/null" && p != "/dev/stdin" {
                         reads.insert(glob_for_path(&p));

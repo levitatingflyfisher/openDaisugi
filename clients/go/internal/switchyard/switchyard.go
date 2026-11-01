@@ -1,8 +1,8 @@
-// Package switchyard runs NVIDIA NeMo Switchyard as the gateway's
-// external model chooser: opendaisugi.router_switchyard. It finds the
+// Package switchyard runs NVIDIA NeMo Switchyard as the router's
+// external model chooser: opendaisugi.routing_switchyard. It finds the
 // switchyard-server binary, writes its TOML deployment file, starts and
 // stops it as a managed child on loopback, and probes its health. The
-// gateway stays the meter.
+// router stays the meter.
 package switchyard
 
 import (
@@ -34,7 +34,7 @@ const (
 	HealthPath   = "/health"
 	DefaultHost  = "127.0.0.1"
 	DefaultPort  = 4000
-	ForwardLogin = "forwards your own login, as the gateway does"
+	ForwardLogin = "forwards your own login, as the router does"
 	NoCredential = "no credential: a local host"
 	anthropicAPI = "https://api.anthropic.com"
 	defaultLocal = "http://127.0.0.1:11434"
@@ -200,7 +200,7 @@ func Render(t *Targets, routeID string, keyPresent func(string) bool) (string, e
 			pystr.Repr(t.CapableID))
 	}
 	if t.APIKeyEnv != "" && !keyPresent(t.APIKeyEnv) {
-		return "", fmt.Errorf("switchyard_api_key_env names %s, which is not set. Export it before the gateway starts, "+
+		return "", fmt.Errorf("switchyard_api_key_env names %s, which is not set. Export it before the router starts, "+
 			"or clear the field to forward your login.", t.APIKeyEnv)
 	}
 	cloud := "forward"
@@ -311,7 +311,7 @@ func RouteTargets(path, routeID string) (string, string, error) {
 		}
 	}
 	if !found {
-		return "", "", &MeterError{fmt.Sprintf("route %s in %s does not name two tiers. The gateway meters "+
+		return "", "", &MeterError{fmt.Sprintf("route %s in %s does not name two tiers. The router meters "+
 			"capable_target and efficient_target, or strong_target and weak_target.", pystr.Repr(routeID), path)}
 	}
 	targets := doc.Vals["targets"].(*Table)
@@ -534,7 +534,7 @@ type Files struct{ Config, Log, RoutingLog string }
 
 // ChildFiles is child_files_for.
 func ChildFiles(dataDir string, port int) Files {
-	gw := filepath.Join(dataDir, "gateway")
+	gw := filepath.Join(dataDir, "router")
 	p := strconv.Itoa(port)
 	return Files{filepath.Join(gw, "switchyard-"+p+".toml"), filepath.Join(gw, "switchyard-"+p+".log"),
 		filepath.Join(gw, "switchyard-routing-"+p+".jsonl")}
@@ -542,7 +542,7 @@ func ChildFiles(dataDir string, port int) Files {
 
 // StatePath is state_path_for.
 func StatePath(dataDir string, port int) string {
-	return filepath.Join(dataDir, "gateway", "switchyard-"+strconv.Itoa(port)+".json")
+	return filepath.Join(dataDir, "router", "switchyard-"+strconv.Itoa(port)+".json")
 }
 
 // State is a state file as read_state reads it.
@@ -594,9 +594,9 @@ type StateFile struct {
 	State *State
 }
 
-// ListStates is list_states: every gateway/switchyard-*.json, sorted.
+// ListStates is list_states: every router/switchyard-*.json, sorted.
 func ListStates(dataDir string) []StateFile {
-	matches, _ := filepath.Glob(filepath.Join(globEscape(filepath.Join(dataDir, "gateway")), "switchyard-*.json"))
+	matches, _ := filepath.Glob(filepath.Join(globEscape(filepath.Join(dataDir, "router")), "switchyard-*.json"))
 	var out []StateFile
 	for _, m := range matches {
 		out = append(out, StateFile{m, ReadState(m)})
@@ -805,7 +805,7 @@ func Start(o StartOptions) (*Handle, string) {
 	}
 	port := int64(o.Port)
 	if ProbeHealth(host, port) {
-		return nil, fmt.Sprintf("something already answers on http://%s:%d%s. If it is a switchyard-server a gateway "+
+		return nil, fmt.Sprintf("something already answers on http://%s:%d%s. If it is a switchyard-server a router "+
 			"started earlier, stop it with `daisugi router stop`. Else pick another port with --switchyard-port.",
 			host, o.Port, HealthPath)
 	}
@@ -884,7 +884,7 @@ func writeState(path string, h *Handle, routeID string, auth *Auth) {
 }
 
 // StopOwn is stop_own_child with a five-second wait: the child this
-// gateway started, by its own handle. The state file goes only while it
+// router started, by its own handle. The state file goes only while it
 // still names this pid.
 func (h *Handle) StopOwn(statePath string) string {
 	if st := ReadState(statePath); st != nil && st.PID == int64(h.PID) {

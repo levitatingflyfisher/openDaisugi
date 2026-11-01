@@ -42,7 +42,7 @@ run never starts a server of its own unless the case asks for it.
 
 For each file, the driver starts one Go server and one Rust server, each in
 its own scratch directory: its own HOME, socket, data dir and start dir,
-PATH=/usr/bin:/bin, and a coppice.toml with no plugins, no gateway and voice
+PATH=/usr/bin:/bin, and a coppice.toml with no plugins, no router and voice
 off. Each server is started with `--socket S --data-dir D server start
 --foreground`, as a child in its own process group. The file is replayed on
 one connection to each server, case by case, with the rules of
@@ -88,17 +88,17 @@ fixture directory, the same on both sides. It holds the fake harnesses of
 harness/coppice/testdata/adapters and harness/coppice-rs/cases/headless
 under `adapters/`, harness/coppice-rs/cases/cli/fixtures under
 `cli/`, and harness/coppice-rs/cases/chat/fixtures (the fakes of the
-foreman's chat mode) under `chat/`. `{BIN}` is the side's own binary and `{SOCK}` its socket. Each side's HOME holds the OpenCode gate plugin, which
+steward's chat mode) under `chat/`. `{BIN}` is the side's own binary and `{SOCK}` its socket. Each side's HOME holds the OpenCode warden plugin, which
 the opencode adapter checks before it starts. `{HOME}`, `{WORK}`, `{DATA}` and
 `{START}` are the side's own home, work dir, data dir and start dir.
 `{FLOOR}` and `{FLOOR_ALT}` are the floor keys (F11-R-6) of the side's
-socket and of `{WORK}/alt.sock`: the marker directories under the gate
+socket and of `{WORK}/alt.sock`: the marker directories under the warden
 root's `agents/`.
 
-Each case passes two gates:
+Each case passes two checks:
 
-- gate A: each reply matches the corpus's expected line.
-- gate B: the Go reply and the Rust reply are the same JSON value, after
+- warden A: each reply matches the corpus's expected line.
+- warden B: the Go reply and the Rust reply are the same JSON value, after
   NORMALIZE: each server's own paths become placeholders, and the values
   that differ by process (a pid, an uptime, a clock) are masked. A rule
   that masks more than that is a ruling (CP-R-n in clients/ADJUDICATIONS.md)
@@ -106,10 +106,10 @@ Each case passes two gates:
 
 A case is classed:
 
-- agree: both replies pass gate A and gate B.
+- agree: both replies pass warden A and warden B.
 - refused: the Rust server answers that it has no such command.
-- disagree: any other difference, or a Rust reply that fails gate A.
-- go-fail: the Go reply fails gate A. That is a fault in Go or the corpus,
+- disagree: any other difference, or a Rust reply that fails warden A.
+- go-fail: the Go reply fails warden A. That is a fault in Go or the corpus,
   never a pass.
 
 The events each side sent on its connections are compared once per file,
@@ -174,12 +174,12 @@ TUI_FIXTURES = CASES / "tui" / "fixtures"
 CHAT_FIXTURES = CASES / "chat" / "fixtures"
 WEB_STATIC = REPO / "harness" / "coppice" / "internal" / "web" / "static"
 KEYS = REPO / "harness" / "coppice" / "testdata" / "keys.json"
-GATE_PLUGIN = REPO / "src" / "opendaisugi" / "harness_opencode" / "plugin" / "daisugi-gate.ts"
+WARDEN_PLUGIN = REPO / "src" / "opendaisugi" / "harness_opencode" / "plugin" / "daisugi-warden.ts"
 
 # The scratch config each server reads. No plugin runs, so no policy
-# process starts. gateway = "" means the floor probes no gateway address.
+# process starts. router = "" means the floor probes no router address.
 # Voice is off, so the Go server never starts daisugi voice serve.
-SCRATCH_TOML = 'plugins = []\ngateway = ""\n\n[voice]\nenabled = false\n'
+SCRATCH_TOML = 'plugins = []\nrouter = ""\n\n[voice]\nenabled = false\n'
 
 # The fake harnesses of the screens suite. Each draws the screen file it is
 # given, then sleeps, so the screen stays as drawn.
@@ -834,9 +834,9 @@ class Side:
                 dst = home / ".config" / "coppice" / "plugins" / src.name
                 if src.is_dir() and not dst.exists():
                     shutil.copytree(src, dst)
-        plugin = home / ".config" / "opencode" / "plugins" / "daisugi-gate.ts"
+        plugin = home / ".config" / "opencode" / "plugins" / "daisugi-warden.ts"
         plugin.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(GATE_PLUGIN, plugin)
+        shutil.copyfile(WARDEN_PLUGIN, plugin)
         env = self.server_env()
         log = open(self.work / "server.log", "ab")  # noqa: SIM115 - closed with the process
         argv = [self.binary, "--socket", str(self.sock), "--data-dir", str(data)]
@@ -961,7 +961,7 @@ class Side:
 
 
 def floor_key(sock: str) -> str:
-    """The floor's directory under the gate root's agents/ (F11-R-6): the
+    """The floor's directory under the warden root's agents/ (F11-R-6): the
     first 16 hex digits of the SHA-256 of its socket path."""
     return hashlib.sha256(os.fsencode(sock)).hexdigest()[:16]
 
@@ -1110,7 +1110,7 @@ def is_refusal(reply: Any) -> bool:
     return msg.startswith("no command ") and "Known commands" in msg
 
 
-def gate_a(m: Matcher, expected: Any, actual: Any, req: Any) -> str | None:
+def warden_a(m: Matcher, expected: Any, actual: Any, req: Any) -> str | None:
     try:
         m.match(expected, actual, request_id(req))
     except Mismatch as exc:
@@ -1141,7 +1141,7 @@ def event_view(evs: list[Any]) -> list[Any]:
     decide when the merged state changes. Both are left out: pane.explain
     and agent.wait compare what the tick read. A frame counts only when it
     is full, and its seq is masked. Every note, child, presence and messages event,
-    and every state event from the gate, the operator or a headless
+    and every state event from the warden, the operator or a headless
     harness, counts."""
     out = []
     for e in evs:
@@ -1267,7 +1267,7 @@ def replay(cf: CaseFile, sides: list[Side], dump: bool) -> list[dict[str, Any]]:
                                     res[k] = masked
                     else:
                         reply = conn.call(json.dumps(req))
-                    fail = gate_a(m, expected, reply, req)
+                    fail = warden_a(m, expected, reply, req)
                     if fail is None or time.monotonic() >= deadline:
                         break
                     time.sleep(0.1)
@@ -1287,7 +1287,7 @@ def replay(cf: CaseFile, sides: list[Side], dump: bool) -> list[dict[str, Any]]:
                     row["class"] = "refused"
                 elif fails[1] is not None:
                     row["class"] = "disagree"
-                    row["diff"] = [f"gate A: {fails[1]}"]
+                    row["diff"] = [f"warden A: {fails[1]}"]
                 else:
                     d = diff(sides[0].normalize(replies[0]), sides[1].normalize(replies[1]))
                     row["class"] = "disagree" if d else "agree"
@@ -1340,7 +1340,7 @@ def all_files(suite: str, fixtures: Path) -> list[CaseFile]:
 
 def fill_fixtures(fixtures: Path) -> None:
     """The files cases name under {FIXTURES}: the transcripts, as a Claude
-    config directory would hold them, and a fake foreman harness."""
+    config directory would hold them, and a fake steward harness."""
     proj = fixtures / "claude" / "projects" / "demo"
     proj.mkdir(parents=True, exist_ok=True)
     for f in FACTS.glob("claude-*.jsonl"):
@@ -1384,7 +1384,7 @@ def fill_fixtures(fixtures: Path) -> None:
     for f in web.rglob("*"):
         if f.is_file() and (f.name.startswith("fake-") or f.parent.name == "bin"):
             f.chmod(0o755)
-    fake = fixtures / "fake-foreman.sh"
+    fake = fixtures / "fake-steward.sh"
     fake.write_text(
         "#!/bin/sh\nsleep 1\nprintf '\\033[?2004hforeman ready\\r\\n'\nexec cat\n", encoding="utf-8"
     )
@@ -1484,7 +1484,7 @@ def memory_headroom_kib() -> int:
     return headroom_kib(mem_available_kib(), mx, cur)
 
 
-class MemoryGate:
+class MemoryWarden:
     """Lets a file start only while memory is above the reserve. A file that
     would be the only one running always starts, so a low box slows the run
     and never stops it."""
@@ -1542,7 +1542,7 @@ def masked_line(names: list[str]) -> str:
     return f"{len(names)} masked files (disagreed under --jobs, agreed alone): " + ", ".join(names)
 
 
-def run_files(files, jobs, run, gate, abort=None):
+def run_files(files, jobs, run, warden, abort=None):
     """Yield (file, FileResult) in the order of `files`, however the files
     finish. `run(cf)` replays one file and returns its FileResult. With
     jobs > 1 the files run that many at a time; serial files run alone after
@@ -1556,13 +1556,13 @@ def run_files(files, jobs, run, gate, abort=None):
     results: dict[int, FileResult] = {}
 
     def work(i: int) -> FileResult:
-        if gate is not None:
-            gate.acquire()
+        if warden is not None:
+            warden.acquire()
         try:
             return run(files[i])
         finally:
-            if gate is not None:
-                gate.release()
+            if warden is not None:
+                warden.release()
 
     batch = [i for i, cf in enumerate(files) if not is_serial(cf)]
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
@@ -1703,7 +1703,7 @@ def main() -> int:
     if args.dump:
         jobs = 1  # replies print as they arrive, so they must not interleave
     index = {id(cf): n for n, cf in enumerate(files)}
-    gate = MemoryGate(stagger=0.5) if jobs > 1 else None
+    warden = MemoryWarden(stagger=0.5) if jobs > 1 else None
     masked: list[str] = []
 
     def abort_all() -> None:
@@ -1715,7 +1715,7 @@ def main() -> int:
             files,
             jobs,
             lambda cf: run_file(index[id(cf)], cf, binaries, root, fixtures, args.dump),
-            gate,
+            warden,
             abort=abort_all,
         ):
             rows = res.rows

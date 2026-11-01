@@ -113,7 +113,9 @@ def test_verify_ok_plan_exits_zero(tmp_path):
         id="env_ok",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         id="plan_ok",
@@ -163,7 +165,9 @@ def test_verify_json_output(tmp_path):
         id="env_j",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         id="plan_j",
@@ -210,7 +214,9 @@ def test_journal_stats_with_traces(tmp_path):
         id="e",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(id="p", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     for ok in [True, True, False]:
@@ -308,7 +314,9 @@ def test_journal_replay_no_drift(tmp_path):
         id="e",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(id="p", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     j.log(
@@ -348,7 +356,9 @@ def test_journal_replay_drift_exits_one(tmp_path, monkeypatch):
         id="e",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(id="p", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     j.log(
@@ -410,7 +420,9 @@ def test_verify_prints_warnings(tmp_path, monkeypatch):
         id="env_w",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         id="plan_w", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")]
@@ -498,7 +510,9 @@ def test_journal_replay_json_output(tmp_path):
         id="e",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(id="p", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     j.log(
@@ -542,7 +556,9 @@ def test_journal_replay_drift_with_violations(tmp_path, monkeypatch):
         id="e",
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(id="p", source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     j.log(

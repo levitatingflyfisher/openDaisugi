@@ -4,10 +4,10 @@ document that still says it. A fact nobody re-reads rots silently."""
 import sys
 
 from opendaisugi.bench.options import (
-    GATE_PATHS,
     LOOPS,
     MATCHER_BACKENDS,
     VERIFIER_CLIENTS,
+    WARDEN_PATHS,
     build_hint,
     repo_root,
 )
@@ -58,26 +58,26 @@ def test_lexical_needs_no_package_so_it_can_never_be_absent():
     assert MATCHER_BACKENDS["lexical"].extra is None
 
 
-def test_every_gate_path_quote_is_still_in_its_source():
-    for spec in GATE_PATHS.values():
+def test_every_warden_path_quote_is_still_in_its_source():
+    for spec in WARDEN_PATHS.values():
         text = _read(spec.source)
         assert spec.quote in text, f"{spec.name}: {spec.quote!r} is gone from {spec.source}"
 
 
 def test_fail_open_classes_and_evidence_are_from_the_closed_sets():
-    for spec in GATE_PATHS.values():
+    for spec in WARDEN_PATHS.values():
         assert spec.fail_open_class in {"hard", "soft", "deny-only", "advisory"}
         assert spec.evidence in {"measured", "designed"}
 
 
 def test_codex_is_recorded_as_the_fail_open_path():
-    assert GATE_PATHS["codex-hooks"].fail_open_class == "soft"
+    assert WARDEN_PATHS["codex-hooks"].fail_open_class == "soft"
 
 
-def test_every_loop_names_an_install_command_and_a_real_gate_path():
+def test_every_loop_names_an_install_command_and_a_real_warden_path():
     for spec in LOOPS.values():
         assert spec.install.strip()
-        assert spec.gate_path in GATE_PATHS
+        assert spec.warden_path in WARDEN_PATHS
 
 
 def test_build_hint_is_a_runnable_one_liner():

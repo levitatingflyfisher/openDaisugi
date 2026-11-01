@@ -1,11 +1,11 @@
 # Fence any harness with Landlock
 
-*How to run an agent harness so that the kernel, not only the gate, keeps it
+*How to run an agent harness so that the kernel, not only the warden, keeps it
 out of your keys and your other files. One command, no daemon, no container.*
 
-The gate reads the text of a tool call. It cannot stop a program that the
+The warden reads the text of a tool call. It cannot stop a program that the
 call starts. `cat ~/.ssh/id_ed25519`, a one-line Python `rmtree` of a
-directory outside the workspace, or a Python line that writes the gate's own
+directory outside the workspace, or a Python line that writes the warden's own
 `DISARMED` file all pass a text check. `daisugi fence` closes that gap. It
 applies a [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
 ruleset to itself, sets `no_new_privs`, then runs the harness. Every process
@@ -21,22 +21,25 @@ daisugi fence --print --json
 It works with any harness, because it wraps the process and reads nothing of
 the harness's protocol. Claude Code, Codex, pi, OpenCode and sprig have a
 built-in entry for their own directories (`~/.claude`, `~/.codex`, `~/.pi`
-and so on). Any other command gets the workspace and the system.
+and so on), and so does Hermes (`~/.hermes`). Any other command gets the workspace and the system.
 
 ## What the harness can reach
+
+The Rust and Python ports lag the Go build for the narrower `~/.claude` grant and the Pando lead clone (fixes of round 8b); the Go `daisugi` is the one to run for them.
 
 | Path | Access |
 |---|---|
 | The workspace (the current directory, or `--workspace`) and each `--workdir` | read, write, run |
 | A private temp dir made for this run (`$TMPDIR` in the harness) | read, write, run |
-| The harness's own config directory | read only |
+| The harness's own config directory | read only; for Claude, only its config entries of `~/.claude` (settings, skills, plugins and the like), and of `~/.claude/projects` only this workspace's own dir, so other projects' transcripts, the prompt history, the copies of `~/.claude.json` in `backups` and other sessions' data stay shut. A workspace whose Claude project dir the fence cannot name (a path over 200 bytes or not ASCII) is refused unless `--allow ~/.claude/projects:rw` is given |
+| A Pando lead's repo objects (`<repo>/.git/objects`, which its shared clone borrows) | read only, through coppice's `--allow` |
 | The parts of it the harness writes (sessions, logs, its credentials file) | read, write |
 | `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/ptmx`, `/dev/pts` | read, write |
 | `/usr /bin /sbin /lib* /etc /opt /proc /sys` | read, run |
 | Each directory on `PATH` (the entry itself, not its parent), the harness's binary directory and this binary's directory | read, run |
-| The gate root and `config.yaml` in each data dir | read only; `gate.sock` connects |
+| The warden root and `config.yaml` in each data dir | read only; `warden.sock` connects |
 | The coppice socket's directory (`--coppice-socket`) | connect only |
-| The paths in the gate's envelope (`file_read`, `file_write`) | read, or read and write |
+| The paths in the warden's envelope (`file_read`, `file_write`) | read, or read and write |
 | `--allow PATH` (read) and `--allow PATH:rw` (read and write) | as named |
 | Everything else under HOME, `/tmp`, other unix sockets | none |
 
@@ -54,32 +57,57 @@ would reach and does not start.
 The secrets stay shut under the home in `$HOME` and under the home in the
 password database, when the two differ. No variable turns the fence off.
 
-The gate's state is never writable. The disarm marker, the envelopes, the
+**The memory stores are closed too.** `pando/` and the old `foreman/` dir under
+every data dir hold the conversation memory. The fence grants no access to
+them, read or write, whatever the envelope or `--allow` of a path above them
+says. An envelope prefix that reaches one is cut down to leave it out. A
+workspace, work dir or harness path that holds one is refused. An `--allow`
+that is a store itself still opens it, like a secret: you typed it. A fenced
+agent's `cat`, glob and `tar` of the store fail at the kernel.
+
+The warden's state is never writable. The disarm marker, the envelopes, the
 asks, the answers, the audit log, the sessions and `config.yaml` stay read
 only, even if the envelope or `--allow` names them.
 
-## The gate hook asks the resident gate
+## The warden hook asks the resident warden
 
 The hook is a child of the harness, so it runs inside the fence, where the
-gate's state is read only. It is a thin client: it sends each call, asks
-included, to the resident gate (`daisugi gate serve`) on `<gate root>/gate.sock`,
+warden's state is read only. It is a thin client: it sends each call, asks
+included, to the resident warden (`daisugi warden serve`) on `<warden root>/warden.sock`,
 and that server, outside the fence, decides and makes every write. If the
-gate is on and nothing answers on `gate.sock`, the hook denies the call.
+warden is on and nothing answers on `warden.sock`, the hook denies the call.
 
-`daisugi fence` starts the resident gate before it applies the ruleset when
-the gate is on and no server answers, and says so on stderr with its pid. It
+`daisugi fence` starts the resident warden before it applies the ruleset when
+the warden is on and no server answers, and says so on stderr with its pid. It
 starts once per session; later runs find it. It starts it with
-`--captures-root <gate root>/captures`, so a fenced run's allowed calls are
+`--captures-root <warden root>/captures`, so a fenced run's allowed calls are
 captured there.
 
-The resident gate takes no path from a request. Its root, and the captures
-root (`daisugi gate serve --captures-root DIR`), are fixed when it starts; a
+The resident warden takes no path from a request. Its root, and the captures
+root (`daisugi warden serve --captures-root DIR`), are fixed when it starts; a
 request that names `--root` or `--captures-root`, or a prefix of either, is
 denied. A session id must match `[A-Za-z0-9._-]{1,128}` (not `.` or `..`),
 or the call is denied. Before it applies the ruleset, the fence writes
-`<gate root>/fence-runs/<pid>.json` with its pid, the start time of that pid
+`<warden root>/fence-runs/<pid>.json` with its pid, the start time of that pid
 and the resolved workspace, and the server finds it from the caller's pid
 and its parents: that is how it knows a caller is fenced.
+The record is the last thing the fence does before it applies the ruleset:
+after the resident warden is up, before the harness starts. No variable
+sets it, and `DAISUGI_FENCED` in a caller's environment fences nothing
+(ADR-0028).
+
+**A fenced call records its shell file accesses.** For a fenced caller, a
+shell read or write that the warden cannot place, or places outside
+`file_read` and `file_write`, is allowed and recorded. The audit line has a
+`fence_enforced` list and the session tree a `fenceEnforced` verdict, each with
+the parser's reason. Only the kernel can stop such an access, and it does.
+The file tools, the hard-deny rules, the head allowlist, the metacharacter
+check, MCP rules and the other checks decide as before. The kernel stops such an access except where the fence grants the path to
+the harness (its config, its transcripts, the warden root with captures and
+audit): a shell read of one of those is recorded, not denied. The fence does
+not limit the network, so a shell access to `/dev/tcp/` or `/dev/udp/` is
+denied as it is without a fence. Without a fence, enforce denies the accesses
+it cannot place.
 
 **Checkpoints are off inside the fence.** A `--checkpoints` call from a
 fenced session is denied with one line, `checkpoints are off inside the
@@ -102,6 +130,7 @@ harness writes:
 | pi | `~/.pi/agent/sessions` |
 | opencode | `~/.local/share/opencode/{storage,log,project}`, `~/.local/share/opencode/auth.json`, `~/.local/state/opencode` |
 | sprig | the `--session-dir` coppice passes (a work dir) |
+| hermes | `~/.hermes/{sessions,logs,memories}`, `~/.hermes/auth.json`, `~/.hermes/state.db` (and its `-wal` and `-shm`) |
 
 So `~/.claude/settings.json`, hooks, skills, agents, plugins and `CLAUDE.md`
 stay read only. So do `~/.claude.json` (it holds `mcpServers` and the
@@ -130,18 +159,21 @@ starts, since the harness cannot make it under a read-only parent. It does
 not make a missing file: log in once outside the fence first.
 
 Under coppice, a fenced Claude Code pane also starts with
-`--settings '<JSON>'`. That document holds the gate hook (by absolute path,
+`--settings '<JSON>'`. That document holds the warden hook (by absolute path,
 matcher `*`, `onFailure: block`), `disableAllHooks: false` and a
 `ConfigChange` hook that exits 2. It outranks the user, project and local
-settings files, so a planted file cannot drop the gate hook or switch hooks
+settings files, so a planted file cannot drop the warden hook or switch hooks
 off mid-session. The strongest form is a root-owned
-`/etc/claude-code/managed-settings.json` with the gate hook and
+`/etc/claude-code/managed-settings.json` with the warden hook and
 `allowManagedHooksOnly: true`. That needs root once, and the fence does not
 do it for you.
 
 The workspace is granted whole, and Landlock cannot hide the files in it
 that run code later: `.mcp.json`, `.envrc`, `.gitmodules`, `opencode.json`,
-the `.claude/`, `.codex/` and `.opencode/` trees, and `.git/config` and
+the config files of the `.claude/`, `.codex/` and `.opencode/` dirs (settings,
+hooks, MCP config, instruction files, commands, agents, skills, plugins and
+the like, not the transcripts, todos and tool results the harness writes
+while it runs), and `.git/config` and
 `.git/hooks` (or, when `.git` is a file, those of the git dir it names and
 its common dir). A fenced agent can plant a git hook that runs later,
 outside any fence. Coppice hashes those files when a fenced pane starts and
@@ -164,26 +196,32 @@ refuses unless you pass `--allow-weak-ipc`, which fences the files only. Your
 kernel also needs `landlock` in its `lsm=` list. Check with
 `daisugi fence --print`, which shows the ABI.
 
-To run without the fence: `--no-fence`, or leave coppice at its default
-(`fence = "off"`).
+To run without the fence: `--no-fence`, or set `fence = "off"` in
+`coppice.toml`. Under coppice's default (`fence = "auto"`), a kernel without
+Landlock ABI 9 runs agent work bare instead, and the floor says that files are
+not confined and names the kernel.
 
 ## Under coppice
 
-The fence is opt-in in coppice: with no `fence` line it starts every pane
-bare, as light as a plain harness. Turn it on for all panes with `fence =
-"on"`, or for one pane with `coppice pane create --fence on`. With `fence =
-"auto"`, coppice fences while the gate is on (any gate root it may use holds
-`envelopes/` and no `DISARMED` marker). When the fence is on, it still fails
-closed: a pane whose fence cannot be applied does not start. It covers
-terminal panes and headless panes, a resume, a fork and a restart, and the
-foreman's workers and turns. A plain shell pane is yours
-and stays bare. In `coppice.toml`:
+The fence is on by default in coppice. With no `fence` line the setting is
+`"auto"`: coppice fences agent panes, steward workers and tree children while
+the warden is on (any warden root it may use holds `envelopes/` and no
+`DISARMED` marker). A plain shell pane is yours and stays bare. In
+`coppice.toml`:
 
 ```toml
-# fence = "off"  # never (the default)
-fence = "on"     # always
-# fence = "auto" # while the gate is on
+fence = "auto"   # while the warden is on (the default)
+# fence = "on"   # always; a pane whose fence cannot be applied does not start
+# fence = "off"  # never; your choice, and the floor says files are not confined
 ```
+
+Under `"auto"` a kernel without Landlock ABI 9 runs the work bare, and the
+floor shows the line `Files are not confined` with the reason. Coppice never
+passes `--allow-weak-ipc`: weak IPC would let a child reach D-Bus or the user
+systemd outside the fence. Under `"on"` the fence fails
+closed: a pane whose fence cannot be applied does not start. The fence covers
+terminal panes and headless panes, a resume, a fork and a restart, and the
+steward's workers and turns.
 
 One pane can choose: `coppice pane create --fence on ...` (or `off`). Only the
 operator can turn a fence off: a pane, a plugin or a process coppice cannot place cannot turn a fence
@@ -194,12 +232,13 @@ its own, so a request cannot move them. Each run of a fenced pane gets a
 fresh private temp dir under `<coppice data>/fence-tmp/`, removed when the
 pane ends.
 
-A foreman worker's `daisugi tree run` runs bare, since it writes the worker's
-gate root; only its sprig runs under the fence (`DAISUGI_SPRIG_FENCE`), with
-the worker's directory and its own session dir writable and the gate root
+A steward worker's `daisugi tree run` runs bare, since it writes the worker's
+warden root; only its sprig runs under the fence (`DAISUGI_SPRIG_FENCE`), with
+the worker's directory and its own session dir writable and the warden root
 read only. Coppice also passes `--sprig-fence`, so a `daisugi` that cannot
 apply the fence refuses the run and the worker does not start. A worker with
-the spawn tool cannot run under the fence.
+the spawn tool cannot run under the fence. Coppice never gives a worker the
+spawn tool.
 
 ## What it does not do
 
@@ -207,17 +246,17 @@ the spawn tool cannot run under the fence.
   harness can still reach any host.
 - **chmod, chown, setxattr and utimes are not limited.** No Landlock right
   covers them. An agent can change the mode of a file it cannot open. The
-  gate counts a gate root it cannot read as on, and denies an allow whose
-  audit line it cannot write, so a chmod cannot switch the gate off without a
+  warden counts a warden root it cannot read as on, and denies an allow whose
+  audit line it cannot write, so a chmod cannot switch the warden off without a
   word.
 - **The workspace's `.git` and project config are writable** (see above).
 - **No checkpoints inside the fence.** A fenced session gets no
   checkpoints and no rewind to one; run without the fence to have them.
 - **This workspace's own Claude memory is writable** (see above), like its
   `CLAUDE.md`.
-- **A fenced run's captures** go to the captures root the resident gate
+- **A fenced run's captures** go to the captures root the resident warden
   started with, or nowhere: a request cannot name one. `daisugi fence` and
-  `daisugi start` both start it with `<gate root>/captures`, so whichever
+  `daisugi start` both start it with `<warden root>/captures`, so whichever
   starts it first, the captures land there. A server you start by hand with
   no `--captures-root` captures nothing.
 - **A standalone run's temp dir is not removed at exit**, because the fence
@@ -235,18 +274,18 @@ the spawn tool cannot run under the fence.
 The fence adds one exec and a few system calls at start, and nothing per
 call. Measured on this box (a fake HOME, `fence -- /bin/true` against
 `fence --no-fence -- /bin/true`, median of 300 runs): the fence's own work is
-about 1.9 ms in the Go client and 2.3 ms in the Rust client, with the gate
+about 1.9 ms in the Go client and 2.3 ms in the Rust client, with the warden
 off or on and its server running. Most of it is the private temp dir and
 the password lookup. The rest of the start-up is the `daisugi` binary
 itself (about 4.6 ms for Go and 2.2 ms for Rust over a bare `/bin/true`).
-Starting the resident gate is once per session: the first fenced run with
-the gate on and no server takes about 26 ms (Go) or 19 ms (Rust).
+Starting the resident warden is once per session: the first fenced run with
+the warden on and no server takes about 26 ms (Go) or 19 ms (Rust).
 
 ## Rules and parity
 
 The rule list comes from one pure function, `opendaisugi.fence.plan`, and the
 Go and Rust clients must print the same list for the same input
-(`clients/fence_compare.py` runs 88 golden cases through each). Only the
+(`clients/fence_compare.py` runs 102 golden cases through each). Only the
 kernel step is in Go and Rust. The rulings are `FN-R-1` to `FN-R-26` in
 `clients/ADJUDICATIONS.md`.
 

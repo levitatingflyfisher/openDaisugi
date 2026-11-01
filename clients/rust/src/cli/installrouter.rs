@@ -1,154 +1,249 @@
-//! `install --router`: `cli._plan_router_update` and `_apply_router_update`.
+//! The BASE_URL layer of install (ADR-0013): each harness pointed at the
+//! local token-saving router, and the reverse. The Go client's
+//! `install/router.go` is the reference.
 
-use super::config::{self, ConfigErr, SaveErr};
-use super::gatewaycmd::ROUTERS;
-use super::routercmd::sy_config;
-use super::{Env, Parsed, Stop};
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::Value;
-use crate::switchyard as sy;
+use super::wardenroot::join;
+use super::install::{dump_settings, fail, plan, read_json, Edit, InstErr, ReadState, Runtime, Step, R};
+use crate::warden::py::text::is_space;
+use crate::warden::pyjson::{loads, py_type_name, Object, Value};
 
-pub type Update = Vec<(String, Value)>;
+/// DEFAULT_ROUTER_BASE_URL.
+pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8787";
 
-impl Env {
-    /// `cli._plan_router_update`: the config.yaml fields a --router choice
-    /// sets, checked, or None for no change. Every refusal exits 1 before
-    /// anything is written.
-    pub(super) fn plan_router_update(&mut self, p: &Parsed, gateway: bool) -> Result<Option<Update>, Stop> {
-        let mut efficient = p.str("--efficient-model", "");
-        let mut capable = p.str("--capable-model", "");
-        if !p.has("--router") {
-            if !efficient.is_empty() || !capable.is_empty() || p.has("--api-key-env") {
-                self.out("Note: --efficient-model, --capable-model and --api-key-env apply with --router switchyard.\n");
-            }
-            return Ok(None);
-        }
-        let router = p.str("--router", "");
-        if !ROUTERS.contains(&router.as_str()) {
-            return Err(self.fail3(
-                &format!("unknown --router {}.", repr(&router)),
-                "the gateway knows four choosers.",
-                &format!("choose one of: {}", ROUTERS.join(", ")),
-                1,
-            ));
-        }
-        if !gateway {
-            self.out("Note: --router only applies with --gateway. This run writes no router config.\n");
-            return Ok(None);
-        }
-        let mut update: Update = vec![("gateway_router".into(), Value::Str(router.clone()))];
-        if router != "switchyard" {
-            self.check_restate(&update)?;
-            return Ok(Some(update));
-        }
-        let cfg = self.load_cfg("install", &super::gateroot::join(&self.data_home(), "config.yaml"))?;
-        if efficient.is_empty() {
-            if let Some(e) = &cfg.switchyard_efficient_model {
-                efficient = e.clone();
-            }
-        }
-        if efficient.is_empty() {
-            return Err(self.fail3(
-                "--router switchyard needs an efficient model.",
-                "the stage router chooses between a capable tier and a cheaper one.",
-                "add --efficient-model <id>: a local model id, or a claude-* id.",
-                1,
-            ));
-        }
-        if capable.is_empty() {
-            capable = cfg.switchyard_capable_model.clone();
-        }
-        update.push(("switchyard_efficient_model".into(), Value::Str(efficient.clone())));
-        update.push(("switchyard_capable_model".into(), Value::Str(capable.clone())));
-        let mut sc = sy_config(&cfg);
-        sc.efficient_model = Some(efficient);
-        sc.capable_model = capable;
-        if p.has("--api-key-env") {
-            let v = strip(&p.str("--api-key-env", "")).to_string();
-            if v.is_empty() {
-                update.push(("switchyard_api_key_env".into(), Value::Null));
-                sc.api_key_env = None;
-            } else {
-                update.push(("switchyard_api_key_env".into(), Value::Str(v.clone())));
-                sc.api_key_env = Some(v);
-            }
-        }
-        // The key variable is checked when the gateway starts, in its own
-        // environment, not in the shell that runs install.
-        let targets = sy::targets_from_config(&sc).unwrap_or_default();
-        if let Err(why) = sy::render(&targets, &cfg.switchyard_route_id, &|_| true) {
-            return Err(self.fail3(
-                &format!("cannot build the Switchyard route: {why}"),
-                "the two tiers must name two different models.",
-                "run again with a different --efficient-model or --capable-model.",
-                1,
-            ));
-        }
-        self.check_restate(&update)?;
-        Ok(Some(update))
-    }
+/// The router gap Hermes reports.
+pub const HERMES_GAP: &str = "Not wired: router speaks Anthropic Messages; this harness's custom endpoint expects OpenAI \
+                              \u{2014} not wired (needs an OpenAI-wire adapter)";
 
-    /// Refuses, before anything is written, a config.yaml this binary
-    /// cannot write back the way save_config would. A file pydantic rejects
-    /// is left to fail where Python fails, after the harness writes.
-    fn check_restate(&mut self, update: &Update) -> Result<(), Stop> {
-        let path = super::gateroot::join(&self.data_home(), "config.yaml");
-        match config::dump(&path, &self.home, update) {
-            Ok(_) | Err(ConfigErr::Invalid | ConfigErr::Yaml(_)) => Ok(()),
-            Err(e) => Err(self.refuse("install", &format!("config.yaml is not one this binary rewrites: {e}")).unwrap_err()),
+/// `Runtime.plan(home, layers)` for the warden and base_url layers: the
+/// supported steps in layer order, then the gap notes.
+pub fn plan_steps(rt: &Runtime, home: &str, router: bool, enforce: bool, ask: bool, url: &str) -> Vec<Step> {
+    let (mut steps, mut gaps) = (vec![], vec![]);
+    for s in plan(rt, home, enforce, ask) {
+        if s.supported {
+            steps.push(s);
+        } else {
+            gaps.push(s);
         }
     }
+    if router {
+        let step = |description: String, target: String| Step { layer: "base_url", description, target, supported: true };
+        match rt.key {
+            "claude" => steps.push(step(format!("Point ANTHROPIC_BASE_URL at {url}"), join(home, ".claude/settings.json"))),
+            "codex" => steps.push(step(
+                format!("Register router model provider ({url}/v1, wire_api=chat) and select it"),
+                join(home, ".codex/config.toml"),
+            )),
+            "openclaw" => steps.push(step(
+                format!("Register opendaisugi router provider (anthropic-messages) at {url} \u{2014} select it as the active provider manually"),
+                join(home, ".openclaw/openclaw.json"),
+            )),
+            "hermes" => gaps.push(Step { layer: "base_url", description: HERMES_GAP.into(), target: String::new(), supported: false }),
+            _ => {}
+        }
+    }
+    steps.extend(gaps);
+    steps
+}
 
-    /// `cli._apply_router_update`: the router fields saved, and for
-    /// switchyard the TOML file written beside them.
-    pub(super) fn apply_router_update(&mut self, update: &Update) -> Result<(), Stop> {
-        let cfg_path = super::gateroot::join(&self.data_home(), "config.yaml");
-        match config::save(&cfg_path, &self.home, update) {
-            Ok(()) => {}
-            Err(SaveErr::Config(ConfigErr::Invalid | ConfigErr::Yaml(_))) => {
-                self.errf(&format!("daisugi install: pydantic_core._pydantic_core.ValidationError: {cfg_path} does not validate\n"));
-                return Err(Stop::Exit(1));
+
+
+/// The content an edit is planned on: an earlier edit of the same file in
+/// this run, or the file.
+pub(super) fn json_of(p: &str, prior: Option<&Edit>) -> R<(Value, ReadState)> {
+    if let Some(e) = prior.filter(|e| !e.content.is_empty()) {
+        return match loads(&e.content) {
+            Ok(v) => Ok((v, ReadState::Ok)),
+            Err(_) => Err(InstErr::Unsupported),
+        };
+    }
+    read_json(p)
+}
+
+/// `_patch_claude_base_url`.
+pub fn plan_claude_base_url(settings_path: &str, url: &str, prior: Option<&Edit>) -> R<Option<Edit>> {
+    let (mut v, st) = json_of(settings_path, prior)?;
+    if st == ReadState::Bad {
+        return Ok(Some(Edit {
+            path: settings_path.into(),
+            warning: format!(
+                "{settings_path} is not valid JSON; skipping ANTHROPIC_BASE_URL to avoid overwriting your Claude Code \
+                 settings (permissions/env). Fix the file and re-run `daisugi install`."
+            ),
+            ..Edit::default()
+        }));
+    }
+    let existed = st != ReadState::Missing;
+    if !existed {
+        v = Value::Obj(Object::new());
+    }
+    let Value::Obj(s) = &mut v else {
+        return fail(format!("'{}' object has no attribute 'setdefault'", py_type_name(&v)));
+    };
+    if s.get("env").is_none() {
+        s.set("env", Object::new());
+    }
+    let Some(Value::Obj(env)) = s.get_mut("env") else {
+        return fail(format!("'{}' object has no attribute 'get'", py_type_name(s.value("env"))));
+    };
+    if env.get("ANTHROPIC_BASE_URL").and_then(|c| c.as_str()) == Some(url) {
+        return Ok(None);
+    }
+    env.set("ANTHROPIC_BASE_URL", url);
+    Ok(Some(Edit { path: settings_path.into(), existed, content: dump_settings(&v), ..Edit::default() }))
+}
+
+const CODEX_SELECT: &str = "model_provider = \"opendaisugi\"";
+
+fn codex_block(url: &str) -> String {
+    format!("\n[model_providers.opendaisugi]\nname = \"openDaisugi router\"\nbase_url = \"{url}/v1\"\nwire_api = \"chat\"\n")
+}
+
+/// `path.read_text()`: "" and false when the file is absent; a file that
+/// is not UTF-8 fails the runtime.
+pub(super) fn read_text(p: &str) -> R<(String, bool)> {
+    if std::fs::metadata(p).is_err() {
+        return Ok((String::new(), false));
+    }
+    let raw = match std::fs::read(p) {
+        Ok(r) => r,
+        Err(e) => return fail(e.to_string()),
+    };
+    match String::from_utf8(raw) {
+        Ok(t) => Ok((t, true)),
+        Err(_) => fail(format!("{p} is not valid UTF-8")),
+    }
+}
+
+
+/// `plan_codex_base_url` on an earlier edit's content.
+pub fn plan_codex_base_url_on(p: &str, url: &str, prior: Option<&Edit>) -> R<Option<Edit>> {
+    let (mut text, existed) = match prior {
+        Some(e) => (e.content.clone(), true),
+        None => read_text(p)?,
+    };
+    if text.contains("[model_providers.opendaisugi]") {
+        return Ok(None);
+    }
+    if !text.contains(CODEX_SELECT) {
+        text = format!("{CODEX_SELECT}\n{text}");
+    }
+    let content = format!("{}\n{}", text.trim_end_matches('\n'), codex_block(url));
+    Ok(Some(Edit { path: p.into(), existed, content, ..Edit::default() }))
+}
+
+/// `_strip_json5_comments`: // and /* */ comments outside strings, then a
+/// comma before a closing brace or bracket (anywhere, as the regex does).
+pub fn strip_json5(text: &str) -> String {
+    let rs: Vec<char> = text.chars().collect();
+    let n = rs.len();
+    let find = |sub: &[char], from: usize| -> Option<usize> {
+        if from > n || sub.len() > n {
+            return None;
+        }
+        (from..=n - sub.len()).find(|&i| rs[i..i + sub.len()] == *sub)
+    };
+    let mut out: Vec<char> = Vec::with_capacity(n);
+    let mut in_str = false;
+    let mut i = 0;
+    while i < n {
+        let c = rs[i];
+        if in_str {
+            out.push(c);
+            if c == '\\' && i + 1 < n {
+                out.push(rs[i + 1]);
+                i += 2;
+                continue;
             }
-            Err(SaveErr::Config(e)) => {
-                return Err(self.refuse("install", &format!("{cfg_path} is not one this binary rewrites: {e}")).unwrap_err())
+            if c == '"' {
+                in_str = false;
             }
-            Err(SaveErr::Io(e)) => return Err(self.fail("install", &e.to_string()).unwrap_err()),
+            i += 1;
+            continue;
         }
-        let cfg = match config::load(&cfg_path) {
-            Ok(c) => c,
-            Err(e) => return Err(self.fail("install", &e.to_string()).unwrap_err()),
-        };
-        if cfg.gateway_router != "switchyard" {
-            self.out(&format!(
-                "Gateway router set to {} in {cfg_path}. Restart `daisugi gateway` to use it.\n",
-                cfg.gateway_router
-            ));
-            return Ok(());
+        if c == '"' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+            continue;
         }
-        let targets = sy::targets_from_config(&sy_config(&cfg)).unwrap_or_default();
-        let text = match sy::render(&targets, &cfg.switchyard_route_id, &|_| true) {
-            Ok(t) => t,
-            Err(why) => return Err(self.fail("install", &why).unwrap_err()),
-        };
-        let toml_path = match sy::write_config(&self.data_home(), &text, "switchyard.toml") {
-            Ok(p) => p,
-            Err(e) => return Err(self.fail("install", &e.to_string()).unwrap_err()),
-        };
-        let auth = sy::auth_modes(&targets);
-        self.out(&format!("Switchyard router: wrote {toml_path} and set gateway_router in {cfg_path}.\n"));
-        self.out(&format!("  capable tier {}: {}\n", targets.capable_id, auth.capable));
-        self.out(&format!("  efficient tier {}: {}\n", targets.efficient_id, auth.efficient));
-        if !targets.api_key_env.is_empty() && self.env.get(&targets.api_key_env).is_none_or(|v| v.is_empty()) {
-            self.out(&format!(
-                "  {} is not set in this shell. The gateway refuses to start until it is set in the shell that starts it.\n",
-                targets.api_key_env
-            ));
+        if c == '/' && i + 1 < n && rs[i + 1] == '/' {
+            i = find(&['\n'], i).unwrap_or(n);
+            continue;
         }
-        let path = self.env.get("PATH").cloned().unwrap_or_default();
-        if sy::look_path(sy::BINARY_NAME, &path).is_none() {
-            self.out(&format!("  switchyard-server is not on PATH yet. Install it with: {}\n", sy::INSTALL_CMD));
+        if c == '/' && i + 1 < n && rs[i + 1] == '*' {
+            i = find(&['*', '/'], i + 2).map(|j| j + 2).unwrap_or(n);
+            continue;
         }
-        self.out("  Start it with: daisugi gateway --router switchyard\n");
-        Ok(())
+        out.push(c);
+        i += 1;
+    }
+    // re.sub(r",(\s*[}\]])", r"\1", ...)
+    let mut res = String::with_capacity(out.len());
+    for (k, &c) in out.iter().enumerate() {
+        if c == ',' {
+            let mut j = k + 1;
+            while j < out.len() && is_space(out[j]) {
+                j += 1;
+            }
+            if j < out.len() && (out[j] == '}' || out[j] == ']') {
+                continue;
+            }
+        }
+        res.push(c);
+    }
+    res
+}
+
+
+
+/// `_pop_json_env_key`.
+pub fn plan_pop_env_key(p: &str, key: &str, prior: Option<&Edit>) -> R<Option<Edit>> {
+    let (mut v, st) = json_of(p, prior)?;
+    if st != ReadState::Ok {
+        return Ok(None);
+    }
+    let Value::Obj(s) = &mut v else { return Err(InstErr::Unsupported) };
+    let Some(Value::Obj(env)) = s.get_mut("env") else { return Ok(None) };
+    if env.get(key).is_none() {
+        return Ok(None);
+    }
+    env.remove(key);
+    if env.is_empty() {
+        s.remove("env");
+    }
+    Ok(Some(Edit { path: p.into(), existed: true, content: dump_settings(&v), ..Edit::default() }))
+}
+
+
+/// `plan_codex_unpatch` on an earlier edit's content.
+pub fn plan_codex_unpatch_on(p: &str, prior: Option<&Edit>) -> R<Option<Edit>> {
+    let (mut text, existed) = match prior {
+        Some(e) => (e.content.clone(), true),
+        None => read_text(p).map_err(|_| InstErr::Unsupported)?,
+    };
+    if !existed || (!text.contains("[model_providers.opendaisugi]") && !text.contains(CODEX_SELECT)) {
+        return Ok(None);
+    }
+    let re = regex::Regex::new(r"\n?\[model_providers\.opendaisugi\][^\[]*").expect("a fixed pattern");
+    if let Some(m) = re.find(&text) {
+        text = format!("{}\n{}", &text[..m.start()], &text[m.end()..]);
+    }
+    text = text.replacen(&format!("{CODEX_SELECT}\n"), "", 1);
+    let mut cleaned = text.trim_matches('\n').to_string();
+    if !cleaned.is_empty() {
+        cleaned.push('\n');
+    }
+    Ok(Some(Edit { path: p.into(), existed: true, content: cleaned, ..Edit::default() }))
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json5_comments_and_trailing_commas_go() {
+        assert_eq!(strip_json5("{\"a\": \"//x\", // c\n\"b\": [1, /* d */ 2,\n]\n,}"), "{\"a\": \"//x\", \n\"b\": [1,  2\n]\n}");
     }
 }

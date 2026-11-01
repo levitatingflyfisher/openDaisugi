@@ -2,7 +2,7 @@
 //! its lock file of hashed requirements. The built-in catalog and locks
 //! are the repository's own files (`packs/`), included at build time.
 
-use crate::gate::pyjson::{loads, Object, Value};
+use crate::warden::pyjson::{loads, Object, Value};
 
 /// The catalog's pinned CPython.
 #[derive(Debug, Clone, Default)]

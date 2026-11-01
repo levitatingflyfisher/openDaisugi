@@ -305,7 +305,7 @@ test('home reads from the top: facts, the cards that need you, the agents fold, 
   assert.ok(at('roster') < at('chat'));
   assert.ok(at('chat') < at('tell'));
   assert.ok(at('tell') < at('recent'), 'the bar is not above Recent');
-  assert.match(html, /placeholder="Tell the foreman…"/);
+  assert.match(html, /placeholder="Tell the steward…"/);
 });
 
 test('the chat bar is docked at the bottom of a phone, above the keyboard, and the chat is on a phone only', () => {
@@ -319,20 +319,20 @@ test('the fold line counts the agents and their projects', () => {
   assert.equal(foldLine([]), 'No agents yet');
   assert.equal(foldLine([{ id: 'a', cwd: '/x' }]), '1 agent · 1 project');
   assert.equal(foldLine([{ id: 'a', cwd: '/x' }, { id: 'b', cwd: '/y' }, { id: 'c', cwd: '/y' }, { id: 'd', cwd: '/y', closed: true }]), '3 agents · 2 projects');
-  // The foreman's scratch directory is no project.
-  assert.equal(foldLine([{ id: 'a', cwd: '/x' }, { id: 'f', cwd: '/state/foreman' }], 'f'), '2 agents · 1 project');
+  // The steward's scratch directory is no project.
+  assert.equal(foldLine([{ id: 'a', cwd: '/x' }, { id: 'f', cwd: '/state/steward' }], 'f'), '2 agents · 1 project');
 });
 
 test('the chat chips are 44 px tall to tap, and the minimap does not draw on a phone', () => {
   assert.match(css, /button\.chip-agent \{[^}]*min-height: 44px;/);
   assert.match(css, /body\.phone #minimap-frame \{ display: none; \}/);
-  assert.match(html, /<label for="tell-text">Tell the foreman<\/label>/);
+  assert.match(html, /<label for="tell-text">Tell the steward<\/label>/);
   assert.doesNotMatch(html, /[Pp]lumbing/);
 });
 
 test('words typed in a sheet say which agent they went to, and opening a sheet clears an older line', async () => {
   const { ws, sent } = await boot(390, 844);
-  global.window.coppice.status('Sent to foreman.');
+  global.window.coppice.status('Sent to steward.');
   global.location.hash = '#/pane/a';
   route();
   await settle();
@@ -385,7 +385,7 @@ test('a phone subscribes to messages, reads the chat, and reads it again on a me
   assert.equal(sent.filter((m) => m.cmd === 'floor.chat').length, before + 1);
 });
 
-test('a chip in a foreman message opens that agent\'s sheet over home, and the sheet goes back', async () => {
+test('a chip in a steward message opens that agent\'s sheet over home, and the sheet goes back', async () => {
   await chatBoot([{ id: 'a1', at: 1, role: 'agent', text: 'Started a on the parser.', pane: 'f' }]);
   const chip = element('chat-list').querySelector('.chip-agent');
   assert.ok(chip, 'no chip in the reply');
@@ -411,7 +411,7 @@ test('a sentence sent from the bar shows in the chat at once, then as sent, and 
     assert.match(element('chat-list').textContent, /sending.*SECRET check the parser/);
     const talk = sent.filter((m) => m.cmd === 'floor.talk').pop();
     assert.equal(talk.text, 'SECRET check the parser');
-    ws.fire('message', { data: JSON.stringify({ id: talk.id, ok: true, result: { pane: 'f', label: 'foreman', queued: 1 } }) });
+    ws.fire('message', { data: JSON.stringify({ id: talk.id, ok: true, result: { pane: 'f', label: 'steward', queued: 1 } }) });
     await settle();
     await settle();
     assert.match(element('chat-list').textContent, /sent.*SECRET check the parser/);
@@ -426,4 +426,24 @@ test('a wide page reads no chat', async () => {
   await settle();
   await settle();
   assert.equal(sent.filter((m) => m.cmd === 'floor.chat').length, 0);
+});
+
+test('on the phone home the rail is not a scroller and every area above the chat is bounded', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
+  const home = 'body.phone:has(#screen-roster:not([hidden]))';
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // A rule whose selector list holds sel, and whose body matches body.
+  const has = (sel, body) => new RegExp(esc(home + ' ' + sel) + '(,[^{]*)?\\s*\\{[^}]*' + body).test(css);
+  assert.ok(has('#rail', 'overflow: hidden'), 'the rail still scrolls on its own');
+  assert.ok(!has('#rail', 'overflow-y: auto'));
+  for (const [sel, max] of [['#needs', '46vh'], ['#envelopes', '46vh'], ['#quiet', '12vh'], ['#agents', '34vh'], ['#recent', '20vh'], ['#view-list', '20vh']]) {
+    assert.ok(has(sel, 'max-height: ' + max), sel + ' is not bounded');
+    assert.ok(has(sel, 'min-height: 0; overflow-y: auto'), sel + ' does not scroll inside its own box');
+  }
+  assert.ok(has('#chat', 'overflow-y: auto'));
+  assert.match(css, /#envelopes:not\(\[hidden\]\) ~ #quiet \{ display: none; \}/, 'Nothing needs you shows beside a waiting card');
+  assert.match(css, /#envelopes \.card\.envelope \.envelope-actions \{[^}]*position: sticky; bottom: 0/, 'Approve can scroll out of its box');
+  // The cards that wait for an answer do not give way to the lists.
+  assert.ok(has('#envelopes', 'flex-shrink: 0') && has('#needs', 'flex-shrink: 0'));
 });

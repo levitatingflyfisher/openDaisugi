@@ -17,57 +17,57 @@ import (
 )
 
 // outsideTTL is how long the floor trusts what it read about the world
-// outside coppice: the gateway address and router from the config files,
-// and whether the gateway answers.
+// outside coppice: the router address and route from the config files,
+// and whether the router answers.
 const outsideTTL = 5 * time.Second
 
-// gatewayDialTimeout bounds the check that the gateway answers.
-const gatewayDialTimeout = 300 * time.Millisecond
+// routerDialTimeout bounds the check that the router answers.
+const routerDialTimeout = 300 * time.Millisecond
 
 // outsideCache holds, under Server.outsideMu, what the floor last read
-// about the gateway.
+// about the router.
 type outsideCache struct {
-	readAt  time.Time
-	gateway string
-	router  string
+	readAt time.Time
+	router string
+	route  string
 
 	dialAt  time.Time
 	dialFor string
 	answers bool
 }
 
-// gatewayFacts returns the gateway base URL and what routes behind it,
-// "gateway" or "switchyard". The URL comes from coppice.toml's gateway
+// routerFacts returns the router base URL and what routes behind it,
+// "router" or "switchyard". The URL comes from coppice.toml's router
 // key, or daisugi's default address when the key is absent. It is empty
-// when there is no gateway or the file cannot be read.
+// when there is no router or the file cannot be read.
 //
-// The router comes from gateway_router in daisugi's config.yaml beside
-// the gate root. The gateway reads that value only when it starts, and a
-// --router flag overrides it, so this is what the gateway was set to
+// The route comes from routing_mode in daisugi's config.yaml beside
+// the warden root. The router reads that value only when it starts, and a
+// --routing-mode flag overrides it, so this is what the router was set to
 // run, not proof of what it runs now.
-func (s *Server) gatewayFacts() (gateway, router string) {
+func (s *Server) routerFacts() (router, route string) {
 	s.outsideMu.Lock()
 	defer s.outsideMu.Unlock()
 	now := time.Now()
 	if !s.outside.readAt.IsZero() && now.Sub(s.outside.readAt) < outsideTTL {
-		return s.outside.gateway, s.outside.router
+		return s.outside.router, s.outside.route
 	}
-	gateway = ""
+	router = ""
 	if cfg, _, err := config.Load(); err == nil {
-		gateway = cfg.GatewayURL()
+		router = cfg.RouterURL()
 	}
-	router = "gateway"
-	if daisugiRouter(filepath.Join(filepath.Dir(s.cfg.GateRoot), "config.yaml")) == "switchyard" {
-		router = "switchyard"
+	route = "router"
+	if daisugiRoute(filepath.Join(filepath.Dir(s.cfg.WardenRoot), "config.yaml")) == "switchyard" {
+		route = "switchyard"
 	}
-	s.outside.readAt, s.outside.gateway, s.outside.router = now, gateway, router
-	return gateway, router
+	s.outside.readAt, s.outside.router, s.outside.route = now, router, route
+	return router, route
 }
 
-// daisugiRouter reads the top-level gateway_router key from daisugi's
+// daisugiRoute reads the top-level routing_mode key from daisugi's
 // config.yaml. It reads only that one line shape, so it needs no YAML
 // parser. A missing file or key is "".
-func daisugiRouter(path string) string {
+func daisugiRoute(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -76,7 +76,7 @@ func daisugiRouter(path string) string {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
-		rest, ok := strings.CutPrefix(line, "gateway_router:")
+		rest, ok := strings.CutPrefix(line, "routing_mode:")
 		if !ok {
 			continue
 		}
@@ -102,12 +102,12 @@ func (s *Server) paneEnv(p layout.Pane, key string) string {
 // them is direct whatever else is known.
 var vendorAPIs = []string{"https://api.anthropic.com", "https://api.openai.com"}
 
-// routerOf says who routes a pane's model calls: "gateway" or
+// routeOf says who routes a pane's model calls: "router" or
 // "switchyard" when its ANTHROPIC_BASE_URL or OPENAI_BASE_URL is the
-// gateway, "direct" when either names anything else. It is "" when
-// neither is set. With no gateway to compare with, it is "direct" only
+// router, "direct" when either names anything else. It is "" when
+// neither is set. With no router to compare with, it is "direct" only
 // for a vendor's own API address, and "" for any other.
-func (s *Server) routerOf(p layout.Pane) string {
+func (s *Server) routeOf(p layout.Pane) string {
 	var bases []string
 	for _, k := range []string{"ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"} {
 		if v := strings.TrimSpace(s.paneEnv(p, k)); v != "" {
@@ -117,8 +117,8 @@ func (s *Server) routerOf(p layout.Pane) string {
 	if len(bases) == 0 {
 		return ""
 	}
-	gateway, router := s.gatewayFacts()
-	if gateway == "" {
+	router, route := s.routerFacts()
+	if router == "" {
 		for _, b := range bases {
 			for _, v := range vendorAPIs {
 				if sameEndpoint(b, v) {
@@ -129,8 +129,8 @@ func (s *Server) routerOf(p layout.Pane) string {
 		return ""
 	}
 	for _, b := range bases {
-		if sameEndpoint(b, gateway) {
-			return router
+		if sameEndpoint(b, router) {
+			return route
 		}
 	}
 	return "direct"
@@ -171,7 +171,7 @@ func isLoopbackName(host string) bool {
 }
 
 // sameEndpoint compares two base URLs by endpoint only. A path is not
-// compared: the gateway serves the OpenAI wire under /v1 of the same
+// compared: the router serves the OpenAI wire under /v1 of the same
 // address.
 func sameEndpoint(a, b string) bool {
 	ea, oka := endpoint(a)
@@ -179,26 +179,26 @@ func sameEndpoint(a, b string) bool {
 	return oka && okb && ea == eb
 }
 
-// gatewayAnswers reports whether something accepts a connection at the
-// gateway's address. It dials only a loopback address, never a remote
+// routerAnswers reports whether something accepts a connection at the
+// router's address. It dials only a loopback address, never a remote
 // one, and remembers the answer for outsideTTL. known is false when there
-// is no gateway or its address is not loopback.
+// is no router or its address is not loopback.
 //
 // It opens a TCP connection and closes it without a request: every path
-// the gateway serves but one is sent on to the model provider, so an HTTP
+// the router serves but one is sent on to the model provider, so an HTTP
 // request here could leave the machine.
-func (s *Server) gatewayAnswers(gateway string) (answers, known bool) {
-	u, err := url.Parse(gateway)
+func (s *Server) routerAnswers(router string) (answers, known bool) {
+	u, err := url.Parse(router)
 	if err != nil || u.Host == "" || !isLoopbackName(strings.ToLower(u.Hostname())) {
 		return false, false
 	}
-	e, ok := endpoint(gateway)
+	e, ok := endpoint(router)
 	if !ok {
 		return false, false
 	}
 	port := e[strings.LastIndexByte(e, ':')+1:]
 	s.outsideMu.Lock()
-	if s.outside.dialFor == gateway && time.Since(s.outside.dialAt) < outsideTTL {
+	if s.outside.dialFor == router && time.Since(s.outside.dialAt) < outsideTTL {
 		a := s.outside.answers
 		s.outsideMu.Unlock()
 		return a, true
@@ -208,29 +208,29 @@ func (s *Server) gatewayAnswers(gateway string) (answers, known bool) {
 	if host == "localhost" {
 		host = "127.0.0.1"
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), gatewayDialTimeout)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), routerDialTimeout)
 	answers = err == nil
 	if conn != nil {
 		_ = conn.Close()
 	}
 	s.outsideMu.Lock()
-	s.outside.dialAt, s.outside.dialFor, s.outside.answers = time.Now(), gateway, answers
+	s.outside.dialAt, s.outside.dialFor, s.outside.answers = time.Now(), router, answers
 	s.outsideMu.Unlock()
 	return answers, true
 }
 
-// disarmed reports whether daisugi's disarm marker is in the gate root.
-// While it is there, an installed gate allows every call.
+// disarmed reports whether daisugi's disarm marker is in the warden root.
+// While it is there, an installed warden allows every call.
 func (s *Server) disarmed() bool {
-	_, err := os.Lstat(filepath.Join(s.cfg.GateRoot, "DISARMED"))
+	_, err := os.Lstat(filepath.Join(s.cfg.WardenRoot, "DISARMED"))
 	return err == nil
 }
 
-// modeOff is the daisugi mode of a harness pane that no gate hook has
+// modeOff is the daisugi mode of a harness pane that no warden hook has
 // reported for.
 const modeOff = "off"
 
-// stackOf is a pane.list row's stack object: loop, model, router and
+// stackOf is a pane.list row's stack object: loop, model, route and
 // daisugi, each only when known. It is nil when nothing is known.
 func (s *Server) stackOf(p layout.Pane, v factsView) map[string]any {
 	st := map[string]any{}
@@ -240,8 +240,8 @@ func (s *Server) stackOf(p layout.Pane, v factsView) map[string]any {
 	if v.model != "" {
 		st["model"] = v.model
 	}
-	if r := s.routerOf(p); r != "" {
-		st["router"] = r
+	if r := s.routeOf(p); r != "" {
+		st["route"] = r
 	}
 	if p.Harness != "" && !p.Closed {
 		mode := v.mode
@@ -249,7 +249,7 @@ func (s *Server) stackOf(p layout.Pane, v factsView) map[string]any {
 			mode = modeOff
 		}
 		d := map[string]any{"mode": mode, "armed": !s.disarmed()}
-		// The owner set this agent to watching; the gate reads it on the
+		// The owner set this agent to watching; the warden reads it on the
 		// agent's next tool call, so mode may still say enforcing.
 		if m, note := s.modeMarker(p.ID); m != "" {
 			d["marker"] = m
@@ -265,7 +265,7 @@ func (s *Server) stackOf(p layout.Pane, v factsView) map[string]any {
 	return st
 }
 
-// addFacts puts stack, gate and tokens on one pane.list row, each only
+// addFacts puts stack, warden and tokens on one pane.list row, each only
 // when known.
 func (s *Server) addFacts(row map[string]any, p layout.Pane) {
 	v := s.viewFacts(p)
@@ -273,40 +273,40 @@ func (s *Server) addFacts(row map[string]any, p layout.Pane) {
 		row["stack"] = st
 	}
 	if v.verdict != nil {
-		row["gate"] = v.verdict
+		row["warden"] = v.verdict
 	}
 	if v.tokens != nil {
 		row["tokens"] = *v.tokens
 	}
 }
 
-// hookFiles are the harness settings a daisugi gate hook is written to,
+// hookFiles are the harness settings a daisugi warden hook is written to,
 // under the home: Claude Code's and Codex's.
 var hookFiles = []string{".claude/settings.json", ".codex/hooks.json"}
 
-// gateInstalled reports whether any harness settings file under the home
-// names the daisugi gate. Every gate hook command daisugi writes, Python,
-// Go or Rust, holds "opendaisugi.gate". It says nothing of any one pane:
+// wardenInstalled reports whether any harness settings file under the home
+// names the daisugi warden. Every warden hook command daisugi writes, Python,
+// Go or Rust, holds "opendaisugi.warden". It says nothing of any one pane:
 // that is the pane's own mode.
-func (s *Server) gateInstalled() bool {
+func (s *Server) wardenInstalled() bool {
 	if s.cfg.HookHome == "" {
 		return false
 	}
 	for _, f := range hookFiles {
 		raw, err := os.ReadFile(filepath.Join(s.cfg.HookHome, f))
-		if err == nil && strings.Contains(string(raw), "opendaisugi.gate") {
+		if err == nil && strings.Contains(string(raw), "opendaisugi.warden") {
 			return true
 		}
 	}
 	return false
 }
 
-// hookRootArg finds the --root a daisugi gate hook command names, in
+// hookRootArg finds the --root a daisugi warden hook command names, in
 // the raw text of a harness settings file.
-var hookRootArg = regexp.MustCompile(`opendaisugi\.gate[^"\n]*?--root(?:=|\s+)([^\s"\\]+)`)
+var hookRootArg = regexp.MustCompile(`opendaisugi\.warden[^"\n]*?--root(?:=|\s+)([^\s"\\]+)`)
 
-// hookRoot is the gate root an installed gate hook names with --root when
-// it is not this server's gate root, or "". Then the gate reads markers
+// hookRoot is the warden root an installed warden hook names with --root when
+// it is not this server's warden root, or "". Then the warden reads markers
 // from another place, so a mode set here does nothing, and the mode row
 // says so (F11-R-15). A root that starts with ~/ is read from the home. A
 // hook with no --root is taken to use the default root, which is this
@@ -325,7 +325,7 @@ func (s *Server) hookRoot() string {
 			if strings.HasPrefix(root, "~/") {
 				root = filepath.Join(s.cfg.HookHome, root[2:])
 			}
-			if filepath.Clean(root) != filepath.Clean(s.cfg.GateRoot) {
+			if filepath.Clean(root) != filepath.Clean(s.cfg.WardenRoot) {
 				return m[1]
 			}
 		}
@@ -396,7 +396,7 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 			case eff.State == proto.StateWorking:
 				working++
 			case eff.State == proto.StateBlocked && s.heldFor(p.ID) != nil:
-				// A foreman hears this ask first, so it is working, the
+				// A steward hears this ask first, so it is working, the
 				// same as every floor counts it from pane.list.
 				working++
 			case eff.State == proto.StateBlocked:
@@ -424,7 +424,7 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 	daisugi := map[string]any{
 		"mode": mode, "armed": !s.disarmed(),
 		"enforcing": counts["enforcing"], "watching": counts["watching"], "off": counts[modeOff],
-		"installed": s.gateInstalled(),
+		"installed": s.wardenInstalled(),
 	}
 	if root := s.hookRoot(); root != "" {
 		daisugi["hook_root"] = root
@@ -433,31 +433,31 @@ func (s *Server) handleFloorFacts(_ *Client, r *proto.Request) proto.Response {
 		"daisugi": daisugi,
 		"working": working, "needing_you": needing, "tokens_today": today,
 	}
-	// The saving is the gateway's own figure and nothing else: with none,
+	// The saving is the router's own figure and nothing else: with none,
 	// the reply has no such key.
 	if tokens, ok := s.savedToday(now); ok {
 		res["saved_today"] = map[string]any{"tokens": tokens}
 	}
-	// The floor's foreman, when the one the server tracks runs now.
+	// The floor's steward, when the one the server tracks runs now.
 	s.talkMu.Lock()
-	fid := s.trackedForeman()
+	fid := s.trackedSteward()
 	s.talkMu.Unlock()
-	if live, _ := s.foremanState(fid); live {
-		res["foreman"] = map[string]any{"pane": fid, "label": s.labelOf(fid)}
+	if live, _ := s.stewardState(fid); live {
+		res["steward"] = map[string]any{"pane": fid, "label": s.labelOf(fid)}
 	}
-	// The chat foreman's last turn: the profile it ran on, once one has run.
+	// The chat steward's last turn: the profile it ran on, once one has run.
 	if name, ok := s.lastTurnProfile(); ok {
-		res["foreman_turn"] = map[string]any{"ran_on": name}
+		res["steward_turn"] = map[string]any{"ran_on": name}
 	}
 	if days, ok := s.phoneCertDays(now); ok && days < phoneCertWarnDays {
 		res["phone_cert_days"] = days
 	}
-	if gateway, _ := s.gatewayFacts(); gateway != "" {
-		gw := map[string]any{"url": gateway}
-		if answers, known := s.gatewayAnswers(gateway); known {
+	if router, _ := s.routerFacts(); router != "" {
+		gw := map[string]any{"url": router}
+		if answers, known := s.routerAnswers(router); known {
 			gw["answers"] = answers
 		}
-		res["gateway"] = gw
+		res["router"] = gw
 	}
 	return proto.OKResp(r.ID, res)
 }

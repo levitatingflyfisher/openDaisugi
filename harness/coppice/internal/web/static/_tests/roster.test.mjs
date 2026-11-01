@@ -11,14 +11,14 @@ const NOW = 1757300060;
 // These four run against a real server's literal pane.list reply. The shape
 // is flat: state is a string on the row, not a nested PaneStateEvent. Reading
 // the nested shape would make every pane unknown, put no blocked pane first,
-// and leave askSummary empty, so the roster would look calm while the gate
+// and leave askSummary empty, so the roster would look calm while the warden
 // was holding an ask.
 test('a real pane.list row reads as the state it says it is', () => {
   const rows = paneRows(PANES, NOW);
   const blocked = rows.find((r) => r.id === 'w1:p2');
   assert.equal(blocked.state, 'blocked');
   assert.equal(blocked.harness, 'codex');
-  assert.equal(blocked.source, 'gate');
+  assert.equal(blocked.source, 'warden');
   assert.equal(blocked.label, 'db migration');
 });
 
@@ -105,4 +105,62 @@ test('panesFrom reads a real result and rejects anything that is not one', () =>
   assert.equal(panesFrom(null), null);
   assert.equal(panesFrom(undefined), null);
   assert.equal(panesFrom([]), null);
+});
+
+test('a draw for one changed row keeps the other rows, and a draw of the same panes keeps all of them', () => {
+  reset();
+  render(paneRows(PANES, NOW));
+  const first = [...element('roster').children];
+  assert.equal(first.length, 3);
+  render(paneRows(PANES, NOW));
+  assert.deepEqual([...element('roster').children], first, 'the same panes were drawn again');
+  const changed = JSON.parse(JSON.stringify(PANES));
+  changed.find((p) => p.id === 'w1:p3').label = 'a new name';
+  render(paneRows(changed, NOW));
+  const now = [...element('roster').children];
+  assert.equal(now.length, 3);
+  const same = now.filter((el) => first.includes(el));
+  assert.equal(same.length, 2, 'the rows that did not change were drawn again');
+});
+
+test('the quiet block is not drawn again for the same words', () => {
+  reset();
+  const calm = JSON.parse(JSON.stringify(PANES)).map((p) => ({ ...p, state: 'idle' }));
+  render(paneRows(calm, NOW).map((r) => ({ ...r, state: 'idle', askSummary: '', askId: '' })), { askLine: 'last ask 1m ago' });
+  const q = element('quiet');
+  const kids = [...q.children];
+  assert.ok(kids.length > 0, 'the quiet block drew nothing');
+  render(paneRows(calm, NOW).map((r) => ({ ...r, state: 'idle', askSummary: '', askId: '' })), { askLine: 'last ask 1m ago' });
+  assert.deepEqual([...q.children], kids, 'the quiet block was drawn again');
+});
+
+test('a row that shows no age is not drawn again when the clock moves', () => {
+  for (const phone of [false, true]) {
+    reset();
+    render(paneRows(PANES, NOW), { phone });
+    const first = [...element('roster').children];
+    render(paneRows(PANES, NOW + 7), { phone });
+    const now = [...element('roster').children];
+    assert.equal(now.length, first.length);
+    const kept = now.filter((el) => first.includes(el)).length;
+    // A blocked pane is a compact row in the roster on either page. Its card
+    // is in the needs list, which shows the age.
+    assert.equal(kept, first.length, (phone ? 'phone' : 'wide') + ': the rows drawn again because only their age moved');
+  }
+});
+
+test('the phone queue keeps its cards when only the age moves, and the age text follows', () => {
+  reset();
+  render(paneRows(PANES, NOW), { phone: true });
+  const first = [...element('needs').children];
+  assert.ok(first.length > 0, 'no card in the queue');
+  const ageOf = (li) => {
+    const walk = (e) => { if (String(e.className).split(' ').includes('age')) return e; for (const c of e.children || []) { const f = walk(c); if (f) return f; } return null; };
+    return walk(li);
+  };
+  const before = ageOf(first[0]).textContent;
+  render(paneRows(PANES, NOW + 7), { phone: true });
+  const now = [...element('needs').children];
+  assert.deepEqual(now, first, 'the queue cards were drawn again for an age');
+  assert.notEqual(ageOf(now[0]).textContent, before, 'the age text did not follow the clock');
 });

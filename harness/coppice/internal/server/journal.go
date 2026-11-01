@@ -12,7 +12,7 @@ import (
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
-// journalKept is how many gate verdicts the journal keeps and the most one
+// journalKept is how many warden verdicts the journal keeps and the most one
 // floor.journal reply holds.
 const journalKept = 500
 
@@ -49,7 +49,7 @@ func journalPush(ring []journalEntry, e journalEntry) []journalEntry {
 // journalFile is where the journal lives, under the data dir.
 var journalFile = filepath.Join("journal", "verdicts.jsonl")
 
-// journalEntry is one verdict a gate told the server about. At is unix
+// journalEntry is one verdict a warden told the server about. At is unix
 // seconds on the server's clock.
 type journalEntry struct {
 	At       float64 `json:"at"`
@@ -195,7 +195,7 @@ func (s *Server) rewriteJournalLocked() {
 	j.lines = len(j.ring)
 }
 
-// noteVerdict adds one verdict a gate reported to the journal and its file.
+// noteVerdict adds one verdict a warden reported to the journal and its file.
 func (s *Server) noteVerdict(pane string, v *proto.Verdict, mode string) {
 	if v == nil || pane == "" || v.Decision == "" {
 		return
@@ -207,14 +207,14 @@ func (s *Server) noteVerdict(pane string, v *proto.Verdict, mode string) {
 }
 
 // noteTreeVerdict adds a verdict read from a sprig session tree, which no
-// gate reports. It carries the tree's own time. A verdict with no usable
+// warden reports. It carries the tree's own time. A verdict with no usable
 // time (none, or one after the server's clock) is skipped, since the server
 // cannot place it. It is also skipped when the journal already holds the
 // same verdict: the same pane, time, decision, tool and clause. A server
 // that restarts and reads the tree again so adds nothing twice. Nor does it
 // add a verdict the quota pruned: when the pane holds its quota, a verdict
 // older than the pane's oldest entry is skipped.
-func (s *Server) noteTreeVerdict(pane string, v gateFact, mode string) {
+func (s *Server) noteTreeVerdict(pane string, v wardenFact, mode string) {
 	if pane == "" || v.Decision == "" {
 		return
 	}

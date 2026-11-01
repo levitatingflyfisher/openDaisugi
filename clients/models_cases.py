@@ -266,7 +266,7 @@ def build_cases() -> list[dict[str, Any]]:
             "list unknown ram json", "list", "--json", env={"OPENDAISUGI_VOICE_HARDWARE": ",1,0"}
         )
     )
-    add(models("list fractional ram", "list", env={"OPENDAISUGI_VOICE_HARDWARE": "15.5,4,0"}))
+    add(models("list fractional ram", "list", env={"OPENDAISUGI_VOICE_HARDWARE": "12.5,6,0"}))
     add(models("list just under", "list", env={"OPENDAISUGI_VOICE_HARDWARE": "7.9,8,5.9"}))
     add(models("list exactly at", "list", env={"OPENDAISUGI_VOICE_HARDWARE": "8,1,0"}))
     add(models("list gpu at 6", "list", env={"OPENDAISUGI_VOICE_HARDWARE": "2,1,6"}))
@@ -570,7 +570,7 @@ def pin_cases() -> list[dict[str, Any]]:
         "lastModified": "2025-01-02T03:04:05.000Z",
         "createdAt": "2024-11-16T00:27:02Z",
         "private": False,
-        "gated": False,
+        "gated": False,  # names-ok: the Hugging Face API field
         "disabled": False,
         "downloads": 12,
         "likes": 3,

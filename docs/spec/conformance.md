@@ -129,31 +129,34 @@ cost, not verification), embedding (C ABI / wasm), and the long tail.
 
 `clients/fixtures/dialect/`, written by `clients/dialect_cases.py` from the
 oracle, holds the kernel's `forall_writes` and the system dialect's words
-(DL-1 to DL-17). `cases.jsonl` is ordinary corpus cases: 2,319 of kind
+(DL-1 to DL-17). `cases.jsonl` is ordinary corpus cases: 2,339 of kind
 `verify`, each with `expect.word_audit` present (empty included), among
 them cases placed from a base (`options.dialect_base`), and 3 of kind
 `decompose`, so `clients/compare.py` runs any conform client over it.
 `globs.json` is the glob translation: `dialect.glob_regex` for 400 globs,
 with the error text of each refused one and the paths each other one
 matches among 99 normalized paths. `writes.json` is
-`write_paths.step_write_paths` for 313 shell commands (redirects, each
+`write_paths.step_write_paths` for 325 shell commands (redirects, each
 writer's operands with good and bad flags, wrappers, `cd`), with no base
-and placed from one. The Go and Rust unit tests check their ports against
-both. `cases.manifest.json` pins the three files. Go and Rust `conform`:
-2,322 of 2,322.
+and placed from one. `accesses.json` is `write_paths.step_accesses` for 1,026
+shell commands: the reads and the writes of each command, whether each is a
+path or a tree, how it was found (`via`), and the unknown reasons
+(SG-1 to SG-6), with and without a base. The Go and Rust unit tests check
+their ports against all three. `cases.manifest.json` pins the four files. Go
+and Rust `conform`: 2,342 of 2,342.
 
-## Gate cases
+## Warden cases
 
-A third kind checks a whole gate binary, not a verifier: one hook call in,
-the host contract and every log line out. Unlike the corpus, gate cases
+A third kind checks a whole warden binary, not a verifier: one hook call in,
+the host contract and every log line out. Unlike the corpus, warden cases
 are synthetic (fake paths such as `/work` and `/home/user`), so they are
-committed: `clients/fixtures/gate/cases.jsonl` with its manifest, written
-by `clients/gate_cases.py` from the Python gate.
+committed: `clients/fixtures/warden/cases.jsonl` with its manifest, written
+by `clients/warden_cases.py` from the Python warden.
 
 ```json
-{"kind": "gate", "v": 1, "id": "…", "name": "bash allowlist miss (enforce)",
+{"kind": "warden", "v": 1, "id": "…", "name": "bash allowlist miss (enforce)",
  "tags": ["shell"],
- "argv": ["--mode", "enforce", "--root", "{ROOT}/data/gate", "--format", "claude", …],
+ "argv": ["--mode", "enforce", "--root", "{ROOT}/data/warden", "--format", "claude", …],
  "stdin": "{\"session_id\": \"s1\", \"tool_name\": \"Bash\", …}",
  "env": {"CLAUDE_PROJECT_DIR": "/work"}, "coppice": false,
  "state": {"envelopes": {"default": "<envelope file text>"}, "disarmed": false,
@@ -166,7 +169,7 @@ by `clients/gate_cases.py` from the Python gate.
 ```
 
 - `{ROOT}` is the run's scratch directory, substituted in argv, stdin,
-  env and envelope text; the gate root is `{ROOT}/data/gate`, so the
+  env and envelope text; the warden root is `{ROOT}/data/warden`, so the
   session tree is `{ROOT}/data/sessions` and `config.yaml` is
   `{ROOT}/data/config.yaml`. `stdin_hex`, when present, replaces `stdin`
   with raw bytes (for invalid UTF-8).
@@ -187,33 +190,33 @@ by `clients/gate_cases.py` from the Python gate.
 - A graft case (router part 0, tag `graft`) adds three state keys, only
   when it has them, so no other case's id changed: `files` (real files
   under `{ROOT}`, each `text`, `hex`, `repeat` with `count`, `fifo`, `dir`
-  or `symlink`), `grafts` (rule files in `{ROOT}/data/gate/grafts`) and
+  or `symlink`), `grafts` (rule files in `{ROOT}/data/warden/grafts`) and
   `tier1` (the text of `{ROOT}/data/local_tier1.json`). 131 cases cover the
   limit escape, the line count, each rule field, the worker's host and
   grant, every format, an envelope that would deny the delegate call, and
-  the delegate call's path (RP-1 to RP-7). 2026-10-01 added the gate
-  change rule and the per-command reading of the owner's verbs (`gate
+  the delegate call's path (RP-1 to RP-7). 2026-10-01 added the warden
+  change rule and the per-command reading of the owner's verbs (`warden
   change rule`, `tree rule compound`, `rank rule compound`, `owner chain`,
   `label rule`, `owner rule shlex gap`; SW-1, SW-2, SW-12), the deadline at call time (`deadline`,
-  with `DAISUGI_GATE_NOW` in `env`; SW-4), the code write's gate check
+  with `DAISUGI_WARDEN_NOW` in `env`; SW-4), the code write's warden check
   (`graft delegate code write`; SW-9) and the graft trial (`graft trial`;
-  SW-13). Then the gate's own state (`gate state ...`, 157 cases; SW-17):
-  each write form into the gate root and the data dir's state paths, in
+  SW-13). Then the warden's own state (`warden state ...`, 157 cases; SW-17):
+  each write form into the warden root and the data dir's state paths, in
   both modes, the reads and near misses that stay allowed (a sibling dir
-  with the same prefix, a read of the gate root), an operator ask, and
+  with the same prefix, a read of the warden root), an operator ask, and
   long `&&` and `sh -c` chains near the frame limit. Then an `llm_check`
   through the claude-code backend (`llm claude ...`; PG-1): a fake
   `claude`, laid out executable by the case, prints a fixed reply. The
-  gate cases now number 2,099; Go and Rust agree on all of them.
+  warden cases now number 2,099; Go and Rust agree on all of them.
 
-Comparison is structural, field by field (`clients/gate_compare.py`), and
+Comparison is structural, field by field (`clients/warden_compare.py`), and
 each difference is classed by what it does to a host: **fail-open** (the
 binary allowed what the oracle denied; a blocker), **stricter** (it denied
 what the oracle allowed), or **record** (same verdict, a logged field
-differs). All of `expect` is normative for a gate binary: reason text,
+differs). All of `expect` is normative for a warden binary: reason text,
 tier and log lines are what an operator reads.
 
-`gate_compare.py --fuzz N --seed S` adds a seeded differential fuzz: N
+`warden_compare.py --fuzz N --seed S` adds a seeded differential fuzz: N
 single-line compound shell commands, each run as a Bash call against two
 envelopes (decomposition on and off) through the in-process oracle and the
 binary. Only the binary's native answers are compared (a hand-off is
@@ -285,7 +288,7 @@ Python CLI. They are synthetic and committed.
   against the case's own (HTTP 596 when it is not) and records only its
   name, never its value.
 - A `tend api proxy` case sets proxy variables and puts the fake
-  proxy of the gateway cases in front of the fake server; `expect` then
+  proxy of the router cases in front of the fake server; `expect` then
   also holds what the proxy got. The model call follows the proxy rules
   httpx reads (`clients/ADJUDICATIONS.md` LLM-11).
 - Output is normalized on both sides before it is compared: a time near
@@ -357,8 +360,8 @@ checks, the router's model for task steps, the filled step's rejection
 (halt and recompute), resume, agentic steps, and the parallel path the
 ports refuse. The cases use the K2 cases' scratch HOME, fakes and
 normalization. For an agentic step the fake `claude` is a sub-agent: it
-runs each tool call of its answer through the gate hook its `--settings`
-name, and logs the verdicts and the envelopes registered in the gate root
+runs each tool call of its answer through the warden hook its `--settings`
+name, and logs the verdicts and the envelopes registered in the warden root
 (PG-4).
 A case may run earlier commands with the same binary (`pre`), or lay out a
 state file with start marks for its plan file (`weave_marks`); a plan hash
@@ -436,18 +439,18 @@ CI, so these run on a box that holds the pinned model.
 ## rank cases
 
 `clients/fixtures/rank/`, written by `clients/rank_cases.py` from the
-oracle, checks `daisugi rank fit`, `choose`, `queue` and `record pick|drop`:
+oracle, checks `daisugi rank fit`, `choose`, `queue`, `show`, `judge`, `judges`, `pivot` and `record pick|drop`:
 the attempts file's checks, elimination, quality tiers, the votes that
 survive the order swap, the fit and its seeded bootstrap (B up to 1000),
 owner constraints and cycles, cost, the next judge pair, the comparison
 and choice journals, the switch cost from a journal index of receipts, and
 decay. Times are laid out relative to the run (a card 6 or 8 days old), and
 a `receipts` tree entry is a journal index with receipt rows at fixed run
-ids. No case calls a model; the judges' votes are written into the case.
+ids; a `git` entry is a repository with detached worktrees (git's own files are left out of the snapshot). The judge cases answer from the fake model server, whose replies are recorded by request order; the other cases write the judges' votes into the case.
 Help texts and click's usage errors are left to the CLI cases (RK-R-11).
 
 `clients/rank_compare.py --binary B` compares a client as `garden_compare.py`
-does. The Go and Rust binaries each agree on all 135; CI runs it with
+does. The Go and Rust binaries each agree on all 181; CI runs it with
 `--max-refused 0`.
 
 ## tree cases
@@ -460,14 +463,14 @@ shell heads, opaque invariants, the Z3 proof) and its bad input; `tree
 root`, `spawn`, `end`, `answer` and `status` over a ledger and registered
 envelopes laid out as the commands write them (budgets reserved and given
 back, refusals, the fourth refused proposal as an ask, the operator's
-answer, rows that do not read or fit); and `gate register --parent`. Times
+answer, rows that do not read or fit); `tree run` with `attempts` over a git repository (refused budgets, a missing workspace, two that ran, one that failed, a hard check, the ledger rows in branch order), `tree prune-branches` and `tree adopt` over worktrees laid out beside it; and `warden register --parent`. Times
 are laid out relative to the run; deadlines lie in 2030, outside the
-normalizer's window (TR-R-12). No case calls a model.
+normalizer's window (TR-R-12). The children are the fake sprig, answering by session; the measured wall time and the fit seed that hashes it are fixed, and the process-group rows parallel children write are sorted. No case calls a model.
 
 `clients/tree_compare.py --binary B` compares a client as `rank_compare.py`
-does. The Go and Rust binaries each agree on all 134; CI runs it with
-`--max-refused 0`. The gate cases `tree rule ...` (31) check the hard deny of
-the tree's write verbs, `gate register`, `gate init` and `start`.
+does. The Go and Rust binaries each agree on all 252; CI runs it with
+`--max-refused 0`. The warden cases `tree rule ...` (31) check the hard deny of
+the tree's write verbs, `warden register`, `warden init` and `start`.
 
 ## Model catalog cases
 
@@ -671,7 +674,7 @@ adapter runs a fake harness (COPPICE_CLAUDE_BIN and the like), and
 opencode needs (CP-R-25). The fakes are Go's for claude, codex and sprig,
 and two beside the cases in `harness/coppice-rs/cases/headless` for pi
 and opencode; the opencode fake replays Go's captured OpenCode stream.
-Each side's scratch HOME holds the OpenCode gate plugin. An adapters
+Each side's scratch HOME holds the OpenCode warden plugin. An adapters
 suite replays each stream fixture of `harness/coppice/testdata/adapters`
 in a headless pane. A minted sprig session id and the done of an
 operator close are normalized (CP-R-24, CP-R-26). Slice 4: 552 of 552
@@ -729,7 +732,7 @@ against the Go coppice: sprig has no Python side.
 `clients/sprig_cases.py` on both sides, each in a scratch root with its
 own HOME and TMPDIR, the work dir as the cwd, and `PATH` set to the
 side's fakes and `/usr/bin:/bin`. The fakes are a `claude` that answers
-from the case's script and records argv, cwd and stdin; a gate that rules
+from the case's script and records argv, cwd and stdin; a warden that rules
 by the case's rules and records each payload; and a local API server that
 records each request's path, body and the four headers sprig sets, over
 http or over https with a scratch CA. A case passes when the exit code,
@@ -737,39 +740,39 @@ stdout, stderr, every recorded call and request, and the files of the
 work dir and the session dir agree after the normalization of SP-R-1:
 paths and ports become placeholders, ids are renamed by first appearance,
 and clock values are masked. A Rust "not ported" counts as refused; a
-Rust side that refuses fewer gate calls than Go, or lets a hook call
+Rust side that refuses fewer warden calls than Go, or lets a hook call
 through that Go blocks, is classed fail-open.
 
 The cases cover the command line and its flags, the loop on the claude
 backend (each tool, the fences, the nudge, the turn budget, envelope
-errors, raw bytes), the process gate (allow, deny, its reason, a missing
-or broken gate command, the timeout, the cwd and the session id it is
+errors, raw bytes), the process warden (allow, deny, its reason, a missing
+or broken warden command, the timeout, the cwd and the session id it is
 sent), the session tree and its resume, the API backend (tool use,
 errors, chunked replies, https, a refused connection), sprig-hook,
 sprig-mcp and weave. With `--daisugi [LABEL=]PATH`, six more run through
-each real daisugi given, after `gate init` in the side's HOME. 185 of 185
+each real daisugi given, after `warden init` in the side's HOME. 185 of 185
 agree, 12 of them through the real Go and Rust daisugi, none refused. CI
 runs it in the `sprig-rs` job with `--max-refused 0`.
 
-## Gateway cases
+## Router cases
 
-A sixth kind checks the token-saving gateway and its router:
-`clients/fixtures/gateway/`, written by `clients/gateway_cases.py` from the
+A sixth kind checks the token-saving router and its router:
+`clients/fixtures/router/`, written by `clients/router_cases.py` from the
 Python CLI. They are synthetic and committed.
 
-- A `proxy` case starts `daisugi gateway` as a process on a free loopback
+- A `proxy` case starts `daisugi router serve` as a process on a free loopback
   port, in front of a fake upstream on 127.0.0.1 that answers from the
   case's table, keyed by the SHA-256 of the request path and the exact
   body bytes (HTTP 597 when no answer is recorded). A raw-socket client
   sends the case's requests; steps may send a signal, rewrite config.yaml
-  or wait. `expect` holds whether the gateway came up, its exit code,
+  or wait. `expect` holds whether the router came up, its exit code,
   stdout and stderr (less the server's own log lines, GW-2), each answer
   the client got (status, the headers that matter, the body, whether a
   stream arrived as it was sent), each request the upstream got (path,
   headers, body), and the tree after (turn journal, answer store,
   Switchyard files). Switchyard cases add a fake `switchyard-server` on
   PATH and record what it was started with and whether it outlived the
-  gateway.
+  router.
   An `env proxy` case also sets proxy variables and runs a fake proxy on
   127.0.0.1 (`clients/fake_proxy.py`); `expect` then holds what the
   proxy got: each CONNECT line with all its headers, each request line
@@ -778,7 +781,7 @@ Python CLI. They are synthetic and committed.
   port or to the fake upstream and never forwards a tunnel, so no host a
   URL names is reached. The proxy rules each client follows are
   `clients/ADJUDICATIONS.md` PX-1 to PX-8.
-- A `cli` case runs `gateway-report`, `router status|stop` or `route` once
+- A `cli` case runs `router report`, `router status|stop` or `route` once
   in a scratch HOME, as the CLI cases do; live children a state file names
   are started first when the case asks.
 - A `recall` case runs queries against a laid-out pathway store or answer
@@ -796,13 +799,13 @@ Python CLI. They are synthetic and committed.
   `{HOME}` (SW-13 to SW-15), and the `router label` cases write and refuse
   labels (SW-10).
 
-`clients/gateway_compare.py --binary B` compares a binary on all of them;
+`clients/router_compare.py --binary B` compares a binary on all of them;
 it takes the Go client's `clients/go/daisugi` and the Rust client's
 `clients/rust/target/release/daisugi` alike. With `--fuzz N --seed S
 --probe P` it also runs seeded turn sequences through the pipeline in
 process on both sides, in chunks of at most 500 turns, and compares the
 bytes sent upstream, the stream flag and each journal and answer-store
-line (`cmd/gateway-probe` for Go, `gateway-probe` for Rust). `--speed`
+line (`cmd/router-probe` for Go, `router-probe` for Rust). `--speed`
 times a buffered turn through the binary against the Go client's
 `cmd/fake-upstream`. A case a binary refuses (exit 2, one line) counts
 apart, and only where a ruling allows it: both binaries refuse the same
@@ -814,10 +817,10 @@ A seventh kind checks the CLI commands themselves: `clients/fixtures/cli/`,
 written by `clients/cli_cases.py` from the Python CLI. They are synthetic
 and committed.
 
-- A plain case (the gate commands, `install`) is a file tree, one
+- A plain case (the warden commands, `install`) is a file tree, one
   command, its stdin and env, run in a scratch HOME (`{HOME}`); `expect`
   holds the exit code, stdout, stderr and the tree after, JSON files
-  parsed and a gate hook command compared by its flags (`{GATE}`).
+  parsed and a warden hook command compared by its flags (`{WARDEN}`).
 - A case with `"runner": "rich"` (`status`, `config`, `start`, `journal`)
   runs as a garden case does: journals and stores laid out by the
   oracle's classes, a fake `claude` answering the case's `model` table,
@@ -840,40 +843,40 @@ unchanged) counts apart.
 
 `start` cases run a binary behind a wrapper script: the binary names
 itself by the path it was run by, so its `start` launches the wrapper's
-`gate serve`, which logs its argv and makes the socket file, as the
+`warden serve`, which logs its argv and makes the socket file, as the
 oracle's fake launch does (G2-4). No case leaves a server running.
 The Go and Rust binaries answer every CLI case alike: the same cases
 agree, are refused and are not ported in each (C-R).
 
 `install --harness` cases compare the line that says how pi and
-OpenCode ask the gate: the oracle and both binaries print it word for
+OpenCode ask the warden: the oracle and both binaries print it word for
 word.
 
 `verify *` cases run `daisugi verify` on two files (a verify line's
 duration is `{MS}`), and `hook report *` cases send one event on stdin
-with the gate root's parent on a file, so the best-effort session tree
+with the warden root's parent on a file, so the best-effort session tree
 append writes nothing (PG-6). Of the 609 CLI cases, Go and Rust each
 agree on 591, with the same 9 not ported and 9 refused.
 
-## Resident gate cases
+## Resident warden cases
 
-An eighth kind checks the resident gate, `daisugi gate serve`, the
-server the pi extension, the OpenCode plugin and `gate_client.py` ask
-over `<root>/gate.sock`: `clients/fixtures/gate_server/`, written by
-`clients/gate_server_cases.py` from the Python server
-(`python -m opendaisugi.cli gate serve`). They are synthetic and
+An eighth kind checks the resident warden, `daisugi warden serve`, the
+server the pi extension, the OpenCode plugin and `warden_client.py` ask
+over `<root>/warden.sock`: `clients/fixtures/warden_server/`, written by
+`clients/warden_server_cases.py` from the Python server
+(`python -m opendaisugi.cli warden serve`). They are synthetic and
 committed.
 
 - A request case is the bytes one client sends (a JSON request line in
-  the pi, OpenCode or gate_client shape, or raw bytes for a malformed
-  one), the gate state it runs against, and the fakes it may reach: a
+  the pi, OpenCode or warden_client shape, or raw bytes for a malformed
+  one), the warden state it runs against, and the fakes it may reach: a
   coppice socket that places a hello as the pane it names, as another
   pane, or answers every line bare, and a `herdr` on the server's PATH
   that logs its argv. `expect` holds the reply bytes and every line
   written to the audit log, the session tree (with the modes of the
   sessions directory and files), the captures mirror, the fake coppice
   and the fake herdr. The request cases of one server environment share
-  one server; each has its own gate root. A second environment gives the
+  one server; each has its own warden root. A second environment gives the
   server its own pane variables and data directory, which no report or
   rule may take for a caller's.
 - A scenario runs its own servers: twelve clients at once with a slow
@@ -891,12 +894,12 @@ committed.
   both binaries, and `rust_expect` those for the Rust binary alone
   (clients/ADJUDICATIONS.md, G2-2 and G2-3).
 
-`clients/gate_server_compare.py --binary B --port go|rust` starts the
-binary's `gate serve` the way the cases start the oracle's and compares
+`clients/warden_server_compare.py --binary B --port go|rust` starts the
+binary's `warden serve` the way the cases start the oracle's and compares
 every observation. A reply that allows where the oracle's denies is
 fail-open, a blocker; a deny where it allows is stricter. `--oracle`
 runs the Python server again to show a stale fixture, and both report
-the p50 of a gate decision over the socket.
+the p50 of a warden decision over the socket.
 
 ## Voice bridge cases (stage H)
 

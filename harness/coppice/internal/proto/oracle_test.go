@@ -29,8 +29,8 @@ func TestValidateAgreesWithThePythonOracleOnEveryRule(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "a gate blocked event with a well-formed ask is valid",
-			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":"",` +
+			name: "a warden blocked event with a well-formed ask is valid",
+			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":"",` +
 				`"ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":1090.0}}`,
 			wantErr: false,
 		},
@@ -50,8 +50,8 @@ func TestValidateAgreesWithThePythonOracleOnEveryRule(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "gate may not say done",
-			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"done","source":"gate","detail":""}`,
+			name:    "warden may not say done",
+			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"done","source":"warden","detail":""}`,
 			wantErr: true,
 		},
 		{
@@ -76,7 +76,7 @@ func TestValidateAgreesWithThePythonOracleOnEveryRule(t *testing.T) {
 		},
 		{
 			name: "an ask on a non-blocked event is rejected",
-			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"working","source":"gate","detail":"",` +
+			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"working","source":"warden","detail":"",` +
 				`"ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":1090.0}}`,
 			wantErr: true,
 		},
@@ -97,7 +97,7 @@ func TestValidateAgreesWithThePythonOracleOnEveryRule(t *testing.T) {
 		},
 		{
 			name:    "a non-object ask is rejected",
-			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":"","ask":5}`,
+			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":"","ask":5}`,
 			wantErr: true,
 		},
 		{
@@ -134,25 +134,25 @@ func TestValidateAgreesWithThePythonOracleOnEveryRule(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "a gate blocked event with no ask is rejected",
-			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":""}`,
+			name:    "a warden blocked event with no ask is rejected",
+			json:    `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":""}`,
 			wantErr: true,
 		},
 		{
 			name: "a non-numeric ask deadline is rejected",
-			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":"",` +
+			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":"",` +
 				`"ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":"soon"}}`,
 			wantErr: true,
 		},
 		{
 			name: "a null ask deadline is rejected",
-			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":"",` +
+			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":"",` +
 				`"ask":{"id":"t1","tool":"Bash","summary":"ls","deadline":null}}`,
 			wantErr: true,
 		},
 		{
 			name: "a non-string ask id is rejected",
-			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"gate","detail":"",` +
+			json: `{"v":1,"ts":1000.0,"session_id":"s1","harness":"claude-code","state":"blocked","source":"warden","detail":"",` +
 				`"ask":{"id":5,"tool":"Bash","summary":"ls","deadline":1090.0}}`,
 			wantErr: true,
 		},

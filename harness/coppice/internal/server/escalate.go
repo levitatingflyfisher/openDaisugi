@@ -10,28 +10,28 @@ import (
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
-// DefaultHoldFor is how long a foreman holds a child's undoable ask before
+// DefaultHoldFor is how long a steward holds a child's undoable ask before
 // it goes to the operator.
 const DefaultHoldFor = 120 * time.Second
 
-// holdMargin is how long before the gate gives up on an ask a hold must
+// holdMargin is how long before the warden gives up on an ask a hold must
 // end, so the operator still has time to answer it.
 const holdMargin = 30 * time.Second
 
 // surfacedKept is how many surfaced ask ids the server keeps per pane.
 const surfacedKept = 64
 
-// hold is one ask a foreman hears before the operator does.
+// hold is one ask a steward hears before the operator does.
 type hold struct {
 	pane, ask     string
-	foreman, task string
+	steward, task string
 	since, until  float64
 	timer         *time.Timer
 	// id is the short name the server gives the hold. The typed line and
 	// agent.deny use it, so no text the child chose has to reach the
-	// foreman.
+	// steward.
 	id string
-	// told is true once the foreman's one typed line was written. sending
+	// told is true once the steward's one typed line was written. sending
 	// is true while a write of it runs.
 	told, sending bool
 }
@@ -41,7 +41,7 @@ type hold struct {
 type heldWire struct {
 	Hold         string  `json:"hold"`
 	By           string  `json:"by"`
-	ForemanLabel string  `json:"foreman_label"`
+	StewardLabel string  `json:"steward_label"`
 	Task         string  `json:"task"`
 	TaskLabel    string  `json:"task_label"`
 	Ask          string  `json:"ask"`
@@ -52,7 +52,7 @@ type heldWire struct {
 // heldOf is the held field for h.
 func (s *Server) heldOf(h *hold) *heldWire {
 	w := &heldWire{
-		Hold: h.id, By: h.foreman, ForemanLabel: s.labelOf(h.foreman), Task: h.task, TaskLabel: h.task,
+		Hold: h.id, By: h.steward, StewardLabel: s.labelOf(h.steward), Task: h.task, TaskLabel: h.task,
 		Ask: h.ask, Since: h.since, Until: h.until,
 	}
 	if tk, ok := s.tree.Task(h.task); ok && tk.Label != "" {
@@ -61,10 +61,10 @@ func (s *Server) heldOf(h *hold) *heldWire {
 	return w
 }
 
-// foremanOf finds the nearest foreman for pane id: the Foreman of the
+// stewardOf finds the nearest steward for pane id: the Steward of the
 // pane's task, or of the nearest ancestor that has one. It returns the
-// foreman pane and the task that named it, or two empty strings.
-func (s *Server) foremanOf(id string) (foreman, task string) {
+// steward pane and the task that named it, or two empty strings.
+func (s *Server) stewardOf(id string) (steward, task string) {
 	p, ok := s.tree.Pane(id)
 	if !ok {
 		return "", ""
@@ -76,39 +76,39 @@ func (s *Server) foremanOf(id string) (foreman, task string) {
 		if !ok {
 			return "", ""
 		}
-		if tk.Foreman != "" {
-			return tk.Foreman, tk.ID
+		if tk.Steward != "" {
+			return tk.Steward, tk.ID
 		}
 		cur = tk.Parent
 	}
 	return "", ""
 }
 
-// canAnswer reports whether foreman can take an ask from pane asker: it
+// canAnswer reports whether steward can take an ask from pane asker: it
 // is a pane the tree holds, it is open, it is not the asker, and it does
 // not wait on an ask of its own.
-func (s *Server) canAnswer(foreman, asker string) bool {
-	if foreman == asker {
+func (s *Server) canAnswer(steward, asker string) bool {
+	if steward == asker {
 		return false
 	}
-	p, ok := s.tree.Pane(foreman)
+	p, ok := s.tree.Pane(steward)
 	if !ok || p.Closed {
 		return false
 	}
-	if eff, ok := s.effectiveState(foreman); ok && eff.State == proto.StateBlocked {
+	if eff, ok := s.effectiveState(steward); ok && eff.State == proto.StateBlocked {
 		return false
 	}
 	return true
 }
 
 // escalation is what escalate decided for one event: the held field the
-// broadcast carries, and the note for the foreman, sent after the lock is
+// broadcast carries, and the note for the steward, sent after the lock is
 // released.
 type escalation struct {
 	held    *heldWire
 	note    string
-	foreman string
-	// release lists the asks pane id held as a foreman, when id is now
+	steward string
+	// release lists the asks pane id held as a steward, when id is now
 	// blocked itself. They go to the operator once the lock is released.
 	release []heldAsk
 }
@@ -116,11 +116,11 @@ type escalation struct {
 // heldAsk names one held ask: the asking pane and the ask id.
 type heldAsk struct{ pane, ask string }
 
-// heldBy lists the asks foreman holds. The caller holds holdsMu.
-func (s *Server) heldBy(foreman string) []heldAsk {
+// heldBy lists the asks steward holds. The caller holds holdsMu.
+func (s *Server) heldBy(steward string) []heldAsk {
 	var out []heldAsk
 	for _, h := range s.holds {
-		if h.foreman == foreman {
+		if h.steward == steward {
 			out = append(out, heldAsk{h.pane, h.ask})
 		}
 	}
@@ -128,11 +128,11 @@ func (s *Server) heldBy(foreman string) []heldAsk {
 }
 
 // escalate decides, before the event goes out, whether pane id's merged
-// state is an ask its foreman hears first. An undoable ask on a pane under
-// a foreman that can answer is held until the hold ends. A permanent ask is
-// never held, but the foreman still hears it. A state that is not that ask
+// state is an ask its steward hears first. An undoable ask on a pane under
+// a steward that can answer is held until the hold ends. A permanent ask is
+// never held, but the steward still hears it. A state that is not that ask
 // any more ends the hold. An ask that already surfaced is never held
-// again. A foreman that is blocked itself cannot answer, so every ask it
+// again. A steward that is blocked itself cannot answer, so every ask it
 // holds is released to the operator.
 func (s *Server) escalate(id string, ev proto.PaneStateEvent) escalation {
 	s.holdsMu.Lock()
@@ -163,11 +163,11 @@ func (s *Server) escalateAsk(id string, ev proto.PaneStateEvent) escalation {
 		return escalation{}
 	}
 	s.markSurfaced(id, ev.Ask.ID)
-	foreman, task := s.foremanOf(id)
-	if foreman == "" || !s.canAnswer(foreman, id) {
+	steward, task := s.stewardOf(id)
+	if steward == "" || !s.canAnswer(steward, id) {
 		return escalation{}
 	}
-	out := escalation{foreman: foreman}
+	out := escalation{steward: steward}
 	label := s.labelOf(id)
 	summary := ev.Ask.Summary
 	if ev.Ask.Tool != "" {
@@ -186,13 +186,13 @@ func (s *Server) escalateAsk(id string, ev proto.PaneStateEvent) escalation {
 		}
 	}
 	if until <= now {
-		out.note = fmt.Sprintf("%s asks %s: %s. The gate waits too little for a hold, so it goes to the operator now.",
+		out.note = fmt.Sprintf("%s asks %s: %s. The warden waits too little for a hold, so it goes to the operator now.",
 			label, ev.Ask.ID, summary)
 		return out
 	}
 	s.unmarkSurfaced(id, ev.Ask.ID)
 	s.nextHold++
-	h := &hold{pane: id, ask: ev.Ask.ID, foreman: foreman, task: task, since: now, until: until,
+	h := &hold{pane: id, ask: ev.Ask.ID, steward: steward, task: task, since: now, until: until,
 		id: fmt.Sprintf("h%d", s.nextHold)}
 	askID := ev.Ask.ID
 	h.timer = time.AfterFunc(time.Duration((until-now)*float64(time.Second)), func() { s.surface(id, askID) })
@@ -254,12 +254,12 @@ func (s *Server) heldFor(id string) *heldWire {
 	return nil
 }
 
-// holder is the foreman that holds ask on pane id, or "".
+// holder is the steward that holds ask on pane id, or "".
 func (s *Server) holder(id, ask string) string {
 	s.holdsMu.Lock()
 	defer s.holdsMu.Unlock()
 	if h := s.holds[id]; h != nil && h.ask == ask {
-		return h.foreman
+		return h.steward
 	}
 	return ""
 }
@@ -280,23 +280,23 @@ func (s *Server) surface(id, ask string) {
 	}
 	delete(s.holds, id)
 	s.markSurfaced(id, ask)
-	foreman := h.foreman
+	steward := h.steward
 	ev, ok := s.states.Current(id)
 	if ok && ev.State == proto.StateBlocked && ev.Ask != nil && ev.Ask.ID == ask {
 		s.Broadcast("state", id, stateEvent{Event: "state", PaneStateEvent: ev})
 	}
 	s.holdsMu.Unlock()
-	s.NoteTo(fmt.Sprintf("%s's ask %s goes to the operator now.", s.labelOf(id), ask), id, foreman)
+	s.NoteTo(fmt.Sprintf("%s's ask %s goes to the operator now.", s.labelOf(id), ask), id, steward)
 }
 
 // recheckHolds sends to the operator every held ask whose pane's nearest
-// foreman is no longer the one that holds it. It runs after a task's
-// foreman changes and after a task moves.
+// steward is no longer the one that holds it. It runs after a task's
+// steward changes and after a task moves.
 func (s *Server) recheckHolds() {
 	s.holdsMu.Lock()
 	var gone []heldAsk
 	for _, h := range s.holds {
-		if f, _ := s.foremanOf(h.pane); f != h.foreman {
+		if f, _ := s.stewardOf(h.pane); f != h.steward {
 			gone = append(gone, heldAsk{h.pane, h.ask})
 		}
 	}
@@ -307,16 +307,16 @@ func (s *Server) recheckHolds() {
 }
 
 // plainAsk matches an ask id the server may name in the line it types
-// into a foreman. The asking pane wrote the id, so any other shape is left
+// into a steward. The asking pane wrote the id, so any other shape is left
 // out.
 var plainAsk = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// foremanLine is the one line typed into a foreman for a hold. It names
+// stewardLine is the one line typed into a steward for a hold. It names
 // the hold by the server's own id, the pane, the ask id when it is plain,
 // the seconds left, and two commands. It never holds the ask's summary:
-// the asking pane wrote that, and the foreman reads it through agent get,
+// the asking pane wrote that, and the steward reads it through agent get,
 // as data.
-func foremanLine(h *hold, now float64) string {
+func stewardLine(h *hold, now float64) string {
 	ask := ""
 	if plainAsk.MatchString(h.ask) {
 		ask = " " + h.ask
@@ -356,7 +356,7 @@ func (s *Server) markInput(id string, entered bool) {
 		// A submitted line starts a turn the hooks may not announce, so a
 		// hook idle older than it says nothing (CP-R-57).
 		if lp, ok := s.Live(id); ok {
-			lp.gateIdleSince.Store(0)
+			lp.wardenIdleSince.Store(0)
 		}
 	}
 	s.holdsMu.Lock()
@@ -378,12 +378,12 @@ func (s *Server) wentIdle(id string) {
 	delete(s.open, id)
 }
 
-// turnSources are the sources that know a turn ended: the gate and its
+// turnSources are the sources that know a turn ended: the warden and its
 // hooks, and a headless harness's own stream. The process source only
 // knows the screen went quiet, and a manifest read only knows the prompt
 // box shows, which it also does with a half-typed line in it.
 var turnSources = map[string]bool{
-	proto.SrcGate: true, proto.SrcHeadless: true,
+	proto.SrcWarden: true, proto.SrcHeadless: true,
 }
 
 // turnEnded reports whether ev is an idle that ends a turn.
@@ -392,65 +392,65 @@ func turnEnded(ev proto.PaneStateEvent) bool {
 }
 
 // idle reports whether pane id's effective state is an idle that ends a
-// turn. A foreman whose idle comes only from the process source is never
+// turn. A steward whose idle comes only from the process source is never
 // idle here, so it gets the note and never typed bytes.
 func (s *Server) idle(id string) bool {
 	eff, ok := s.effectiveState(id)
 	return ok && turnEnded(*eff)
 }
 
-// tellHolds types one line into foreman for each ask it holds and has not
-// been told of, when foreman is idle and nobody typed into it since it
-// last went idle. A working or blocked foreman gets no bytes: a line would
+// tellHolds types one line into steward for each ask it holds and has not
+// been told of, when steward is idle and nobody typed into it since it
+// last went idle. A working or blocked steward gets no bytes: a line would
 // mix into its turn, and an Enter would answer its own question. The
 // server types on its own authority, so the guard's typing rule does not
 // apply. Each write runs on a goroutine of its own, so a full input
 // buffer never stops the caller.
-func (s *Server) tellHolds(foreman string) {
-	if !s.idle(foreman) {
+func (s *Server) tellHolds(steward string) {
+	if !s.idle(steward) {
 		return
 	}
 	s.holdsMu.Lock()
-	if s.typed[foreman] {
+	if s.typed[steward] {
 		s.holdsMu.Unlock()
 		return
 	}
 	var tell []*hold
 	for _, h := range s.holds {
-		if h.foreman == foreman && !h.told && !h.sending {
+		if h.steward == steward && !h.told && !h.sending {
 			h.sending = true
 			tell = append(tell, h)
 		}
 	}
 	s.holdsMu.Unlock()
 	for _, h := range tell {
-		go s.tellOne(foreman, h)
+		go s.tellOne(steward, h)
 	}
 }
 
-// tellOne writes one hold's line into foreman. The state and the input
+// tellOne writes one hold's line into steward. The state and the input
 // mark are read again just before the write. The hold is marked told
 // only when the write succeeds, so a failed or skipped one is tried again
 // at the next idle.
-func (s *Server) tellOne(foreman string, h *hold) {
+func (s *Server) tellOne(steward string, h *hold) {
 	err := errNotTold
-	if s.idle(foreman) {
+	if s.idle(steward) {
 		s.holdsMu.Lock()
-		ok := !s.typed[foreman] && s.holds[h.pane] == h
-		line := foremanLine(h, nowSeconds())
+		ok := !s.typed[steward] && s.holds[h.pane] == h
+		line := stewardLine(h, nowSeconds())
 		if ok {
 			// The server's own line is input too. The next line waits for
-			// the turn it starts to end, so a foreman gets one per turn.
-			s.typed[foreman] = true
-			s.open[foreman] = false
+			// the turn it starts to end, so a steward gets one per turn.
+			s.typed[steward] = true
+			s.open[steward] = false
 		}
 		s.holdsMu.Unlock()
 		if ok {
-			err = s.typeInto(foreman, line)
+			err = s.typeInto(steward, line)
 			if err == nil {
 				// The hold line submits a turn too (CP-R-57): a hook
 				// idle older than it says nothing.
-				s.markInput(foreman, true)
+				s.markInput(steward, true)
 			}
 		}
 	}
@@ -460,9 +460,9 @@ func (s *Server) tellOne(foreman string, h *hold) {
 	s.holdsMu.Unlock()
 }
 
-// errNotTold is the reason a hold line was not written: the foreman was
+// errNotTold is the reason a hold line was not written: the steward was
 // not idle, someone typed into it, or the hold ended.
-var errNotTold = errors.New("the foreman was not told")
+var errNotTold = errors.New("the steward was not told")
 
 // typeInto sends one line with Enter to pane id, as agent.prompt does.
 func (s *Server) typeInto(id, line string) error {
@@ -483,7 +483,7 @@ func (s *Server) typeInto(id, line string) error {
 }
 
 // endHolds is for a pane that closed: its own hold ends, and every ask it
-// held as a foreman goes to the operator at once.
+// held as a steward goes to the operator at once.
 func (s *Server) endHolds(id string) {
 	s.holdsMu.Lock()
 	s.dropHold(id)

@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
-	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/agentprof"
+	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/rank"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var rankHelp = `Usage: daisugi rank [OPTIONS] COMMAND [ARGS]...
@@ -22,6 +26,10 @@ Options:
 Commands:
   fit     Rank the attempts: eliminate, then quality, then the judges'...
   choose  Rank the attempts, take the leader, and open a card when there...
+  show    Show a ranking as the journal holds it: votes, choices, card,...
+  judge   Ask a judge model to compare the next pair, in both orders, and...
+  judges  Show how far each judge agrees with the owner, and its current...
+  pivot   Show what switching a card to another attempt would do; with...
   queue   List the open cards: what was chosen, why, and what switching...
   record  Record the owner's answer on a card.
 `
@@ -55,6 +63,14 @@ func (e *Env) rankCmd(args []string) error {
 		return e.rankFit(args[1:], false)
 	case "choose":
 		return e.rankFit(args[1:], true)
+	case "show":
+		return e.rankShow(args[1:])
+	case "judge":
+		return e.rankJudge(args[1:])
+	case "judges":
+		return e.rankJudges(args[1:])
+	case "pivot":
+		return e.rankPivot(args[1:])
 	case "queue":
 		return e.rankQueue(args[1:])
 	case "record":
@@ -72,7 +88,7 @@ func rankOpts() []opt {
 }
 
 func (e *Env) rankDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	return wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 // rankRead is cli._rank_read: the attempts file, checked.
@@ -103,7 +119,7 @@ func (e *Env) rankRead(cmd, path string) (*rank.Ranking, error) {
 func rankFitOf(r *rank.Ranking, dataDir string) *pyjson.Object {
 	var warnings []string
 	var comps []rank.Comparison
-	if !r.HasComparisons {
+	if len(r.Comparisons) == 0 {
 		var bad int
 		comps, bad = rank.JournalComparisons(dataDir, r.ID)
 		if bad > 0 {
@@ -118,7 +134,30 @@ func rankFitOf(r *rank.Ranking, dataDir string) *pyjson.Object {
 		}
 		owner = rank.OwnerAnswers(dataDir, r.ID, byID, &warnings)
 	}
-	return rank.Fit(r, comps, owner, warnings)
+	var weights map[string]float64
+	if len(r.Comparisons) == 0 {
+		// The journal supplies the votes: each judge weighs by its record (W3K-2).
+		set := map[string]bool{}
+		for _, j := range r.Policy.Judges {
+			set[j] = true
+		}
+		for _, c := range comps {
+			set[c.Judge] = true
+		}
+		var judges []string
+		for j := range set {
+			judges = append(judges, j)
+		}
+		sort.Strings(judges)
+		if len(judges) > 0 {
+			ow := owner
+			if r.HasOwner {
+				ow = r.Owner
+			}
+			weights, _ = rank.WeightsFor(dataDir, judges, rank.SeedOf(r, comps, ow))
+		}
+	}
+	return rank.FitW(r, comps, owner, warnings, weights)
 }
 
 // rankFit is `rank fit` and, with choose, `rank choose`.
@@ -162,7 +201,7 @@ func (e *Env) rankFit(args []string, choose bool) error {
 	var cid any
 	recorded := false
 	if order := res.Value("order").([]any); len(order) > 1 {
-		row := rank.OpenedRow(r, res, t, nil)
+		row := rank.OpenedRow(r, res, t, nil, "")
 		id := row.Value("choice_id").(string)
 		cid = id
 		known := false
@@ -252,6 +291,9 @@ func (e *Env) rankRecord(args []string) error {
 		return exit(2)
 	}
 	opts := rankOpts()
+	if n == 2 {
+		opts = append(opts, opt{names: []string{"--apply"}, help: "Then pivot: change the work to the pick."})
+	}
 	names := "CHOICE"
 	if n == 2 {
 		names = "CHOICE ATTEMPT"
@@ -273,11 +315,11 @@ func (e *Env) rankRecord(args []string) error {
 	if n == 2 {
 		pick = p.args[1]
 	}
-	return e.rankAnswer(cmd, e.rankDataDir(p), p.args[0], pick, n == 2, p.flag("--json"))
+	return e.rankAnswer(cmd, e.rankDataDir(p), p.args[0], pick, n == 2, p.flag("--json"), n == 2 && p.flag("--apply"))
 }
 
 // rankAnswer is cli._rank_answer.
-func (e *Env) rankAnswer(cmd, dataDir, cid, pick string, hasPick, jsonOut bool) error {
+func (e *Env) rankAnswer(cmd, dataDir, cid, pick string, hasPick, jsonOut, apply bool) error {
 	t := rankNow()
 	if err := rank.AppendRows(dataDir, rank.Sweep(dataDir, t)); err != nil {
 		return e.fail(cmd, err)
@@ -337,14 +379,292 @@ func (e *Env) rankAnswer(cmd, dataDir, cid, pick string, hasPick, jsonOut bool) 
 	if err := rank.AppendRows(dataDir, []*pyjson.Object{row}); err != nil {
 		return e.fail(cmd, err)
 	}
+	var pivot *pyjson.Object
+	if apply {
+		plan, perr := rank.PivotPlan(card, dataDir, pick)
+		if perr != nil {
+			return e.fail(cmd, perr)
+		}
+		pivot = rank.PivotApply(plan, dataDir)
+	}
 	if jsonOut {
-		e.out("%s\n", pyjson.DumpsIndent(pyjson.NewObject().Set("choice_id", cid).Set("event", "overridden").
+		doc := pyjson.NewObject().Set("choice_id", cid).Set("event", "overridden").
 			Set("chosen", chosen).Set("pick", pick).Set("switch", pyjson.NewObject().Set("cost", sc.Cost).
-			Set("undo_steps", sc.UndoSteps).Set("text", sc.Text)), 2, true))
+			Set("undo_steps", sc.UndoSteps).Set("text", sc.Text))
+		if pivot != nil {
+			doc.Set("pivot", pivot)
+		}
+		e.out("%s\n", pyjson.DumpsIndent(doc, 2, true))
 	} else {
 		e.out("Recorded on %s: switch from %s to %s.\n", cid, chosen, pick)
 		e.out("What switching will do (%s): %s\n", sc.Cost, sc.Text)
-		e.out("The pick is recorded; the work is not changed yet.\n")
+		switch {
+		case pivot == nil:
+			e.out("The pick is recorded; the work is not changed yet.\n")
+		case pivot.Value("applied") == true:
+			e.out("The pick is recorded and applied: undid %d steps.\n", len(pivot.Value("undone").([]any)))
+		default:
+			why := ""
+			if f, ok := pivot.Value("follow_up").(string); ok && f != "" {
+				why = f
+			} else if w, ok := pivot.Value("why").(string); ok {
+				why = w
+			}
+			e.out("The pick is recorded; the work is not changed: %s\n", why)
+		}
+	}
+	if pivot != nil && pivot.Value("applied") != true {
+		return exit(1)
 	}
 	return nil
+}
+
+// rankShow is `rank show`.
+func (e *Env) rankShow(args []string) error {
+	const cmd = "rank show"
+	opts := append([]opt{
+		{names: []string{"--ranking"}, value: true, metavar: "TEXT", help: "A ranking id."},
+		{names: []string{"--choice"}, value: true, metavar: "TEXT", help: "A choice id."},
+	}, rankOpts()...)
+	p, err := parseArgs(args, opts, 0)
+	if err != nil {
+		return e.usage(cmd, err)
+	}
+	if p.help {
+		return e.cmdHelp(cmd, "", "Show a ranking as the journal holds it: votes, choices, card, owner answers.", opts)
+	}
+	var ranking, choice *string
+	if p.has("--ranking") {
+		s := p.str("--ranking", "")
+		ranking = &s
+	}
+	if p.has("--choice") {
+		s := p.str("--choice", "")
+		choice = &s
+	}
+	if (ranking == nil) == (choice == nil) {
+		e.errf("Error: Give --ranking or --choice, not both.\n")
+		return exit(2)
+	}
+	doc, derr := rank.ShowDoc(e.rankDataDir(p), ranking, choice, rankNow())
+	if derr != nil {
+		e.out("%s\n", derr.Error())
+		return exit(1)
+	}
+	if p.flag("--json") {
+		e.out("%s\n", pyjson.DumpsIndent(doc, 2, true))
+	} else {
+		e.out("%s", rank.ShowText(doc))
+	}
+	return nil
+}
+
+// rankJudges is `rank judges`.
+func (e *Env) rankJudges(args []string) error {
+	const cmd = "rank judges"
+	opts := rankOpts()
+	p, err := parseArgs(args, opts, 0)
+	if err != nil {
+		return e.usage(cmd, err)
+	}
+	if p.help {
+		return e.cmdHelp(cmd, "", "Show how far each judge agrees with the owner, and its current weight.", opts)
+	}
+	names, trust := rank.JudgeTrust(e.rankDataDir(p), rank.TrustFloor, rank.TrustMinCards)
+	weights := rank.JudgeWeights(trust, "")
+	if p.flag("--json") {
+		e.out("%s\n", pyjson.DumpsIndent(pyjson.NewObject().Set("judges", rank.TrustDoc(names, trust)).
+			Set("weights", rank.WeightsObj(weights)), 2, true))
+	} else {
+		e.out("%s", rank.TrustText(names, trust, weights))
+	}
+	return nil
+}
+
+// rankPivot is `rank pivot`.
+func (e *Env) rankPivot(args []string) error {
+	const cmd = "rank pivot"
+	opts := []opt{
+		{names: []string{"--choice"}, value: true, metavar: "TEXT", help: "The card's choice id. [required]"},
+		{names: []string{"--to"}, value: true, metavar: "TEXT", help: "The attempt to switch to. [required]"},
+		{names: []string{"--apply"}, help: "Change the work. Only the owner."},
+	}
+	opts = append(opts, rankOpts()...)
+	p, err := parseArgs(args, opts, 0)
+	if err != nil {
+		return e.usage(cmd, err)
+	}
+	if p.help {
+		return e.cmdHelp(cmd, "", "Show what switching a card to another attempt would do; with --apply, do it.", opts)
+	}
+	for _, name := range []string{"--choice", "--to"} {
+		if !p.has(name) {
+			return e.usage(cmd, &usageError{"Missing option '" + name + "'."})
+		}
+	}
+	dataDir := e.rankDataDir(p)
+	choice, to := p.str("--choice", ""), p.str("--to", "")
+	var card *rank.Card
+	for _, c := range rank.ReadCards(dataDir) {
+		if c.ID() == choice {
+			card = c
+			break
+		}
+	}
+	if card == nil {
+		e.out("There is no choice %s.\n", choice)
+		return exit(1)
+	}
+	plan, perr := rank.PivotPlan(card, dataDir, to)
+	if perr != nil {
+		e.errf("Error: %s\n", perr.Error())
+		return exit(2)
+	}
+	var result *pyjson.Object
+	if p.flag("--apply") {
+		result = rank.PivotApply(plan, dataDir)
+	}
+	if p.flag("--json") {
+		var rv any
+		if result != nil {
+			rv = result
+		}
+		e.out("%s\n", pyjson.DumpsIndent(pyjson.NewObject().Set("plan", plan).Set("result", rv), 2, true))
+	} else {
+		e.out("%s", rank.PivotText(plan))
+		if result != nil {
+			if result.Value("applied") == true {
+				e.out("Applied.\n")
+			} else {
+				e.out("Not applied: %s\n", result.Value("why"))
+			}
+		}
+	}
+	if result != nil && result.Value("applied") != true {
+		return exit(1)
+	}
+	return nil
+}
+
+// judgeCall is the model call a judge makes.
+func (e *Env) judgeCall(client *llm.Client) rank.CallFn {
+	return func(model, baseURL, key string, msgs []rank.Msg) (string, error) {
+		ms := make([]llm.Message, len(msgs))
+		for i, m := range msgs {
+			ms[i] = llm.Message{Role: m.Role, Content: m.Content}
+		}
+		reply, cerr := client.CompleteWith(model, baseURL, key, ms, llm.BodyOpts{MaxTokens: -1}, llm.Timeout(e.lookup))
+		if cerr != nil {
+			var le *llm.Error
+			if errors.As(cerr, &le) {
+				return "", &callErr{"ModelCallError", le.Msg}
+			}
+			return "", cerr
+		}
+		return reply.Text, nil
+	}
+}
+
+// callErr carries the oracle's exception class name into the judge's why.
+type callErr struct{ name, msg string }
+
+func (c *callErr) Error() string  { return c.msg }
+func (c *callErr) PyName() string { return c.name }
+
+// rankJudge is `rank judge`.
+func (e *Env) rankJudge(args []string) error {
+	const cmd = "rank judge"
+	opts := append([]opt{
+		{names: []string{"--judge"}, value: true, metavar: "TEXT", help: "PROFILE/MODEL to ask."},
+		{names: []string{"--loop"}, help: "Repeat until the judges are exhausted."},
+	}, rankOpts()...)
+	p, err := parseArgs(args, opts, 1)
+	if err != nil {
+		return e.usageArgs(cmd, "ATTEMPTS_PATH", err)
+	}
+	if p.help {
+		return e.cmdHelp(cmd, " ATTEMPTS_PATH", "Ask a judge model to compare the next pair, in both orders, and record the vote.", opts)
+	}
+	if len(p.args) < 1 {
+		return e.usageArgs(cmd, "ATTEMPTS_PATH", &usageError{"Missing argument 'ATTEMPTS_PATH'."})
+	}
+	path := p.args[0]
+	if err := clickPath("'attempts_path'", path); err != nil {
+		return e.usageArgs(cmd, "ATTEMPTS_PATH", err)
+	}
+	r, err := e.rankRead(cmd, path)
+	if err != nil {
+		return err
+	}
+	raw, _ := os.ReadFile(path)
+	text, _ := pystr.DecodeStrict(raw)
+	doc, _ := pyjson.LoadsPy(text, 900)
+	var judge *string
+	if p.has("--judge") {
+		j := p.str("--judge", "")
+		judge = &j
+	}
+	if judge == nil && len(r.Policy.Judges) == 0 {
+		e.errf("policy.judges names no judge.\n")
+		return exit(3)
+	}
+	dataDir := e.rankDataDir(p)
+	profiles := agentprof.Resolve(agentprof.ConfiguredTable(e.dataHome()), e.lookup)
+	call := e.judgeCall(e.llmClient())
+	getenv := func(k string) string { return e.env[k] }
+	recorded := 0
+	var last *rank.JudgeResult
+	for {
+		last, err = rank.JudgeOnce(func() (*rank.Ranking, error) { return rank.Parse(doc) }, dataDir, profiles, getenv,
+			judge, rankNow(), call)
+		if err != nil {
+			return e.fail(cmd, err)
+		}
+		if !last.Recorded {
+			break
+		}
+		recorded++
+		if !p.flag("--loop") || last.Fit.Value("next") == nil {
+			break
+		}
+	}
+	var stop any
+	if !last.Recorded {
+		stop = last.Reason
+	} else if last.Fit != nil {
+		stop = last.Fit.Value("stop")
+	}
+	var fit, pair, jd, outs any
+	if last.Fit != nil {
+		fit = last.Fit
+	}
+	if last.Pair != nil {
+		pair = strAnyList(last.Pair)
+	}
+	if last.Recorded {
+		jd = last.Judge
+		outs = strAnyList(last.Outcomes)
+	}
+	if p.flag("--json") {
+		e.out("%s\n", pyjson.DumpsIndent(pyjson.NewObject().Set("recorded", recorded).Set("stop", stop).
+			Set("why", last.Why).Set("last", pyjson.NewObject().Set("pair", pair).Set("judge", jd).
+			Set("outcomes", outs)).Set("fit", fit), 2, true))
+	} else {
+		e.out("Recorded %d comparison(s). %s\n", recorded, last.Why)
+	}
+	if recorded > 0 {
+		return nil
+	}
+	if last.Reason == "failed" {
+		return exit(1)
+	}
+	return exit(3)
+}
+
+func strAnyList(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
 }

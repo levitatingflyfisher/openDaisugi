@@ -10,7 +10,28 @@ use super::upstream::{self, CallError};
 use crate::godec::Any;
 
 /// The largest clip forwarded.
-pub const MAX_VOICE_CLIP_BYTES: usize = 8 << 20;
+pub const MAX_VOICE_CLIP_BYTES: usize = 64 << 20;
+
+/// The cap used until the voice server says its own (a voice server built
+/// before /health named it). The voice server owns the number: `voice_cap`
+/// reads it from /health.
+pub const VOICE_MAX_CLIP_SECONDS: f64 = 1200.0;
+
+/// The longest clip the voice server at `target` takes, from its /health
+/// reply. It falls back to `VOICE_MAX_CLIP_SECONDS` when the server does not
+/// answer or does not name a cap.
+fn voice_cap(target: Option<&Target>) -> f64 {
+    let Some(t) = target else { return VOICE_MAX_CLIP_SECONDS };
+    let url = format!("{}/health", t.url.trim_end_matches('/'));
+    let Ok(r) = super::client::send("GET", &url, &[], b"", std::time::Duration::from_secs(2)) else {
+        return VOICE_MAX_CLIP_SECONDS;
+    };
+    serde_json::from_slice::<Value>(&r.body)
+        .ok()
+        .and_then(|v| v.get("max_seconds").and_then(Value::as_f64))
+        .filter(|n| *n > 0.0)
+        .unwrap_or(VOICE_MAX_CLIP_SECONDS)
+}
 
 /// What the page learns about voice.
 #[derive(Default)]
@@ -23,6 +44,8 @@ pub struct State {
     pub away: bool,
     /// `{done, total}` in bytes while voice, starting, gets its speech model.
     pub fetch: Option<Value>,
+    /// The longest clip the voice server takes, in seconds.
+    pub max_seconds: f64,
 }
 
 impl State {
@@ -43,6 +66,11 @@ impl State {
         }
         if let Some(f) = &self.fetch {
             pairs.push(("fetch", f.clone()));
+        }
+        if self.max_seconds.fract() == 0.0 {
+            pairs.push(("max_seconds", json!(self.max_seconds as u64)));
+        } else {
+            pairs.push(("max_seconds", json!(self.max_seconds)));
         }
         crate::gojson::obj(pairs)
     }
@@ -234,12 +262,14 @@ impl Server {
     }
 
     pub fn handle_voice_status(&self, _req: &Request, resp: &mut Response) {
-        let (st, _) = self.voice_now("voice.status").unwrap_or_default_state();
+        let (mut st, target) = self.voice_now("voice.status").unwrap_or_default_state();
+        st.max_seconds = voice_cap(target.as_ref());
         write_json(resp, 200, &st.json());
     }
 
     pub fn handle_voice_retry(&self, _req: &Request, resp: &mut Response) {
-        let (st, _) = self.voice_now("voice.start").unwrap_or_default_state();
+        let (mut st, target) = self.voice_now("voice.start").unwrap_or_default_state();
+        st.max_seconds = voice_cap(target.as_ref());
         write_json(resp, 200, &st.json());
     }
 
@@ -281,6 +311,10 @@ impl Server {
             return;
         }
         let managed = self.opts.voice_url.is_empty();
+        // Whether a job is already running is the voice server's to say: it
+        // answers 409, and the relay passes that on. The wait below does not
+        // follow the page, so a page that goes away leaves the job and the
+        // server's lock exactly as the go server does.
         let mut dest = format!("{}/transcribe", target.url.trim_end_matches('/'));
         if !req.raw_query.is_empty() {
             dest.push('?');
@@ -296,6 +330,19 @@ impl Server {
                     target.url
                 ),
             ),
+            Err(PostError::Timeout) => {
+                // The voice server did not see the cancel and may still be
+                // working. Say that this was a wait that ran out, not a dead
+                // server, so the owner does not start the same job twice.
+                write_err(
+                    resp,
+                    504,
+                    &format!(
+                        "The clip took longer than {} minutes to turn into text. The voice server may still be working on it. Wait a few minutes before sending it again.",
+                        voice_wait().as_secs() / 60
+                    ),
+                );
+            }
             Err(PostError::Reach) => {
                 if managed {
                     write_json(
@@ -382,7 +429,21 @@ fn upsert(pairs: &mut Vec<(String, Any)>, k: &str, v: Any) {
 
 enum PostError {
     Build,
+    Timeout,
     Reach,
+}
+
+/// How long the proxy waits for the voice server by default: as long as the
+/// server can run. whisper.cpp takes up to 120 s for each of 40 windows of a
+/// 20 minute clip (80 minutes), and cleanup adds a few minutes. A shorter
+/// wait threw the finished text away and left the server busy.
+const VOICE_WAIT_DEFAULT_SECS: u64 = 90 * 60;
+
+/// How long the proxy waits for the voice server. A test shortens it.
+pub static VOICE_WAIT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(VOICE_WAIT_DEFAULT_SECS);
+
+fn voice_wait() -> std::time::Duration {
+    std::time::Duration::from_secs(VOICE_WAIT_SECS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// One POST to the voice server: its status, Content-Type and body.
@@ -402,10 +463,11 @@ fn post(
         url,
         &headers,
         body,
-        std::time::Duration::from_secs(120),
+        voice_wait(),
     ) {
         Ok(r) => Ok((r.status, r.content_type, r.body)),
         Err(super::client::Fail::Build(_)) => Err(PostError::Build),
+        Err(super::client::Fail::Reach(m)) if m == "timed out" => Err(PostError::Timeout),
         Err(super::client::Fail::Reach(_)) => Err(PostError::Reach),
     }
 }
@@ -488,5 +550,200 @@ mod tests {
             String::from_utf8(r.body).unwrap(),
             r#"{"at":1.5,"code":"no_speech","error":"No speech found.","message":"No speech found."}"#
         );
+    }
+
+    /// The tests that change or depend on the proxy's wait run one at a time.
+    static WAIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A Server whose voice server is `url`, and a POST of a clip to it.
+    fn proxy(url: &str, name: &str) -> (Server, Request) {
+        let dir = std::env::temp_dir().join(format!("coppice-rs-voice-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tokens = super::super::token::TokenStore::new(dir.join("token"));
+        tokens.mint().unwrap();
+        let opts = super::super::serve::Options {
+            dial: super::super::upstream::Dialer { path: dir.join("none.sock") },
+            tokens,
+            warden_root: dir.clone(),
+            push: None,
+            voice_url: url.into(),
+            voice_token_file: String::new(),
+            views: vec![],
+            extra_data_dirs: vec![],
+            events: None,
+            listening: None,
+            cert_check_every: None,
+            wait_for_tailnet: false,
+            tailnet_retry: None,
+            serving_file: String::new(),
+        };
+        let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let req = Request {
+            method: "POST".into(),
+            path: "/api/voice/transcribe".into(),
+            escaped_path: "/api/voice/transcribe".into(),
+            raw_query: String::new(),
+            proto_minor: 1,
+            headers: vec![],
+            body: b"clip".to_vec(),
+            body_too_big: false,
+            remote: addr,
+            local: addr,
+            host: "x".into(),
+        };
+        (Server::new(opts), req)
+    }
+
+    /// A voice server that waits `hold` before it answers.
+    fn slow_upstream(hold: std::time::Duration) -> String {
+        use std::io::{Read, Write};
+        let ln = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", ln.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in ln.incoming() {
+                let Ok(mut c) = conn else { return };
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    std::thread::sleep(hold);
+                    let body = r#"{"text":"done"}"#;
+                    let _ = c.write_all(
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                            .as_bytes(),
+                    );
+                });
+            }
+        });
+        url
+    }
+
+    // The proxy waits as long as the voice server can run on a 20 minute clip
+    // (40 windows of 120 s), so it never throws a finished text away.
+    #[test]
+    fn the_voice_wait_covers_the_longest_job_the_server_can_run() {
+        assert!(VOICE_WAIT_DEFAULT_SECS >= 85 * 60);
+    }
+
+    // A wait that runs out is not a dead server: the answer says it timed
+    // out, so the owner does not read "voice is down" and start the job again.
+    #[test]
+    fn a_wait_that_ran_out_says_so() {
+        let _g = WAIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let url = slow_upstream(std::time::Duration::from_secs(3));
+        let (s, req) = proxy(&url, "timeout");
+        VOICE_WAIT_SECS.store(1, std::sync::atomic::Ordering::Relaxed);
+        let mut resp = Response::new(200);
+        s.handle_voice_transcribe(&req, &mut resp);
+        VOICE_WAIT_SECS.store(VOICE_WAIT_DEFAULT_SECS, std::sync::atomic::Ordering::Relaxed);
+        let body = String::from_utf8(resp.body).unwrap();
+        assert_eq!(resp.status, 504, "{body}");
+        assert!(body.contains("took longer than") && body.contains("may still be working"), "{body}");
+    }
+
+    /// A voice server that answers 409 to a second clip while one runs.
+    fn busy_upstream(hold: std::time::Duration) -> String {
+        use std::io::{Read, Write};
+        let ln = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", ln.local_addr().unwrap());
+        let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        std::thread::spawn(move || {
+            for conn in ln.incoming() {
+                let Ok(mut c) = conn else { return };
+                let busy = busy.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    let _ = c.read(&mut buf);
+                    let (status, body) = if busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        ("409 Conflict", r#"{"error":"busy","message":"The voice server is still turning an earlier clip into text."}"#)
+                    } else {
+                        std::thread::sleep(hold);
+                        busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                        ("200 OK", r#"{"text":"done"}"#)
+                    };
+                    let _ = c.write_all(
+                        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                            .as_bytes(),
+                    );
+                });
+            }
+        });
+        url
+    }
+
+    // Two clips never run at once, and the voice server is the one that says
+    // so: it answers 409 while it works, and the proxy passes that on.
+    #[test]
+    fn the_voice_servers_busy_answer_is_relayed() {
+        let _g = WAIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let url = busy_upstream(std::time::Duration::from_millis(1500));
+        let (s, req) = proxy(&url, "busy");
+        let s = std::sync::Arc::new(s);
+        let first = {
+            let s = s.clone();
+            let req = clone_req(&req);
+            std::thread::spawn(move || {
+                let mut r = Response::new(200);
+                s.handle_voice_transcribe(&req, &mut r);
+                r.status
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let mut second = Response::new(200);
+        s.handle_voice_transcribe(&req, &mut second);
+        let body = String::from_utf8(second.body).unwrap();
+        assert_eq!(second.status, 409, "{body}");
+        assert!(body.contains("still turning an earlier clip"), "{body}");
+        assert_eq!(first.join().unwrap(), 200);
+        let mut third = Response::new(200);
+        s.handle_voice_transcribe(&req, &mut third);
+        assert_eq!(third.status, 200);
+    }
+
+    // The voice server owns the cap: the status reply carries what its
+    // /health says.
+    #[test]
+    fn the_cap_comes_from_the_voice_servers_health() {
+        use std::io::{Read, Write};
+        let ln = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", ln.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in ln.incoming() {
+                let Ok(mut c) = conn else { return };
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf);
+                let body = r#"{"ok":true,"max_seconds":600}"#;
+                let _ = c.write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                        .as_bytes(),
+                );
+            }
+        });
+        let t = Target { url, token: "t".into() };
+        assert_eq!(voice_cap(Some(&t)), 600.0);
+        assert_eq!(voice_cap(None), VOICE_MAX_CLIP_SECONDS);
+    }
+
+    fn clone_req(r: &Request) -> Request {
+        Request {
+            method: r.method.clone(),
+            path: r.path.clone(),
+            escaped_path: r.escaped_path.clone(),
+            raw_query: r.raw_query.clone(),
+            proto_minor: r.proto_minor,
+            headers: r.headers.clone(),
+            body: r.body.clone(),
+            body_too_big: r.body_too_big,
+            remote: r.remote,
+            local: r.local,
+            host: r.host.clone(),
+        }
+    }
+
+    #[test]
+    fn the_status_reply_carries_the_clip_cap() {
+        let st = State { ready: true, state: "ready".into(), max_seconds: 1200.0, ..Default::default() };
+        let text = crate::gojson::marshal(&st.json());
+        assert!(text.contains(r#""max_seconds":1200"#), "{text}");
     }
 }

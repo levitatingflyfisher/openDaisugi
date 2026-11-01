@@ -51,7 +51,7 @@ func Table() []Binding {
 }
 
 // Keys is the footer text on a row with no daisugi mode to set: every
-// binding's keys and help, two spaces apart, but m. On an agent a gate
+// binding's keys and help, two spaces apart, but m. On an agent a warden
 // hook reports for, the footer adds m mode (see footerText).
 func Keys() string {
 	return joinKeys(withoutMode(Table()))
@@ -68,7 +68,7 @@ func withoutMode(table []Binding) []Binding {
 	return out
 }
 
-// modeSettable is true for a live agent row a gate hook reports a mode
+// modeSettable is true for a live agent row a warden hook reports a mode
 // for: the row m acts on.
 func modeSettable(r Row) bool {
 	return r.Parent == "" && (r.Mode == "enforcing" || r.Marker == "watching")

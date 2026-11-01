@@ -69,7 +69,7 @@ rather than silently dropped.
 | `DaisugiVerify/Wire.lean` | The wire-protocol dispatcher, `handleLine`. |
 | `DaisugiVerify/Theorems.lean` | Task 6 — the proofs. See below. |
 | `Test/Semantics.lean` | Fixture-driven regression against `clients/fixtures/semantics.json` (134 cases). |
-| `analysis/classify.py`, `analysis/false_accept_detail.py`, `analysis/bucket_fa.py` | Dev-loop scripts (not Lean, not gated) used to iterate the parser against the full corpus faster than the capped `daisugi conformance run` report. `bucket_fa.py` only buckets the "superset_heads" false-accept shape (both sides `ok=true`, different heads); that shape's count is 0 against the current corpus, so it currently prints an empty table — the "40+ distinct buckets" finding it produced is a historical result against the pre-fix corpus, preserved in `clients/ADJUDICATIONS.md`'s original L-1 entry. |
+| `analysis/classify.py`, `analysis/false_accept_detail.py`, `analysis/bucket_fa.py` | Dev-loop scripts (not Lean, not checked) used to iterate the parser against the full corpus faster than the capped `daisugi conformance run` report. `bucket_fa.py` only buckets the "superset_heads" false-accept shape (both sides `ok=true`, different heads); that shape's count is 0 against the current corpus, so it currently prints an empty table — the "40+ distinct buckets" finding it produced is a historical result against the pre-fix corpus, preserved in `clients/ADJUDICATIONS.md`'s original L-1 entry. |
 
 ## Scorecard
 
@@ -78,7 +78,7 @@ rather than silently dropped.
 > record of an EARLIER state and are kept as history. The decompose subset
 > parser was since extended — heredocs, `if`/`while`/`until`/`for`/`select`,
 > `${…}`/`$(())`/backtick expansions, assignment-value substitutions, the `!`
-> prefix — behind a gate (`clients/gate.py`) that holds genuinely-unsafe cases
+> prefix — behind a check (`clients/safety_check.py`) that holds genuinely-unsafe cases
 > at **zero**. Current standing:
 >
 > | Kind | Matched | Total | % |
@@ -106,11 +106,11 @@ false-accepts" scorecard in git history / the previous revision of this
 file) instead of silently accepting the fused, wrong output. The oracle
 self-checks 11,450/11,450 against itself.
 
-**Zero crashes (task 2 gate): CONFIRMED.** Every one of the 11,450 cases
+**Zero crashes (task 2 check): CONFIRMED.** Every one of the 11,450 cases
 gets a verdict line; 0 bad-JSON output lines, 0 missing verdicts, 0
 client-side `error` verdicts (`analysis/classify.py`'s header line).
 
-**Whole-corpus decode (task 1 gate): CONFIRMED** — same evidence: nothing
+**Whole-corpus decode (task 1 check): CONFIRMED** — same evidence: nothing
 in the corpus fails to decode into a `Step`/`Plan`/`Envelope` and produce
 a verdict.
 
@@ -120,7 +120,7 @@ a verdict.
 | verify (non-SMT / Core slice) | 327 | 327 | **100.00%** |
 | verify (raw total, incl. out-of-scope Full-stage cases) | 327 | 361 | 90.58% |
 
-### verify — task 5 gate: MET
+### verify — task 5 check: MET
 
 The non-SMT slice (every verify case whose expected violations are drawn
 only from `{permissions, dag}` — i.e. genuinely Core-scoped, no
@@ -135,12 +135,12 @@ predicate, z3}`). The same scope note as before still holds and was
 re-verified against the current oracle source: `stage="delegation"` is
 emitted **exclusively** by `check_skill_delegations` (`verify.py` lines
 658/683), the Z3-backed skill-subsumption check — never by the actual
-Core delegation-safety gate (`_check_delegation_safety`, which emits
+Core delegation-safety check (`_check_delegation_safety`, which emits
 `stage="permissions"`, matched exactly by `checkDelegationSafety` in
 `Verify.lean`). So every `stage="delegation"` expectation is
 out-of-Core-scope by construction, not an ambiguous case to adjudicate.
 
-### decompose — task 4 gate: NOT MET (116 false-accepts, root-caused, new mechanism)
+### decompose — task 4 check: NOT MET (116 false-accepts, root-caused, new mechanism)
 
 `shell_allow_decomposition` cases: simple commands; `;`/`&&`/`||`/`|`/`|&`
 separators; single/double-quoted strings (no expansion — a bare `$VAR`
@@ -228,14 +228,14 @@ triggering mechanism *or* an incomplete redirect-detection pass in the
 validation itself — undetermined, not chased further.
 
 **No client-side rule was implemented.** A rule good for only 87/116 would
-still leave the gate unmet, and per the same reasoning as the prior
+still leave the check unmet, and per the same reasoning as the prior
 revision's finding, retrofitting a *partial*, only-mostly-validated
 heuristic — cross-newline lookahead, nested-wrapper pipe-stage counting,
 "does a redirect appear later in the flattened chain" — is real parser
 complexity added on top of an admittedly incomplete model, for well under
 one point of corpus match rate (87/11,089), on a client whose stated
 deliverable is the proofs, not decompose coverage. Reported as an
-**honestly unmet gate**: false-accepts = 116, mechanism identified and
+**honestly unmet check**: false-accepts = 116, mechanism identified and
 partially (not fully) characterized, no defensive fix attempted. See **L-1**
 in `clients/ADJUDICATIONS.md` for the full investigation and the specific
 probe results.

@@ -9,8 +9,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{Object, Value};
 
 use super::engine::EngineError;
 

@@ -8,13 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"daisugi-verify/internal/gate"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/warden"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // typerFile is typer's Path(exists=True, dir_okay=False, readable=True):
@@ -140,7 +140,7 @@ func (e *Env) hookReport(args []string) error {
 	opts := []opt{
 		{names: []string{"--pane"}, value: true, metavar: "TEXT", help: "Pane id to stamp onto the event, if known."},
 		{names: []string{"--root"}, value: true, metavar: "PATH",
-			help: "Gate data root — where the session tree this event appends to lives."},
+			help: "Warden data root — where the session tree this event appends to lives."},
 	}
 	p, err := parseArgs(args, opts, 0)
 	if err != nil {
@@ -150,11 +150,11 @@ func (e *Env) hookReport(args []string) error {
 		return e.cmdHelp(cmd, "", "Read one PaneStateEvent JSON line from stdin and deliver it.", opts)
 	}
 	raw, _ := io.ReadAll(e.Stdin)
-	argv := []string{"--root", gateroot.PathStr(p.str("--root", e.dataHome()+"/gate"))}
+	argv := []string{"--root", wardenroot.PathStr(p.str("--root", e.dataHome()+"/warden"))}
 	if p.has("--pane") {
 		argv = append(argv, "--pane", p.str("--pane", ""))
 	}
-	stdout, stderr, code := gate.HookReportCLI(argv, raw, e.Environ)
+	stdout, stderr, code := warden.HookReportCLI(argv, raw, e.Environ)
 	if stdout != "" {
 		e.echo("%s\n", stdout)
 	}

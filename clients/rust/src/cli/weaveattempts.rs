@@ -11,8 +11,8 @@ use num_bigint::BigInt;
 use regex::Regex;
 
 use super::weavecmd::{ancestors, collect};
-use crate::gate::py::text::{lower, repr, strip};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{lower, repr, strip};
+use crate::warden::pyjson::{Object, Value};
 use crate::rank;
 use crate::supervise::{str_of, Approver, Decision, DefaultApproval, ExecResult};
 
@@ -100,7 +100,7 @@ impl Shared {
                     Object::new().with("name", "the slot outputs read").with("required", true).with("result", pass(ok)),
                 ));
             }
-            let hash = crate::gate::sha256::hexdigest(res.stdout.as_bytes());
+            let hash = crate::warden::sha256::hexdigest(res.stdout.as_bytes());
             let mut a = Object::new();
             a.set("id", format!("{sid}#{}", k + 1)).set("content_hash", format!("sha256:{hash}"));
             a.set("author", res.model.clone().unwrap_or_default()).set("tests", Value::List(tests));
@@ -147,7 +147,7 @@ impl Shared {
         if matches!(res.value("order"), Value::List(l) if l.len() > 1) {
             let mut run = Object::new();
             run.set("run_id", self.run_id.as_str()).set("step", sid.as_str()).set("downstream", Value::List(self.below(&sid)));
-            let row = rank::opened_row(&r, &res, t, Some(run));
+            let row = rank::opened_row(&r, &res, t, Some(run), None);
             let id = row.value("choice_id").as_str().unwrap_or("").to_string();
             if !rank::read_cards(&self.data_dir).iter().any(|c| c.id() == id) {
                 rows.push(row);

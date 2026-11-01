@@ -55,10 +55,10 @@ def test_effect_is_three_valued_and_covers_every_stage(tmp_path):
     stage_keys = {s.key for s in detect_stages(tmp_path)}
     assert set(STAGE_EFFECT) == stage_keys, "STAGE_EFFECT must cover every stage exactly"
     assert set(STAGE_EFFECT.values()) <= {"live", "cfg", "planned"}
-    # shell, distill and verifier are live; stores is planned; gate is cfg.
+    # shell, distill and verifier are live; stores is planned; warden is cfg.
     assert is_live("shell") and is_live("distill") and is_live("verifier")
     assert effect_of("stores") == "planned"
-    assert effect_of("gate") == "cfg"
+    assert effect_of("warden") == "cfg"
 
 
 def test_verifier_is_a_knob_and_now_live(tmp_path):
@@ -101,7 +101,7 @@ def test_every_module_knob_option_names_a_real_module_in_the_map(tmp_path):
 def test_resolve_command_parses_forgiving_matches():
     from opendaisugi.swap import resolve_command
 
-    assert resolve_command(":gate enforce") == ("gate", "enforce")
+    assert resolve_command(":warden enforce") == ("warden", "enforce")
     assert resolve_command("shell reject") == ("shell", "reject-compound")  # substring
     assert resolve_command("verifier go") == ("verifier", "go (mvdan)")  # value match
 
@@ -111,13 +111,13 @@ def test_resolve_command_rejects_bad_input():
 
     from opendaisugi.swap import resolve_command
 
-    for bad in ("gate", "nope enforce", "gate zzz"):
+    for bad in ("warden", "nope enforce", "warden zzz"):
         with _pytest.raises(ValueError):
             resolve_command(bad)
 
 
 def test_floor_report_effect_is_cfg():
     # The Stop/Notification hooks live in settings.json, which the harness
-    # owns and reloads — the same reason gate mode stays cfg, not live
+    # owns and reloads — the same reason warden mode stays cfg, not live
     # (master §5.9).
     assert effect_of("floor_report") == "cfg"

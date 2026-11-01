@@ -14,19 +14,19 @@ const workingRow = PANES.find((p) => p.id === 'w1:p1');
 // as a pane.list row.
 const stateEvent = {
   event: 'state', v: 1, ts: 1757300030.0, session_id: 'd41c', harness_session_id: null,
-  harness: 'codex', pane: 'w1:p2', state: 'blocked', source: 'gate',
+  harness: 'codex', pane: 'w1:p2', state: 'blocked', source: 'warden',
   detail: 'verdict=deny clause=shell.deny[2]',
   ask: { id: 'toolu_01ABC', tool: 'Bash', summary: 'rm -rf build/', deadline: 1757300090.0 },
 };
 
 // The failure this names: reading pane.list as a nested PaneStateEvent makes
 // stateOf return unknown for every pane, and the Allow and Deny box never
-// appears on the pane the operator just tapped. A gate blocked is one shot,
+// appears on the pane the operator just tapped. A warden blocked is one shot,
 // so there is no second event to rescue it.
 test('stateOf reads a flat pane.list row', () => {
   const st = stateOf(blockedRow);
   assert.equal(st.state, 'blocked');
-  assert.equal(st.source, 'gate');
+  assert.equal(st.source, 'warden');
   assert.equal(st.harness, 'codex');
   assert.equal(st.ts, 1757300030.0);
   assert.equal(st.ask.id, 'toolu_01ABC');

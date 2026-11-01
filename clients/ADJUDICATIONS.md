@@ -9269,7 +9269,7 @@ not trained on this scene, the image is mostly dark (a headlight only),
 and its gripper targets (about 2.0, sized for the SO100 arm) drive
 `j_grip` far past its range.
 
-Latency per chunk on this CPU (Intel i5-7300HQ, 4 cores, 4 threads each,
+Latency per chunk on this CPU (an older laptop CPU, 4 threads each,
 load average 0.7 to 3.4): Go 2.8 s and Rust 3.0 s on the loop's frames
 (the replay runs: the three graphs and the 10 Euler steps, not the camera
 or physics). The PyTorch oracle took 6.7 s on the same mostly dark frames,
@@ -9540,7 +9540,7 @@ Retires when: the vla-ref pack is installed and the chunk is made through
 it (compare it with `chunk.json` then).
 
 **PK-R-8 (ruling): the one real install and train run.** On this box
-(4-core i5-7300HQ, no GPU used, 4 GB memory cap):
+(an older laptop CPU, no GPU used, 4 GB memory cap):
 
 - `pack bundle train` (Rust): the CPython and 57 wheels, a 351.5 MB tar,
   in about 70 s; the first try found the long wheel name of PK-R-5.
@@ -9666,7 +9666,7 @@ Measured 2026-10-08 (PK-R-14). Status: in force.
 Retires when: the trainer's CPU settings change.
 
 **PK-R-14 (ruling): the CPU step, measured through the pack from Go and
-Rust.** On this box (4-core i5-7300HQ), with the train pack built by
+Rust.** On this box (an older laptop CPU), with the train pack built by
 the Go `pack bundle train` (336 MB, 2 min 23 s) and installed by the
 Rust `pack install train --offline` (17 min 20 s: the disk was under
 heavy load from other work; PK-R-8 took 65 s), in a scratch HOME:
@@ -11049,7 +11049,8 @@ Retires when: the owner rules per-edge profiles.
 **MX-R-10 (ruling, Q12): children run one at a time.** The spawn tool waits
 for its child. Parallel children, with ranking, come later.
 
-Status: in force.
+Status: retired by BR-R-1 to BR-R-6 (2026-10-31): `tree run` with `attempts` starts
+parallel children, each in its own worktree, ranked.
 Retires when: parallel children are built.
 
 **MX-R-11 (harness): the cases.** `sprig_compare` passes descriptors to
@@ -15206,3 +15207,684 @@ so; a pause at a turn boundary retires FM-R-98 and removes it). (d) Every
 entry of a pool gets the key of the pool's profile (the doc says so).
 Status: in force.
 Retires when: the owner asks for the floor-bar count or a CLI spawn.
+
+**CL-R-1 (ruling): two cli cases keep the answer of the box that first wrote them.**
+`status pathways minilm` prints the matcher threshold (0.55 with
+sentence-transformers, 0.25 without), and `journal search minilm` either falls
+back to the lexical matcher or fails on a missing model, by what the box
+holds. No case config can hide an installed package. `clients/cli_cases.py`
+now lists both in `BOX_DEPENDENT`, keeps each one's answer from the fixture on
+every regeneration, and `cases.manifest.json` names them under `kept`. The
+ports are compared against the kept answer, so a regeneration on another box
+cannot flip them. Warnings of every class are written as `warning: text` in
+the fixture, so one fixture reads the same on any box.
+Status: in force.
+Retires when: the two cases pin the matcher in their own config, or the
+matcher answer stops depending on installed packages.
+
+## 2026-10-31: W3 fix round 1 (adjudications)
+
+The thin Go `daisugi-warden` binary never starts auto-tend: `warden.CaptureTrigger` is nil there, the resident
+server is the full binary, and a non-resident hook given `--captures-root` has no `config.yaml` beside it. Rust
+starts it from its library. No case can reach the difference.
+Status: in force.
+Retires when: the thin binary reads the config or is retired.
+## 2026-10-31: ranking's judge, trust and pivot; branching (RK-R-17 to RK-R-21, BR-R-1 to BR-R-6)
+
+**RK-R-17 (ruling): `rank show`, `rank judge`, `rank judges`, `rank pivot`
+and `rank record pick --apply` are in all three ports.** `show` reads the
+comparison and choice files and the card, and writes nothing. `judge` asks one
+judge twice for the next pair, in both orders, with the author never shown, and
+records both rows or neither. A reply that is not one line of `A`, `B` or `tie`,
+a transport error and a non-2xx status are no vote (exit 1 for a failed call,
+3 for a reply that does not parse or nothing to judge). The prompt bytes are
+pinned by one digest in the three ports. `judges` shows each judge's record and
+its sampled weight. `pivot` prints a plan, or with `--apply` undoes the
+reversible later steps, newest first, takes the chosen edits out of the chosen
+worktree and applies the other attempt's patch; it never runs a permanent step.
+Status: in force.
+Retires when: does not retire.
+
+**RK-R-18 (ruling): a judge must be of another model family than every author,
+and a bare Claude alias is the claude family.** The family of a model id is its
+first word, lowercased, with these merges: `o1`, `o3`, `o4` and `chatgpt` into
+`gpt`; `gemma` into `gemini`; `haiku`, `sonnet`, `opus` and `fable` into
+`claude`. An author with no model name makes the pair unjudgeable. The merge for
+the bare aliases is there because a branch records its author as the alias it
+started with (`haiku`), and a `claude-*` judge passed the check against it.
+Status: in force.
+Retires when: a model registry names the family of each model.
+
+**RK-R-19 (ruling): the trust floor and the Thompson-sampled weight (owner
+ruling A3).** Agreement is counted over answered cards where the judge voted on
+the pair. A judge under 0.5 over at least 5 such cards is dropped and not asked.
+Each other judge votes with `2 * Beta(1 + agreed, 1 + disagreed)`, one draw per
+ranking, seeded from the ranking's fit seed and the judge id; the draw is the
+order statistic of integer-parameter Beta, so the three ports agree to the last
+digit. Weights apply when the journal supplies the votes; votes held inline in
+the attempts file keep weight 1. The cyclic magnitude is the share of voted
+pairs that lie on a majority cycle, not the curl share (a consistent judge reads
+0.0). It is reported and never used to drop.
+Status: in force.
+Retires when: the owner changes the floor or the weight rule.
+
+**RK-R-20 (ruling): the pivot takes the chosen edits out first.** The chosen
+worktree holds the chosen attempt's own edits, and the other attempt's patch is
+against `HEAD`. So the pivot stages both worktrees, removes the chosen edits
+with `git apply -R --index`, applies the other patch with `--3way --index`, and
+puts the chosen edits back if that fails. Each `git apply` is all or nothing.
+Status: in force.
+Retires when: the pivot restores from a checkpoint instead.
+
+**RK-R-21 (harness): the cases.** `clients/rank_cases.py` gained a `git`
+tree entry (a repository, a commit and detached worktrees, with git's own files
+left out of the snapshot) and a model-reply recorder that answers the judge from
+the fake model server by request order. A case whose card is a branch card holds
+`facts.adopt`, which the queue prints as the command that takes the kept edits.
+The cases do not cover a conflicting `pivot --apply`: a conflict needs a
+repository state the case harness cannot lay out without non-determinism, and the
+Python tests cover it.
+Status: in force.
+Retires when: the harness can lay out a conflict.
+
+**BR-R-1 (ruling): the request.** `tree run` takes `attempts` (2 to 8; 1 or
+absent is the single child) and, for 2 or more, `why`: one of `failed_verify`,
+`failed_tests`, `low_confidence`, `operator`. A bool, 0, 9, a float other than
+1.0 and a text are bad input (exit 2). `--session` cannot name a child when the
+request has attempts. `--parallel K`, `--check NAME=COMMAND` (repeatable) and
+`--judge PROFILE/MODEL` are options of the starter only; the child cannot write
+a check (W3K-11).
+Status: in force.
+Retires when: does not retire.
+
+**BR-R-2 (ruling): all the budgets or none.** Every branch reserves the full
+`--tokens` and `--turns`, all under one lock, in branch order. A parent with less
+than `attempts` times that left refuses the whole run:
+`the parent has T tokens left; N branches of B each need N*B`. No branch starts
+and no worktree stays. A branching run needs a git work tree:
+`branching needs a git workspace; <cwd> is not one`. A refusal under budget
+writes no `refused` row and does not count toward the ask after three.
+Status: in force.
+Retires when: does not retire.
+
+**BR-R-3 (ruling): the row order.** The `spawn` rows of all branches go in first,
+in branch order, each with `branch_of` (the ranking id) and `why`. The `end` rows
+come after every branch ended, in branch order, each with that branch's own use.
+The reply's `branches` list is in branch order. So the ledger is the same under
+`--parallel 1` and `--parallel 4`.
+Status: in force.
+Retires when: does not retire.
+
+**BR-R-4 (ruling): the branch's identity.** A branch's `content_hash` is
+`sha256:` over the diff of its worktree against the commit it started from, a
+NUL byte and the child's answer. New files count (`git add -A --intent-to-add`
+runs first). The base commit is kept in the worktree's git directory, so a child
+that commits does not move it. The author is the model, else the profile's
+model, else `haiku`.
+Status: in force.
+Retires when: does not retire.
+
+**BR-R-5 (ruling): the checks.** A check runs in the branch's worktree with the
+child's scrubbed environment, the envelope's `max_execution_time_s` as its
+timeout and its output discarded. Exit 0 is `pass`; anything else, a timeout and
+a start failure are `fail`. A branch whose sprig did not end `ran` fails the
+required check `the child ran` and its other checks are `not_run`.
+Status: in force.
+Retires when: model-written checks get a trust rule.
+
+**BR-R-6 (ruling): nothing is copied unless the owner runs `tree adopt`.** The
+leader's edits stay in `<data>/tree/branches/<session>`. `daisugi tree adopt
+SESSION` applies the branch's diff against its base commit to the repository it
+came from with `git apply --3way`. It refuses in one line, exit 2, and changes
+nothing when a touched file has uncommitted changes or the edits conflict (every
+touched path is put back as it was). `tree prune-branches` removes the worktrees
+of closed cards and of rankings with no card. Both are tree write verbs: the
+warden denies an agent's shell line. MX-R-10 (children run one at a time) is
+retired by this entry.
+Status: in force.
+Retires when: does not retire.
+
+
+## 2026-10-31: the safety gaps (SG-1 to SG-13)
+
+These are the rulings of the W3 safety-gaps plan, copied as they were written. The owner has not
+read them yet; they are provisional. The port rulings (SG-R-n) follow.
+
+- **SG-1: operand accesses face the scopes.** At the permission stage each shell step's read paths face `file_read` and its write paths face `file_write`, the same scopes a `file_read` or `file_write` step faces. An unknown read set is a violation unless `file_read` holds the glob `**` or `/**`; an unknown write set likewise against `file_write`. The reason names why it is unknown (closed list `UNKNOWN_REASONS`). This runs with and without `shell_allow_decomposition`: a metachar-free line is read with `shlex`; a compound line that is not opted in stays the blanket reject it is today.
+- **SG-2: a tree needs a covering glob.** An access with `tree: true` (a recursive copy's source, `rm -r X`, `tar -x` into DIR, `grep -r DIR`, `find START`, a `cp -r` destination) is in scope only when some glob `g` is `**` or `/**`, or `g` ends with `/**` and the directory matches `g` or `g` without its trailing `/**`. A glob that does not end in `/**` never covers a tree.
+- **SG-3: the base.** The warden passes the call's cwd as the base (today's `dialect_base`); plan-time `verify` passes none. A relative path resolves against the base. If a level's first command is `cd LIT` with one literal operand (no `-`, `~`, `$`, glob, brace) and no other cwd mover appears at any level, every relative access at that level and below resolves against both `base` and `base/LIT`, and both must be in scope (a failed `cd` leaves the cwd where it was). Any other cwd mover anywhere (`cd` not first or not literal, `pushd`, `popd`, `builtin`, `command`, `exec`, `eval`, `source`, `.`, `env` with `-C`, `--chdir` or `--chdir=`) makes every relative access unknown. Without a base, relative paths stay relative and face the globs as written (as redirects do today). **Redirect targets follow the same rule**, so `cat a > out.txt` at cwd `/work` is in scope `/work/**`; today it is denied as the literal `out.txt`. This is the one allow-direction change of the plan.
+- **SG-4: `xargs` is deny-when-unknown; `find -exec` has a rule.** A reader or writer under `xargs` has unknown operands (reason `"{head} runs under xargs, which adds operands the line does not show"`). Under `find START... -exec CMD {} ;|+`: a writer is unknown (as today); a reader's reads are the start trees (already counted) plus its literal operands that are not `{}` and do not contain `{}`; under `-execdir` or `-okdir` a relative literal operand with a `..` segment is unknown. `find` itself reads each start as a tree (`.` when none); `-delete` writes each start tree; `-fprint`, `-fprint0`, `-fprintf` and `-fls` write their FILE; every other token must be in `FIND_ARGS` (a closed table of tests and actions with their argument counts) or the line is unknown.
+- **SG-5: `tar`.** Exactly one mode of `c`, `x`, `t` (short, bundled, old-style first word without a dash, or `--create`, `--extract`, `--list`); `-f ARCHIVE`, `--file ARCHIVE`, `--file=ARCHIVE` once (`-` is a stream, not a path; a missing `-f` is unknown); `-C DIR`, `--directory DIR` or `=DIR` at most once; `z j J a v` and `--gzip --bzip2 --xz --auto-compress --verbose --strip-components=N --strip-components N`. `c`: writes ARCHIVE (path), reads each operand as a tree, operands placed from DIR when given. `x`: reads ARCHIVE, writes DIR as a tree (`.` when none). `t`: reads ARCHIVE. Any other flag (`-P`, `--absolute-names`, `-O`, `-T`, `-r`, `-u`, `-A`, `--delete`, `-h`, `--overwrite`, `-k`, ...) is unknown.
+- **SG-6: names are reads.** `ls`, `find`, `grep -r` and `rg` read names and contents under a path, so they are reads of that path (a tree for the recursive ones), as the `Glob` and `Grep` tools already map to `file_read` (`verify.py:492-494`). `ls` with no operand reads `.`; `ls -R` is a tree.
+- **SG-7: dialect version 3.** `WRITE_PATHS_VERSION` becomes 3 (the cwd-mover set grows, the leading-`cd` rule adds the second base). `DIALECT_HASH` changes; `warden status` prints the new hash; an existing `dialect_enforce` pin that names the old hash makes every word use a violation (`dialect_pin_mismatch`), as DL-4 says. The one-line hint in `warden status` says `pin is from an earlier dialect; set dialect_enforce: <hash> or remove it`.
+- **SG-8: no silent pass.** An enforced invariant or postcondition with no `expr` whose type is not a dialect word, not in `RECOGNIZED_OPAQUE_TYPES` (invariant) and not in `RECOGNIZED_STAGE2_POSTCONDITION_TYPES` (postcondition) is a violation at every stakes, reason `opaque_unrecognized`, message `{label} '{type}' declares a safety property with no verifiable expr and no definition; nothing can discharge it`. A dialect word keeps DL-5: pinned, the word decides; unpinned, audited, and below strict stakes allowed, at strict stakes rejected as today. Robotics unbacked, recognized robotics types and stage-2 postcondition types are unchanged.
+- **SG-9: enforce enforces the words (DL-4 amended).** The warden's dialect pin is `dialect_enforce` when the config sets it; else `DIALECT_HASH` when the warden's effective mode is `enforce`; else none (audit). Plan-time `verify` with `dialect_pin=None` audits, as today. A set pin that differs from the build's hash is a mismatch violation on every word use, in both modes, as today.
+- **SG-10: envelope time.** `models.opaque_unrecognized(envelope) -> list[str]` names the enforced expr-less items SG-8 would reject. `daisugi warden register` refuses such an envelope: exit 2, one line, nothing written. The generation paths (`envelope.py` and the Tier-1 provider) demote each such item to `enforce: false` and add one warning per item to the result, so a model-written envelope never carries protection that is not there; Tier-1 qualification (`tiers setup`) counts a probe that needed a demotion as `declined` with the reason `opaque invariant {type}`.
+- **SG-11: sprig family default.** `sprig`, `weave`, `sprig-mcp` check every tool call with the warden by default. The default command is `daisugi warden check` with no `--mode`, so the installed mode decides: audit records and blocks nothing, enforce denies. The only opt-out is `--warden=false` (Go `flag` form; the hand parsers of `weave` and `sprig-mcp` accept `--warden`, `--warden=true`, `--warden=false`); it prints one line to stderr, `sprig: the warden is off (--warden=false): nothing is checked or recorded`. A missing `daisugi` denies every call with today's install hint: a dead warden is a deny. `sprig-hook` keeps no opt-out (it is the warden) and loses `--mode enforce` from its default. `daisugi tree run` keeps passing `--warden --warden-cmd ...` explicitly; its command string is its own.
+- **SG-12: out of scope, stated in the docs.** The work of an interpreter (`python`, `awk`, `make`, `node`, `perl`; `sed` without `-i` reads its file operands and that is in); a command in neither table (`git`, `npm`, `curl`, `pip`, ...); the file arguments of MCP tools (the W3 MCP-policy plan); symlinks and bind mounts (every scope here is a path string); a persistent shell whose cwd is not the payload's cwd (the warden trusts `cwd` for `Write` paths already, `hook.py:439-450`); pipeline awareness for `find ... | xargs` (a follow-on: it needs the pipeline structure from the grammar in three ports); a `forall_reads` quantifier (a follow-on; SG-1 covers the gate without it); heredoc bodies as data.
+- **SG-13: numbering.** Port disagreements found while building get `SG-R-n` entries in `clients/ADJUDICATIONS.md` under a dated heading; the rulings above are copied there once in Task 10.
+
+**SG-R-1 (ruling): head-refused lines do not repeat their files.** When the allowlist refuses a
+head, the step is already denied, so `_check_shell_accesses` does not run for it. A line refused
+for its metacharacters (decomposition off) still names its files after the reject. This keeps the
+violation lists of the conformance cases at one violation per refused head.
+Status: in force.
+Retires when: the owner wants every refusal to list its files.
+
+**SG-R-2 (ruling): `env -C`, `-S` and `--chdir` make the whole line unknown.** The line is
+unknown for reads and writes (reason: the line moves its cwd). Since review round 1 the env payload
+parser reads the values of `-u`, `-C`, `-S`, `-a` and their long forms (SG-R-13), so the command is
+found and its head is checked; the placer still gives up on the line, because `-S` hides further
+options in its string. Cost if wrong: an `env -C` line that only names absolute paths is denied.
+Status: in force.
+Retires when: the placer models `env -C` and `env -S` exactly.
+
+**SG-R-3 (ruling): the cwd-mover test leaves out `cd`.** SG-3 handles a leading literal `cd` with
+two bases; the plan's `test_every_cwd_mover_is_a_mover` looped over `cd` too and contradicted it.
+The loop runs over the movers except `cd`; `cd` has its own cases.
+Status: in force.
+
+**SG-R-4 (ruling): `infer_envelope` adds operand-access globs.** A captured shell command adds the
+file-scope globs of the accesses the warden would place (a tree gets `DIR/**`), so onboarding
+admits what it saw. A command with an access the warden cannot place (an unquoted glob) adds
+nothing and stays rejected. Go and Rust mirror it (`capture.go`, `capture.rs`).
+Cost if wrong: onboarded envelopes are narrower than the commands they came from.
+Status: in force.
+
+**SG-R-5 (ruling): demotion warnings go to the logger.** `generate_envelope` returns an
+`Envelope`, which has no warning list. Each demoted item logs one warning on `opendaisugi.envelope`.
+Go and Rust do not generate envelopes in the checked families, so there is no port.
+Status: in force.
+Retires when: the generation result carries warnings.
+
+**SG-R-6 (ruling): stage 2 is unchanged.** `stage2.verify_completed_step` (the post-execution
+check; Go `step.go`, `mcptools.go`; Rust `pathways/verify.rs`) keeps its strict-only rejection of an
+opaque postcondition. SG-8 is the stage-1 predicate rule. The three port files stay as they are.
+Status: in force.
+
+**SG-R-7 (ruling): `cp -r DEST` is a path, not a tree.** The plan's test table lists `cp -r src out`
+as `writes: out (path), out/src (tree)`, while SG-2 names a `cp -r` destination as a tree. The
+tests are binding, so the destination is a path. Under a scope that covers `out/src` and not `out`,
+a copy into a fresh `out` writes files the check does not see.
+Status: in force.
+Retires when: the owner rules the destination a tree.
+
+**SG-R-8 (ruling): tar joins WRITERS.** `tar` is in `WRITERS` (rule `tar`, flags in `TAR`) so the
+dialect field and the warden-state rule see its writes.
+Status: in force.
+
+
+## 2026-11-01: the safety gaps, fix round 1 (SG-R-9 to SG-R-15)
+
+**SG-R-9 (ruling): Go and Rust envelope generation do not demote unchecked items.** The oracle's
+`demote_unchecked` turns each enforced item nothing can check into `enforce: false`. The ports do
+not. A model-written envelope with such an item keeps it there, `warden register` refuses it in all
+three languages, and the SG-8 predicate stage rejects the item at verify. So the port fails closed
+and prints no warning, where Python demotes, warns to the logger and lets the plan pass. Why not
+port it: the item needs the unchecked-items table and an envelope rewrite in two generators that no
+checked family reaches. Cost if wrong: a Go or Rust user sees a rejected plan where Python would
+have warned and run it.
+Status: in force.
+Retires when: a checked family runs envelope generation in Go or Rust.
+
+**SG-R-10 (ruling): the leading `cd` is the line's start.** SG-3's first command of a level is the
+leading `cd` only when the stripped line begins with that command's text. A line that starts with
+`for`, `while`, `until`, `if`, `(`, `{` or a function definition has no leading `cd`; a `cd` in its
+body is a mover, so every relative access on the line is unknown. Absolute accesses stay placed.
+Why: a `cd ..` in a loop body runs any number of times, and one modelled level hid it (a fail-open
+write). Cost if wrong: a loop that does `cd DIR` once and then writes relative names is denied.
+Status: in force.
+
+**SG-R-11 (ruling): `exec`, `eval`, `builtin`, `source` and `.` make the line unknown.** With any
+argument, the head runs a command (or a file of commands) the placer cannot read, so reads and
+writes of the whole line are unknown, with the reason `exec, eval, builtin, source and . run a
+command the placer cannot read`. `exec 3>FILE` has no argument; its redirect is placed. Cost if
+wrong: `exec` or `builtin` followed by an exactly known command is denied.
+Status: in force.
+
+**SG-R-12 (ruling): under `find -exec`, only a bare `{}` is the found file.** A word equal to `{}`
+is dropped from the reads (find's start tree covers it) but kept while the flags are read, so
+`grep -e {} FILE` still reads FILE. A word that embeds `{}` in a longer word (`/etc/{}`,
+`{}/../x`, `--file={}`) makes the command's reads and writes unknown, with the reason `a find -exec
+operand that wraps the found file in a longer word`. Cost if wrong: such lines are denied.
+Status: in force.
+
+**SG-R-13 (ruling): `uniq` and `xxd` write their second operand; `env` options take values.**
+`uniq IN OUT` and `xxd IN OUT` read the first operand and write the second (rule `inout`; three
+operands are a flag failure; `-` is the stream). In `env`, `-u NAME`, `-C DIR`, `-a NAME`, `-S
+STRING` and the long forms `--unset`, `--chdir`, `--argv0`, `--split-string` consume their value, so
+`env -u cat curl x` runs `curl`. `-S` replaces itself with the shlex words of its string, so the
+command in it faces the allowlist like any line; a string with a backslash, `$` or `#` stays one
+word and fails the allowlist. Cost if wrong: an `env -S` string that env would read differently is
+checked as written.
+Status: in force.
+
+**SG-R-14 (ruling): small exactness fixes.** (1) A `tar` archive with a colon before its first
+slash is on another host: the reads and writes of the tar line are unknown (reason `a tar archive
+on another host (HOST:PATH)`). (2) `grep -d recurse`, `-drecurse` and `--directories=recurse` read
+a tree. (3) A path that normalizes to a leading `//` becomes `/`, so `cd .. && tee etc/hosts` at
+`/work` places `/etc/hosts`. (4) A `<(...)` or `>(...)` word is removed before the operands are
+read; its inner command is decomposed and checked on its own; a span that does not close makes the
+line unknown. (5) `CWD_HEADS` and `resolve_writes` are gone from Python, Go and Rust; no caller used
+them. Cost if wrong: none known.
+Status: in force.
+
+**SG-R-15 (ruling): the reuse failure names the file scope.** When a recalled pathway fails
+re-verify and a violation is a shell read or write the envelope's scope does not cover (or cannot
+place), the reason says which of `file_read` and `file_write` lacks the scope and says: re-distill
+the pathway, or remove it. Other failures keep the generic reason. Cost if wrong: the advice does not
+fit a caller whose envelope is simply too narrow.
+Status: in force.
+
+## 2026-11-01: the safety gaps, fix round 2 (SG-R-16 to SG-R-21)
+
+**SG-R-16 (ruling): long options are matched as GNU getopt_long matches them.** One lookup serves
+`env`, `xargs` and every transparent wrapper (`timeout`, `nice`, `nohup`, `time`, `stdbuf`,
+`command`, `setsid`, `ionice`): an exact name wins; otherwise a unique prefix selects the option; an
+ambiguous or unknown name, or a value given to an option that takes none (`--null=1`), makes the
+payload opaque and the line's reads and writes unknown (reason `a wrapper option the placer cannot
+match`). Each tool's table is its man page (GNU coreutils 9.7, GNU findutils 4.10, util-linux). Kinds:
+no value, a value (`--name=V` or the next word), a value only as `--name=V` (xargs `--replace`,
+`--max-lines`, `--eof`; env `--block-signal`, `--default-signal`, `--ignore-signal`). A short bundle
+is read letter by letter (`xargs -rI R`, `-rn1`). The `env` mover test uses the same lookup, so
+`env --ch DIR` is a cwd move. Reader and writer tables keep exact names: a miss there is a flag
+failure, which is unknown. Cost if wrong: a long option that a tool accepts but the table lacks is
+denied.
+Status: in force.
+
+**SG-R-17 (ruling): a flag outside a reader's closed set makes reads and writes unknown.** The flag
+may write (`sort -o FILE`, `sort --output=FILE`, `less -o FILE`, `file -C`), so the line is unknown
+in both directions for every table head. Cost if wrong: a benign unlisted reader flag is denied
+under a narrow `file_write` scope.
+Status: in force.
+
+**SG-R-18 (ruling): ionice and GNU time tables follow the man pages.** `ionice -t` (`--ignore`)
+takes no value; `-c`, `-n`, `-p`, `-P`, `-u` do. GNU `time` takes values for `-f` and `-o`;
+`-o FILE` and `--output=FILE` are writes (placed, so the file faces `file_write`). The other
+wrappers were checked against their pages and are unchanged: `timeout` (`-k`, `-s` values;
+`-f`, `-p`, `-v` none), `nice` (`-n`), `stdbuf` (`-i`, `-o`, `-e`), `setsid` (no values),
+`nohup` (none), `command` (none). Cost if wrong: a wrapper option missing from a table is opaque.
+Status: in force.
+
+**SG-R-19 (ruling): a sed script that reads, writes or runs a file is unknown.** A small reader
+walks the script (addresses, commands, `s` and `y` bodies, bracket expressions, `a i c` text).
+The reads and writes of the line are unknown for `w`, `W`, `e`, `r`, `R`, an `s` flag `w` or `e`,
+a `-f` script file, and anything the reader does not understand. Beyond the controller's list,
+`r` and `R` (they read a file) and `e` reads as well as writes: a file read through `r` was
+invisible to `file_read`. Cost if wrong: a script the reader does not understand is denied.
+Status: in force.
+
+**SG-R-20 (ruling): `chroot`, `flock`, `busybox`, `script`, `parallel`, `coproc`, `trap` are opaque
+runners.** They join `SHELL_INTERPRETERS` and the opaque set, and `RUNNERS`: with any argument the
+line's reads and writes are unknown (the `exec` reason, reworded to list them). Nothing unwraps
+their inner command exactly. `script` is unknown with any argument, not only `-c`: a `script FILE`
+writes a typescript. Cost if wrong: `flock FILE CMD` with an exactly known CMD is denied.
+Status: in force.
+
+**SG-R-21 (ruling, parked): the agent's `CDPATH` is not seen.** A relative `cd` is placed as if
+`CDPATH` were empty. `docs/limitations.md` says so. Cost if wrong: with `CDPATH` set, a `cd NAME`
+may enter another directory and the writes after it are placed under the wrong base.
+Status: in force.
+
+## 2026-11-01: the safety gaps, fix round 3 (SG-R-22 to SG-R-27)
+
+**SG-R-22 (ruling): the reader tables follow the tools' own help.** `od -w` takes a value only when
+attached (`-w16`), so `od -w /etc/shadow` reads the file. `hexdump -f` is out of the closed set
+(unknown), because it reads a format file. `rg --color` takes a value. `md5sum`, `sha1sum`, `sha256sum`
+and `sha512sum` lose `-c` and `--check`: they read the files named inside the operand, which the
+placer cannot see. `od -S` takes a value. `nl -d` takes a value and `-p` none. Cost if wrong: a
+`sha256sum -c LIST` or a `hexdump -f` line is denied under a narrow scope. Status: in force.
+
+**SG-R-23 (ruling): `sudo`, `doas`, `watch` and the heads that run a command are runners.** With
+an argument, the whole line is unknown (the `exec` reason, reworded). Always: `systemd-run`, `screen`,
+`unbuffer`, `runuser`, `taskset`, `chrt`, `prlimit`, `unshare`, `nsenter`, `entr`. With no argument too:
+`batch`, `expect` (they read commands from standard input). Only in some forms: `git` with `-c`,
+`--config-env` or `--exec-path` before the subcommand (`-C` stays as it was), `ssh` with a word after
+the host or `-o` Command/Match/Include/Exec, `-F`, `-E`, `su` with `-c`, `--command`,
+`--session-command`, `tmux` with a command that runs commands (by name, alias or unique prefix) or
+`-c`/`-f`, `vim` and kin with any option or `+cmd`, `crontab` and `at` with anything but `-l`. I
+chose runner over unwrap for each: an exact parse needs each tool's option grammar, and the
+allowlist then still sees only the head. `nohup`, `setsid`, `stdbuf`, `nice`, `ionice`, `timeout`,
+`time` and `command` already unwrap exactly and stay so. The default `surface` policy only flags an
+opaque interpreter, so without this a runner head allowed a write anywhere. Cost if wrong:
+`taskset -c 0 pytest` and `sudo make install` are denied under a narrow `file_write` scope (and
+`file_write` empty), and `vim -d a b` is denied. Status: in force.
+
+**SG-R-24 (ruling): allowlisting a runner head allows any command it runs.** `docs/limitations.md`
+says so, names every head, and lists what is not covered (git config written to `.git/config`,
+`git filter-branch`, `rebase --exec`, `submodule foreach`, `rsync -e`, `scp -o`). Cost if wrong: a
+user reads the allowlist as a limit on the inner command. Status: in force.
+
+**SG-R-25 (ruling): the interpreter lookup uses the program name of an absolute path.**
+`/usr/bin/env`, `/usr/bin/timeout` and `/bin/sh` are `env`, `timeout` and `sh`. A relative path
+(`./timeout`, `bin/env`) is the project's own file and stays what it was. Cost if wrong: an absolute
+path to a project script that shares a name with an interpreter (`/work/bin/make`) is read as the
+interpreter. Status: in force.
+
+**SG-R-26 (ruling): the common GNU long options of the readers are in their closed sets.**
+`diff --color[=WHEN]` and the other `diff` flags, `ls --group-directories-first` and the other
+`ls` flags, `grep -NUM`, `--line-buffered` and kin, `sort -c -C -m -S` and the long names, `uniq -D
+--zero-terminated`, `tail --max-unchanged-stats`, `wc --total`, `strings -n`, `rg --no-heading
+--json` and kin. Cost if wrong: none known; an option the tool lacks but the table accepts places
+the operands as reads. Status: in force.
+
+**SG-R-27 (ruling): `sed -f` stays unknown; `sudo` under `surface` with no file scope now denies.**
+The `sed --in-place=.orig -f fix.sed a.py` row in `tests/test_write_paths_operands.py` expects
+unknown writes (SG-R-19 stands). `test_sudo_strict_rejected_surface_passes` became
+`test_sudo_strict_rejected_and_surface_cannot_place_its_writes`: an envelope with an empty
+`file_write` denies the unknown writes of a runner. Cost if wrong: a plan that runs `sudo` under
+`surface` and no file scope is denied. Status: in force.
+
+## 2026-11-01: argument rules for MCP calls (MP-R-1 to MP-R-4)
+
+**MP-R-1 (ruling): the Go and Rust subsumption twins of `mcp_rules` are narrower than the oracle's proof.**
+The oracle proves with Z3 that an inner rule's argument expressions imply the outer rule's. The standalone
+verifier in Go (`verify/mcprules.go`) and in Rust (`src/mcp_rules.rs`) accepts an outer rule only when every
+expression of it also stands in the inner rule, equal as JSON, and it reads two tool patterns as overlapping
+unless both are literals that differ. A pair the oracle proves by reasoning is a refusal in the ports, never an
+acceptance. The refusal is fail-closed: an envelope delegation that the oracle admits may be refused by a port.
+No corpus case reaches the gap: the cases hold equal rules or rules that do not overlap.
+Status: in force.
+Retires when: the ports encode `path_in` and the argument expressions for their Z3 client.
+
+**MP-R-2 (ruling): `warden register` in Go and Rust refuses a malformed `mcp_rules` entry without pydantic's text.**
+Both binaries read an `mcp_rules` entry with the same typed model the warden uses, and a refused entry is the
+`Unsure` refusal (exit 2, nothing written, the line says the binary does not read it yet). The oracle prints
+pydantic's error. A malformed entry reaches the warden hook with pydantic's own text in all three ports.
+Status: in force.
+Retires when: the register validator in the ports words a pydantic error for a nested model.
+
+**MP-R-3 (ruling): the Rust pathway store keeps `mcp_rules` as given.**
+`pathways/pmodel.rs` holds the field as a list of any value. The store only round-trips it. The verifier reads
+the rules with serde and `parse_expression`, so a rule it cannot parse reads as "could not be evaluated" and
+denies.
+Status: in force.
+Retires when: the pathway model gains the `McpRule` model.
+
+**MP-R-4 (ruling): the standalone Go verifier reports several unknown arguments in sorted order.**
+A decoded step holds its arguments in a map. The warden ports keep insertion order, as the oracle does. The
+standalone verifier in Go walks keys sorted, so a call with two unknown arguments lists the violations in
+another order than the oracle. The set of violations is the same. The Rust standalone verifier keeps the
+insertion order its JSON reader holds.
+Status: in force.
+Retires when: the Go step record keeps key order.
+
+## 2026-11-01: argument rules, review round 1 (MP-R-5 to MP-R-7)
+
+**MP-R-5 (ruling): a signal during a check gives the mode's verdict in the Go and Rust hook parents, without the oracle's words.**
+The oracle turns SIGINT and SIGTERM into `KeyboardInterrupt` for the whole hook entry (`warden.main` and `warden_client.main`).
+`run_argv` escapes: exit 2 and `DENIED (fail-closed on error)` in enforce, the format's allow body and exit 0 in audit. The Go
+and Rust hook processes are a parent and a child. The parent works out the mode with the child's own functions before it starts
+the child (`ModeFor`, `mode_for`), and on SIGINT or SIGTERM it kills the child and gives the same verdict: the allow body and
+exit 0 in audit, the format's deny with exit 2 in enforce. A mode it cannot read stands as the `--mode` text of argv, else
+enforce. The reason text is the backstop's, not `warden escape: `. A signal cannot be a golden case; the tests are one per port
+and mode. The resident server keeps its own signal behaviour in all three.
+Status: in force.
+Retires when: the ports share the oracle's words.
+
+**MP-R-6 (ruling): a rule regex is one small subset, run whole string, in all three ports.**
+The three engines (`google-re2`, Go `regexp`, Rust `regex`) read the corners of regex syntax differently, and patching each
+difference did not end (round 3 found `(?x)`, `\U`, `[a--b]`, `[!--/]` and loose `\p{...}` names). So a rule regex is limited
+to one documented subset, checked by one hand-written validator (`rule_regex.supported`, ported exactly to Go as
+`verify.RuleRegexSupported` and to Rust as `rulere::supported`). Anything outside it denies with one reason, "argument rule
+refused: regex '...' is outside the supported subset", in `evaluate_rules` and in the lint. The subset: literals and `\` before
+any ASCII punctuation; `.`, `^`, `$`; ASCII classes `[...]` with ranges and a leading `^` (inside: literals, escaped
+punctuation, ranges, `\d \w \s`; a `-` only first, last or as a range; no `--`, `&&`, `~~`, nested `[` or `[:name:]`);
+`\d \w \s \D \W \S` with ASCII meaning; groups `(...)` and `(?:...)`; `|`; quantifiers `* + ? {m} {m,} {m,n}` with m and n up
+to 1000, no leading zero and m <= n, and their lazy forms, never after `^` or `$` and never doubled; `(?i)` only at the very
+start. Nothing else: no `\p`, `\x`, `\u`, `\b`, `\A`, `\z`, `\Z`, other flags, named groups, lookaround or backreferences. Three
+limits keep the ports alike: nested repeat counts multiply to at most 1000, groups nest at most 50 deep, and the expanded size
+(repeat counts multiplied in) is at most 2000. After the check each port runs its own engine for a whole-string match
+(`\A(?:R)\z`); on the subset they agree, and `clients/fixtures/rule_regex_subset.json` (verdicts) and
+`rule_regex_match.json` (what google-re2 answers on 12000 probe strings) are read by the unit tests of all three. The only
+rewriting left is in Rust: `\d \w \s` become ASCII sets (the crate reads them as Unicode) and an escaped punctuation character
+becomes its `\x{..}` escape (the crate reads `\<` and `\>` as word edges). A pattern or a value that holds a lone surrogate is
+outside the subset or not valid UTF-8 text. The 4096-character cap stays.
+Status: in force.
+Retires when: the three ports share one regex engine build.
+
+**MP-R-7 (ruling): OpenCode and pi tool names are not split; a wildcard allowlist entry does not admit a ruled tool.**
+`opencode/<id>` and `pi/<name>` carry no separator between the MCP server and the tool, so the warden cannot rewrite them to
+`server/tool` (`github_get_issue` is `github`/`get_issue` and also `github_get`/`issue`). A call is denied when only a wildcard
+`mcp_allowlist` entry admits it and a rule pattern matches the id once both are written in one loose form: ASCII letters in
+lower case, and every character but a letter, a digit and (in the pattern) a glob character as `_`. A wildcard rule does not
+skip the guard: the rules the loose comparison finds apply with the rules that match the name. All three ports and the oracle do
+the same. A literal allowlist entry for the tool still admits it when no rule matches the name.
+Status: in force.
+Retires when: the hosts send the server and the tool apart.
+
+## 2026-11-01: argument rules, review round 2 (MP-R-8)
+
+**MP-R-8 (ruling): the subset replaces the static nested-quantifier and ambiguous-alternation check.**
+Round 2 added `regex_risk`, a conservative scan that refused a repeated group that holds a repeat and a repeated alternation
+whose branches may start alike, and ported it step for step. The controller ruled that the oracle uses `google-re2`
+instead, and in round 3 that the regex is limited to one subset (MP-R-6). Linear time makes the scan unnecessary, and the scan
+refused safe patterns (`^([a-z0-9]+\.)+[a-z]+$`). The scan, its reasons, its ports (`verify.RegexRisk`, `rxrisk::regex_risk`),
+`regex_balance`, and their golden cases are gone. `^a*a*a*a*b$` on 4096 characters, which ran past 100 seconds on `re`, is inside
+the subset and answers at once.
+Status: in force.
+Retires when: never; the engine, not a scan, bounds the time.
+
+## 2026-11-01: argument rules, review round 3 (MP-R-9, MP-R-10)
+
+**MP-R-9 (ruling): a fenced check gives the mode's verdict on a signal.**
+In `daisugi fence` the hook waits on the resident warden's socket. A host that times the hook out sends SIGINT or SIGTERM
+while the resident warden is stuck, and a process that dies by the signal gives the host no verdict, which it reads as go on.
+The Go (`warden check`) and Rust (`warden check`, `daisugi-warden`) fenced paths now watch both signals during the wait and give
+the mode's verdict (`ModeFor`, `mode_for`): the allow body and exit 0 in audit, the format's deny with exit 2 in enforce. The
+Python client escape reads the full mode too (config and the watched-pane marker), then falls back to the `--mode` text of argv.
+A deny after a signal names a reason ("interrupted by a signal"). The tests hold a socket that takes the request and never
+answers. A signal while a parent still reads stdin ends the process, as before.
+Status: in force.
+Retires when: the hosts send a verdict on a timeout.
+
+**MP-R-10 (ruling): a rule value that is not valid UTF-8 text denies before matching.**
+A rule-checked string that holds a lone surrogate (Go: bytes that are not valid UTF-8) cannot be written as UTF-8, so no engine
+can match it. All three denies with "argument rule refused: argument 'P' is not valid UTF-8 text", after the length cap and the
+pattern check, for `matches` and `not_matches` alike. On the hook path such a payload is refused earlier; `warden replay`
+reaches the rule.
+Status: in force.
+Retires when: never.
+## 2026-11-02: Pando R2 moves into daisugi (PD-R-1 to PD-R-10)
+
+The conversation memory (log, tree, view, compactor, importer, read tools)
+moved out of coppice into the `pando` package of each port (ADR-0023). The
+file format did not change. The Go package is the oracle for this part; the
+Rust crate is its twin; Python reads (PD-R-10). The owner's word on option B
+(the written parity exception) is still open; the build follows the plan's
+recommendation.
+
+**PD-R-1 (ruling): the store path.** `<data home>/pando/<store>/`. The names
+`work` and `home` are the two named stores; any name matching
+`[a-z][a-z0-9-]{0,31}` is allowed. `work` is the default.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-2 (ruling): no verb reads two stores.** `--store all` is refused with
+`one store at a time: pando stores are separate on purpose.` and exit 2. A
+proposal line that names `all` is refused the same way.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-3 (ruling): packages.** The Go package is `clients/go/pando`, outside
+`internal`, so coppice imports it. It opens no socket and imports no cgo. The
+Rust crate is `clients/rust/pando` and has no Z3.
+Status: in force (Go); the Rust crate is not built yet.
+Retires when: does not retire.
+
+**PD-R-4 (ruling): one writer per store.** The lock file is `lock` in the
+store dir. A second writer gets `another process has this pando store open`
+and exit 1. A reader never takes the lock.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-5 (ruling): recall.** A lexical ranking (the garden's default matcher,
+ADR-0019) over the view's summary lines and the raw messages. It gives ids, a
+score to three places and one line of at most 160 bytes, never a whole raw
+message. Ties go to the older id. A level-0 view line counts once, as the
+message.
+Status: in force.
+Retires when: the matcher setting is wired in (today recall is lexical only).
+
+**PD-R-6 (ruling): migrate copies, checks, then renames.** It never deletes.
+A second run on a dir that is gone with a `.moved-*` sibling says
+`already moved: <path>` and exits 0. With the old dir open it refuses and
+copies nothing.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-7 (ruling): the web importer proposes first.** `import --from web
+--propose FILE` writes one line per chat (`key`, store, reason, title) and
+writes nothing to any store. Only `--accept FILE` logs messages.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-8 (ruling): dedupe by act.** A message is keyed by (source, session id,
+message id). A web chat is keyed by its conversation uuid and message uuid; a
+message uuid that two chats share is logged once in each.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-9 (ruling): `--map OLD=NEW`.** It rewrites the front of the project
+path a transcript names (a `cwd`), by path element. It changes nothing in
+message text. The map is kept in `import.json` so a queued session reads with
+it later.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-10 (ruling): Python never writes.** `opendaisugi.pando` opens a store
+read only. `append`, `tend`, `import` and `migrate` in the Python CLI print
+`the Python package reads pando stores; coppice or daisugi (Go or Rust) writes
+them.` and exit 2.
+Status: in force.
+Retires when: the owner keeps full parity and the Python writer is built.
+
+**PD-R-11 (ruling): child transcript stores.** A worker's transcript is a
+small store at `<store>/children/<label>/`, built from its sprig session when
+the worker ends. It is never merged into the parent's tree. The parent's
+`work` message names it and lists its root ids. `zoom` with `child=<label>`
+reads inside it. A child lives under the store that started it.
+Status: in force (Go).
+Retires when: does not retire.
+
+**INS-2 (ruling, Python, Go and Rust): our program names are an exact set, and a
+hook is rewritten only when it is one plain command.** The names are
+`daisugi`, `daisugi-py`, `daisugi-go` and `daisugi-rs`, bare or as the last
+part of a path. A program called `daisugi-local` is a user's own wrapper:
+install never replaces it, uninstall never removes it, and `is_record_hook`
+does not read it. This retires the prefix rule of INS-1 (`daisugi-something`
+is ours). Install writes the path the binary was run by only when its name is
+in the set; a binary run under another name writes what PATH calls `daisugi`,
+else the bare name, and the check after the write says if that cannot run.
+Only install does this (`install.daisugi_exe`, `SelfEntry`, `entry_path`); the
+verbs that start this binary again (`start`, `hook`, `tree`) still use the
+running binary. Install changes a record hook only when the whole command is a
+program word (bare, or one single-quoted path) and plain words
+(`[A-Za-z0-9_./:=@%+,-]`). It swaps the program word and keeps every other
+byte. A command with an operator, a redirection, an `env` or `NAME=val`
+prefix, a quote or an expansion is left as it is, and one note names the
+runtime and the command. When nothing was written and a note says a hook was
+left, the run does not say "already configured". Cost if wrong: a hook that
+is not plain and names a bare `daisugi` keeps failing where the agent's PATH
+lacks it; the note and the check after the write say so.
+Status: in force.
+Retires when: does not retire.
+
+**INS-3 (ruling, Python, Go and Rust): the check after install reads the files
+back.** For each runtime it parses the hook and MCP commands on disk (the
+record hooks by segment, the warden hook, the MCP entry) and tests that each
+program exists and can run. It exits 1 on any that cannot. A path under
+`/.cache/uv/` (also through a link) is only a warning, one line, exit 0: the
+path works now and breaks on a cache clean.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-12 (ruling, Go and Rust; Python has no tend): a summary call that gives
+no text is a fallback, counted and reported.** The compactor already clipped a
+node when the model gave no line. A thinking model out of tokens did that for
+every node with no word to the user (42 of 42 on the box). Now the summary
+call takes `max_tokens` from the agent profile (1024 when it names none; the
+claude-code wire takes none and a profile that names one is invalid). A reply
+with no text that stopped for length is a call that gave no line, never the
+reasoning field. `tend` prints `built: N, fell back to clipped: M`, and one
+line of why when M is more than 0. A fallback is counted by its stored text
+starting with `[clipped] `. If the first 5 model calls of a run all fall back,
+tend stops with exit 1; the 5 nodes stay as clipped copies. `import --tend`
+does the same.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-13 (ruling, Go and Rust): `tend --redo-clipped` writes a new line for a
+node and the tree keeps the last line of a node.** The loaders of Go, Rust and
+Python already take the last line of a node in file order, so no file is cut
+and a crash cannot lose a node. A rebuilt node is a later line in the
+current day's tree file. A parent's line is made from its two children, so a
+parent is stale when one of its children was written after it, and it is made
+again, with the model when the two lines do not fit together. The run goes by
+level, then oldest first, so a parent comes after its children. `--max` counts
+model calls; a parent that fits without a model is free. A run that stops on
+`--max` may leave a stale parent: the next run finds it by its order. A node
+whose new text is the same clipped text is left. The same 25-call refusal for
+the default model applies; the first 5 calls all clipped stops the run.
+Cost if wrong: if the system clock goes back before the day of an older tree
+file, the older line sorts last and wins; a store on a box whose clock jumped
+back needs its `tree/` files renamed.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-14 (ruling, Go oracle, Rust twin; Python reads nothing for a marked
+process): a branch is a store inside a store (ADR-0029).** It is
+`<store>/branches/<label>/` with a `branch.json` (`path`, `created`, `state`,
+`closed`), nested to 8 levels. A path's parts are child labels; `..`, `.`,
+an empty part, a leading `/` and a symbolic link at any level are refused.
+`DAISUGI_PANDO_BRANCH` names a process's branch; `serve`, `context`, `hook` and
+the read verbs then work in it. A bad, missing or linked marker is a closed
+server, no view and exit 1 on a read verb, never the store above. Under any
+marker, `stores`, `append`, `tend`, `import`, `migrate`, `follow` and `close`
+exit 1.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-15 (ruling, Go and Rust): the session map.** `<store>/branch.sessions`
+holds `id<TAB>branch` lines; the first line for an id wins, the file only
+grows. The id is a Claude session id, a transcript path or `hermes:<id>`.
+The follow service, the hooks of the store and the importer send a mapped
+session to its branch (the importer skips it). coppice maps a lead's minted
+`--session-id` before the pane starts, and a session it learns later for a
+lead pane.
+Cost if wrong: a session that is mapped late has its first lines in the store
+above; the log only grows, so they stay there.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-16 (ruling, Go and Rust): recall from above.** `recall` over a store or
+branch ranks its own hits and those of every branch below it, open or closed,
+in one list: score first, then the branch path (the store's own hits first),
+then the older id, then the smaller node. A branch hit's id is
+`<branch>:<first>+<count>`, the branch named from where the search started.
+`zoom` and `date` take `branch`, a path below the caller's scope.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-17 (ruling, Go and Rust): the view names live branches.** After the
+"Not in the view yet" lines, a view adds `Branches below (...)` and one line
+`- <label>: <text>` for each open branch right below it. The text is the
+summary of the branch's newest root node, or its newest message while that
+node waits, clipped to 200 bytes, or `(no message yet)`. A branch's view
+starts with `Pando memory: the view of the branch <path>, ...`. A worker
+(both markers) has no `view` tool and gets no view.
+Status: in force.
+Retires when: does not retire.
+
+**PD-R-18 (ruling, Go and Rust; review fix 1): the session map cannot take
+the owner's chat, and dir routes.** A line for a session the store already
+holds (a Claude session whose `chat` is in the store's log, or a Hermes
+session whose act is) is refused when written and not followed when read.
+`daisugi pando routes` lists the map; `daisugi pando unroute ID` rewrites it
+without ID; both exit 1 under any marker. `dir:<abs path>` maps every Claude
+session whose cwd is that dir or under it (the longest dir wins); the
+importer skips those sessions. coppice writes one for a lead's own worktree.
+Only `ReopenBranch` (a new long-running agent) opens a closed branch; every
+other write leaves it closed.
+Status: in force.
+Retires when: does not retire.

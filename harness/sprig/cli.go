@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -96,19 +97,20 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	jsonOut := fs.Bool("json", false, "emit the result as JSON (for scripts and jq)")
-	gateOn := fs.Bool("gate", false, "verify each tool call against the envelope, fail-closed")
+	wardenOn := fs.Bool("warden", true,
+		"check each tool call with the warden (daisugi warden check); --warden=false turns it off: nothing is checked or recorded")
 	maxTurns := fs.Int("max-turns", 20, "give up after this many model turns")
 	maxTokens := fs.Int("max-tokens", -1,
 		"stop before a model call once the run has used this many tokens (all four usage counts); -1 is no cap")
-	gateCmd := fs.String("gate-cmd", DefaultGateCmd(),
-		"the out-of-process envelope gate to call when --gate is set")
+	wardenCmd := fs.String("warden-cmd", DefaultWardenCmd(),
+		"the warden command (default: daisugi warden check, in the installed mode)")
 	sessionDir := fs.String("session-dir", "",
-		"write the session tree (JSONL) here — the same shape daisugi's gate writes on path D. Empty = off.")
+		"write the session tree (JSONL) here — the same shape daisugi's warden writes on path D. Empty = off.")
 	sessionID := fs.String("session", "", "session id to write under --session-dir (default: a fresh one)")
 	resume := fs.String("resume", "",
 		"resume this session id from --session-dir: reopen its file, rebuild history from its head, and append")
 	tools := fs.String("tools", strings.Join(AllToolNames, ","),
-		"the tools the model may call, a comma list of read, write, edit, bash and spawn, or none")
+		"the tools the model may call, a comma list of read, write, edit, bash, spawn and help, or none")
 	systemFile := fs.String("system-file", "",
 		"use the bytes of this file as the system prompt, in place of sprig's own")
 	modelName := fs.String("model", "",
@@ -125,8 +127,10 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		"read the resolved agent profiles, with keys, from this file descriptor; the spawn tool passes them on")
 	mcpConfig := fs.String("mcp-config", "",
 		`the MCP servers whose tools the model may call, as a file or inline JSON {"mcpServers": {name: {command, args, env}}}; stdio servers only`)
+	stepTimeout := fs.Int("step-timeout", stepCapFromEnv(),
+		"kill a bash call that runs past this many seconds; the call fails with a line that names it. 0 is no cap (default: $"+StepCapEnv+", else 0)")
 	scrubEnv := fs.String("scrub-env", "",
-		"a comma list of more variables no tool, gate or backend process gets")
+		"a comma list of more variables no tool, warden or backend process gets")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, `usage: sprig [flags] "<task>"     (or:  echo "<task>" | sprig -)`)
 		fmt.Fprintln(stderr, "a minimal coding-agent harness — the answer goes to stdout, logs to stderr.")
@@ -228,7 +232,7 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 
 	if *resume != "" && *sessionDir == "" {
 		// Without this, --resume alone silently ran a normal fresh task —
-		// the whole session-tree block below is gated on --session-dir, so
+		// the whole session-tree block below is checked on --session-dir, so
 		// nothing named the mistake. A user who explicitly asked to resume
 		// a session deserves a refusal, not a run that quietly forgot the ask.
 		fmt.Fprintln(stderr, "sprig: --resume needs --session-dir too (which session store to resume from)")
@@ -286,12 +290,16 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		model = redactingModel{Model: model, key: key}
 	}
 
-	// --gate wires openDaisugi's envelope as an OUT-OF-PROCESS, fail-closed check
-	// on every tool call (AgentSpec P1-P4). Gate off = plain-pi AllowAll. If the
-	// gate command is missing it fails closed (denies), never silently allows.
-	var gate Gate = AllowAll{}
-	if *gateOn {
-		gate = DaisugiGate{Command: strings.Fields(*gateCmd), Timeout: 10 * time.Second}
+	// The warden is on by default: an OUT-OF-PROCESS, fail-closed check on
+	// every tool call (AgentSpec P1-P4), in the mode daisugi is installed in.
+	// --warden=false is the only opt-out (plain-pi AllowAll), and it says so.
+	// If the warden command is missing it fails closed (denies), never
+	// silently allows.
+	var warden Warden = AllowAll{}
+	if *wardenOn {
+		warden = DaisugiWarden{Command: strings.Fields(*wardenCmd), Timeout: 10 * time.Second}
+	} else {
+		fmt.Fprintln(stderr, WardenOffNotice("sprig"))
 	}
 
 	// --session-dir opts into the session tree (path E's counterpart to
@@ -321,36 +329,47 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			}
 			seedHistory = HistoryFromEntries(entries)
 		}
-		if dg, ok := gate.(DaisugiGate); ok {
-			dg.SessionID = sid
-			gate = dg
+		wardenSID := sid
+		if *resume != "" && *sessionID != "" {
+			// A resume that names a new session: the history and the file
+			// are the old session's, the warden's envelope is the new one's.
+			wardenSID = *sessionID
+		}
+		if dg, ok := warden.(DaisugiWarden); ok {
+			dg.SessionID = wardenSID
+			warden = dg
 		}
 		fmt.Fprintf(stderr, "sprig: session %s at %s\n", sid, w.Path())
 	}
 
-	toolMap := ToolsFor(wall)
+	toolMap := ToolsWithStepCap(wall, time.Duration(max(*stepTimeout, 0))*time.Second)
 	var spawn *SpawnTool
 	if slices.Contains(wall, "spawn") {
 		parent := *sessionID
-		if *resume != "" {
+		if *resume != "" && parent == "" {
 			parent = *resume
 		}
 		spawn = &SpawnTool{Command: strings.Fields(*treeCmd), Session: parent, Keys: spawnKeys,
 			DefaultTools: HostTools(wall)}
 		toolMap["spawn"] = spawn
 	}
+	var help *HelpTool
+	if slices.Contains(wall, "help") {
+		help = &HelpTool{}
+		toolMap["help"] = help
+	}
 	if mcp != nil {
 		for _, t := range mcp.Tools {
 			toolMap[t.Name()] = t
 		}
 	}
-	exec := NewExecutor(toolMap, gate)
+	exec := NewExecutor(toolMap, warden)
 	exec.SessionObserver = obs
 	agent := &Agent{
 		Model: model, Exec: exec, MaxTurns: *maxTurns,
 		SessionObserver: obs, SeedHistory: seedHistory,
 		MaxTokens: *maxTokens, CapTokens: *maxTokens >= 0,
-		NoTools: noTools,
+		NoTools: noTools, Help: help,
 	}
 	if spawn != nil {
 		agent.ExtraTokens = spawn.BranchTokens
@@ -369,8 +388,12 @@ func (c *CLI) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		if n, ok := model.(interface{ ModelName() string }); ok {
 			name = n.ModelName()
 		}
-		_ = json.NewEncoder(stdout).Encode(map[string]any{"answer": answer, "turns": len(agent.History),
-			"model_turns": agent.ModelTurns(), "model": name, "usage": usageSum(agent.History)})
+		doc := map[string]any{"answer": answer, "turns": len(agent.History),
+			"model_turns": agent.ModelTurns(), "model": name, "usage": usageSum(agent.History)}
+		if help != nil && help.Called {
+			doc["status"], doc["help_kind"], doc["help_text"] = "help", help.Kind, help.Text
+		}
+		_ = json.NewEncoder(stdout).Encode(doc)
 	} else {
 		fmt.Fprintln(stdout, answer)
 	}
@@ -394,3 +417,13 @@ func openOrNewSessionWriter(dir, sessionID string, resume bool) (*SessionWriter,
 // a session id is long-lived (unlike an entry id, minted once per line), so
 // it gets a wider draw than the tree's own 8-hex entry ids.
 func defaultSessionID() string { return newID() + newID() }
+
+// stepCapFromEnv is $SPRIG_STEP_TIMEOUT_S as a whole number of seconds, or
+// 0 when it is unset or not one.
+func stepCapFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(StepCapEnv)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}

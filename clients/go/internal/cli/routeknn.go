@@ -3,8 +3,8 @@ package cli
 import (
 	"strconv"
 
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/router"
 )
 
 // knnTurn is one booked turn in route_knn.outcome_summary's recent list.
@@ -20,18 +20,18 @@ type knnState struct {
 
 // knnSummary is outcome_summary for the table at path.
 func knnSummary(path string) (*knnState, error) {
-	rows, err := (&gateway.OutcomeStore{Path: path}).All(gateway.KnnMaxRows)
+	rows, err := (&router.OutcomeStore{Path: path}).All(router.KnnMaxRows)
 	if err != nil {
 		return nil, err
 	}
 	st := &knnState{path: path, booked: len(rows)}
 	for _, r := range rows {
 		switch r.Outcome {
-		case gateway.KnnGood:
+		case router.KnnGood:
 			st.good++
-		case gateway.KnnBad:
+		case router.KnnBad:
 			st.bad++
-		case gateway.KnnUnknown:
+		case router.KnnUnknown:
 			st.unknown++
 		}
 	}

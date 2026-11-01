@@ -36,13 +36,13 @@ class VLAStep(StepBase):
     timeout_s: float = 5.0
 ```
 
-`target_pose` is what the envelope's workspace-bounds invariant gates
+`target_pose` is what the envelope's workspace-bounds invariant checks
 against — it's the verifier's view of "where this skill is trying to
 end up." The actions inside the rollout aren't visible to the verifier.
 
 ## Substrate guarantees
 
-- **Pre-execution gate**: `target_pose` outside `workspace_bounds` →
+- **Pre-execution warden**: `target_pose` outside `workspace_bounds` →
   rejected by v0.8's `_check_workspace_containment`. No actions fire.
 - **Action cap**: `min(step.max_actions, executor.max_actions_global)`
   bounds the rollout length. A misbehaving policy can't run forever.

@@ -4,7 +4,7 @@
 //! group of its own. The group dies when the run ends, on a signal, and
 //! with sprig.
 
-use crate::gate::Tool;
+use crate::warden::Tool;
 use crate::gostr::trim_space;
 use crate::json::{self, jmap, jmap_any, Dec, GoSlice, Map, Node, J, V};
 use std::cell::{Cell, RefCell};

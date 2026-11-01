@@ -1,4 +1,4 @@
-//! speech.status and speech.say: the foreman answers aloud. The page speaks
+//! speech.status and speech.say: the steward answers aloud. The page speaks
 //! with the browser's own voice unless [voice] speak_url names a speech
 //! server with an OpenAI-style POST /v1/audio/speech. speech.say asks that
 //! server for one sentence and answers the audio, base64 in the reply. The
@@ -220,12 +220,12 @@ fn last_line(text: &str, err: &str) -> String {
 /// The key of the operator profile `name`, from
 /// `daisugi agent-profiles bundle --fd 3`. The bytes live in this call
 /// only. Err is the line to say, with no key in it.
-fn bundle_key(name: &str, host: &str) -> Result<Option<String>, String> {
+fn bundle_key(steward_dir: &str, name: &str, host: &str) -> Result<Option<String>, String> {
     let bin = std::env::var("COPPICE_DAISUGI_BIN")
         .ok()
         .filter(|b| !b.is_empty())
         .unwrap_or_else(|| "daisugi".to_string());
-    let dir = format!("{}/compactor", Server::foreman_dir());
+    let dir = format!("{steward_dir}/compactor");
     {
         use std::os::unix::fs::DirBuilderExt;
         let _ = std::fs::DirBuilder::new()
@@ -259,7 +259,7 @@ fn bundle_key(name: &str, host: &str) -> Result<Option<String>, String> {
             } else if libc::dup2(wfd, 3) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            super::foreman_turn::close_from_4();
+            super::steward_turn::close_from_4();
             Ok(())
         });
     }
@@ -392,7 +392,7 @@ impl Server {
         let host = ep.host.clone();
         let mut key = String::new();
         if !v.speak_profile.is_empty() {
-            match bundle_key(&v.speak_profile, &host) {
+            match bundle_key(&self.steward_dir(), &v.speak_profile, &host) {
                 Err(line) => return adapter(&line),
                 Ok(k) => key = k.unwrap_or_default(),
             }

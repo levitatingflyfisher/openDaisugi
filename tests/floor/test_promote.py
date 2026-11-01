@@ -1,5 +1,5 @@
-"""Promotion is one line: the pane reads the foreman page the coppice binary
-prints, and becomes the foreman."""
+"""Promotion is one line: the pane reads the steward page the coppice binary
+prints, and becomes the steward."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def test_promote_sends_exactly_one_line_that_names_the_page():
     got = promote(b, PaneRef("fake", "w1:p1"))
     assert b.calls == [("w1:p1", PROMOTION, True)]
     assert got == PROMOTION
-    assert "coppice skill foreman" in PROMOTION
+    assert "coppice skill steward" in PROMOTION
     assert PROMOTION.endswith("Say ready.")
 
 
@@ -57,16 +57,16 @@ def test_the_line_is_the_one_the_floor_sends():
     assert m.group(1) == PROMOTION
 
 
-def test_prompt_pane_as_foreman_promotes_first():
+def test_prompt_pane_as_steward_promotes_first():
     b = Recorder()
-    got = prompt_pane(b, PaneRef("fake", "w1:p1"), "tidy the docs", kind="pty", foreman=True)
+    got = prompt_pane(b, PaneRef("fake", "w1:p1"), "tidy the docs", kind="pty", steward=True)
     assert got == "typed"
     assert [c[1] for c in b.calls] == [PROMOTION, "tidy the docs"]
 
 
-def test_prompt_pane_as_foreman_with_no_text_only_promotes():
+def test_prompt_pane_as_steward_with_no_text_only_promotes():
     b = Recorder()
-    prompt_pane(b, PaneRef("fake", "w1:p1"), "", kind="pty", foreman=True)
+    prompt_pane(b, PaneRef("fake", "w1:p1"), "", kind="pty", steward=True)
     assert [c[1] for c in b.calls] == [PROMOTION]
 
 
@@ -79,8 +79,8 @@ def test_promote_sends_nothing_to_a_pane_that_is_not_idle(state):
     assert "idle" in str(e.value)
 
 
-def test_prompt_pane_as_foreman_sends_no_text_when_the_page_was_not_sent():
+def test_prompt_pane_as_steward_sends_no_text_when_the_page_was_not_sent():
     b = Recorder(state="blocked")
     with pytest.raises(PromotionNotSent):
-        prompt_pane(b, PaneRef("fake", "w1:p1"), "tidy", kind="pty", foreman=True, timeout_s=0.3)
+        prompt_pane(b, PaneRef("fake", "w1:p1"), "tidy", kind="pty", steward=True, timeout_s=0.3)
     assert b.calls == []

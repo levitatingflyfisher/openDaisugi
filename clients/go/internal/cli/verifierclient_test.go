@@ -8,8 +8,8 @@ import (
 )
 
 // F14: an old config.yaml that names a verifier client this box lacks
-// gets one clear line from gate status, and the command still succeeds.
-func TestGateStatusSaysWhenTheNamedVerifierClientIsMissing(t *testing.T) {
+// gets one clear line from warden status, and the command still succeeds.
+func TestWardenStatusSaysWhenTheNamedVerifierClientIsMissing(t *testing.T) {
 	for _, c := range []struct {
 		client string
 		want   string
@@ -19,15 +19,15 @@ func TestGateStatusSaysWhenTheNamedVerifierClientIsMissing(t *testing.T) {
 		{"cobol", "verifier_client: cobol names no client"},
 	} {
 		home := t.TempDir()
-		root := filepath.Join(home, ".opendaisugi", "gate")
+		root := filepath.Join(home, ".opendaisugi", "warden")
 		if err := os.MkdirAll(root, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		cfg := "verifier_client: " + c.client + "\ngate_mode: enforce\n"
+		cfg := "verifier_client: " + c.client + "\nwarden_mode: enforce\n"
 		if err := os.WriteFile(filepath.Join(home, ".opendaisugi", "config.yaml"), []byte(cfg), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		code, _, errs := run(t, home, "", "gate", "status", "--root", root)
+		code, _, errs := run(t, home, "", "warden", "status", "--root", root)
 		if code != 0 {
 			t.Fatalf("%s: exit %d: %s", c.client, code, errs)
 		}

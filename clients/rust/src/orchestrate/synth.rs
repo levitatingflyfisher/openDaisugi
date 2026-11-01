@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::gate::py::text::{rstrip, strip};
-use crate::gate::pyjson::Object;
-use crate::gateway::route::DEFAULT_CHEAP_MODEL;
+use crate::warden::py::text::{rstrip, strip};
+use crate::warden::pyjson::Object;
+use crate::router::route::DEFAULT_CHEAP_MODEL;
 use crate::llm::{Call, Client, Schema};
 use crate::pathways::pmodel::Id;
 use crate::supervise::{str_of, Session, SUCCEEDED};

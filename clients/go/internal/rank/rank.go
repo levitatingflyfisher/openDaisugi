@@ -54,8 +54,8 @@ type Attempt struct {
 	Verify                   *pyjson.Object // ok, violations
 	verifyOK                 bool
 	verifyViolations         int64
-	hasGate                  bool
-	gateOverride             int64
+	hasWarden                bool
+	wardenOverride           int64
 	Tests                    []*pyjson.Object // name, required, result
 	Features                 []*pyjson.Object // name, required, green
 	Cost                     *pyjson.Object   // tokens, wall_ms, diff_lines, estimated
@@ -237,11 +237,11 @@ func parseAttempt(raw any, i int) *Attempt {
 		a.verifyViolations = count(getDef(vo, "violations", pyjson.Int{Text: "0"}), w+": verify.violations")
 		a.Verify = pyjson.NewObject().Set("ok", a.verifyOK).Set("violations", int(a.verifyViolations))
 	}
-	if v := o.Value("gate"); v != nil {
-		g := obj(v, w+": gate")
-		count(getDef(g, "denies", pyjson.Int{Text: "0"}), w+": gate.denies")
-		a.gateOverride = count(getDef(g, "override_allows", pyjson.Int{Text: "0"}), w+": gate.override_allows")
-		a.hasGate = true
+	if v := o.Value("warden"); v != nil {
+		g := obj(v, w+": warden")
+		count(getDef(g, "denies", pyjson.Int{Text: "0"}), w+": warden.denies")
+		a.wardenOverride = count(getDef(g, "override_allows", pyjson.Int{Text: "0"}), w+": warden.override_allows")
+		a.hasWarden = true
 	}
 	for j, t := range list(getDef(o, "tests", []any{}), w+": tests") {
 		to := obj(t, fmt.Sprintf("%s: tests[%d]", w, j))
@@ -505,6 +505,7 @@ func qualityKey(a *Attempt) qkey {
 type Vote struct {
 	I, J, Judge string
 	Win         float64
+	W           float64 // the vote's weight; 1 unless a fit gives its judge one
 }
 
 func verdict(c Comparison) (string, bool) {
@@ -600,7 +601,7 @@ func VotesFrom(comps []Comparison, byID map[string]*Attempt, warnings *[]string)
 		} else {
 			keys = append(keys, vk)
 		}
-		keep[vk] = kept{k.pair, Vote{I: pi, J: pj, Judge: k.judge, Win: win}}
+		keep[vk] = kept{k.pair, Vote{I: pi, J: pj, Judge: k.judge, Win: win, W: 1.0}}
 	}
 	sort.Slice(keys, func(a, b int) bool {
 		x, y := keys[a], keys[b]
@@ -636,10 +637,10 @@ func BTFit(members []string, votes []Vote, prior float64) map[string]float64 {
 	}
 	for _, v := range votes {
 		a, b := idx[v.I], idx[v.J]
-		wins[a] = wins[a] + v.Win
-		wins[b] = wins[b] + (1.0 - v.Win)
-		games[a][b] = games[a][b] + 1.0
-		games[b][a] = games[b][a] + 1.0
+		wins[a] = wins[a] + float64(v.W*v.Win)
+		wins[b] = wins[b] + float64(v.W*float64(1.0-v.Win))
+		games[a][b] = games[a][b] + v.W
+		games[b][a] = games[b][a] + v.W
 	}
 	s := make([]float64, n)
 	for i := range s {
@@ -704,8 +705,14 @@ func objList(os []*pyjson.Object) []any {
 	return out
 }
 
-// SeedOf is rank.seed_of.
+// SeedOf is rank.seed_of without judge weights.
 func SeedOf(r *Ranking, comps []Comparison, owner []Pair) string {
+	return SeedOfW(r, comps, owner, nil)
+}
+
+// SeedOfW is rank.seed_of: the judge weights are part of the hash only when
+// the fit uses them (weights non-nil).
+func SeedOfW(r *Ranking, comps []Comparison, owner []Pair, weights map[string]float64) string {
 	var atts []any
 	for _, a := range r.Attempts {
 		var ep any
@@ -733,6 +740,9 @@ func SeedOf(r *Ranking, comps []Comparison, owner []Pair) string {
 		Set("policy", pyjson.NewObject().Set("bootstrap", r.Policy.Bootstrap).Set("judges", strList(r.Policy.Judges)).
 			Set("prior", r.Policy.Prior).Set("threshold", r.Policy.Threshold)).
 		Set("ranking_id", r.ID)
+	if weights != nil {
+		doc.Set("judge_weights", weightsObj(weights))
+	}
 	sum := sha256.Sum256([]byte(pyjson.CanonicalASCII(doc)))
 	return hex.EncodeToString(sum[:])[:16]
 }
@@ -873,8 +883,14 @@ func Join(items []string) string {
 
 // Fit is rank.fit. comps and owner stand in for the file's own when it has none.
 func Fit(r *Ranking, comps []Comparison, owner []Pair, warnings []string) *pyjson.Object {
+	return FitW(r, comps, owner, warnings, nil)
+}
+
+// FitW is rank.fit with judge weights: weights scale each vote, and a judge
+// with no entry has no vote (RK-5, W3K-2). nil means no weights.
+func FitW(r *Ranking, comps []Comparison, owner []Pair, warnings []string, weights map[string]float64) *pyjson.Object {
 	warnings = append([]string{}, warnings...)
-	if r.HasComparisons {
+	if len(r.Comparisons) > 0 {
 		comps = r.Comparisons
 	}
 	if r.HasOwner {
@@ -893,17 +909,20 @@ func Fit(r *Ranking, comps []Comparison, owner []Pair, warnings []string) *pyjso
 			continue
 		}
 		survivors = append(survivors, a)
-		if a.hasGate && a.gateOverride > 0 {
-			warnings = append(warnings, fmt.Sprintf("%s was let out of its envelope %d times by an operator allow; it is kept", a.ID, a.gateOverride))
+		if a.hasWarden && a.wardenOverride > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s was let out of its envelope %d times by an operator allow; it is kept", a.ID, a.wardenOverride))
 		}
 	}
-	seed := SeedOf(r, comps, owner)
+	seed := SeedOfW(r, comps, owner, weights)
 	out := pyjson.NewObject().Set("ranking_id", r.ID).Set("status", "none_survived").Set("eliminated", eliminated).
 		Set("quality_tiers", []any{}).Set("order", []any{}).Set("decided_by", []any{}).Set("scores", pyjson.NewObject()).
 		Set("leader", nil).Set("confidence", nil).Set("label", "no_label").Set("next", nil).Set("stop", "nothing_to_ask").
 		Set("owner_constraints", []any{})
 	finish := func() *pyjson.Object {
 		out.Set("warnings", strList(warnings)).Set("seed", seed)
+		if weights != nil {
+			out.Set("judge_weights", weightsObj(weights))
+		}
 		return out
 	}
 	if len(survivors) == 0 {
@@ -956,6 +975,16 @@ func Fit(r *Ranking, comps []Comparison, owner []Pair, warnings []string) *pyjso
 		if surv[v.I] && surv[v.J] && tierOf[v.I] == tierOf[v.J] {
 			votes = append(votes, v)
 		}
+	}
+	if weights != nil {
+		var weighted []Vote
+		for _, v := range votes {
+			if w, ok := weights[v.Judge]; ok {
+				v.W = R9(float64(v.W * w))
+				weighted = append(weighted, v)
+			}
+		}
+		votes = weighted
 	}
 	edges := ownerEdges(owner, surv, &warnings)
 	clo := closure(edges)
@@ -1180,6 +1209,9 @@ func Fit(r *Ranking, comps []Comparison, owner []Pair, warnings []string) *pyjso
 	for _, m := range cands {
 		i, j := sorted2(leader, m)
 		for _, judge := range r.Policy.Judges {
+			if _, has := weights[judge]; weights != nil && !has {
+				continue
+			}
 			if !voted[[3]string{judge, i, j}] {
 				p := R9(point[leader] / float64(point[leader]+point[m]))
 				out.Set("next", pyjson.NewObject().Set("pair", []any{leader, m}).Set("judge", judge).

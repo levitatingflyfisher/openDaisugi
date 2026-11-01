@@ -1,7 +1,7 @@
 //! The four tools: read, write, edit, bash. Each runs only after the
-//! executor's gate allows the call.
+//! executor's warden allows the call.
 
-use crate::gate::Tool;
+use crate::warden::Tool;
 use crate::goerr::quote;
 use crate::gostr::{count, replace_once};
 use crate::json::{Any, Map};
@@ -119,9 +119,9 @@ pub fn default_tools() -> BTreeMap<String, Box<dyn Tool>> {
 /// and the default of --tools.
 pub const ALL_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash"];
 
-/// Every name --tools takes, in sprig's order: the four tools and spawn,
-/// which needs --tree-cmd.
-pub const WALL_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash", "spawn"];
+/// Every name --tools takes, in sprig's order: the four tools, spawn
+/// (which needs --tree-cmd) and help.
+pub const WALL_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash", "spawn", "help"];
 
 /// A --tools value: a comma list of tool names. Returns the named tools
 /// once each, in sprig's order. An empty value or a name that is not a
@@ -129,7 +129,7 @@ pub const WALL_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash", "spawn"]
 pub fn parse_tool_wall(list: &[u8]) -> Result<Vec<String>, Vec<u8>> {
     if list.is_empty() {
         return Err(
-            b"--tools is empty; name one or more of read, write, edit, bash, spawn".to_vec(),
+            b"--tools is empty; name one or more of read, write, edit, bash, spawn, help".to_vec(),
         );
     }
     let mut want = Vec::new();
@@ -138,7 +138,7 @@ pub fn parse_tool_wall(list: &[u8]) -> Result<Vec<String>, Vec<u8>> {
             return Err([
                 b"--tools: unknown tool ".as_slice(),
                 quote(name).as_bytes(),
-                b"; the tools are read, write, edit, bash, spawn",
+                b"; the tools are read, write, edit, bash, spawn, help",
             ]
             .concat());
         }
@@ -177,15 +177,15 @@ mod tests {
         );
         assert_eq!(
             parse_tool_wall(b"").unwrap_err(),
-            b"--tools is empty; name one or more of read, write, edit, bash, spawn"
+            b"--tools is empty; name one or more of read, write, edit, bash, spawn, help"
         );
         assert_eq!(
             parse_tool_wall(b"read,").unwrap_err(),
-            b"--tools: unknown tool \"\"; the tools are read, write, edit, bash, spawn"
+            b"--tools: unknown tool \"\"; the tools are read, write, edit, bash, spawn, help"
         );
         assert_eq!(
             parse_tool_wall(b"grep").unwrap_err(),
-            b"--tools: unknown tool \"grep\"; the tools are read, write, edit, bash, spawn"
+            b"--tools: unknown tool \"grep\"; the tools are read, write, edit, bash, spawn, help"
         );
         let m = tools_for(&["bash".to_string()]);
         assert_eq!(m.keys().collect::<Vec<_>>(), vec!["bash"]);

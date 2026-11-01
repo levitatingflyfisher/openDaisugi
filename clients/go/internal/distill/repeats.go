@@ -15,11 +15,11 @@ import (
 	"daisugi-verify/internal/pystr"
 )
 
-// This file is gateway_journal.load, gateway_cluster.cluster_repeats and
-// gateway_distill.rank_reuse_candidates: the ranked reuse worklist
+// This file is router_journal.load, router_cluster.cluster_repeats and
+// router_distill.rank_reuse_candidates: the ranked reuse worklist
 // `distill-repeats` prints.
 
-// Turn is the part of a GatewayTurnRecord the worklist reads.
+// Turn is the part of a RouterTurnRecord the worklist reads.
 type Turn struct {
 	Signature, Task string
 	Tokens          *big.Int
@@ -32,7 +32,7 @@ var turnFields = []string{"created_at", "signature", "task", "tier", "requested_
 
 var requiredTurnFields = turnFields[:14]
 
-// LoadTurns is GatewayJournal(path).load(): each line a record, a line
+// LoadTurns is RouterJournal(path).load(): each line a record, a line
 // that is not JSON or not a record skipped (and counted). A record whose
 // values the worklist cannot add up the Python way is ErrUnreadable.
 func LoadTurns(path string) (turns []Turn, skipped int, err error) {
@@ -44,7 +44,7 @@ func LoadTurns(path string) (turns []Turn, skipped int, err error) {
 		return nil, 0, err
 	}
 	if !utf8.Valid(raw) {
-		return nil, 0, fmt.Errorf("%w: the gateway journal is not UTF-8", ErrUnreadable)
+		return nil, 0, fmt.Errorf("%w: the router journal is not UTF-8", ErrUnreadable)
 	}
 	for _, line := range pystr.Splitlines(string(raw)) {
 		line = pystr.Strip(line)
@@ -82,7 +82,7 @@ func LoadTurns(path string) (turns []Turn, skipped int, err error) {
 
 func turnOf(o *pyjson.Object) (Turn, error) {
 	bad := func(what string) (Turn, error) {
-		return Turn{}, fmt.Errorf("%w: a gateway turn's %s is not the type the worklist adds up", ErrUnreadable, what)
+		return Turn{}, fmt.Errorf("%w: a router turn's %s is not the type the worklist adds up", ErrUnreadable, what)
 	}
 	sig, ok1 := o.Value("signature").(string)
 	task, ok2 := o.Value("task").(string)

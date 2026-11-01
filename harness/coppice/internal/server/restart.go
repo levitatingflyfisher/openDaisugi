@@ -163,7 +163,7 @@ func (s *Server) Restore() error {
 // Tree.ClosePane, for the same reason.
 func (s *Server) markRestored(rec layout.Pane, st, detail string) {
 	_ = s.tree.ClosePane(rec.ID, rec.ExitCode, s.clock().Unix())
-	s.tree.DropForeman(rec.ID)
+	s.tree.DropSteward(rec.ID)
 	id := rec.ID
 	s.mu.Lock()
 	if s.restored == nil {

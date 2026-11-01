@@ -61,7 +61,7 @@ func TestSaveWritesTheCommentLineFirst(t *testing.T) {
 		t.Fatalf("body lacks the default: %q", b)
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "foreman") || strings.HasPrefix(line, "plugins") {
+		if strings.HasPrefix(line, "steward") || strings.HasPrefix(line, "plugins") {
 			t.Fatalf("an empty key was written: %q", line)
 		}
 	}
@@ -135,25 +135,25 @@ func TestSaveWritesNoKeysTableWhenNoneIsSet(t *testing.T) {
 	}
 }
 
-func TestGatewayURLDefaultsToDaisugisOwnAddress(t *testing.T) {
-	if got := (Config{}).GatewayURL(); got != "http://127.0.0.1:8787" {
-		t.Fatalf("GatewayURL() = %q", got)
+func TestRouterURLDefaultsToDaisugisOwnAddress(t *testing.T) {
+	if got := (Config{}).RouterURL(); got != "http://127.0.0.1:8787" {
+		t.Fatalf("RouterURL() = %q", got)
 	}
 	none := ""
-	if got := (Config{Gateway: &none}).GatewayURL(); got != "" {
-		t.Fatalf("gateway = \"\" gave %q, want no gateway", got)
+	if got := (Config{Router: &none}).RouterURL(); got != "" {
+		t.Fatalf("router = \"\" gave %q, want no router", got)
 	}
 	mine := "http://127.0.0.1:9999"
-	if got := (Config{Gateway: &mine}).GatewayURL(); got != mine {
-		t.Fatalf("GatewayURL() = %q, want %q", got, mine)
+	if got := (Config{Router: &mine}).RouterURL(); got != mine {
+		t.Fatalf("RouterURL() = %q, want %q", got, mine)
 	}
 }
 
-// FN-R-33: the fence is opt-in. With no fence key a harness starts with no
-// fence; "on" and "auto" still turn it on.
-func TestTheFenceIsOffUnlessTheConfigTurnsItOn(t *testing.T) {
-	if got := (Config{}).FenceMode(); got != "off" {
-		t.Errorf("no fence key: %q, want off", got)
+// ADR-0028: with no fence key the mode is "auto"; "on" and "off" are the
+// operator's own choice.
+func TestTheFenceIsAutoUnlessTheConfigSaysOtherwise(t *testing.T) {
+	if got := (Config{}).FenceMode(); got != "auto" {
+		t.Errorf("no fence key: %q, want auto", got)
 	}
 	for _, v := range []string{"on", "auto", "off"} {
 		v := v

@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::gate::pyjson::{dumps, dumps_indent, loads, Object, Value};
-use crate::gate::sha256::hexdigest;
+use crate::warden::pyjson::{dumps, dumps_indent, loads, Object, Value};
+use crate::warden::sha256::hexdigest;
 
 use super::catalog::{parse_lock, wheel_key, Catalog, Pack, Req};
 use super::client::run_job;

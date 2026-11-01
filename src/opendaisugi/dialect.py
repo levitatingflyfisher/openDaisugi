@@ -19,13 +19,13 @@ redirect, and no file a known command writes through its operands (``cp``,
 missing target is ``**``, every path. The words do not see the work of an
 interpreter, nor of a command ``write_paths`` does not know.
 
-The base. At the gate a call has a working directory, and a model writes
-most targets relative (``src/**``) while the gate sees absolute paths. So
+The base. At the warden a call has a working directory, and a model writes
+most targets relative (``src/**``) while the warden sees absolute paths. So
 ``unfold`` takes a ``base`` (the call's cwd): a relative target is joined
 to it (``resolve_target``), and each relative write path is resolved
-against it (``write_paths.resolve_writes``). A target that starts with
+against it (``write_paths.step_accesses``). A target that starts with
 ``/`` or ``**`` is left as written, so the default ``**`` still names
-every path. With no base (a plan verified outside the gate) nothing is
+every path. With no base (a plan verified outside the warden) nothing is
 resolved.
 
 Synonyms unfold to the same word, so they are one word; the tests prove
@@ -65,7 +65,7 @@ GLOB_REGEX_VERSION = 1
 # What a step writes is part of every definition's meaning too: version 1
 # was the redirects; version 2 adds the operand writes, the unknown write
 # set of a line that moves its cwd, and the resolution against a base.
-WRITE_PATHS_VERSION = 2
+WRITE_PATHS_VERSION = 3
 
 # The limits of a supported target glob. Past them a target is refused.
 MAX_GLOB_CHARS = 1024
@@ -90,7 +90,7 @@ DESCRIPTIONS: dict[str, str] = {
         "no step writes a path inside target (a file glob; ** when absent): no "
         "file_write step, no shell write redirect, and no file a known command "
         "writes through its operands (cp, mv, tee, sed -i, rm and others). At "
-        "the gate a relative target and relative writes are placed from the "
+        "the warden a relative target and relative writes are placed from the "
         "call's cwd. Interpreter work is not seen."
     )
 }

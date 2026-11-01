@@ -1,7 +1,7 @@
 //! The text `json.loads` reads from bytes.
 
 use super::PwErr;
-use crate::gate::py::text::cp_char;
+use crate::warden::py::text::cp_char;
 
 /// `json.detect_encoding` picks UTF-8 (with or without a BOM), UTF-16 or
 /// UTF-32 from the first bytes, and the bytes are decoded with

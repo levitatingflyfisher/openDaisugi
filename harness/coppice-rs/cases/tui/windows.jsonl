@@ -19,8 +19,8 @@
 {"id": "$id", "ok": true, "result": {"pane": "$idle"}}
 {"id": "p4", "cmd": "pane.create", "kind": "headless", "harness": "pi", "cwd": "{START}", "label": "e2e pi"}
 {"id": "$id", "ok": true, "result": {"pane": "$pi"}}
-{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "gate", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
-{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "gate"}}
+{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "warden", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "warden"}}
 {"id": "a1", "cli": ["server", "start"], "alt": true, "autostart": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "a2", "cli": ["pane", "create", "--json", "--label", "floor", "--kind", "pty", "--cols", "200", "--rows", "50", "--cwd", "{START}", "--", "/usr/bin/env", "-u", "COPPICE_PANE", "{BIN}", "--socket", "{SOCK}", "--data-dir", "{DATA}"], "alt": true}

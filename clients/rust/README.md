@@ -87,13 +87,13 @@ clean 1:1 mapping:
 | `shell_decompose.rs` | `shell_decompose.py` | tree-sitter-bash walk, byte-for-byte rule mirror |
 | `predicate.rs` | `predicate.py` + the pure half of `predicate_z3.py` | `Expr` parser + `evaluate_predicate`/`eval_scalar` (concrete, no Z3) |
 | `z3_checks.rs` | `z3_checks.py` | robotics trajectory checks (native f64, exact 8-sample interpolation) **and** envelope self-consistency / plan-vs-envelope (native boolean logic — see below) |
-| `z3_bridge.rs` | the symbolic half of `predicate_z3.py` + `vacuity.py` | SMT-LIB2 emission, run on the linked Z3; `check_vacuity_exact` uses the gate's exact vacuity check |
+| `z3_bridge.rs` | the symbolic half of `predicate_z3.py` + `vacuity.py` | SMT-LIB2 emission, run on the linked Z3; `check_vacuity_exact` uses the warden's exact vacuity check |
 | `subsumption.rs` | `subsumption.py` | `envelope_subsumes` — robot-capability + permission-scope fail-closed checks (native), shell-admission + invariant subsumption (Z3) |
 | `dag.rs` | `dag.py` | duplicate/missing-dep/cycle checks |
 | `verify.rs` | `verify.py` | orchestration: the exact stage order and short-circuit points |
 | `wire.rs` / `main.rs` | `conformance.py`'s wire protocol | stdin/stdout JSON-lines loop |
 
-`clients/PORTING-NOTES.md`'s traps (the two glob engines, the metachar-gate-
+`clients/PORTING-NOTES.md`'s traps (the two glob engines, the metachar-warden-
 runs-first invariant, the `**` mid-pattern recursive-segment semantics) are
 called out at their exact implementation site in the module docs above, not
 re-derived here. The file-scope matcher's right-anchoring bug this note
@@ -105,8 +105,8 @@ used to describe (ADJUDICATIONS F-1) is fixed oracle-side as of
 **Since 2026-09-25: Z3 is linked, and vacuity is exact.** Every script
 below runs through `Z3_eval_smtlib2_string` on the statically linked Z3
 5.1.0 (the oracle's version), not a `z3` binary on PATH. The vacuity of
-an invariant or postcondition is the gate's own check
-(`src/gate/predicate.rs`: the tagged-union parse, `regex_to_z3` over the
+an invariant or postcondition is the warden's own check
+(`src/warden/predicate.rs`: the tagged-union parse, `regex_to_z3` over the
 port of Python's re, the linked Z3), so the soft-regex choice described
 below now applies to subsumption only. The corpus still matches in full.
 
@@ -235,17 +235,17 @@ changed and how it was verified.
 
 ### Since then
 
-Two findings from porting the gate (below) were in this client's
+Two findings from porting the warden (below) were in this client's
 verifier, both fixed: `shlex_split` escaped `\$` and `` \` `` inside
 double quotes where Python keeps the backslash (GT-20), and a redirect
 with more than one target was accepted where the oracle refuses it
 (GT-21). The corpus still matches in full: 11,450 of 11,450.
 
-## daisugi-gate: the tool-call gate in Rust
+## daisugi-warden: the tool-call warden in Rust
 
-The second port of the gate hook, beside the Go one
-(`clients/go/README.md`, "daisugi-gate"). Every tool call an agent makes
-runs the gate; a cold `python -m opendaisugi.gate` costs about half a
+The second port of the warden hook, beside the Go one
+(`clients/go/README.md`, "daisugi-warden"). Every tool call an agent makes
+runs the warden; a cold `python -m opendaisugi.warden` costs about half a
 second, almost all of it start-up. This binary answers the same hook the
 same way without that cost, and it never runs Python.
 
@@ -253,10 +253,10 @@ same way without that cost, and it never runs Python.
 ../go/scripts/native.sh        # once: the native prefix, with the baseline libc++
 cd clients/rust
 source tools/z3-build-env.sh   # zig c++ for Z3 (baseline CPU), the prefix's libc++, the build-path maps
-cargo build --release          # target/release/daisugi-gate
-tools/check-paths.sh target/release/daisugi-gate target/release/conform
+cargo build --release          # target/release/daisugi-warden
+tools/check-paths.sh target/release/daisugi-warden target/release/conform
 echo '{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/work/a"},"cwd":"/work"}' \
-  | target/release/daisugi-gate --mode audit --root ~/.opendaisugi/gate --format claude
+  | target/release/daisugi-warden --mode audit --root ~/.opendaisugi/warden --format claude
 ```
 
 This builds from a fresh checkout: `z3-build-env.sh` needs zig 0.16.0 on
@@ -267,15 +267,15 @@ binaries run on any x86-64. They name no build path, and link libc, libm
 and `libgcc_s`, which Rust's unwinder needs on glibc (a static glibc build
 would need glibc's NSS modules at run time for the name lookup of an
 `llm_check` over https). `scripts/release.sh VERSION --rust` puts
-`daisugi` and `daisugi-gate` in a second tarball,
+`daisugi` and `daisugi-warden` in a second tarball,
 `opendaisugi-rust-VERSION-linux-x86_64.tar.gz`.
 
 It reads the same flags (argparse's rules, help text and errors
-included), the same payload and the same gate root (envelopes, the
+included), the same payload and the same warden root (envelopes, the
 `DISARMED` marker, `config.yaml` beside the root), and writes the same
 stdout, stderr and exit code for each format, the same audit line,
 session tree entries, captures line, checkpoint refs and coppice or
-Herdr report. `DAISUGI_GATE_TRACE=<file>` appends one line per call:
+Herdr report. `DAISUGI_WARDEN_TRACE=<file>` appends one line per call:
 `native`, `undecided` (with why) or `backstop`.
 
 ### What it ports
@@ -336,7 +336,7 @@ second; and `OPENDAISUGI_CONFORMANCE_RECORD`.
 
 On 2026-09-25, rebased on master 25c38d19:
 
-- gate cases (1,288 then; 1,342 since): 1,288 native, 0 disagreements,
+- warden cases (1,288 then; 1,342 since): 1,288 native, 0 disagreements,
   0 stale against a live oracle. Rerun on 2026-09-27: 1,342 of 1,342
   native, 0 disagreements;
 - fuzz (at most 2,000 items a run, one run at a time): shell seeds 7 and
@@ -347,10 +347,10 @@ On 2026-09-25, rebased on master 25c38d19:
 - the frozen corpus through `conform`: 11,450 of 11,450;
 - `tools/check-paths.sh`: no build-machine path in either binary.
 
-Wall time per call, cold process, over the gate cases: p50 6.1 ms and
-p90 7.1 ms, against 429 ms and 464 ms for the Python gate. The two
+Wall time per call, cold process, over the warden cases: p50 6.1 ms and
+p90 7.1 ms, against 429 ms and 464 ms for the Python warden. The two
 ground Z3 stages (envelope self-consistency, plan against envelope) are
-decided directly, as the Go gate decides them, and a test asks the
+decided directly, as the Go warden decides them, and a test asks the
 linked Z3 the same formulas over every combination of their inputs.
 Making a Z3 context costs about 8 ms (z3py pays the same: Z3 5.1.0
 zeroes an 8.5 MB term table), so it is made only when the envelope has
@@ -360,8 +360,8 @@ runs the vacuity check takes about 20 ms. The binary is 32 MB
 and links only libc, libm and libgcc_s dynamically.
 
 ```sh
-uv run --no-sync python clients/gate_compare.py --binary clients/rust/target/release/daisugi-gate --oracle
-uv run --no-sync python clients/gate_compare.py --binary clients/rust/target/release/daisugi-gate --fuzz 2000 --kind envelope
+uv run --no-sync python clients/warden_compare.py --binary clients/rust/target/release/daisugi-warden --oracle
+uv run --no-sync python clients/warden_compare.py --binary clients/rust/target/release/daisugi-warden --fuzz 2000 --kind envelope
 ```
 
 ### Dependencies
@@ -375,35 +375,35 @@ MIT) on ring for an `llm_check` over https. rustls needs subtle, which
 is BSD-3-Clause; `NOTICE` carries its notice. The tests alone use rcgen
 for a test CA.
 
-## daisugi: the Rust CLI for the gate
+## daisugi: the Rust CLI for the warden
 
 `target/release/daisugi` is the Rust port of the Go `daisugi` binary
-(`clients/go/README.md`, "daisugi: the Go CLI for the gate"): the gate
-commands a user runs every day and the gate half of `daisugi install`,
+(`clients/go/README.md`, "daisugi: the Go CLI for the warden"): the warden
+commands a user runs every day and the warden half of `daisugi install`,
 with the flags, files and output of the Python CLI. It never runs
-Python. `daisugi gate check`, the command an installed hook runs, is
-the gate above: it decides in a child it starts as `daisugi gate
-check`, with the same frame pipe, nonce and deadline as `daisugi-gate`.
+Python. `daisugi warden check`, the command an installed hook runs, is
+the warden above: it decides in a child it starts as `daisugi warden
+check`, with the same frame pipe, nonce and deadline as `daisugi-warden`.
 
 ```sh
 cd clients/rust
 source tools/z3-build-env.sh
-cargo build --release          # target/release/daisugi, daisugi-gate, conform
-target/release/daisugi gate init --workspace "$PWD"
-target/release/daisugi install --gate --enforce --yes
-target/release/daisugi gate status
+cargo build --release          # target/release/daisugi, daisugi-warden, conform
+target/release/daisugi warden init --workspace "$PWD"
+target/release/daisugi install --enforce --yes
+target/release/daisugi warden status
 ```
 
-It carries the Go binary's commands: `gate check`, `gate init`, `gate
-register`, `gate arm`, `gate disarm`, `gate status`, `gate report`,
-`gate settings`, `gate proposals`, `gate serve` (the resident gate,
-below), `install --gate [--enforce|--audit]
+It carries the Go binary's commands: `warden check`, `warden init`, `warden
+register`, `warden arm`, `warden disarm`, `warden status`, `warden report`,
+`warden settings`, `warden proposals`, `warden serve` (the resident warden,
+below), `install [--enforce|--audit]
 [--runtime X] [--dry-run] [--yes] [--uninstall]`, `install --harness
 pi|opencode [--uninstall] [--dry-run]`, `pathways list|show|stats|
 delete|export|import` (see the next section), `gardener`, `tend`,
 `hook auto-tend` and `distill-repeats` (the garden, below), and
-`gateway`, `gateway-report`, `router status|stop`, `route` and `install
---gateway` (the gateway, below), and `status`, `config`, `start` and
+`router`, `router report`, `router status|stop`, `route` and `install
+--router` (the router, below), and `status`, `config`, `start` and
 `journal stats|replay|search|parse|ingest` (the everyday commands,
 below), `generate-envelope`, `run` and `orchestrate`, and `mcp serve`,
 `onboard` and `tiers setup` (below), `modules`, `dashboard` and
@@ -414,13 +414,13 @@ prints one line,
 The hook it writes has the Go binary's words,
 
 ```
-DAISUGI_GATE_HOOK=opendaisugi.gate '/abs/path/daisugi' gate check --mode enforce \
-  --root ~/.opendaisugi/gate --format claude --verify-timeout 10.0 || exit 2
+DAISUGI_WARDEN_HOOK=opendaisugi.warden '/abs/path/daisugi' warden check --mode enforce \
+  --root ~/.opendaisugi/warden --format claude --verify-timeout 10.0 || exit 2
 ```
 
-and it finds a gate hook by its words, with the same rules for an
-unknown gate hook (ADJUDICATIONS C-9). `config.yaml` and an envelope for
-`gate register` go through the Go binary's YAML reader, ported; YAML
+and it finds a warden hook by its words, with the same rules for an
+unknown warden hook (ADJUDICATIONS C-9). `config.yaml` and an envelope for
+`warden register` go through the Go binary's YAML reader, ported; YAML
 outside it is refused with a reason. Files are written atomically, and a
 `settings.json` that is a symlink is written through with a note, as the
 Go binary does. The pi and OpenCode extensions are the Python package's
@@ -430,10 +430,10 @@ On 2026-09-25, against the committed CLI cases and a live oracle
 (`clients/cli_compare.py --binary clients/rust/target/release/daisugi
 --oracle`): 234 cases, 221 agree, 10 not ported and 3 refused (the YAML
 the reader does not take), as for the Go binary; 0 stale, 0 machine
-paths in the fixtures. Every gate case run through `daisugi gate check`
+paths in the fixtures. Every warden case run through `daisugi warden check`
 (a two-line wrapper script) is native with 0 disagreements (1,342 of
 1,342, rerun 2026-09-27). Cold start: `daisugi --help` p50 2.0 ms, p90 2.4 ms; `daisugi
-gate status` p50 5.0 ms. `tools/check-paths.sh` finds no build-machine
+warden status` p50 5.0 ms. `tools/check-paths.sh` finds no build-machine
 path in it.
 
 ## daisugi pathways: the pathway store in Rust
@@ -492,7 +492,7 @@ storable before the store is opened, so a bundle the binary cannot read or
 verify the Python way is refused with nothing written; the other errors
 are then reported in Python's order. The verifier is the crate's own
 (`verify.rs`, each violation now with the oracle's message) with the
-gate's predicate stage, and the two Z3 stages run on the linked Z3 with
+warden's predicate stage, and the two Z3 stages run on the linked Z3 with
 `--z3-timeout-ms`: an `unknown` is a timeout and import refuses with
 `VERIFICATION_TIMEOUT`; a Z3 error is a violation.
 
@@ -531,12 +531,12 @@ Cold process, 1,000 lexical pathways (about 22 MB of vector text):
 
 `list` validates every row as `list_all` does (the envelope, the plan
 and all 4,096 floats of each vector), on four threads (PW-R-10). The
-same build agrees on the other suites: `gate_compare.py --oracle` over
-`daisugi-gate`, 1,310 cases, 0 disagreements, 0 stale; `cli_compare.py
+same build agrees on the other suites: `warden_compare.py --oracle` over
+`daisugi-warden`, 1,310 cases, 0 disagreements, 0 stale; `cli_compare.py
 --oracle` over `daisugi`, 261 cases, 248 agree, 10 not ported and 3
 refused as before, 0 stale; `conform` on the frozen corpus, 11,450 of
 11,450 (the verifier's messages changed nothing else); and
-`tools/check-paths.sh` finds no build path in `daisugi`, `daisugi-gate`
+`tools/check-paths.sh` finds no build path in `daisugi`, `daisugi-warden`
 or `pathway-probe`.
 
 
@@ -552,7 +552,7 @@ yet, as in Go (HR-4).
 |---|---|
 | `garden` | `gardener.prune` and `gardener.merge`, `intersect_permissions`, Python's int / int and `==` on dumps |
 | `tracejournal` | `Journal`: the YAML trace bodies and the SQLite index, its schema and migrations, a read-only open for the checks, `list_successful_traces`, `load_trace`, refinements, `log`, the converted-session table; networkx's topological order; the envelope cache |
-| `distill` | `Distiller.tend`, `pathway_params` and the gateway worklist |
+| `distill` | `Distiller.tend`, `pathway_params` and the router worklist |
 | `llm` | the structured model call, two backends, and its HTTP(S) POST |
 | `capture` | `hook.list_sessions`, `infer_envelope` and the plan a capture makes |
 | `pathways::literal` | the Python literals a model writes in place of JSON |
@@ -615,31 +615,31 @@ Cold process, the binary and Python:
 | `gardener merge --dry-run`, 1,000 pathways (all pairs) | 65.1 ms | 5,332 ms |
 | `tend`, 7 traces, one cluster salvaged and verified | 141 ms | 741 ms |
 
-## daisugi gateway, gateway-report, router, route: the gateway in Rust
+## daisugi router serve, router report, router, route: the router in Rust
 
-The token-saving gateway runs in the binary, as in the Go binary
-(`clients/go/README.md`, "the gateway in Go"): an HTTP proxy between a
+The token-saving router runs in the binary, as in the Go binary
+(`clients/go/README.md`, "the router in Go"): an HTTP proxy between a
 harness and its model that routes each turn, meters it and journals it,
 with the flags, output, files and exit codes of the Python CLI. It never
 runs Python.
 
 | Command | What it does |
 |---|---|
-| `gateway` | the proxy: Anthropic Messages and OpenAI Chat Completions, buffered and streamed, the rules router (ADR-0015 sticky routing), `--router off`, and `--router switchyard` with Switchyard as a managed child |
-| `gateway-report` | the calibration report: realized routing, the prompt cache, the reuse ceiling, the Switchyard target shares |
-| `router status [--json]`, `router stop` | the router choice, the binary and each child from its state file, recent turns; stop what a gateway left running |
+| `router serve` | the proxy: Anthropic Messages and OpenAI Chat Completions, buffered and streamed, the rules routing mode (ADR-0015 sticky routing), `--routing-mode off`, and `--routing-mode switchyard` with Switchyard as a managed child |
+| `router report` | the calibration report: realized routing, the prompt cache, the reuse ceiling, the Switchyard target shares |
+| `router status [--json]`, `router stop` | the routing mode, the binary and each child from its state file, recent turns; stop what a router left running |
 | `route` | the cheapest viable tier for a task, a matching pathway first |
-| `install --gateway [--base-url U] [--router R ...]` | the base_url layer: Claude Code's `ANTHROPIC_BASE_URL`, Codex's model provider, OpenClaw's provider; `--router` writes config.yaml and the Switchyard TOML |
+| `install --router [--base-url U] [--routing-mode R ...]` | the base_url layer: Claude Code's `ANTHROPIC_BASE_URL`, Codex's model provider, OpenClaw's provider; `--routing-mode` writes config.yaml and the Switchyard TOML |
 
 | Module | What it models |
 |---|---|
-| `gateway::server` | `gateway_asgi`: the proxy on a small HTTP/1.1 server, a thread for each connection, and the config reloader |
-| `gateway::http` | the upstream client (TCP or rustls, a small keep-alive pool) and httpx's gzip and deflate decoders |
+| `router::server` | `router_asgi`: the proxy on a small HTTP/1.1 server, a thread for each connection, and the config reloader |
+| `router::http` | the upstream client (TCP or rustls, a small keep-alive pool) and httpx's gzip and deflate decoders |
 | `netproxy` | proxies from the environment as httpx and urllib read them, and the one connector every HTTP client uses: a CONNECT tunnel then TLS, absolute form for http, credentials from the proxy URL (PX-1 to PX-8) |
-| `gateway::pipeline`, `route`, `meter`, `sniff`, `answers`, `report` | `gateway_pipeline`, `routing` and `route_turn`, the meter and `record_turn`, the SSE sniffers, the answer store, `gateway_journal` and `gateway_report` |
-| `gateway::pyops` | Python's operations on decoded JSON: a body whose shape makes one raise is forwarded untouched |
-| `gateway::recall` | `gateway_recall.recall` and `gateway_answers.recall_answer`, the reuse a harness calls through MCP |
-| `switchyard` | `router_switchyard`: the TOML it writes, a reader for the TOML a deployment file uses, the child, its state file, health and stop |
+| `router::pipeline`, `route`, `meter`, `sniff`, `answers`, `report` | `router_pipeline`, `routing` and `route_turn`, the meter and `record_turn`, the SSE sniffers, the answer store, `router_journal` and `router_report` |
+| `router::pyops` | Python's operations on decoded JSON: a body whose shape makes one raise is forwarded untouched |
+| `router::recall` | `router_recall.recall` and `router_answers.recall_answer`, the reuse a harness calls through MCP |
+| `switchyard` | `routing_switchyard`: the TOML it writes, a reader for the TOML a deployment file uses, the child, its state file, health and stop |
 | `cli::config` | now also `save_config`: the whole file restated as pydantic dumps it |
 
 How it matches the oracle, beyond what the Go section says:
@@ -663,8 +663,8 @@ How it matches the oracle, beyond what the Go section says:
 ```sh
 cd clients/rust && source tools/z3-build-env.sh && cargo build --release
 (cd ../go && go build -o /some/scratch/fake-upstream ./cmd/fake-upstream)
-DAISUGI_RECALL_PROBE=target/release/recall-probe uv run --no-sync python ../gateway_compare.py \
-    --binary target/release/daisugi --oracle --fuzz 2000 --seed 1 --probe target/release/gateway-probe \
+DAISUGI_RECALL_PROBE=target/release/recall-probe uv run --no-sync python ../router_compare.py \
+    --binary target/release/daisugi --oracle --fuzz 2000 --seed 1 --probe target/release/router-probe \
     --speed --upstream-bin /some/scratch/fake-upstream
 ```
 
@@ -672,25 +672,25 @@ Results on the reference box, 2026-09-26:
 
 | Run | Items | Disagreements |
 |---|---|---|
-| gateway cases, stderr on every case | 169 (167 agree, 2 refused as ruled: GW-8, GW-9) | 0 |
+| router cases, stderr on every case | 169 (167 agree, 2 refused as ruled: GW-8, GW-9) | 0 |
 | the same with `--oracle` (fixture rerun live) | 169 | 0 stale |
-| gateway cases after the 54 proxy cases (PX-1 to PX-8) | 223 (221 agree, 2 refused as ruled) | 0 |
+| router cases after the 54 proxy cases (PX-1 to PX-8) | 223 (221 agree, 2 refused as ruled) | 0 |
 | the 54 proxy cases with `--oracle` | 54 | 0 stale |
-| CLI cases with the `install --gateway` and `--router` cases | 306 (294 agree, 12 not ported or refused as before) | 0 |
+| CLI cases with the `install --router` and `--routing-mode` cases | 306 (294 agree, 12 not ported or refused as before) | 0 |
 | pipeline fuzz, seeds 1 to 6, chunks of at most 500 turns | 12,000 turns | 0 |
 
-The gateway's added time on a buffered turn, 400 turns each way against
+The router's added time on a buffered turn, 400 turns each way against
 Go's `cmd/fake-upstream`, alternating: straight to the upstream p50
-0.24 ms, through the gateway p50 0.46 ms, so 0.22 ms added at p50
+0.24 ms, through the router p50 0.46 ms, so 0.22 ms added at p50
 (target: under 5 ms; the Go binary adds 0.88 ms).
 
-## daisugi gate serve: the resident gate in Rust
+## daisugi warden serve: the resident warden in Rust
 
-`daisugi gate serve [--root R]` is the Rust port of the Go binary's
-resident gate (`clients/go/README.md`, "daisugi gate serve"): the server
+`daisugi warden serve [--root R]` is the Rust port of the Go binary's
+resident warden (`clients/go/README.md`, "daisugi warden serve"): the server
 the pi extension and the OpenCode plugin ask over
-`~/.opendaisugi/gate/gate.sock`, with the oracle's wire, socket modes and
-lifecycle, and each call decided in a child it starts as `daisugi gate
+`~/.opendaisugi/warden/warden.sock`, with the oracle's wire, socket modes and
+lifecycle, and each call decided in a child it starts as `daisugi warden
 check`, fed the request on stdin, so a crash is the format's deny. A
 connection runs on a thread with a 256 MB stack, since a request may nest
 9,992 deep. `daisugi start` starts it, as the Go binary's does (G2-4),
@@ -699,24 +699,24 @@ to G2-8 in `clients/ADJUDICATIONS.md`; G2-3 is the Rust binary's alone
 (a `--verify-timeout` that is not finite is not decided, as RG-12).
 
 ```sh
-target/release/daisugi gate serve --root ~/.opendaisugi/gate
-uv run --no-sync python clients/gate_server_compare.py \
+target/release/daisugi warden serve --root ~/.opendaisugi/warden
+uv run --no-sync python clients/warden_server_compare.py \
     --binary clients/rust/target/release/daisugi --port rust
 ```
 
 Results on the reference box, 2026-09-27: 198 cases (190 requests, 8
-scenarios), 198 agree. The gate, CLI, pathway, garden and gateway cases
-rerun on the same binaries: 0 disagreements (1,342 gate calls native;
+scenarios), 198 agree. The warden, CLI, pathway, garden and router cases
+rerun on the same binaries: 0 disagreements (1,342 warden calls native;
 CLI 295 agree, 175 not ported, 3 refused).
 
-A gate decision over the socket (connect, one request, the reply), 300
+A warden decision over the socket (connect, one request, the reply), 300
 calls in a row after 20 to warm up:
 
 | Server | allow p50 | allow p90 | deny p50 | deny p90 |
 |---|---|---|---|---|
-| Python (`gate_server.py`) | 6.8 ms | 7.2 ms | 4.6 ms | 5.2 ms |
-| Go `daisugi gate serve` | 5.9 ms | 6.5 ms | 7.4 ms | 8.3 ms |
-| Rust `daisugi gate serve` | 4.8 ms | 5.4 ms | 5.9 ms | 6.3 ms |
+| Python (`warden_server.py`) | 6.8 ms | 7.2 ms | 4.6 ms | 5.2 ms |
+| Go `daisugi warden serve` | 5.9 ms | 6.5 ms | 7.4 ms | 8.3 ms |
+| Rust `daisugi warden serve` | 4.8 ms | 5.4 ms | 5.9 ms | 6.3 ms |
 
 The allow is `ls` and the deny `rm -rf /` under the cases' base envelope,
 in enforce mode, on a 4-core box under a load of about 5 from other work.
@@ -738,9 +738,9 @@ files of the Python CLI, as the Go binary runs them
   matcher the binary does not carry (MiniLM, int8) is off; it asks
   nvidia-smi for the GPU and never torch.
 - `config` lists every setting with its source, as `resolved_config` does.
-- `start --no-ui` or `--dry-run` installs the gate hook for this
+- `start --no-ui` or `--dry-run` installs the warden hook for this
   directory, registers a starter envelope keyed to it and starts this
-  binary's own `gate serve`; there is no view, and `start` without either
+  binary's own `warden serve`; there is no view, and `start` without either
   flag is refused.
 - `journal` reads and writes the oracle's journal. `replay` and `ingest`
   word each permissions and DAG violation's detail as the oracle does and
@@ -751,10 +751,10 @@ files of the Python CLI, as the Go binary runs them
 
 Results on the reference box, 2026-09-27: 498 CLI cases, 478 agree, 11
 not ported and 9 refused, the same cases in each class as the Go
-binary's; 0 disagreements. On the same final binaries: the gate cases
+binary's; 0 disagreements. On the same final binaries: the warden cases
 (1,348 calls, all native), the pathway cases (158 CLI cases and 245
-finds), the garden cases (227; 216 agree, 11 not ported), the gateway
-cases (223; 221 agree, 2 refused) and the resident gate cases (200):
+finds), the garden cases (227; 216 agree, 11 not ported), the router
+cases (223; 221 agree, 2 refused) and the resident warden cases (200):
 0 disagreements. The 577 verify-message cases pass in `cargo test`. A cold run, p50 on a fresh home, inside a
 `systemd-run` scope with a 4 GB memory cap (which about doubles every
 time here), under a load of about 1.5: `daisugi status`, with the real
@@ -786,7 +786,7 @@ client's `internal/envgen`:
 
 The model client (`src/llm`) now sends the thinking kwargs and takes a
 `base_url`, an `api_key` and a deadline for the whole call.
-`gateway::recall` binds a typed pathway's holes through `envgen::bind`
+`router::recall` binds a typed pathway's holes through `envgen::bind`
 before it verifies the plan against the caller's envelope (K1-7). The
 self-consistency check runs on the linked Z3, and a check that did not
 finish refuses the envelope, as the oracle now does (K1-2). A bound plan
@@ -811,17 +811,17 @@ read back every pathway store and envelope cache the binary wrote (24
 cases). `cargo test` makes the linked Z3 answer `unknown` and sees
 `self_consistent` refuse the envelope and `plan_verifies` refuse the bound
 plan, which `bind` then drops for its template. On the same
-binaries: gate 1,348 calls, all native; CLI 498 cases (478 agree, 11 not
+binaries: warden 1,348 calls, all native; CLI 498 cases (478 agree, 11 not
 ported, 9 refused); pathway 158 cases and 380 finds; garden 227 cases,
-run in parts; gateway 223 (221 agree, 2 refused as ruled); resident gate
+run in parts; router 223 (221 agree, 2 refused as ruled); resident warden
 200 agree. 0 disagreements in each.
 
-One CLI case, `install gateway idempotent`, disagreed when the binary ran
-from a copy named `rs-daisugi`: the hook reader knew the gate only by the
+One CLI case, `install router idempotent`, disagreed when the binary ran
+from a copy named `rs-daisugi`: the hook reader knew the warden only by the
 program's file name `daisugi` (INS-1). The CLI compare runs the binary
 through a symlink named `daisugi`, so no case depends on where the binary
-sits. The reader in all three languages now also knows the gate by the
-hook's shape: the installer's marker, `gate check`, and the four flags the
+sits. The reader in all three languages now also knows the warden by the
+hook's shape: the installer's marker, `warden check`, and the four flags the
 installer writes. A binary installed under another name writes a hook that
 status reports, uninstall removes and a second install does not repeat;
 cases with `prog` run the binary as `daisugi-copy` to show it.
@@ -874,11 +874,11 @@ binary wrote (99 cases). `cargo test` reaches what no case can: the
 per-step rejection and the recompute fallback (K2-1), and a Z3 check that
 answers `unknown` in the verify before `run`, in the decomposition, before
 `orchestrate`'s run, per step and on a recomputed step (K2-2). On the same
-binaries: gate 1,348 calls, all native; CLI 507 cases (487 agree, 11 not
+binaries: warden 1,348 calls, all native; CLI 507 cases (487 agree, 11 not
 ported, 9 refused); pathway 158 cases and 245 finds (the 2 real-potion
 cases skipped: the scratch HF_HOME held no model); garden 227 cases, run
-in parts with `--only` and `--skip`; gateway 223 (221 agree, 2 refused as
-ruled); resident gate 200 agree; K1 186 (183 agree, 3 refused as ruled). 0
+in parts with `--only` and `--skip`; router 223 (221 agree, 2 refused as
+ruled); resident warden 200 agree; K1 186 (183 agree, 3 refused as ruled). 0
 disagreements in each. `cargo test --release` passes.
 
 ## daisugi mcp serve, onboard and tiers setup: stage K3 in Rust
@@ -895,7 +895,7 @@ rejected the same way), checks each request as the SDK does, pre-parses
 and validates the tool arguments with `src/pathways/pmodel`, and writes
 pydantic's JSON text. Each reply is written and flushed at once. The tools
 run on the existing libraries: `src/envgen`, the pathway store,
-`src/gateway/recall.rs`, the verifier, the supervisor and the journal.
+`src/router/recall.rs`, the verifier, the supervisor and the journal.
 `tools/gen_mcp_tools.py` takes the tools/list result, the capabilities
 and the protocol versions from the oracle; `--check` fails when they
 drift.
@@ -947,12 +947,12 @@ read back every journal and pathway store the binary wrote (175 cases).
 `cargo test` reaches what no case can: a Z3 unknown in `verify_plan`
 (K3-5), a refused MCP method with the server going on, a lone surrogate in
 an argument (K3-3), and the CPU-only recommendation for fixed profiles
-(K3-9). On the same binaries: gate 1,348 calls, all native; CLI 507 cases
+(K3-9). On the same binaries: warden 1,348 calls, all native; CLI 507 cases
 (487 agree, 11 not ported, 9 refused); K1 186 (183 agree, 3 as ruled); K2
 116 (109 agree, 7 not ported); pathway 158 cases and 245 finds (the 2
 real-potion cases skipped: the scratch HF_HOME held no model); garden 227
-cases in four parts (216 agree, 11 not ported); gateway 223 (221 agree, 2
-refused as ruled); resident gate 200 agree. 0 disagreements in each.
+cases in four parts (216 agree, 11 not ported); router 223 (221 agree, 2
+refused as ruled); resident warden 200 agree. 0 disagreements in each.
 `cargo test --release` passes, and `tools/check-paths.sh` finds no
 build-machine path.
 
@@ -960,7 +960,7 @@ build-machine path.
 
 `daisugi modules [--data-dir D] [--json]` draws the module map;
 `daisugi dashboard [--data-dir D] [--once] [--json] [--interval S]` adds a
-gauge per stage read from the journal, the pathway store and the gateway's
+gauge per stage read from the journal, the pathway store and the router's
 turn journal: one frame when stdout is not a terminal or with `--once`,
 JSON with `--json`, and on a terminal a new frame every interval until
 Ctrl-C. `daisugi metrics [--data-dir D] [--serve [--host H] [--port P]]`
@@ -988,7 +988,7 @@ subagent events, for Hermes and for the OpenClaw plugin. It reads one
 payload on stdin, records the call or reports the session's state to
 coppice or herdr with its session-tree entry, and prints the host's
 contract. Past the options it always exits 0 (HR-1), so a Stop hook never
-blocks the stop. `src/gate/hookrecord.rs` holds the payload half and
+blocks the stop. `src/warden/hookrecord.rs` holds the payload half and
 `src/cli/hookcmd.rs` the options and the background tend trigger (HR-2).
 `hook list` and `hook to-trace` are stage F (below); the command-line
 `hook report` stays refused; no hook runs it (HR-4).
@@ -1007,12 +1007,12 @@ dashboards and metrics runs, 7 cases over a fresh box and an inf hit sum,
 and 76 hook cases),
 188 agree, 0 disagreements; the 2 not ported (K4-3) and 3 refused (K4-4)
 are the Go binary's 5 by name. The integration test drives the terminal
-view over a pty (K4-R-3). On the same binaries: gate 1,348 calls, all
+view over a pty (K4-R-3). On the same binaries: warden 1,348 calls, all
 native; CLI 508 cases (490 agree, 9 not ported, 9 refused; the 3 `start
 view` cases agree); K1 186 (183 agree, 3 as ruled); K2 116 (109 agree, 7
 not ported); K3 207 (204 agree, 3 not ported); pathway 158 cases and 245
 finds (2 real-potion cases skipped); garden 227 (216 agree, 11 not
-ported); gateway 223 (221 agree, 2 refused as ruled); resident gate 200
+ported); router 223 (221 agree, 2 refused as ruled); resident warden 200
 agree. 0 disagreements in each. `cargo test --release` passes.
 
 ## Stage L in Rust: the registry, batch proofs, release signing
@@ -1050,15 +1050,15 @@ cargo test --release
 
 Results on the reference box, 2026-09-28: 239 L cases (144 commands, 95
 library probes), 239 agree, 0 refused, 0 disagreements; the hostile git environment and repo-inside-a-repo cases
-agree too (L-15). On the same binaries: gate 1,348 calls, all native; CLI
+agree too (L-15). On the same binaries: warden 1,348 calls, all native; CLI
 508 cases (490 agree, 9 not ported, 9 refused); K1 186 (183 agree, 2 not
 ported, 1 refused); K2 116 (109 agree, 7 not ported); K3 207 (204 agree, 3
 not ported); K4 193 (188 agree, 2 not ported, 3 refused); pathway 158
 cases and 380 finds; garden 227 (217 agree, 10 not ported: `registry
-pull-and-tend no clone` now agrees); gateway 223 (221 agree, 2 refused);
-resident gate 200 agree. 0 disagreements in each. `cargo test --release`
+pull-and-tend no clone` now agrees); router 223 (221 agree, 2 refused);
+resident warden 200 agree. 0 disagreements in each. `cargo test --release`
 passes, and `tools/check-paths.sh` finds no build-machine path in
-`daisugi`, `daisugi-gate` or `l-probe`.
+`daisugi`, `daisugi-warden` or `l-probe`.
 
 ## Stage F in Rust: the transcript parsers, ingest and the capture commands
 
@@ -1071,7 +1071,7 @@ D] [--task T] [--allow-shell-decomposition]`.
 
 | Module | What it models |
 |---|---|
-| `src/gate/pymodel.rs` (`decode_stream`) | `open(path, encoding="utf-8")` read line by line: 8192-byte decode calls and the `UnicodeDecodeError` they raise (F-2, F-R-1) |
+| `src/warden/pymodel.rs` (`decode_stream`) | `open(path, encoding="utf-8")` read line by line: 8192-byte decode calls and the `UnicodeDecodeError` they raise (F-2, F-R-1) |
 | `src/transcript` | `parsers/claude_code.py` and `parsers/codex.py`: every exception the parse raises, worded as Python words it; values kept as the transcript holds them until the step models validate them (F-3, F-5) |
 | `src/capture.rs` | `hook.list_sessions` and the records `captures_to_trace` reads; `list.sort(reverse=True)` (F-6, F-R-2) |
 | `src/cli/hookcapcmd.rs` | `hook list` and `hook to-trace` (F-7) |
@@ -1096,13 +1096,13 @@ cargo test --release
 
 Results on the reference box, 2026-09-28: 199 F cases, 198 agree, 1
 refused (F-4, the Go binary's same case), 0 disagreements; the six cases
-F-10 found agree. On the same binaries: gate 1,348 calls, all native; CLI
+F-10 found agree. On the same binaries: warden 1,348 calls, all native; CLI
 508 cases (490 agree, 9 not ported, 9 refused); K1 186 (183 agree, 2 not
 ported, 1 refused); K2 116 (109 agree, 7 not ported); K3 207 (204 agree, 3
 not ported); K4 193 (188 agree, 2 not ported, 3 refused); L 239 agree;
 pathway 158 cases and 245 finds (2 real-potion cases skipped); garden 226
 (219 agree, 7 not ported; the two auto-tend cases GD-8 refused now
-agree); gateway 223 (221 agree, 2 refused); resident gate 200 agree. 0
+agree); router 223 (221 agree, 2 refused); resident warden 200 agree. 0
 disagreements in each. `cargo test --release` passes, and
 `tools/check-paths.sh` finds no build-machine path in `daisugi` or
-`daisugi-gate`.
+`daisugi-warden`.

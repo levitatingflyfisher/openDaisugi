@@ -78,19 +78,27 @@ async def test_zero_steps_raises_no_steps_error():
         await decompose("hello", client=_FakeClient(result))
 
 
-async def test_envelope_gate_passes_in_policy_plan():
+async def test_envelope_warden_passes_in_policy_plan():
     result = _dp(DecomposedStep(id="s1", type="shell", command="ls"))
     env = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = await decompose("x", client=_FakeClient(result), envelope=env)
     assert plan.steps[0].command == "ls"
 
 
-async def test_envelope_gate_rejects_out_of_policy_plan():
+async def test_envelope_warden_rejects_out_of_policy_plan():
     result = _dp(DecomposedStep(id="s1", type="shell", command="rm -rf /"))
     env = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["ls"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
     )
     with pytest.raises(DecompositionError) as ei:
         await decompose("x", client=_FakeClient(result), envelope=env)

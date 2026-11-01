@@ -8,7 +8,7 @@
         "kind": "pty", "harness": "claude-code",
         "workspace": "w1", "tab": "t1", "closed": false,
         "cols": 120, "rows": 40,
-        "state": "working", "source": "gate", "detail": "",
+        "state": "working", "source": "warden", "detail": "",
         "ts": 1757300000.0, "session_id": "s1"
       },
       {
@@ -16,7 +16,7 @@
         "kind": "headless", "harness": "codex",
         "workspace": "w1", "tab": "t1", "closed": false,
         "cols": 120, "rows": 40,
-        "state": "blocked", "source": "gate",
+        "state": "blocked", "source": "warden",
         "detail": "verdict=deny clause=shell.deny[2]",
         "ts": 1757300030.0, "session_id": "s2",
         "ask": {

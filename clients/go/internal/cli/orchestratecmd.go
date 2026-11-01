@@ -9,7 +9,6 @@ import (
 	"strconv"
 
 	"daisugi-verify/internal/envgen"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/orchestrate"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
@@ -18,6 +17,7 @@ import (
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // orchInt is click.INT on an option: the value, or click's usage error.
@@ -35,7 +35,7 @@ func (e *Env) orchestrateCmd(args []string) error {
 	const cmd = "orchestrate"
 	opts := []opt{
 		{names: []string{"--envelope", "-e"}, value: true, metavar: "PATH", help: "Envelope YAML (authorization boundary). If omitted, one is generated for the prompt."},
-		{names: []string{"--budget", "-b"}, value: true, metavar: "INTEGER", help: "Approximate token budget for the run (gates routing during execution). Omit for unbudgeted."},
+		{names: []string{"--budget", "-b"}, value: true, metavar: "INTEGER", help: "Approximate token budget for the run (checks routing during execution). Omit for unbudgeted."},
 		{names: []string{"--strict-budget"}, help: "Stop when the budget is exhausted instead of downgrading to a cheaper model."},
 		{names: []string{"--deterministic-synthesis"}, help: "Assemble the final answer from step outputs deterministically instead of with an LLM."},
 		{names: []string{"--max-parallel"}, value: true, metavar: "INTEGER", help: "Run independent steps in the same dependency level concurrently, up to this many at once (1 = sequential, the default)."},
@@ -92,7 +92,7 @@ func (e *Env) orchestrateCmd(args []string) error {
 		e.Environ = append(e.Environ, "OPENDAISUGI_LLM_BACKEND="+v)
 	}
 	model := p.str("--model", orchestrate.DefaultDecomposeModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if err := e.renamedBackendAt(cmd, dataDir); err != nil {
 		return err
 	}

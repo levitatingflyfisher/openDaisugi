@@ -1,8 +1,8 @@
-//! The loop: ask the model, run any tools it asks for through the gate,
+//! The loop: ask the model, run any tools it asks for through the warden,
 //! feed the results back, until it answers in plain text or the turn
 //! budget runs out.
 
-use crate::gate::{result_text, Executor, ToolCall};
+use crate::warden::{result_text, Executor, ToolCall};
 use crate::session::{new_id, SessionObserver, Usage};
 use std::rc::Rc;
 
@@ -36,7 +36,7 @@ pub trait Model {
     }
 }
 
-/// A model, a gated executor and a turn budget.
+/// A model, a checked executor and a turn budget.
 pub struct Agent {
     pub model: Box<dyn Model>,
     pub exec: Executor,
@@ -59,6 +59,9 @@ pub struct Agent {
     /// A run that offers the model no tool (--tools none): a reply that
     /// calls one fails the run.
     pub no_tools: bool,
+    /// The run's help call, when the run offers help: a valid call ends
+    /// the run after the calls of that turn.
+    pub help: Option<crate::help::HelpCall>,
     clarified: bool,
 }
 
@@ -88,6 +91,7 @@ impl Agent {
             extra_tokens: None,
             own_use: None,
             no_tools: false,
+            help: None,
             clarified: false,
         }
     }
@@ -197,6 +201,11 @@ impl Agent {
                     ..Default::default()
                 });
             }
+            if let Some(h) = &self.help {
+                if let Some((_, text)) = h.borrow().as_ref() {
+                    return Ok(text.clone());
+                }
+            }
         }
         Err(format!(
             "sprig: gave up after {} turns without finishing",
@@ -219,7 +228,7 @@ pub fn sat_add(a: i64, b: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::{AllowAll, Tool};
+    use crate::warden::{AllowAll, Tool};
     use crate::json::Map;
     use std::collections::BTreeMap;
 
@@ -374,7 +383,7 @@ mod tests {
             a.run(b"t").unwrap_err(),
             b"sprig: gave up after 2 turns without finishing"
         );
-        assert_eq!(a.history[4].text, b"REFUSED by the gate: unknown tool: zap");
+        assert_eq!(a.history[4].text, b"REFUSED by the warden: unknown tool: zap");
         let (mut a, _) = agent(vec![], -1);
         assert_eq!(
             a.run(b"t").unwrap_err(),

@@ -28,10 +28,10 @@ type Config struct {
 	NtfyTopic    string `json:"ntfy_topic"`
 	NtfyTokenEnv string `json:"ntfy_token_env"`
 	ExternalURL  string `json:"external_url"`
-	// GateRoot is the gate's ask directory. The caller resolves it, usually
-	// with GateRoot(dataDir), so a box with a non-default data directory
-	// still has every allow and deny land where the gate can see them.
-	GateRoot string `json:"gate_root"`
+	// WardenRoot is the warden's ask directory. The caller resolves it, usually
+	// with WardenRoot(dataDir), so a box with a non-default data directory
+	// still has every allow and deny land where the warden can see them.
+	WardenRoot string `json:"warden_root"`
 	// VoiceURL is where daisugi voice serve listens. Empty means the record
 	// button on the phone has nowhere to send a clip yet.
 	VoiceURL string `json:"voice_url"`
@@ -86,8 +86,8 @@ func Serve(ctx context.Context, c Config, opts Options) error {
 	if c.Listen == "" {
 		c.Listen = ":8443"
 	}
-	if c.GateRoot != "" {
-		opts.Gate = AskChannel{Root: c.GateRoot}
+	if c.WardenRoot != "" {
+		opts.Warden = AskChannel{Root: c.WardenRoot}
 	}
 	if c.VoiceURL != "" {
 		opts.VoiceURL = c.VoiceURL
@@ -240,7 +240,7 @@ func Serve(ctx context.Context, c Config, opts Options) error {
 		defer removeServing(opts.ServingFile)
 	}
 	opts.Log.Info("web: serving the phone",
-		"listen", c.Listen, "tls", string(source), "gate_root", opts.Gate.Root)
+		"listen", c.Listen, "tls", string(source), "warden_root", opts.Warden.Root)
 	// Every address is bound before any is served, so a port that is
 	// taken on one of them leaves nothing half up. Under --tls tailscale
 	// with no host, a tailnet address the box will not bind is skipped;

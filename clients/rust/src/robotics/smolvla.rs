@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use super::vla::{Action, PredictError, Vla};
 use super::{floats_of, PyError};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::pyjson::{Object, Value};
 use crate::mujoco::{Data, Model, Renderer};
 use crate::smolvla::{noise, Policy};
 use crate::supervise::str_of;

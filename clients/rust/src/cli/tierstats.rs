@@ -4,7 +4,7 @@
 
 use super::statuscmd::py_fixed;
 use super::{parse_args, Env, Opt, Res};
-use crate::gate::pyjson::{dumps_indent, Object, Value};
+use crate::warden::pyjson::{dumps_indent, Object, Value};
 
 const TIERS: [&str; 3] = ["tier0", "tier1", "tier2"];
 

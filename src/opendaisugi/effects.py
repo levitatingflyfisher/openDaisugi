@@ -1,6 +1,6 @@
 """The effect class of one tool call, and the tier of an ask about it.
 
-The gate asks the operator about a call the envelope denied. The tier says
+The warden asks the operator about a call the envelope denied. The tier says
 how careful that answer must be:
 
 - ``silent``: the envelope allowed the call. Nobody is asked.
@@ -1145,7 +1145,7 @@ def _command_class(
         paths = [a]
         if head == "git" and ":" in a and "://" not in a:
             rev_path = a.split(":", 1)[1]
-            # A climb in REV:path leaves the tree the gate reads it from.
+            # A climb in REV:path leaves the tree the warden reads it from.
             if ".." in rev_path.replace("\\", "/").split("/"):
                 return "unknown"
             paths.append(rev_path)
@@ -1354,7 +1354,7 @@ def _shell_class(command: str, root: Workspace | None, cwd: str | None = None) -
     for tokens, text in zip(token_lists, dec.commands, strict=True):
         if _unsafe_words(text):
             classes.append("unknown")
-        # After a cd or popd the gate cannot follow, a relative word could
+        # After a cd or popd the warden cannot follow, a relative word could
         # name anything.
         if lost and any(_is_relative_word(a) for a in tokens[1:]):
             classes.append("unknown")
@@ -1367,7 +1367,7 @@ def _shell_class(command: str, root: Workspace | None, cwd: str | None = None) -
         cwd = _next_cwd(tokens, cwd)
         if cwd not in cwds and len(cwds) >= _MAX_CWDS:
             # Past this many directories the line counts as moved to a
-            # place the gate cannot follow, so the check stays well inside
+            # place the warden cannot follow, so the check stays well inside
             # a hook timeout and relative words stay unknown.
             cwd = None
             lost = True
@@ -1467,7 +1467,7 @@ def effect_class(
     """
     try:
         return _effect_class(record, cwd, call_cwd)
-    except Exception:  # noqa: BLE001 - a path the gate cannot resolve is unknown
+    except Exception:  # noqa: BLE001 - a path the warden cannot resolve is unknown
         return "unknown"
 
 

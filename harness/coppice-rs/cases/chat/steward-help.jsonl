@@ -1,0 +1,92 @@
+# A worker's help tool and the steward's reply tool in chat mode (the Pando
+# move, addendum C). A worker that ends by help parks (need_info, escalate) or
+# ends at once (give_up); the steward answers with reply, which starts a new
+# segment with the answer as the task and the first session as resume. The
+# fake daisugi (cases/chat/fixtures/fake-daisugi.py) answers help-* tasks with
+# status help, and a request with resume with status ran once the case writes
+# the go file named by the answer.
+#!config projects = ["{WORK}/proj"]
+#!config [steward]
+#!config mode = "chat"
+#!env COPPICE_CLAUDE_BIN={FIXTURES}/chat/fake-turn-claude.py
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/chat/fake-daisugi.py
+#!env FAKE_TURN_DIR={WORK}/turns
+#!env FAKE_TREE_LOG={WORK}/tree.log
+#!env FAKE_TREE_GO={WORK}/go
+{"id":"w1","write":"{WORK}/proj/README","text":"a project\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{HOME}/.config/coppice/envelopes/proj.json","text":"{\"envelope\": {\"tools\": [\"read\"], \"paths\": [\"<repo>\"]}, \"tokens\": 5000, \"turns\": 3}"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"1","cmd":"floor.talk","text":"spawn proj help-need"}
+{"id":"$id","ok":true,"result":{"message":"log/0"}}
+#!retry 20000
+{"id":"2","cmd":"floor.chat"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/0"},{"id":"log/1","role":"agent","text":"","tool":"spawn"},{"id":"log/2","role":"agent","text":"tools zoom,date,spawn,status,reply; spawn gave error=False: started proj-1"}]}}
+{"id":"g3","write":"{WORK}/go/help-need","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"4","cmd":"floor.chat","since":"log/2"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/3","role":"work","text":"[proj-1] asks a question\n> which db?\n(Answer it with reply.)"}]}}
+{"id":"5","cmd":"floor.talk","text":"status"}
+{"id":"$id","ok":true,"result":{"message":"log/4"}}
+#!retry 20000
+{"id":"6","cmd":"floor.chat","since":"log/4"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/5","role":"agent","text":"","tool":"status"},{"id":"log/6","role":"agent","text":"*"}]}}
+{"id":"7","cmd":"floor.talk","text":"reply proj-1 sqlite"}
+{"id":"$id","ok":true,"result":{"message":"log/7"}}
+#!retry 20000
+{"id":"8","cmd":"floor.chat","since":"log/7"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/8","role":"agent","text":"","tool":"reply"},{"id":"log/9","role":"agent","text":"tools zoom,date,spawn,status,reply; reply gave error=False: answered proj-1; it goes on"}]}}
+{"id":"g9","write":"{WORK}/go/sqlite","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"10","cmd":"floor.chat","since":"log/9"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/10","role":"work","text":"[proj-1] report\ngot: sqlite"}]}}
+{"id":"11","cmd":"floor.talk","text":"spawn proj help-escalate"}
+{"id":"$id","ok":true,"result":{"message":"log/11"}}
+#!retry 20000
+{"id":"12","cmd":"floor.chat","since":"log/11"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/12","role":"agent","text":"","tool":"spawn"},{"id":"log/13","role":"agent","text":"tools zoom,date,spawn,status,reply; spawn gave error=False: started proj-2"}]}}
+{"id":"g13","write":"{WORK}/go/help-escalate","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"14","cmd":"floor.chat","since":"log/13"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/14","role":"work","text":"[proj-2] asks the owner\n> which db?\n(This is for the owner. Tell the owner, then pass the answer on with reply.)"}]}}
+{"id":"16","cmd":"floor.talk","text":"reply proj-2 keep"}
+{"id":"$id","ok":true,"result":{"message":"log/15"}}
+#!retry 20000
+{"id":"17","cmd":"floor.chat","since":"log/15"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/16","role":"agent","text":"","tool":"reply"},{"id":"log/17","role":"agent","text":"tools zoom,date,spawn,status,reply; reply gave error=False: answered proj-2; it goes on"}]}}
+{"id":"g18","write":"{WORK}/go/keep","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"19","cmd":"floor.chat","since":"log/17"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/18","role":"work","text":"[proj-2] report\ngot: keep"}]}}
+{"id":"20","cmd":"floor.talk","text":"spawn proj help-give"}
+{"id":"$id","ok":true,"result":{"message":"log/19"}}
+#!retry 20000
+{"id":"21","cmd":"floor.chat","since":"log/19"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/20","role":"agent","text":"","tool":"spawn"},{"id":"log/21","role":"agent","text":"tools zoom,date,spawn,status,reply; spawn gave error=False: started proj-3"}]}}
+{"id":"g22","write":"{WORK}/go/help-give","text":"go"}
+{"id":"$id","ok":true,"result":{"written":true}}
+#!retry 20000
+{"id":"23","cmd":"floor.chat","since":"log/21"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/22","role":"work","text":"[proj-3] gave up\n> the envelope has no network\nchanged: a.go, b.go\n(transcript: child store proj-3, roots 0+2, 2+1; zoom with child=\"proj-3\")"}]}}
+{"id":"24","cmd":"floor.talk","text":"reply proj-3 again"}
+{"id":"$id","ok":true,"result":{"message":"log/23"}}
+#!retry 20000
+{"id":"25","cmd":"floor.chat","since":"log/23"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/24","role":"agent","text":"","tool":"reply"},{"id":"log/25","role":"agent","text":"tools zoom,date,spawn,status,reply; reply gave error=True: proj-3 is not waiting for an answer (it is gave_up)"}]}}
+{"id":"26","cmd":"floor.talk","text":"reply proj-9 hello"}
+{"id":"$id","ok":true,"result":{"message":"log/26"}}
+#!retry 20000
+{"id":"27","cmd":"floor.chat","since":"log/26"}
+{"id":"$id","ok":true,"result":{"messages":[{"id":"log/27","role":"agent","text":"","tool":"reply"},{"id":"log/28","role":"agent","text":"tools zoom,date,spawn,status,reply; reply gave error=True: no worker named \"proj-9\". status lists them"}]}}
+{"id":"28","file":"{WORK}/tree.log","count":"\"resume\": \"s-help\""}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"29","file":"{DATA}/foreman/work/workers.json","count":"\"state\":\"gave_up\""}
+{"id":"$id","ok":true,"result":{"count":1}}
+{"id":"30","file":"{DATA}/foreman/work/workers.json","count":"\"state\":\"ran\""}
+{"id":"$id","ok":true,"result":{"count":2}}
+{"id":"31","file":"{DATA}/foreman/work/workers.json","count":"\"state\":\"waiting\""}
+{"id":"$id","ok":true,"result":{"count":0}}

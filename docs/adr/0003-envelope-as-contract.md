@@ -28,6 +28,14 @@ Because it's one object, it composes: containment is transitive, so
 "skills-as-contracts," safe sub-agents, and shared pathways all fall out of the
 same subsumption proof.
 
+## Where the envelope comes from
+
+The envelope is a contract only if the party it binds does not write it. `generate_envelope`
+takes the task and context and never a plan, so the planner cannot shape its own
+constraints. A generated child envelope is checked against its parent and can only
+tighten it. The parent is the ceiling a person sets and reviews. The rules, and which of
+them the code enforces, are in the [security model](../security-model.md#where-the-envelope-comes-from).
+
 ## Consequences
 
 - **Buys:** a single, testable definition of "allowed," and free composition —

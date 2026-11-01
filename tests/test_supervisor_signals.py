@@ -35,7 +35,11 @@ def test_supervisor_finalizes_and_journals_on_keyboard_interrupt(tmp_path):
     import asyncio
 
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["sleep"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["sleep"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -89,7 +93,11 @@ async def test_supervisor_reaps_grandchildren_on_step_timeout(tmp_path):
     script.chmod(0o755)
 
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["sh"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["sh"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",

@@ -37,7 +37,7 @@ func registerAll(s *server.Server) error {
 		// otherwise, can cause. No test exercises this branch for that
 		// reason.
 		warn := fmt.Sprintf(
-			"agent detection did not load: %v. Screen detection is off. Gate-reported state still works. "+
+			"agent detection did not load: %v. Screen detection is off. Warden-reported state still works. "+
 				"The agent-detection override directory is %s.", err, detect.OverrideDir())
 		s.SetDetectionWarnings([]string{warn})
 		// pane.explain stays in the usage text even now, so it must still

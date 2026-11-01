@@ -10,7 +10,7 @@ worktree, and that worktree has an open pull request, this policy runs
 gh pr checks there. When the checks pass it prompts the pane with
 "checks are green, merge". While checks are pending it asks again every
 poll_seconds, up to max_polls times. It never merges on its own and never
-answers a gate ask. The pane's own gate decides what the merge may do.
+answers a warden ask. The pane's own warden decides what the merge may do.
 """
 
 from __future__ import annotations

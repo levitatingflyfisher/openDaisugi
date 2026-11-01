@@ -14,7 +14,7 @@ import { gridToText } from './grid.js';
 export { WATCH_MAX };
 
 // eventForView is a state event or a pane row as a view is given it. A
-// blocked one whose ask a foreman holds reads as working, with held still
+// blocked one whose ask a steward holds reads as working, with held still
 // on it, so every view sorts, colours and counts it as the rail does.
 export function eventForView(e) {
   if (!e || e.state !== 'blocked' || !e.held) return e;
@@ -42,9 +42,36 @@ export function viewSrc(id) {
 // viewAction reads one message a view posted. It is an open of a pane the
 // list holds, a new sel cut down to panes the list holds, a watch of at
 // most WATCH_MAX panes the list holds, a close, or null for anything else.
-export function viewAction(data, panes) {
+//
+// A view may also post an answer to a card (answer), a request for a
+// card's diff (card-diff) and an answer to a tree ask (tree-answer). Each
+// is accepted only for an id in the last list the page sent that view:
+// cards for the first two, tree.asks for the third.
+export function viewAction(data, panes, cards, tree) {
   if (!data || typeof data !== 'object') return null;
   if (data.type === 'close') return { kind: 'close' };
+  const cardIds = new Set((Array.isArray(cards) ? cards : []).map((c) => c && c.choice_id));
+  if (data.type === 'answer') {
+    if (typeof data.choice_id !== 'string' || !cardIds.has(data.choice_id)) return null;
+    if (!['keep', 'drop', 'switch'].includes(data.outcome)) return null;
+    const pick = typeof data.pick === 'string' ? data.pick : '';
+    if (data.outcome === 'switch') {
+      const card = cards.find((c) => c && c.choice_id === data.choice_id);
+      const alts = Array.isArray(card && card.alternatives) ? card.alternatives : [];
+      if (!pick || !alts.includes(pick)) return null;
+    }
+    return { kind: 'answer', choice_id: data.choice_id, outcome: data.outcome, pick: data.outcome === 'switch' ? pick : '' };
+  }
+  if (data.type === 'card-diff') {
+    return typeof data.choice_id === 'string' && cardIds.has(data.choice_id)
+      ? { kind: 'card-diff', choice_id: data.choice_id } : null;
+  }
+  if (data.type === 'tree-answer') {
+    const asks = Array.isArray(tree && tree.asks) ? tree.asks : [];
+    if (typeof data.ask_id !== 'string' || !asks.some((a) => a && a.ask_id === data.ask_id)) return null;
+    if (data.decision !== 'allow' && data.decision !== 'deny') return null;
+    return { kind: 'tree-answer', ask_id: data.ask_id, decision: data.decision };
+  }
   const known = new Set((panes || []).map((p) => p.id));
   if (data.type === 'open-pane' && typeof data.pane === 'string' && known.has(data.pane)) {
     return { kind: 'open', pane: data.pane };
@@ -124,6 +151,10 @@ export const REFRESH_MS = 3000;
 // cause. Many events in that time make one post.
 export const POST_MS = 250;
 
+// EXTRA_MS is how often the floor reads the cards and the tree for a view
+// that shows them.
+export const EXTRA_MS = 30000;
+
 // STOP_ON are the answers that end the refresh: a token the server no
 // longer takes, and an address it has banned for a minute.
 const STOP_ON = [401, 429];
@@ -169,6 +200,18 @@ export function mountViewHost(frame, deps) {
   let pending = null;
   let dirty = false;
   const frames = new Map();
+  // cards, diffs and tree are the data the cards and tree views are given.
+  // The floor reads them with its own token, at most every EXTRA_MS, and
+  // at once after an answer.
+  let cards = [];
+  let diffs = {};
+  let tree = null;
+  let notice = '';
+  // readNotice is why the last read of the cards or the tree failed.
+  let readNotice = '';
+  let extraAt = -Infinity;
+  const clock = deps.now || (() => Date.now());
+  const wants = (kind) => Boolean(current && typeof deps.wants === 'function' && deps.wants(current.id, kind));
   const wantsRing = () => Boolean(current && typeof deps.ring === 'function' && deps.ring(current.id));
   const win = () => {
     const w = frame.contentWindow;
@@ -206,7 +249,7 @@ export function mountViewHost(frame, deps) {
     const ids = new Set(known().map((p) => p.id));
     wanted = wanted.filter((p) => ids.has(p));
     letGo([...held]);
-    if (typeof deps.settled === 'function') watch.gate(deps.settled());
+    if (typeof deps.settled === 'function') watch.warden(deps.settled());
     watch.set(wanted.filter((p) => !held.has(p)));
   };
   const known = () => {
@@ -238,6 +281,9 @@ export function mountViewHost(frame, deps) {
       sel: deps.sel ? deps.sel() : current.sel,
       events: held().map(eventForView),
       from: wantsRing() ? ringFrom : null,
+      ...(wants('cards') ? { cards, diffs } : {}),
+      ...(wants('tree') ? { tree } : {}),
+      ...(notice || readNotice ? { notice: notice || readNotice } : {}),
     }, '*');
   };
   // flush sends what events and frames left waiting.
@@ -277,10 +323,35 @@ export function mountViewHost(frame, deps) {
       throw e;
     }
   };
+  // readExtras reads the cards and the tree for a view that asks for
+  // them. A refusal keeps what the floor held and says why in notice.
+  const readExtras = async (force) => {
+    const t = clock();
+    if (!force && t - extraAt < EXTRA_MS) return;
+    const jobs = [];
+    if (wants('cards')) {
+      jobs.push(deps.api('/api/cards?sort=' + encodeURIComponent(cardSort))
+        .then((b) => { cards = Array.isArray(b && b.cards) ? b.cards : []; readNotice = ''; }));
+    }
+    if (wants('tree')) {
+      jobs.push(deps.api('/api/tree').then((b) => { tree = b && typeof b === 'object' ? b : null; readNotice = ''; }));
+    }
+    if (!jobs.length) return;
+    extraAt = t;
+    const done = await Promise.allSettled(jobs);
+    for (const r of done) {
+      if (r.status === 'rejected') {
+        if (STOP_ON.includes(r.reason && r.reason.status)) stop();
+        readNotice = (r.reason && r.reason.message) || 'Could not read.';
+      }
+    }
+  };
+  let cardSort = 'reversibility';
   const refresh = async () => {
     const [lists, ringRead] = await Promise.allSettled([
       Promise.all([deps.api('/api/tasks'), deps.api('/api/panes')]),
       readRing(),
+      readExtras(false),
     ]);
     if (lists.status === 'fulfilled') {
       const [t, p] = lists.value;
@@ -309,7 +380,8 @@ export function mountViewHost(frame, deps) {
       wanted = [];
       forgetRing();
     }
-    if (watch && after) watch.gate(after);
+    if (watch && after) watch.warden(after);
+    const fresh = !current || current.id !== id;
     current = { id, sel: [...(sel || [])] };
     const src = viewSrc(id);
     if (frame.dataset.src !== src) {
@@ -318,6 +390,8 @@ export function mountViewHost(frame, deps) {
     }
     frame.title = id;
     stop();
+    extraAt = -Infinity;
+    if (fresh) { cards = []; tree = null; diffs = {}; notice = ''; readNotice = ''; }
     timer = deps.every(refresh, REFRESH_MS);
     return refresh();
   };
@@ -338,10 +412,48 @@ export function mountViewHost(frame, deps) {
     }
     return gone;
   };
+  const json = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const failed = (e) => ((e && e.message) || 'The answer did not go through.');
+  const answerCard = async (act) => {
+    try {
+      const r = await deps.api('/api/cards/answer', json({ choice_id: act.choice_id, outcome: act.outcome, pick: act.pick }));
+      notice = act.outcome === 'switch' ? 'Switched to ' + act.pick + '.' : act.outcome === 'drop' ? 'Dropped.' : 'Kept.';
+      if (r && r.pruned && typeof r.pruned === 'object' && Array.isArray(r.pruned.removed) && r.pruned.removed.length) {
+        notice += ' Removed ' + r.pruned.removed.length + ' branch worktree' + (r.pruned.removed.length === 1 ? '' : 's') + '.';
+      }
+    } catch (err) {
+      notice = failed(err);
+    }
+    delete diffs[act.choice_id];
+    await readExtras(true);
+    post();
+  };
+  const loadDiff = async (id) => {
+    try {
+      const b = await deps.api('/api/cards/' + encodeURIComponent(id) + '/diff');
+      diffs = { ...diffs, [id]: { diffs: b.diffs || {}, notes: b.notes || {} } };
+    } catch (err) {
+      diffs = { ...diffs, [id]: { diffs: {}, notes: { '': failed(err) } } };
+    }
+    post();
+  };
+  const answerAsk = async (act) => {
+    try {
+      await deps.api('/api/tree/answer', json({ ask_id: act.ask_id, decision: act.decision }));
+      notice = act.decision === 'allow' ? 'Allowed. The child is marked not proved.' : 'Denied.';
+    } catch (err) {
+      notice = failed(err);
+    }
+    await readExtras(true);
+    post();
+  };
   const onMessage = (e) => {
     if (!current || !e || e.source !== frame.contentWindow || !frame.contentWindow) return;
-    const act = viewAction(e.data, known());
+    const act = viewAction(e.data, known(), wants('cards') ? cards : [], wants('tree') ? tree : null);
     if (!act) return;
+    if (act.kind === 'answer') { answerCard(act); return; }
+    if (act.kind === 'card-diff') { loadDiff(act.choice_id); return; }
+    if (act.kind === 'tree-answer') { answerAsk(act); return; }
     if (act.kind === 'open') {
       if (deps.open) deps.open(act.pane);
       else deps.go('#/pane/' + encodeURIComponent(act.pane));

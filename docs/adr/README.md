@@ -34,6 +34,14 @@ whether you're fixing a mistake or unknowingly reopening a settled trade-off.
 | [0020](0020-layer-floor-loop.md) | The layer, the floor, and the loop | Accepted |
 | [0021](0021-int8-matcher.md) | The `int8` matcher: MiniLM without torch, through onnxruntime | Accepted |
 | [0022](0022-weave-runner-for-verified-plan-trees.md) | weave: the runner for verified plan trees | Accepted in part (option B) |
+| [0023](0023-pando-r2-in-daisugi.md) | Pando R2, the conversation memory, moves from coppice into daisugi | Proposed |
+| [0024](0024-commonplace.md) | Commonplace, the owner's notes as semantic memory | Proposed |
+| [0025](0025-record-by-default.md) | A plain install records every call; `--enforce` is the one opt-in to blocking | Accepted |
+| [0026](0026-names-warden-router-steward-pando.md) | Four parts get new names: warden, router, steward and Pando R2 | Accepted |
+| [0027](0027-mcp-argument-rules.md) | Argument rules for MCP tools | Accepted |
+| [0028](0028-fenced-warden-records-file-accesses.md) | Inside a fence, the kernel is the file boundary and the warden records file accesses | Accepted |
+| [0029](0029-pando-branches.md) | Pando branches: one tree, shaped like an org chart | Accepted |
+| [0030](0030-one-default-permission.md) | One default permission per project | Accepted |
 
 ## Writing a new one
 

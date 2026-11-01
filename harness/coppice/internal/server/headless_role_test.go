@@ -70,12 +70,12 @@ func TestAHeadlessHarnessChildCannotReportForAnotherPane(t *testing.T) {
 
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", dir, 1),
-		gateBlockedLine("w1:p1"))
+		wardenBlockedLine("w1:p1"))
 	if !got[0].OK || !got[1].OK {
 		t.Fatalf("setup: %+v", got)
 	}
 	clear := `{"id":"r","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"ts":1,"session_id":"s",` +
-		`"harness":"claude","pane":"w1:p1","state":"idle","source":"gate"}}`
+		`"harness":"claude","pane":"w1:p1","state":"idle","source":"warden"}}`
 	create := fmt.Sprintf(`{"id":"2","cmd":"pane.create","cwd":%q,"kind":"headless","harness":"pi",`+
 		`"env":{"HELPER":%q,"OUT":%q,"COPPICE_HELPER_REPORT":%q}}`, dir, self, out, clear)
 	if got := roundTrip(t, s, create); !got[0].OK {
@@ -107,7 +107,7 @@ func TestAnUnnamedPaneReportsForNoPane(t *testing.T) {
 	send, next, stop := streamFacts(t, s, &peerFacts{checked: true, pane: true})
 	defer stop()
 	send(`{"id":"1","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"ts":1,"session_id":"s",` +
-		`"harness":"claude","pane":"w1:p1","state":"idle","source":"gate"}}`)
+		`"harness":"claude","pane":"w1:p1","state":"idle","source":"warden"}}`)
 	refusedWith(t, next())
 	send(`{"id":"2","cmd":"pane.report_child","pane":"w1:p1","child":"a1","state":"working"}`)
 	refusedWith(t, next())

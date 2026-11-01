@@ -56,7 +56,7 @@ def _stub_tree(tmp_path: Path, native_fails: bool = False) -> Path:
     """A copy of the scripts with the heavy parts replaced by stubs."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
-    for name in ("install.sh", "preflight.sh"):
+    for name in ("install.sh", "preflight.sh", "restart-units.sh"):
         shutil.copy(REPO / "scripts" / name, root / "scripts" / name)
     tc = root / "harness" / "coppice" / "scripts" / "toolchain.sh"
     tc.parent.mkdir(parents=True)
@@ -146,7 +146,8 @@ def test_the_build_is_quiet_fetches_tools_and_skips_voice(tmp_path):
     assert "noise" not in r.stderr
     assert "GOTOOLCHAIN=auto" in (tmp_path / "go.txt").read_text()
     assert "scripts/install.sh --voice" in r.stdout
-    assert "about 45 min on 4 cores" in r.stdout
+    assert "the first build compiles Z3, once" in r.stdout
+    assert " min " not in r.stdout and "cores" not in r.stdout
     log = tmp_path / "home" / ".local" / "state" / "opendaisugi" / "install.log"
     assert str(log) in r.stdout
     assert "compiler noise line" in log.read_text()
@@ -224,3 +225,38 @@ def test_the_voice_note_is_silent_when_the_engines_are_already_linked(tmp_path):
     r = _run(tmp_path, root, _stock_box(tmp_path))
     assert r.returncode == 0, r.stderr
     assert "voice engines were not built" not in r.stdout
+
+
+def test_preflight_line_prints_once_in_a_full_install(tmp_path):
+    root = _stub_tree(tmp_path)
+    r = _run(tmp_path, root, _stock_box(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("preflight: every build tool is here.") == 1, r.stdout
+
+
+def test_toolchain_reuses_native_ghostty(tmp_path):
+    import os
+
+    native = tmp_path / "native"
+    (native / "share" / "pkgconfig").mkdir(parents=True)
+    (native / "share" / "pkgconfig" / "libghostty-vt-static.pc").write_text("Name: x\n")
+    fake = tmp_path / "fakebin"
+    fake.mkdir()
+    (fake / "native.sh").write_text(f'#!/bin/sh\n[ "$1" = --print-prefix ] && echo {native}\n')
+    (fake / "native.sh").chmod(0o755)
+    (fake / "git").write_text("#!/bin/sh\necho 'git must not run' >&2; exit 97\n")
+    (fake / "git").chmod(0o755)
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "PATH": f"{fake}:{os.environ['PATH']}",
+        "COPPICE_NATIVE_SH": str(fake / "native.sh"),
+        "XDG_DATA_HOME": str(tmp_path / "xdg"),
+    }
+    (tmp_path / "home").mkdir()
+    r = subprocess.run(  # noqa: S603 - the script under test
+        [str(REPO / "harness/coppice/scripts/toolchain.sh"), "--ghostty-only"],
+        env=env, capture_output=True, text=True, timeout=60, check=False,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    assert f"using libghostty-vt from {native} (built by native.sh)" in r.stdout
+    assert "git must not run" not in r.stderr

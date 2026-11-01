@@ -128,7 +128,7 @@ func floats(xs []float64) []any {
 	return out
 }
 
-func strList(v any) []string {
+func probeNames(v any) []string {
 	xs, _ := v.([]any)
 	out := make([]string, 0, len(xs))
 	for _, x := range xs {
@@ -154,8 +154,8 @@ func robotState(m *mujoco.Model, d *mujoco.Data, c *pyjson.Object) *pyjson.Objec
 	}
 	return pyjson.NewObject().Set("qpos", floats(d.QPos())).Set("qvel", floats(d.QVel())).
 		Set("ctrl", floats(d.Ctrl())).Set("ncon", d.NCon()).
-		Set("bodies", named(mujoco.ObjBody, strList(c.Value("bodies")), d.XPos)).
-		Set("sites", named(mujoco.ObjSite, strList(c.Value("sites")), d.SiteXPos))
+		Set("bodies", named(mujoco.ObjBody, probeNames(c.Value("bodies")), d.XPos)).
+		Set("sites", named(mujoco.ObjSite, probeNames(c.Value("sites")), d.SiteXPos))
 }
 
 // caseSteps validates the case's steps as ActionPlan.steps.

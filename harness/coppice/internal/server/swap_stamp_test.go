@@ -17,12 +17,12 @@ import (
 	"github.com/opendaisugi/coppice/internal/layout"
 )
 
-// A pane whose own env sets a base URL to the gateway starts with the pane
-// prefix on it, so the gateway can name the pane on its turn record (F12a).
+// A pane whose own env sets a base URL to the router starts with the pane
+// prefix on it, so the router can name the pane on its turn record (F12a).
 
-// capsGateway is a loopback server that answers GET /_caps with status and
+// capsRouter is a loopback server that answers GET /_caps with status and
 // body, and counts the asks. It answers its base URL.
-func capsGateway(t *testing.T, status int, body string) (string, *atomic.Int32) {
+func capsRouter(t *testing.T, status int, body string) (string, *atomic.Int32) {
 	t.Helper()
 	var asks atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,10 +56,10 @@ func TestStampURLPutsThePrefixAheadOfThePathAndReplacesOldStamps(t *testing.T) {
 	}
 }
 
-func TestAPaneStartsWithTheStampOnItsOwnGatewayURLOnly(t *testing.T) {
+func TestAPaneStartsWithTheStampOnItsOwnRouterURLOnly(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	gw, _ := capsGateway(t, 200, capsYes)
-	if err := config.Save(config.Config{Gateway: &gw}); err != nil {
+	gw, _ := capsRouter(t, 200, capsYes)
+	if err := config.Save(config.Config{Router: &gw}); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("OPENAI_BASE_URL", gw) // inherited from the server: left alone
@@ -88,8 +88,8 @@ func TestAPaneStartsWithTheStampOnItsOwnGatewayURLOnly(t *testing.T) {
 
 func TestAProcessGetsTheStampedURLInItsEnv(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	gw, _ := capsGateway(t, 200, capsYes)
-	if err := config.Save(config.Config{Gateway: &gw}); err != nil {
+	gw, _ := capsRouter(t, 200, capsYes)
+	if err := config.Save(config.Config{Router: &gw}); err != nil {
 		t.Fatal(err)
 	}
 	s := newPaneServer(t)
@@ -109,12 +109,12 @@ func TestAProcessGetsTheStampedURLInItsEnv(t *testing.T) {
 }
 
 // A record that names a floor counts only on that floor: pane ids start at
-// w1:p1 on every floor, and floors share a gateway journal.
+// w1:p1 on every floor, and floors share a router journal.
 func TestFloorFactsCountsARecordOfAnotherFloorForNoPane(t *testing.T) {
 	s := newFactsServer(t)
-	s.cfg.GateRoot = filepath.Join(t.TempDir(), "gate")
+	s.cfg.WardenRoot = filepath.Join(t.TempDir(), "warden")
 	now := s.clock().UTC().Format("2006-01-02T15:04:05.000000+00:00")
-	dir := filepath.Join(filepath.Dir(s.cfg.GateRoot), "gateway")
+	dir := filepath.Join(filepath.Dir(s.cfg.WardenRoot), "router")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -136,25 +136,25 @@ func TestFloorFactsCountsARecordOfAnotherFloorForNoPane(t *testing.T) {
 	}
 }
 
-// coppice stamps only when the gateway says it takes the prefix. An older
-// gateway forwards /_caps and answers an error, or nothing: the pane then
+// coppice stamps only when the router says it takes the prefix. An older
+// router forwards /_caps and answers an error, or nothing: the pane then
 // keeps its plain URL and works as before, with no per-pane figure.
-func TestAPaneIsNotStampedUnlessTheGatewaySaysItTakesThePrefix(t *testing.T) {
+func TestAPaneIsNotStampedUnlessTheRouterSaysItTakesThePrefix(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		status int
 		body   string
 	}{
-		{"an old gateway that forwards it", 404, `{"error":"not found"}`},
-		{"a gateway that says no", 200, `{"pane_prefix": false}`},
-		{"a gateway that says nothing", 200, `{}`},
+		{"an old router that forwards it", 404, `{"error":"not found"}`},
+		{"a router that says no", 200, `{"pane_prefix": false}`},
+		{"a router that says nothing", 200, `{}`},
 		{"an answer that is not JSON", 200, `ok`},
 		{"a refusal", 403, `{"error":"caps is loopback only"}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-			gw, asks := capsGateway(t, c.status, c.body)
-			if err := config.Save(config.Config{Gateway: &gw}); err != nil {
+			gw, asks := capsRouter(t, c.status, c.body)
+			if err := config.Save(config.Config{Router: &gw}); err != nil {
 				t.Fatal(err)
 			}
 			s := newPaneServer(t)
@@ -172,10 +172,10 @@ func TestAPaneIsNotStampedUnlessTheGatewaySaysItTakesThePrefix(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a gateway that does not answer", func(t *testing.T) {
+	t.Run("a router that does not answer", func(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		gw := "http://127.0.0.1:1"
-		if err := config.Save(config.Config{Gateway: &gw}); err != nil {
+		if err := config.Save(config.Config{Router: &gw}); err != nil {
 			t.Fatal(err)
 		}
 		s := newPaneServer(t)
@@ -186,11 +186,11 @@ func TestAPaneIsNotStampedUnlessTheGatewaySaysItTakesThePrefix(t *testing.T) {
 	})
 }
 
-// A yes is asked once per gateway address, however many panes start.
-func TestTheGatewayIsAskedOncePerAddressWhenItSaysYes(t *testing.T) {
+// A yes is asked once per router address, however many panes start.
+func TestTheRouterIsAskedOncePerAddressWhenItSaysYes(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	gw, asks := capsGateway(t, 200, capsYes)
-	if err := config.Save(config.Config{Gateway: &gw}); err != nil {
+	gw, asks := capsRouter(t, 200, capsYes)
+	if err := config.Save(config.Config{Router: &gw}); err != nil {
 		t.Fatal(err)
 	}
 	s := newPaneServer(t)

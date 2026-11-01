@@ -7,10 +7,10 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/viz"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // vizCmd is `daisugi viz [PATHWAY_ID] [--data-dir D] [-o FILE]`: a
@@ -31,7 +31,7 @@ func (e *Env) vizCmd(args []string) error {
 		return e.cmdHelp(cmd, " [PATHWAY_ID]", "Render a distilled pathway's plan as a standalone execution-monitor page.", opts)
 	}
 	dataDir := e.dataDir(p)
-	db := gateroot.Join(dataDir, "pathways.db")
+	db := wardenroot.Join(dataDir, "pathways.db")
 	if _, err := os.Stat(db); err != nil {
 		e.errf("No pathway store at %s. Run `daisugi onboard` or `daisugi tend` first.\n", db)
 		return exit(1)
@@ -95,7 +95,7 @@ func (e *Env) vizCmd(args []string) error {
 	if p.has("--output") {
 		out = p.str("--output", "")
 	}
-	out = gateroot.PathStr(out)
+	out = wardenroot.PathStr(out)
 	if err := os.WriteFile(out, []byte(html), 0o666); err != nil {
 		var no syscall.Errno
 		if !errors.As(err, &no) {

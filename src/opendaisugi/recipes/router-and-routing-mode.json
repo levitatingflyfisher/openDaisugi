@@ -1,0 +1,37 @@
+{
+  "name": "router-and-routing-mode",
+  "title": "The router and a routing mode, in front of any harness",
+  "doc": "docs/recipes/router-and-routing-mode.md",
+  "slots": {
+    "harness": "any harness (theirs)",
+    "router": "daisugi router (ours)",
+    "routing mode": "rules, or your choice",
+    "warden": "none"
+  },
+  "params": {
+    "routing_mode": {
+      "help": "how the router picks the model: rules, switchyard, knn, model or off",
+      "required": false,
+      "default": "rules"
+    }
+  },
+  "steps": [
+    {
+      "kind": "install",
+      "only": [
+        "router"
+      ],
+      "runtime": []
+    },
+    {
+      "kind": "config",
+      "set": {
+        "routing_mode": "{routing_mode}"
+      }
+    },
+    {
+      "kind": "note",
+      "text": "Start the router: daisugi router serve. Codex speaks the OpenAI wire on /chat/completions."
+    }
+  ]
+}

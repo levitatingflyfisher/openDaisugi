@@ -37,7 +37,7 @@ func TestTheHerdrBridgeManifestReadsEveryAttachStatusLine(t *testing.T) {
 	}
 	for i, r := range rows {
 		// The status line sits on the last row, under the pane's own text.
-		screen := "some pane text\nblocked via gate in the pane text\n" + r.Line + "\n"
+		screen := "some pane text\nblocked via warden in the pane text\n" + r.Line + "\n"
 		if got := c.Evaluate(Input{Screen: screen}).State; string(got) != r.HerdrState {
 			t.Errorf("row %d %q: state %q, want %q", i, r.Line, got, r.HerdrState)
 		}

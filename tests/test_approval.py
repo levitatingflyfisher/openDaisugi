@@ -76,7 +76,7 @@ def test_allowlist_bypass_skips_non_shell_steps():
 # v0.28.4 — defense-in-depth. AllowlistBypassStrategy was previously a
 # first-token allowlist check. ``cat > /etc/passwd`` auto-approved at the
 # human-in-the-loop layer despite verify rejecting it. The strategy now
-# runs the same metachar gate verify does, so metachar-laden commands
+# runs the same metachar warden verify does, so metachar-laden commands
 # fall through to the inner strategy regardless of head match.
 
 
@@ -92,7 +92,7 @@ def test_allowlist_bypass_skips_non_shell_steps():
     ],
 )
 def test_allowlist_bypass_rejects_metachar_laden_commands(cmd):
-    """v0.28.4 — head-token allowlist check is gated by metachar inspection."""
+    """v0.28.4 — head-token allowlist check is checked by metachar inspection."""
     s = AllowlistBypassStrategy(inner=DenyStrategy())
     head = cmd.split()[0]
     decision = s.decide(_shell_step(cmd), _env([head, "echo"]))

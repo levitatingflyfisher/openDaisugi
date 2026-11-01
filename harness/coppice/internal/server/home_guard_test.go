@@ -9,7 +9,7 @@ import (
 )
 
 // A test server resolves no path under the operator's real home: not its
-// socket, data, gate root, hook home or foreman directory, nor the
+// socket, data, warden root, hook home or steward directory, nor the
 // defaults it falls back to. TestMain moves HOME and the XDG directories
 // into scratch; this fails if that ever stops holding.
 func TestATestServerResolvesNoPathUnderTheRealHome(t *testing.T) {
@@ -29,9 +29,9 @@ func TestATestServerResolvesNoPathUnderTheRealHome(t *testing.T) {
 	}
 	s := newTestServer(t)
 	paths := map[string]string{
-		"socket": s.cfg.SocketPath, "data": s.cfg.DataDir, "gate root": s.cfg.GateRoot,
-		"hook home": s.cfg.HookHome, "foreman": s.cfg.ForemanDir,
-		"default socket": SocketPath(), "default data": DataDir(), "default foreman": ForemanDir(),
+		"socket": s.cfg.SocketPath, "data": s.cfg.DataDir, "warden root": s.cfg.WardenRoot,
+		"hook home": s.cfg.HookHome, "steward": s.cfg.StewardDir,
+		"default socket": SocketPath(), "default data": DataDir(), "default steward": StewardDir(),
 		"coppice.toml": config.Path(),
 	}
 	for name, p := range paths {
@@ -47,7 +47,7 @@ func TestATestServerResolvesNoPathUnderTheRealHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = bare.Close() }()
-	if testhome.UnderRealHome(bare.cfg.HookHome) || testhome.UnderRealHome(bare.cfg.ForemanDir) {
-		t.Fatalf("a bare test server reads the real home: hook home %s, foreman %s", bare.cfg.HookHome, bare.cfg.ForemanDir)
+	if testhome.UnderRealHome(bare.cfg.HookHome) || testhome.UnderRealHome(bare.cfg.StewardDir) {
+		t.Fatalf("a bare test server reads the real home: hook home %s, steward %s", bare.cfg.HookHome, bare.cfg.StewardDir)
 	}
 }

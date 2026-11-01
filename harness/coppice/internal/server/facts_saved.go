@@ -11,11 +11,11 @@ import (
 	"time"
 )
 
-// savedTailCap is the most bytes of the gateway's turn journal one read
+// savedTailCap is the most bytes of the router's turn journal one read
 // takes, from its end. A day of turns fits well inside it.
 const savedTailCap = 8 << 20
 
-// savedCache holds what the floor last read from the gateway's turn
+// savedCache holds what the floor last read from the router's turn
 // journal, under mu: the frontier tokens saved today for each pane the
 // records name. The file is read again when its size, its time or the
 // local day changed.
@@ -27,20 +27,20 @@ type savedCache struct {
 	by   map[string]int64
 }
 
-// gatewayTurnsPath is where the gateway writes one record per routed
-// turn: <daisugi data dir>/gateway/turns.jsonl. The data dir is the parent
-// of the gate root.
-func (s *Server) gatewayTurnsPath() string {
-	return filepath.Join(filepath.Dir(s.cfg.GateRoot), "gateway", "turns.jsonl")
+// routerTurnsPath is where the router writes one record per routed
+// turn: <daisugi data dir>/router/turns.jsonl. The data dir is the parent
+// of the warden root.
+func (s *Server) routerTurnsPath() string {
+	return filepath.Join(filepath.Dir(s.cfg.WardenRoot), "router", "turns.jsonl")
 }
 
-// savedToday is the frontier tokens the gateway says it saved today, local
+// savedToday is the frontier tokens the router says it saved today, local
 // time, on turns that name a pane of this floor. ok is false when the
-// gateway has no such figure: no journal, one that cannot be read, or no
+// router has no such figure: no journal, one that cannot be read, or no
 // turn today that names a pane here. A turn that names no pane counts for
 // no pane. The floor never estimates a saving of its own.
 func (s *Server) savedToday(now time.Time) (tokens int64, ok bool) {
-	path := s.gatewayTurnsPath()
+	path := s.routerTurnsPath()
 	fi, err := os.Stat(path)
 	if err != nil || !fi.Mode().IsRegular() {
 		return 0, false
@@ -73,7 +73,7 @@ func (s *Server) savedToday(now time.Time) (tokens int64, ok bool) {
 // of the last savedTailCap bytes of path whose created_at falls on now's
 // local day. A line that is not a record, or names no pane, is skipped. A
 // record that names a floor counts only when it is this one: pane ids
-// start at w1:p1 on every floor, and floors share a gateway journal.
+// start at w1:p1 on every floor, and floors share a router journal.
 func readSavedToday(path string, now time.Time, floor string) (map[string]int64, error) {
 	f, err := os.Open(path)
 	if err != nil {

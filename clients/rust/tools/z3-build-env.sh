@@ -6,7 +6,7 @@
 #     clients/go/scripts/native.sh            # once: the native prefix
 #     . clients/rust/tools/z3-build-env.sh
 #     cargo build --release --manifest-path clients/rust/Cargo.toml
-#     clients/rust/tools/check-paths.sh clients/rust/target/release/daisugi-gate
+#     clients/rust/tools/check-paths.sh clients/rust/target/release/daisugi-warden
 #
 # ZIG names the zig binary (default: zig on PATH). Z3 and the C++ runtime
 # are compiled for the baseline CPU, so the binaries run on any box of

@@ -83,7 +83,7 @@ func TestTheRosterRowsDrawDimWhileATileTypes(t *testing.T) {
 	m := tiledModel()
 	m.Typing = "a"
 	for _, l := range Render(m, 140, 30) {
-		if rail, _, _ := strings.Cut(strings.ReplaceAll(stripSGR(l), accentDivider, divider), divider); strings.Contains(rail, "gate-refactor  claude") {
+		if rail, _, _ := strings.Cut(strings.ReplaceAll(stripSGR(l), accentDivider, divider), divider); strings.Contains(rail, "gear-refactor  claude") {
 			if !strings.HasPrefix(l, sgrFaint) || strings.HasPrefix(l, sgrAmber) {
 				t.Fatalf("a roster row is not dim: %q", l)
 			}
@@ -566,23 +566,43 @@ func startSizedFloor(t *testing.T, cols *atomic.Int64) (string, *recordingProxy,
 	return id, p, pw, out, done, resize
 }
 
+// "At once" means before any other resize, not within a wall-clock second:
+// the first pane.resize after the signal carries the new width, and no
+// pane.resize with the old width follows it. The wait is long because a
+// loaded box runs the resize late, and late is not wrong.
 func TestATerminalResizeSendsTheNewTileSizeAtOnce(t *testing.T) {
 	var cols atomic.Int64
 	cols.Store(140)
 	id, p, pw, _, done, resize := startSizedFloor(t, &cols)
+	forID := func() []float64 {
+		var got []float64
+		for _, req := range sentReqs(p, "pane.resize") {
+			if req["pane"] == id {
+				if c, ok := req["cols"].(float64); ok {
+					got = append(got, c)
+				}
+			}
+		}
+		return got
+	}
+	before := len(forID())
 	cols.Store(160)
 	resize <- syscall.SIGWINCH
 	_, widths := splitWidths(160, 1)
-	resized := func() bool {
-		for _, req := range sentReqs(p, "pane.resize") {
-			if req["pane"] == id && req["cols"] == float64(widths[0]) {
-				return true
-			}
-		}
-		return false
+	want := float64(widths[0])
+	if !waitFor(t, 5*time.Second, func() bool { return len(forID()) > before }) {
+		t.Fatalf("no pane.resize after the resize: %v", sentReqs(p, "pane.resize"))
 	}
-	if !waitFor(t, time.Second, resized) {
-		t.Fatalf("no pane.resize within a second of the resize: %v", sentReqs(p, "pane.resize"))
+	after := forID()[before:]
+	if after[0] != want {
+		t.Fatalf("the first pane.resize after the signal has %v columns, want %v: %v", after[0], want, after)
+	}
+	// Let any late request arrive, then check none returns to the old width.
+	time.Sleep(200 * time.Millisecond)
+	for _, c := range forID()[before:] {
+		if c != want {
+			t.Fatalf("a pane.resize with %v columns follows the new size %v", c, want)
+		}
 	}
 	quit(t, pw, done)
 }

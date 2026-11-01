@@ -7,7 +7,7 @@ use super::{parse_args, Env, Opt, Res, START_HERE};
 /// `clients/cli_cases.HELP_NOT_PORTED`: the commands of the oracle's help
 /// --all this binary does not carry, a top-level command or "group sub".
 /// Their lines are left out (ruling HP-1).
-const HELP_NOT_PORTED: &[&str] = &["bench", "conformance", "coppice", "gate audit"];
+const HELP_NOT_PORTED: &[&str] = &["bench", "conformance", "coppice", "warden audit"];
 
 /// The oracle's help --all text with the lines of the commands this binary
 /// does not carry left out.

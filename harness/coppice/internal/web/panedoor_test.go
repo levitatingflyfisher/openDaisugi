@@ -80,7 +80,7 @@ func TestWebDoorHelper(t *testing.T) {
 // doorFixture is a coppice server and a web server in this process, with
 // one pending ask.
 type doorFixture struct {
-	sock, gate, url, tok string
+	sock, warden, url, tok string
 }
 
 func newDoorFixture(t *testing.T) doorFixture {
@@ -91,8 +91,8 @@ func newDoorFixture(t *testing.T) doorFixture {
 	if len(sock) > 100 {
 		t.Skip("the temp dir is too long for a unix socket path")
 	}
-	gate := filepath.Join(dir, "gate")
-	s, err := server.New(server.Config{SocketPath: sock, DataDir: dir, GateRoot: gate})
+	warden := filepath.Join(dir, "warden")
+	s, err := server.New(server.Config{SocketPath: sock, DataDir: dir, WardenRoot: warden})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,21 +110,21 @@ func newDoorFixture(t *testing.T) doorFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws, err := web.New(web.Options{Dial: web.UnixDialer{Path: sock}, Tokens: store, Gate: web.AskChannel{Root: gate}})
+	ws, err := web.New(web.Options{Dial: web.UnixDialer{Path: sock}, Tokens: store, Warden: web.AskChannel{Root: warden}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(ws.Handler())
 	t.Cleanup(ts.Close)
 
-	if err := os.MkdirAll(filepath.Join(gate, "asks"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(warden, "asks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	ask := `{"toolUseId":"ask-3","nonce":"n1","postedAt":1,"deadline":9999999999,"tier":"undoable"}`
-	if err := os.WriteFile(filepath.Join(gate, "asks", "ask-3.json"), []byte(ask), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(warden, "asks", "ask-3.json"), []byte(ask), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return doorFixture{sock: sock, gate: gate, url: ts.URL, tok: tok}
+	return doorFixture{sock: sock, warden: warden, url: ts.URL, tok: tok}
 }
 
 // call sends one request on the coppice socket and returns the reply.
@@ -193,8 +193,8 @@ func runInPane(t *testing.T, f doorFixture, mode string) string {
 
 func noAnswer(t *testing.T, f doorFixture) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(f.gate, "answers", "ask-3.json")); err == nil {
-		t.Fatal("a pane's answer reached the gate")
+	if _, err := os.Stat(filepath.Join(f.warden, "answers", "ask-3.json")); err == nil {
+		t.Fatal("a pane's answer reached the warden")
 	}
 }
 
@@ -234,7 +234,7 @@ func TestTheOperatorStillAnswersThroughTheWebRoute(t *testing.T) {
 	}
 	rep := call(t, f.sock, map[string]any{"cmd": "pane.report_state", "pane": id, "event": map[string]any{
 		"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": id,
-		"state": "blocked", "source": "gate",
+		"state": "blocked", "source": "warden",
 		"ask": map[string]any{"id": "ask-3", "tool": "Bash", "summary": "ls", "deadline": 9999999999.0, "tier": "undoable"},
 	}})
 	if rep["ok"] != true {
@@ -251,7 +251,7 @@ func TestTheOperatorStillAnswersThroughTheWebRoute(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if _, err := os.Stat(filepath.Join(f.gate, "answers", "ask-3.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(f.warden, "answers", "ask-3.json")); err != nil {
 		t.Fatalf("no answer written: %v", err)
 	}
 }

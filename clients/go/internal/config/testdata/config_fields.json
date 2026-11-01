@@ -21,19 +21,19 @@
    "bool | None"
   ],
   [
-   "gateway_local_model",
+   "router_local_model",
    "str | None"
   ],
   [
-   "gateway_router",
+   "routing_mode",
    "<class 'str'>"
   ],
   [
-   "gateway_router_model",
+   "routing_model",
    "str | None"
   ],
   [
-   "gateway_grader",
+   "router_grader",
    "str | None"
   ],
   [
@@ -57,11 +57,11 @@
    "<class 'bool'>"
   ],
   [
-   "gate_mode",
+   "warden_mode",
    "<class 'str'>"
   ],
   [
-   "gate_ask",
+   "warden_ask",
    "<class 'bool'>"
   ],
   [

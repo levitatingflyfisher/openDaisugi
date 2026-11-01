@@ -189,3 +189,16 @@ def test_to_wav_16k_mono_raises_a_teaching_error_for_webm_with_no_decoder(monkey
     monkeypatch.setattr("opendaisugi.voice.audio.shutil.which", lambda name: None)
     with pytest.raises(AudioFormatUnsupported, match="ffmpeg"):
         to_wav_16k_mono(b"not a real webm file", "audio/webm")
+
+
+def test_truncate_wav_keeps_the_first_seconds_and_counts_the_cut_rounded_up():
+    import numpy as np
+
+    from opendaisugi.voice.audio import truncate_wav, wav_duration_s, write_wav_16k_mono
+
+    wav = write_wav_16k_mono(np.zeros(int(16000 * 10.25), dtype=np.int16))
+    kept, cut = truncate_wav(wav, 10.0)
+    assert wav_duration_s(kept) == 10.0
+    assert cut == 1
+    same, none = truncate_wav(kept, 10.0)
+    assert same == kept and none == 0

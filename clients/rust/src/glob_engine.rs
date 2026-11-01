@@ -248,3 +248,21 @@ pub fn path_matches_any(path: &str, globs: &[String]) -> bool {
     let normalized = normpath(path);
     globs.iter().any(|g| match_glob(&normalized, g))
 }
+
+/// `verify.covers_everything`: a scope glob that is exactly `**` or `/**`.
+pub fn covers_everything(globs: &[String]) -> bool {
+    globs.iter().any(|g| g == "**" || g == "/**")
+}
+
+/// `verify.covers_tree`: `directory` and everything under it is in scope
+/// only under a glob that ends in `/**` (SG-2).
+pub fn covers_tree(directory: &str, globs: &[String]) -> bool {
+    if covers_everything(globs) {
+        return true;
+    }
+    let norm = normpath(directory);
+    globs.iter().any(|g| match g.strip_suffix("/**") {
+        Some(stem) => match_glob(&norm, g) || match_glob(&norm, stem),
+        None => false,
+    })
+}

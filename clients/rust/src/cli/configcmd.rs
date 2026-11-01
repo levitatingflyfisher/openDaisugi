@@ -4,8 +4,8 @@
 
 use super::config::{self, ConfigErr, Row, RowsErr};
 use super::{parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::{len as py_len, strip};
-use crate::gate::pyjson::{dumps_indent, Object, Value};
+use crate::warden::py::text::{len as py_len, strip};
+use crate::warden::pyjson::{dumps_indent, Object, Value};
 
 pub(super) const JSON_OPT: Opt = Opt::flag(&["--json"], "Machine-readable JSON output.");
 
@@ -46,7 +46,7 @@ impl Env {
         if p.help {
             return self.cmd_help(CMD, "", "Show every setting as daisugi will use it, and where each one came from.", &opts);
         }
-        let path = super::gateroot::join(&self.data_home(), "config.yaml");
+        let path = super::wardenroot::join(&self.data_home(), "config.yaml");
         let home = self.home.clone();
         let (mut rows, unknown, cfg) = match config::rows(&path, &home) {
             Ok(r) => r,
@@ -73,19 +73,19 @@ impl Env {
             Err(_) => return self.refuse(CMD, "a Claude Code settings.json holds hooks this binary does not read yet"),
         };
         if !eff.mode.is_empty() {
-            rows.push(Row::new("gate_mode (resolved)", &eff.mode, config::source_label(&eff)));
+            rows.push(Row::new("warden_mode (resolved)", &eff.mode, config::source_label(&eff)));
             if !eff.cwd_mode.is_empty() && !eff.global_mode.is_empty() {
-                rows.push(Row::new("gate_mode (project)", &eff.cwd_mode, "project"));
-                rows.push(Row::new("gate_mode (global)", &eff.global_mode, "global"));
+                rows.push(Row::new("warden_mode (project)", &eff.cwd_mode, "project"));
+                rows.push(Row::new("warden_mode (global)", &eff.global_mode, "global"));
                 rows.push(Row::new(
-                    "gate_mode (coexistence)",
+                    "warden_mode (coexistence)",
                     "both fire; the verdict is the intersection — either one enforcing denies",
                     "info",
                 ));
             }
         } else {
-            let src = rows.iter().rev().find(|r| r.key == "gate_mode").map(|r| r.source.clone()).unwrap_or("default".into());
-            rows.push(Row::new("gate_mode (resolved)", &cfg.gate_mode, &src));
+            let src = rows.iter().rev().find(|r| r.key == "warden_mode").map(|r| r.source.clone()).unwrap_or("default".into());
+            rows.push(Row::new("warden_mode (resolved)", &cfg.warden_mode, &src));
         }
         if p.flag("--json") {
             let mut body = Object::new();

@@ -23,7 +23,7 @@ struct World {
     ws: String,
     tmp: String,
     outside: String,
-    /// Each resident gate the fence said it started: ended by pid on drop.
+    /// Each resident warden the fence said it started: ended by pid on drop.
     servers: RefCell<Vec<i32>>,
 }
 
@@ -32,7 +32,44 @@ impl Drop for World {
         for pid in self.servers.borrow().iter() {
             unsafe { libc::kill(*pid, libc::SIGTERM) };
         }
+        // A resident warden a nested fence started prints its pid to a stderr
+        // the test does not read, so its pid is never recorded above.
+        stop_wardens_under(&self.base);
         let _ = fs::remove_dir_all(&self.base);
+    }
+}
+
+/// Go's stopWardensUnder: stop, by pid, every `warden serve` whose argv
+/// names a path under base, then wait up to a second for each to go.
+fn stop_wardens_under(base: &Path) {
+    let base = format!("{}/", base.display());
+    let me = std::process::id() as i32;
+    let mut pids: Vec<i32> = vec![];
+    let Ok(rd) = fs::read_dir("/proc") else { return };
+    for e in rd.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else { continue };
+        if pid <= 1 || pid == me {
+            continue;
+        }
+        let Ok(raw) = fs::read(format!("/proc/{pid}/cmdline")) else { continue };
+        let text = String::from_utf8_lossy(&raw);
+        let args: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
+        let serve = args.windows(2).any(|w| w[0] == "warden" && w[1] == "serve");
+        let under = args.iter().any(|a| a.starts_with(&base));
+        if serve && under {
+            pids.push(pid);
+        }
+    }
+    for &pid in &pids {
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+    }
+    for &pid in &pids {
+        for _ in 0..100 {
+            if unsafe { libc::kill(pid, 0) } != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 
@@ -56,7 +93,7 @@ fn world_under(dir: &Path) -> World {
     };
     for d in [
         format!("{}/.ssh", w.home),
-        format!("{}/.opendaisugi/gate/envelopes", w.home),
+        format!("{}/.opendaisugi/warden/envelopes", w.home),
         format!("{}/.claude", w.home),
         format!("{}/other", w.home),
         w.ws.clone(),
@@ -68,7 +105,7 @@ fn world_under(dir: &Path) -> World {
     for (p, body) in [
         (format!("{}/.ssh/key", w.home), "SECRET"),
         (format!("{}/other/file", w.home), "OTHER"),
-        (format!("{}/.opendaisugi/gate/envelopes/default.json", w.home), r#"{"permissions":{"file_read":[],"file_write":[]}}"#),
+        (format!("{}/.opendaisugi/warden/envelopes/default.json", w.home), r#"{"permissions":{"file_read":[],"file_write":[]}}"#),
         (format!("{}/victim", w.outside), "VICTIM"),
         (format!("{}/ok", w.ws), "OK"),
     ] {
@@ -125,7 +162,7 @@ fn run_fd(w: &World, env: &HashMap<String, String>, fd3: Option<i32>, args: &[&s
     let out = c.output().unwrap();
     let se = String::from_utf8_lossy(&out.stderr).into_owned();
     for line in se.lines() {
-        if let Some(rest) = line.split("started the resident gate on ").nth(1) {
+        if let Some(rest) = line.split("started the resident warden on ").nth(1) {
             if let Some(pid) = rest.split("(pid ").nth(1).and_then(|p| p.trim_end_matches(')').parse::<i32>().ok()) {
                 if pid > 1 {
                     w.servers.borrow_mut().push(pid);
@@ -144,7 +181,7 @@ fn claude_project(w: &World) -> String {
 
 fn strip_started(se: &str) -> String {
     se.lines()
-        .filter(|l| !l.starts_with("daisugi fence: started the resident gate on "))
+        .filter(|l| !l.starts_with("daisugi fence: started the resident warden on "))
         .map(|l| format!("{l}\n"))
         .collect()
 }
@@ -172,18 +209,18 @@ fn probes(w: &World) -> String {
         format!("t truncate_outside truncate -s 0 {o}/victim"),
         format!("t remove_outside rm -rf {o}"),
         format!("t read_outside cat {o}/victim"),
-        format!("t write_gate_disarmed sh -c 'echo x > {h}/.opendaisugi/gate/DISARMED'"),
-        format!("t write_gate_envelope sh -c 'echo x > {h}/.opendaisugi/gate/envelopes/default.json'"),
-        format!("t read_gate_envelope cat {h}/.opendaisugi/gate/envelopes/default.json"),
-        format!("t mkdir_gate mkdir {h}/.opendaisugi/gate/envelopes/x"),
-        format!("t rename_in_gate mv {h}/.opendaisugi/gate/envelopes/default.json {h}/.opendaisugi/gate/envelopes/d2.json"),
+        format!("t write_warden_disarmed sh -c 'echo x > {h}/.opendaisugi/warden/DISARMED'"),
+        format!("t write_warden_envelope sh -c 'echo x > {h}/.opendaisugi/warden/envelopes/default.json'"),
+        format!("t read_warden_envelope cat {h}/.opendaisugi/warden/envelopes/default.json"),
+        format!("t mkdir_warden mkdir {h}/.opendaisugi/warden/envelopes/x"),
+        format!("t rename_in_warden mv {h}/.opendaisugi/warden/envelopes/default.json {h}/.opendaisugi/warden/envelopes/d2.json"),
         format!("t hardlink_ssh ln {h}/.ssh/key {ws}/k"),
         format!("t symlink_ssh_read sh -c 'ln -s {h}/.ssh/key {ws}/lnk && cat {ws}/lnk'"),
         format!("t move_ssh_out mv {h}/.ssh/key {ws}/k2"),
         format!("t move_ws_to_outside mv {ws}/ok {o}/ok"),
         format!("t child_reads_ssh sh -c 'sh -c \"cat {h}/.ssh/key\"'"),
         format!("t python_rmtree python3 -c \"import shutil; shutil.rmtree('{o}')\""),
-        format!("t python_disarm python3 -c \"open('{h}/.opendaisugi/gate/DISARMED','w')\""),
+        format!("t python_disarm python3 -c \"open('{h}/.opendaisugi/warden/DISARMED','w')\""),
     ];
     lines.join("\n")
 }
@@ -206,13 +243,13 @@ fn the_fence_holds_the_line() {
     let got = parse(&so);
     let ok = [
         "read_ws", "write_ws", "mkdir_ws", "write_tmp", "write_devnull", "read_system", "exec_system",
-        "read_gate_envelope",
+        "read_warden_envelope",
     ];
     let denied = [
         "read_ssh", "list_ssh", "read_home_other", "write_home", "write_outside", "clobber_outside",
-        "truncate_outside", "remove_outside", "read_outside", "write_gate_disarmed", "write_shared_tmp",
+        "truncate_outside", "remove_outside", "read_outside", "write_warden_disarmed", "write_shared_tmp",
         "read_slash_tmp",
-        "write_gate_envelope", "mkdir_gate", "rename_in_gate", "hardlink_ssh", "symlink_ssh_read",
+        "write_warden_envelope", "mkdir_warden", "rename_in_warden", "hardlink_ssh", "symlink_ssh_read",
         "move_ssh_out", "move_ws_to_outside", "child_reads_ssh", "python_rmtree", "python_disarm",
     ];
     for n in ok {
@@ -222,7 +259,7 @@ fn the_fence_holds_the_line() {
         assert_eq!(got.get(n).map(String::as_str), Some("denied"), "{n}");
     }
     for p in [
-        format!("{}/.opendaisugi/gate/DISARMED", w.home),
+        format!("{}/.opendaisugi/warden/DISARMED", w.home),
         format!("{}/new", w.outside),
         format!("{}/newfile", w.home),
         format!("{}/k", w.ws),
@@ -449,7 +486,7 @@ fn print_json_lists_the_rules() {
     assert_eq!(modes.get(&format!("{}/.claude", w.home)).map(String::as_str), Some("ro"));
     assert_eq!(modes.get(&claude_project(&w)).map(String::as_str), Some("rw"));
     assert!(!modes.contains_key(&format!("{}/.ssh", w.home)));
-    assert_eq!(modes.get(&format!("{}/.opendaisugi/gate", w.home)).map(String::as_str), Some("sock"));
+    assert_eq!(modes.get(&format!("{}/.opendaisugi/warden", w.home)).map(String::as_str), Some("sock"));
 }
 
 #[test]
@@ -463,14 +500,14 @@ fn allow_opens_only_what_it_names() {
     assert!(code == 0 && Path::new(&format!("{}/w", w.outside)).exists());
 }
 
-/// The gate hook is a child of the harness, so it runs fenced: it asks the
-/// resident gate (the Rust gate here, inside the Rust fence), which logs,
+/// The warden hook is a child of the harness, so it runs fenced: it asks the
+/// resident warden (the Rust warden here, inside the Rust fence), which logs,
 /// and the agent must still not touch the marker, the envelope, the
 /// answers, the asks or the logs (FN-V-4).
 #[test]
-fn the_gate_hook_logs_inside_the_fence_and_the_agent_cannot_erase_the_log() {
+fn the_warden_hook_logs_inside_the_fence_and_the_agent_cannot_erase_the_log() {
     let w = world();
-    let root = format!("{}/.opendaisugi/gate", w.home);
+    let root = format!("{}/.opendaisugi/warden", w.home);
     fs::write(
         format!("{root}/envelopes/default.json"),
         r#"{"generated_by":"t","task":"t","permissions":{"file_read":["/**"],"file_write":[]}}"#,
@@ -479,10 +516,10 @@ fn the_gate_hook_logs_inside_the_fence_and_the_agent_cannot_erase_the_log() {
     fs::create_dir_all(format!("{root}/answers")).unwrap();
     let payload = r#"{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/work/a"},"cwd":"/work"}"#;
     fs::write(format!("{}/allow.json", w.ws), payload).unwrap();
-    // FENCE_TEST_GATE_BIN lets a scratch build of the fence borrow another
-    // binary that has the gate.
-    let bin = std::env::var("FENCE_TEST_GATE_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_daisugi").to_string());
-    let check = format!("{bin} gate check --mode enforce --root {root} --format claude < {}/allow.json", w.ws);
+    // FENCE_TEST_WARDEN_BIN lets a scratch build of the fence borrow another
+    // binary that has the warden.
+    let bin = std::env::var("FENCE_TEST_WARDEN_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_daisugi").to_string());
+    let check = format!("{bin} warden check --mode enforce --root {root} --format claude < {}/allow.json", w.ws);
     let (plain, plain_err, plain_code) = run(&w, &env(&w, &[]), &["--no-fence", "--", "/bin/sh", "-c", &check]);
     let bin_dir = Path::new(&bin).parent().unwrap().display().to_string();
     let (fenced, fenced_err, fenced_code) = run(
@@ -522,15 +559,15 @@ const ENVELOPE: &str = r#"{"generated_by":"t","task":"t","permissions":{"file_re
 /// FN-V-4: with the server down a fenced hook denies; an ask posted from
 /// inside the fence is answered by the operator and the answer consumed.
 #[test]
-fn fn_v4_the_fenced_hook_asks_the_resident_gate() {
+fn fn_v4_the_fenced_hook_asks_the_resident_warden() {
     let w = world();
-    let root = format!("{}/.opendaisugi/gate", w.home);
+    let root = format!("{}/.opendaisugi/warden", w.home);
     fs::write(format!("{root}/envelopes/default.json"), ENVELOPE).unwrap();
-    let gate_bin = std::env::var("FENCE_TEST_GATE_BIN").unwrap_or_else(|_| bin());
+    let warden_bin = std::env::var("FENCE_TEST_WARDEN_BIN").unwrap_or_else(|_| bin());
     let mut e = env(&w, &[]);
     e.insert("DAISUGI_FENCED".into(), "landlock".into());
-    let out = Command::new(&gate_bin)
-        .args(["gate", "check", "--mode", "enforce", "--root", &root, "--format", "claude"])
+    let out = Command::new(&warden_bin)
+        .args(["warden", "check", "--mode", "enforce", "--root", &root, "--format", "claude"])
         .env_clear()
         .envs(&e)
         .stdin(Stdio::piped())
@@ -544,7 +581,7 @@ fn fn_v4_the_fenced_hook_asks_the_resident_gate() {
         })
         .unwrap();
     let se = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.code() == Some(2) && se.contains("resident gate"), "server down: {:?} {se}", out.status);
+    assert!(out.status.code() == Some(2) && se.contains("resident warden"), "server down: {:?} {se}", out.status);
     for d in ["asks", "answers"] {
         fs::create_dir_all(format!("{root}/{d}")).unwrap();
     }
@@ -576,10 +613,10 @@ fn fn_v4_the_fenced_hook_asks_the_resident_gate() {
         })
     };
     let check = format!(
-        "{gate_bin} gate check --mode enforce --root {root} --format claude --ask --ask-timeout 20 < {}/ask.json",
+        "{warden_bin} warden check --mode enforce --root {root} --format claude --ask --ask-timeout 20 < {}/ask.json",
         w.ws
     );
-    let bin_dir = Path::new(&gate_bin).parent().unwrap().display().to_string();
+    let bin_dir = Path::new(&warden_bin).parent().unwrap().display().to_string();
     let (so, se, code) = run(&w, &env(&w, &[]), &["--workspace", &w.ws, "--allow", &bin_dir, "--", "/bin/sh", "-c", &check]);
     stop.store(true, Ordering::SeqCst);
     let _ = op.join();
@@ -593,12 +630,12 @@ fn fn_v4_the_fenced_hook_asks_the_resident_gate() {
 #[test]
 fn fn_v7_a_read_only_audit_log_denies() {
     let w = world();
-    let root = format!("{}/.opendaisugi/gate", w.home);
+    let root = format!("{}/.opendaisugi/warden", w.home);
     fs::write(format!("{root}/envelopes/default.json"), ENVELOPE).unwrap();
-    let gate_bin = std::env::var("FENCE_TEST_GATE_BIN").unwrap_or_else(|_| bin());
+    let warden_bin = std::env::var("FENCE_TEST_WARDEN_BIN").unwrap_or_else(|_| bin());
     let check = |mode: &str| {
-        let mut c = Command::new(&gate_bin)
-            .args(["gate", "check", "--mode", mode, "--root", &root, "--format", "claude"])
+        let mut c = Command::new(&warden_bin)
+            .args(["warden", "check", "--mode", mode, "--root", &root, "--format", "claude"])
             .env_clear()
             .envs(env(&w, &[]))
             .stdin(Stdio::piped())
@@ -619,12 +656,12 @@ fn fn_v7_a_read_only_audit_log_denies() {
 }
 
 /// FN-R-21: the fence, still outside its ruleset, records its run in the
-/// gate root, so the resident gate binds the workspace for checkpoints. The
+/// warden root, so the resident warden binds the workspace for checkpoints. The
 /// record is the harness's own pid, and nothing inside the fence writes it.
 #[test]
 fn fn_r21_the_fence_records_its_run() {
     let w = world();
-    let root = format!("{}/.opendaisugi/gate", w.home);
+    let root = format!("{}/.opendaisugi/warden", w.home);
     let script = format!(
         "cat {root}/fence-runs/$$.json; echo\n\
          if sh -c 'echo x > {root}/fence-runs/$$.json' 2>/dev/null; then echo wrote; else echo denied; fi\n\
@@ -639,15 +676,15 @@ fn fn_r21_the_fence_records_its_run() {
     );
 }
 
-/// FN-R-25 (review N-4): a foreman worker's tree run stays outside the
-/// fence and only sprig runs under it: sprig cannot write the worker's gate
-/// root, writes its own session dir, and its gate calls reach the resident
-/// gate the fence starts on that root.
+/// FN-R-25 (review N-4): a steward worker's tree run stays outside the
+/// fence and only sprig runs under it: sprig cannot write the worker's warden
+/// root, writes its own session dir, and its warden calls reach the resident
+/// warden the fence starts on that root.
 #[test]
-fn fn_r25_a_workers_sprig_runs_fenced_and_cannot_write_its_gate_root() {
+fn fn_r25_a_workers_sprig_runs_fenced_and_cannot_write_its_warden_root() {
     let w = world();
     let work = format!("{}/work", w.base.display());
-    let root = format!("{work}/gate");
+    let root = format!("{work}/warden");
     let env_file = format!("{}/env.json", w.base.display());
     let envelope = format!(
         r#"{{"id":"env_w","generated_by":"t","task":"t","permissions":{{"file_read":["{ws}/**"],"file_write":["{ws}/**"],"network":false,"shell":true,"shell_allowlist":["cat","ls"],"max_execution_time_s":60,"max_output_size_mb":20}}}}"#,
@@ -663,7 +700,7 @@ fn fn_r25_a_workers_sprig_runs_fenced_and_cannot_write_its_gate_root() {
         let out = ch.wait_with_output().unwrap();
         let se = String::from_utf8_lossy(&out.stderr).into_owned();
         for line in se.lines() {
-            if let Some(rest) = line.split("started the resident gate on ").nth(1) {
+            if let Some(rest) = line.split("started the resident warden on ").nth(1) {
                 if let Some(pid) = rest.split("(pid ").nth(1).and_then(|p| p.trim_end_matches(')').parse::<i32>().ok()) {
                     w.servers.borrow_mut().push(pid);
                 }
@@ -677,49 +714,134 @@ fn fn_r25_a_workers_sprig_runs_fenced_and_cannot_write_its_gate_root() {
     fs::create_dir_all(format!("{}/.bin", w.ws)).unwrap();
     let script = format!(
         r#"#!/bin/sh
-gate= sess=
+warden= sess=
 while [ $# -gt 0 ]; do
-  case "$1" in --gate-cmd) gate=$2; shift;; --session-dir) sess=$2; shift;; esac; shift
+  case "$1" in --warden-cmd) warden=$2; shift;; --session-dir) sess=$2; shift;; esac; shift
 done
 r() {{ if "$@" >/dev/null 2>&1; then printf ok; else printf denied; fi; }}
 envw=$(r sh -c "echo x > {root}/envelopes/x.json")
 disarm=$(r sh -c "echo x > {root}/DISARMED")
 sessw=$(r sh -c "echo x > $sess/probe")
 printf '{{"session_id":"s","tool_name":"Read","tool_input":{{"file_path":"{ws}/ok"}},"cwd":"{ws}"}}' > {ws}/p.json
-if sh -c "$gate --format claude < {ws}/p.json" >/dev/null 2>&1; then gatev=allow; else gatev=deny; fi
-printf '{{"answer": "env=%s disarm=%s sess=%s gate=%s", "turns": 1}}' "$envw" "$disarm" "$sessw" "$gatev"
+if sh -c "$warden --format claude < {ws}/p.json" >/dev/null 2>&1; then gatev=allow; else gatev=deny; fi
+printf '{{"answer": "env=%s disarm=%s sess=%s warden=%s", "turns": 1}}' "$envw" "$disarm" "$sessw" "$gatev"
 "#,
         ws = w.ws
     );
     fs::write(&sprig, script).unwrap();
     fs::set_permissions(&sprig, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-    let fence = format!(r#"["{}","fence","--workspace","{}","--gate-root","{root}"]"#, bin(), w.ws);
+    let fence = format!(r#"["{}","fence","--workspace","{}","--warden-root","{root}"]"#, bin(), w.ws);
     let req = format!(r#"{{"task":"t","envelope":{envelope},"tools":["Read","Bash"]}}"#);
     let (so, se, code) = run_cmd(
         &req,
         &[("DAISUGI_SPRIG", &sprig), ("DAISUGI_SPRIG_FENCE", &fence)],
         &["tree", "run", "--parent", "project-x", "--profile=default", "--data-dir", &work, "--root", &root, "-"],
     );
-    assert!(code == 0 && so.contains(r#""answer": "env=denied disarm=denied sess=ok gate=allow""#), "{code}\n{so}\n{se}");
-    let (_, _, code) = run_cmd("", &[], &["fence", "--workspace", &w.ws, "--gate-root", &root, "--allow", &format!("{work}:rw"), "--", "/bin/true"]);
-    assert_ne!(code, 0, "--allow over the worker's gate root was not refused");
+    assert!(code == 0 && so.contains(r#""answer": "env=denied disarm=denied sess=ok warden=allow""#), "{code}\n{so}\n{se}");
+    let (_, _, code) = run_cmd("", &[], &["fence", "--workspace", &w.ws, "--warden-root", &root, "--allow", &format!("{work}:rw"), "--", "/bin/true"]);
+    assert_ne!(code, 0, "--allow over the worker's warden root was not refused");
 }
 
-/// FN-R-32: the fence starts the resident gate with its captures root fixed
+/// FN-R-32: the fence starts the resident warden with its captures root fixed
 /// at <root>/captures, so a fenced run's allowed calls land there, written
 /// by the server outside the fence.
 #[test]
 fn fn_r32_a_fenced_runs_captures_land() {
     let w = world();
-    let root = format!("{}/.opendaisugi/gate", w.home);
+    let root = format!("{}/.opendaisugi/warden", w.home);
     fs::write(format!("{root}/envelopes/default.json"), ENVELOPE).unwrap();
     let payload = r#"{"session_id":"s7","tool_name":"Read","tool_use_id":"tu7","tool_input":{"file_path":"/work/a"},"cwd":"/work"}"#;
     fs::write(format!("{}/call.json", w.ws), payload).unwrap();
-    let gate_bin = std::env::var("FENCE_TEST_GATE_BIN").unwrap_or_else(|_| bin());
-    let check = format!("{gate_bin} gate check --mode enforce --root {root} --format claude < {}/call.json", w.ws);
-    let bin_dir = Path::new(&gate_bin).parent().unwrap().display().to_string();
+    let warden_bin = std::env::var("FENCE_TEST_WARDEN_BIN").unwrap_or_else(|_| bin());
+    let check = format!("{warden_bin} warden check --mode enforce --root {root} --format claude < {}/call.json", w.ws);
+    let bin_dir = Path::new(&warden_bin).parent().unwrap().display().to_string();
     let (so, se, code) = run(&w, &env(&w, &[]), &["--workspace", &w.ws, "--allow", &bin_dir, "--", "/bin/sh", "-c", &check]);
     assert_eq!(code, 0, "{so} {se}");
     let n = fs::read_dir(format!("{root}/captures")).map(|d| d.count()).unwrap_or(0);
     assert!(n > 0, "no capture under {root}/captures: {se}");
+}
+
+/// Plan task 3 (ADR-0028): a call from inside a fence is allowed and its
+/// unplaced shell file access is recorded as fence_enforced; the same call
+/// from a process that is not fenced is denied. The kernel stops the write.
+#[test]
+fn adr28_a_fenced_call_records_an_unplaced_shell_access_and_the_kernel_stops_it() {
+    let w = world();
+    let root = format!("{}/.opendaisugi/warden", w.home);
+    let envelope = format!(
+        r#"{{"generated_by":"t","task":"t","permissions":{{"file_read":["{ws}/**"],"file_write":["{ws}/**"],"shell":true,"shell_allowlist":["git","sh","echo"]}}}}"#,
+        ws = w.ws
+    );
+    fs::write(format!("{root}/envelopes/default.json"), envelope).unwrap();
+    let payload = format!(
+        r#"{{"session_id":"s28","tool_name":"Bash","tool_use_id":"tu28","tool_input":{{"command":"git -c k=v commit -m x"}},"cwd":"{}"}}"#,
+        w.ws
+    );
+    fs::write(format!("{}/call.json", w.ws), &payload).unwrap();
+    let warden_bin = std::env::var("FENCE_TEST_WARDEN_BIN").unwrap_or_else(|_| bin());
+    // Not fenced: enforce denies a line it cannot place.
+    let out = Command::new(&warden_bin)
+        .args(["warden", "check", "--mode", "enforce", "--root", &root, "--format", "claude"])
+        .env_clear()
+        .envs(&env(&w, &[]))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            use std::io::Write;
+            c.stdin.take().unwrap().write_all(payload.as_bytes())?;
+            c.wait_with_output()
+        })
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0), "an unfenced call was allowed");
+    // Fenced: the hook asks the resident warden, which finds the fence run.
+    let script = format!(
+        "{warden_bin} warden check --mode enforce --root {root} --format claude < {ws}/call.json\necho \"hook=$?\"\nif sh -c 'echo x > {home}/outside' 2>/dev/null; then echo wrote; else echo denied; fi",
+        ws = w.ws,
+        home = w.home
+    );
+    let bin_dir = Path::new(&warden_bin).parent().unwrap().display().to_string();
+    let (so, se, code) = run(&w, &env(&w, &[]), &["--workspace", &w.ws, "--allow", &bin_dir, "--", "/bin/sh", "-c", &script]);
+    assert!(code == 0 && so.contains("hook=0") && so.trim_end().ends_with("denied"), "exit {code} out {so:?} err {se:?}");
+    let audit = fs::read_to_string(format!("{root}/audit/s28.jsonl")).unwrap_or_default();
+    assert!(audit.contains("\"fence_enforced\"") && !audit.contains("\"decision\": \"deny\""), "audit: {audit}");
+    assert!(fs::metadata(format!("{}/outside", w.home)).is_err(), "the write got through the kernel");
+}
+
+/// Plan task 5: the fence never opens a data dir's pando or foreman store,
+/// whatever the envelope grants above it. cat, a glob and tar all fail at the
+/// kernel, while a path the envelope grants elsewhere still reads.
+#[test]
+fn adr28_the_memory_store_stays_closed_to_a_fenced_agent() {
+    let w = world();
+    let root = format!("{}/.opendaisugi/warden", w.home);
+    let envelope = r#"{"generated_by":"t","task":"t","permissions":{"file_read":["~/.opendaisugi/**","~/.opendaisugi/pando/**","~/.opendaisugi/foreman/**","~/other/**"],"file_write":[]}}"#;
+    fs::write(format!("{root}/envelopes/default.json"), envelope).unwrap();
+    let h = format!("{}/.opendaisugi", w.home);
+    let store = format!("{h}/pando/work");
+    let old = format!("{h}/foreman/work");
+    for d in [&store, &old, &format!("{h}/notes")] {
+        fs::create_dir_all(d).unwrap();
+    }
+    fs::write(format!("{store}/chat.jsonl"), "MEMORY").unwrap();
+    fs::write(format!("{old}/chat.jsonl"), "OLD").unwrap();
+    let script = [
+        "t() { n=$1; shift; if \"$@\" >/dev/null 2>&1; then echo \"$n ok\"; else echo \"$n denied\"; fi; }".to_string(),
+        format!("t read_granted cat {}/other/file", w.home),
+        format!("t cat_store cat {store}/chat.jsonl"),
+        format!("t cat_old cat {old}/chat.jsonl"),
+        format!("t ls_store ls {store}"),
+        format!("t glob_store sh -c 'cat {h}/pando/*/*'"),
+        format!("t tar_store tar cf {}/s.tar -C {h} pando", w.ws),
+        format!("t tar_old tar cf {}/o.tar -C {h} foreman", w.ws),
+    ]
+    .join("\n");
+    let (so, se, code) = run(&w, &env(&w, &[]), &["--workspace", &w.ws, "--", "/bin/sh", "-c", &script]);
+    assert_eq!(code, 0, "{se}");
+    let got = parse(&so);
+    assert_eq!(got.get("read_granted").map(String::as_str), Some("ok"), "{got:?}");
+    for n in ["cat_store", "cat_old", "ls_store", "glob_store", "tar_store", "tar_old"] {
+        assert_eq!(got.get(n).map(String::as_str), Some("denied"), "{n}: {got:?}");
+    }
 }

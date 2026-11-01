@@ -15,7 +15,7 @@ import (
 // sprig is on PATH after every install but has no model of its own.
 func needsModelNote(name string) string {
 	if name == "sprig" {
-		return "  (needs a model: see docs/how-to/foreman-any-model.md)"
+		return "  (needs a model: see docs/how-to/steward-any-model.md)"
 	}
 	return ""
 }
@@ -33,6 +33,9 @@ func FirstRun(found []config.Found, in io.Reader, out io.Writer) (config.Config,
 		note := config.AppOnlyNote(nil)
 		fmt.Fprintln(out, note)
 		return config.Config{}, errors.New(note)
+	}
+	for _, n := range config.FoundNotes(found) {
+		fmt.Fprintln(out, n)
 	}
 	pick := found[0]
 	if len(found) == 1 {

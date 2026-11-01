@@ -22,3 +22,30 @@ func SocketPath() string {
 func DataDir() string {
 	return filepath.Join(datahome.Default(), "coppice")
 }
+
+// CLISocketPath is the socket a coppice command dials when no --socket flag
+// names one. Inside a pane (COPPICE_PANE set, which only the server does)
+// it is the pane's own COPPICE_SOCK, so a steward on a server with a
+// non-default socket reaches that server. Outside a pane the environment
+// does not choose the server: a reviewer's stray COPPICE_SOCK must not
+// point a command at a live one. A process the pane's agent starts has the
+// pane's env, and so the pane's own server; that is the right one.
+func CLISocketPath() string {
+	if os.Getenv("COPPICE_PANE") != "" {
+		if s := os.Getenv("COPPICE_SOCK"); s != "" {
+			return s
+		}
+	}
+	return SocketPath()
+}
+
+// CLIDataDir is DataDir, or inside a pane the pane's COPPICE_DATA_DIR. See
+// CLISocketPath.
+func CLIDataDir() string {
+	if os.Getenv("COPPICE_PANE") != "" {
+		if d := os.Getenv("COPPICE_DATA_DIR"); d != "" {
+			return d
+		}
+	}
+	return DataDir()
+}

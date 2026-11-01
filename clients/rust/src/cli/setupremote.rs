@@ -4,10 +4,10 @@
 //! The Go client's `cli/setupremote.go` is the twin.
 
 use super::config;
-use super::gateroot::join;
+use super::wardenroot::join;
 use super::{Env, Res};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{dumps, loads, LoadError, Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{dumps, loads, LoadError, Object, Value};
 use crate::llm::http;
 use crate::netproxy;
 
@@ -210,6 +210,16 @@ impl HostClient {
         Ok(Some(p))
     }
 
+    /// `model_host.endpoint_kind`: one `GET root/api/tags`. A 200 with a JSON
+    /// object whose `models` is a list is "ollama"; anything else is "openai".
+    fn endpoint_kind(&mut self, root: &str) -> &'static str {
+        let Some((200, b)) = self.send(&format!("{root}/api/tags"), None) else { return "openai" };
+        match json_body(&b) {
+            Ok(Some(Value::Obj(data))) if matches!(data.value("models"), Value::List(_)) => "ollama",
+            _ => "openai",
+        }
+    }
+
     /// `prefer` names a model: its entry is used when the server lists it (a
     /// provider prefix such as `openai/` is ignored); "" takes the first.
     fn probe_openai(&mut self, base: &str, prefer: &str) -> Result<Option<Probed>, RemoteErr> {
@@ -342,6 +352,12 @@ impl Env {
         c.probe_openai(root, model).ok().flatten().and_then(|p| p.context)
     }
 
+    /// Asks a `/v1` endpoint once whether it is Ollama: "ollama" or "openai".
+    pub(super) fn endpoint_kind(&self, root: &str) -> &'static str {
+        let mut c = HostClient { proxies: netproxy::httpx_for(&self.env), answered: false };
+        c.endpoint_kind(root)
+    }
+
     /// The `--remote` branch of `tiers setup`.
     pub(super) fn setup_remote(
         &mut self,
@@ -417,7 +433,7 @@ impl Env {
         if env.is_empty() {
             b.push_str(
                 "this host speaks the OpenAI wire only. Point an OpenAI wire harness at it directly, \
-                 or route it through `daisugi gateway --openai-upstream`.\n",
+                 or route it through `daisugi router serve --openai-upstream`.\n",
             );
         } else {
             b.push_str("point your harness at it:\n");
@@ -425,8 +441,8 @@ impl Env {
                 b.push_str(&format!("  {k}={v}\n"));
             }
             b.push_str(&format!(
-                "or run: daisugi gateway --upstream {} and point the harness at the gateway. \
-                 The gateway answers count_tokens itself. Most self-hosted servers do not.\n",
+                "or run: daisugi router serve --upstream {} and point the harness at the router. \
+                 The router answers count_tokens itself. Most self-hosted servers do not.\n",
                 info.base_url
             ));
         }

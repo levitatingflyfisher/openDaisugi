@@ -55,7 +55,7 @@ def checkRedirectScopes (stepId : String) (decomp : Decomposition) (perms : Perm
 
 mutual
 
-/-- Port of `_check_shell_command`: metachar gate on the RAW command; if
+/-- Port of `_check_shell_command`: metachar check on the RAW command; if
 hit and `shell_allow_decomposition` is on, decompose (our subset parser)
 and check redirect scopes + every simple command (via `decomp.commands`,
 one entry per `decomp.heads`, in order); if not on (or decomposition

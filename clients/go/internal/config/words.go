@@ -5,26 +5,26 @@ import (
 	"strings"
 )
 
-// A gate hook command is found by its words, never by a substring, the
+// A warden hook command is found by its words, never by a substring, the
 // way opendaisugi.config reads it. The command is split as the shell
 // splits it (quotes, backslashes, runs of ; | & as their own words), each
-// simple command is read on its own, and these forms are a gate hook:
+// simple command is read on its own, and these forms are a warden hook:
 //
-//	[NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.gate[_client] ARGS
-//	[NAME=val ...] .../daisugi gate check ARGS            (this binary)
-//	[NAME=val ...] <any program> gate check ARGS, where the NAME=val words
-//	  hold GateHookMarker and ARGS hold each flag the installer always
+//	[NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.warden[_client] ARGS
+//	[NAME=val ...] .../daisugi warden check ARGS            (this binary)
+//	[NAME=val ...] <any program> warden check ARGS, where the NAME=val words
+//	  hold WardenHookMarker and ARGS hold each flag the installer always
 //	  writes (this binary installed under another file name)
 //	sh|bash|dash|zsh|ksh [opts] -c '<one of the above>'
 //
-// A command whose words hold opendaisugi.gate[_client] (alone, or joined
-// to -m) in any other form is an unknown gate hook: it may gate, but its
+// A command whose words hold opendaisugi.warden[_client] (alone, or joined
+// to -m) in any other form is an unknown warden hook: it may warden, but its
 // mode cannot be read, so status says so and uninstall refuses it.
 
 var (
 	reAssignment   = lazyre.New(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	rePython       = lazyre.New(`^(python[0-9.]*|py)$`)
-	reJoinedModule = lazyre.New(`^-[A-Za-z]*m(opendaisugi\.gate(_client)?)$`)
+	reJoinedModule = lazyre.New(`^-[A-Za-z]*m(opendaisugi\.warden(_client)?)$`)
 )
 
 const pyNoArgFlags = "bBdEhiIOPqRsSuvx"
@@ -40,7 +40,9 @@ var uvValueOpts = map[string]bool{
 	"-f": true, "--cache-dir": true, "--config-file": true, "-w": true,
 }
 
-func isGateModule(w string) bool { return w == "opendaisugi.gate" || w == "opendaisugi.gate_client" }
+func isWardenModule(w string) bool {
+	return w == "opendaisugi.warden" || w == "opendaisugi.warden_client"
+}
 
 // token is one word of a command, or an operator (a run of ; | &).
 type token struct {
@@ -177,7 +179,7 @@ func skipEnv(words []string) []string {
 }
 
 // pythonModuleArgs reads `python* [flags] -m MODULE ARGS`: the words after
-// a gate MODULE, ok false otherwise.
+// a warden MODULE, ok false otherwise.
 func pythonModuleArgs(words []string) ([]string, bool) {
 	for i := 1; i < len(words); i++ {
 		w := words[i]
@@ -212,7 +214,7 @@ func pythonModuleArgs(words []string) ([]string, bool) {
 			}
 		}
 		if found {
-			if isGateModule(module) {
+			if isWardenModule(module) {
 				return words[i+1:], true
 			}
 			return nil, false
@@ -224,21 +226,21 @@ func pythonModuleArgs(words []string) ([]string, bool) {
 // Hook kinds.
 const (
 	KindNone    = ""
-	KindGate    = "gate"
+	KindWarden  = "warden"
 	KindUnknown = "unknown"
 )
 
 // installedFlags are the flags the installer writes into every hook.
 var installedFlags = []string{"--mode", "--root", "--format", "--verify-timeout"}
 
-// binaryGateArgs reads `[NAME=val ...] PROGRAM gate check ARGS`: the ARGS
+// binaryWardenArgs reads `[NAME=val ...] PROGRAM warden check ARGS`: the ARGS
 // when the program is named daisugi, or when the installer wrote the
 // command (the marker is among the leading NAME=val words and ARGS hold
 // each flag the installer always writes). A binary may be installed under
 // any file name, so the name alone does not decide.
-func binaryGateArgs(seg []string) ([]string, bool) {
+func binaryWardenArgs(seg []string) ([]string, bool) {
 	words := skipEnv(seg)
-	if len(words) < 3 || words[1] != "gate" || words[2] != "check" {
+	if len(words) < 3 || words[1] != "warden" || words[2] != "check" {
 		return nil, false
 	}
 	args := words[3:]
@@ -247,7 +249,7 @@ func binaryGateArgs(seg []string) ([]string, bool) {
 	}
 	marked := false
 	for _, w := range seg[:len(seg)-len(words)] {
-		if w == GateHookMarker {
+		if w == WardenHookMarker {
 			marked = true
 		}
 	}
@@ -268,8 +270,8 @@ func binaryGateArgs(seg []string) ([]string, bool) {
 	return args, true
 }
 
-func segmentGateArgs(words []string, depth int) (string, []string) {
-	binArgs, isBinary := binaryGateArgs(words)
+func segmentWardenArgs(words []string, depth int) (string, []string) {
+	binArgs, isBinary := binaryWardenArgs(words)
 	words = skipEnv(words)
 	if len(words) >= 2 && pathBase(words[0]) == "uv" && words[1] == "run" {
 		words = words[2:]
@@ -289,12 +291,12 @@ func segmentGateArgs(words []string, depth int) (string, []string) {
 	switch {
 	case len(words) > 0 && rePython().MatchString(pathBase(words[0])):
 		if args, ok := pythonModuleArgs(words); ok {
-			return KindGate, args
+			return KindWarden, args
 		}
-	case len(words) >= 3 && pathBase(words[0]) == "daisugi" && words[1] == "gate" && words[2] == "check":
-		return KindGate, words[3:]
+	case len(words) >= 3 && pathBase(words[0]) == "daisugi" && words[1] == "warden" && words[2] == "check":
+		return KindWarden, words[3:]
 	case isBinary:
-		return KindGate, binArgs
+		return KindWarden, binArgs
 	case len(words) > 0 && isShell(pathBase(words[0])) && depth < maxShellDepth:
 		for i := 1; i < len(words); i++ {
 			w := words[i]
@@ -302,12 +304,12 @@ func segmentGateArgs(words []string, depth int) (string, []string) {
 				break
 			}
 			if strings.Contains(w[1:], "c") && i+1 < len(words) {
-				return gateHook(words[i+1], depth+1)
+				return wardenHook(words[i+1], depth+1)
 			}
 		}
 	}
 	for _, w := range words {
-		if isGateModule(w) || reJoinedModule().MatchString(w) {
+		if isWardenModule(w) || reJoinedModule().MatchString(w) {
 			return KindUnknown, nil
 		}
 	}
@@ -322,18 +324,18 @@ func isShell(b string) bool {
 	return false
 }
 
-func gateHook(command string, depth int) (string, []string) {
+func wardenHook(command string, depth int) (string, []string) {
 	tokens, ok := CommandTokens(command)
 	if !ok {
-		if strings.Contains(command, "opendaisugi.gate") {
+		if strings.Contains(command, "opendaisugi.warden") {
 			return KindUnknown, nil
 		}
 		return KindNone, nil
 	}
 	unknown := false
 	for _, seg := range segments(tokens) {
-		kind, args := segmentGateArgs(seg, depth)
-		if kind == KindGate {
+		kind, args := segmentWardenArgs(seg, depth)
+		if kind == KindWarden {
 			if args == nil {
 				args = []string{}
 			}
@@ -347,49 +349,49 @@ func gateHook(command string, depth int) (string, []string) {
 	return KindNone, nil
 }
 
-// GateHookKind is config.gate_hook_kind: KindGate, KindUnknown (holds the
-// gate module in a form not read), or KindNone.
-func GateHookKind(command any) string {
+// WardenHookKind is config.warden_hook_kind: KindWarden, KindUnknown (holds the
+// warden module in a form not read), or KindNone.
+func WardenHookKind(command any) string {
 	s, isStr := command.(string)
 	if !isStr {
 		return KindNone
 	}
-	kind, _ := gateHook(s, 0)
+	kind, _ := wardenHook(s, 0)
 	return kind
 }
 
-// GateHookArgs is config.gate_hook_args: the words after the gate entry
+// WardenHookArgs is config.warden_hook_args: the words after the warden entry
 // point, up to the end of its simple command. ok is false when command is
-// not a gate hook in a form read.
-func GateHookArgs(command any) (args []string, ok bool) {
+// not a warden hook in a form read.
+func WardenHookArgs(command any) (args []string, ok bool) {
 	s, isStr := command.(string)
 	if !isStr {
 		return nil, false
 	}
-	kind, args := gateHook(s, 0)
-	return args, kind == KindGate
+	kind, args := wardenHook(s, 0)
+	return args, kind == KindWarden
 }
 
-// IsGateHook reports whether command is a gate hook in a form read.
-func IsGateHook(command any) bool {
-	_, ok := GateHookArgs(command)
+// IsWardenHook reports whether command is a warden hook in a form read.
+func IsWardenHook(command any) bool {
+	_, ok := WardenHookArgs(command)
 	return ok
 }
 
-// GateHookMode is config.gate_hook_mode: the last --mode a gate hook
+// WardenHookMode is config.warden_hook_mode: the last --mode a warden hook
 // passes, as argparse reads it, or "" when there is none or it is not
 // audit or enforce.
-func GateHookMode(command any) string {
-	if mode := gateHookModeWord(command); mode == "audit" || mode == "enforce" {
+func WardenHookMode(command any) string {
+	if mode := wardenHookModeWord(command); mode == "audit" || mode == "enforce" {
 		return mode
 	}
 	return ""
 }
 
-// gateHookModeWord is config._gate_hook_mode_word: the last --mode word
-// a gate hook passes, valid or not.
-func gateHookModeWord(command any) string {
-	args, _ := GateHookArgs(command)
+// wardenHookModeWord is config._warden_hook_mode_word: the last --mode word
+// a warden hook passes, valid or not.
+func wardenHookModeWord(command any) string {
+	args, _ := WardenHookArgs(command)
 	mode := ""
 	for i, w := range args {
 		if w == "--mode" && i+1 < len(args) {
@@ -401,10 +403,10 @@ func gateHookModeWord(command any) string {
 	return mode
 }
 
-// IsStaleModeHook is config.is_stale_mode_hook: a gate hook that passes
-// --mode shadow, the old name of audit mode. The gate refuses that word,
+// IsStaleModeHook is config.is_stale_mode_hook: a warden hook that passes
+// --mode shadow, the old name of audit mode. The warden refuses that word,
 // so the hook denies every call.
-func IsStaleModeHook(command any) bool { return gateHookModeWord(command) == "shadow" }
+func IsStaleModeHook(command any) bool { return wardenHookModeWord(command) == "shadow" }
 
 // IsRecordHook is config.is_record_hook: a `daisugi hook record` simple
 // command, prefixes skipped; with event non-empty, only one passing
@@ -420,7 +422,7 @@ func IsRecordHook(command any, event string) bool {
 	}
 	for _, seg := range segments(tokens) {
 		words := skipEnv(seg)
-		if len(words) < 3 || pathBase(words[0]) != "daisugi" || words[1] != "hook" || words[2] != "record" {
+		if len(words) < 3 || !isEntryName(pathBase(words[0])) || words[1] != "hook" || words[2] != "record" {
 			continue
 		}
 		if event == "" {
@@ -433,6 +435,73 @@ func IsRecordHook(command any, event string) bool {
 		}
 	}
 	return false
+}
+
+// isEntryName is the names a daisugi entry point goes by: an exact set. A
+// user's own wrapper such as daisugi-local is not ours.
+func isEntryName(b string) bool {
+	switch b {
+	case "daisugi", "daisugi-py", "daisugi-go", "daisugi-rs":
+		return true
+	}
+	return false
+}
+
+// IsEntryName is config.is_entry_name on a bare name or a path.
+func IsEntryName(s string) bool { return isEntryName(pathBase(s)) }
+
+// RecordHookPrograms is config.record_hook_programs: the program word of
+// each `daisugi hook record` segment of a command, after any NAME=val and
+// env prefix.
+func RecordHookPrograms(command any) []string {
+	s, isStr := command.(string)
+	if !isStr {
+		return nil
+	}
+	tokens, ok := CommandTokens(s)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, seg := range segments(tokens) {
+		words := skipEnv(seg)
+		if len(words) >= 3 && isEntryName(pathBase(words[0])) && words[1] == "hook" && words[2] == "record" {
+			out = append(out, words[0])
+		}
+	}
+	return out
+}
+
+// HookCommandPrograms is install._hook_command_programs: the program of
+// each record hook segment, else the first program of a warden hook, else
+// none.
+func HookCommandPrograms(command any) []string {
+	if found := RecordHookPrograms(command); len(found) > 0 {
+		return found
+	}
+	if !IsWardenHook(command) {
+		return nil
+	}
+	s, _ := command.(string)
+	tokens, ok := CommandTokens(s)
+	if !ok {
+		return nil
+	}
+	segs := segments(tokens)
+	if len(segs) == 0 {
+		return nil
+	}
+	if words := skipEnv(segs[0]); len(words) > 0 {
+		return words[:1]
+	}
+	return nil
+}
+
+// IsEntryWord is install._is_entry_word: a word whose last path part is one
+// of those names.
+func IsEntryWord(v any) bool {
+	s, ok := v.(string)
+	return ok && isEntryName(pathBase(s))
 }
 
 // pathBase is the last "/"-separated part, as rsplit("/", 1)[-1].

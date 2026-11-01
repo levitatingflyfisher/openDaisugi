@@ -54,7 +54,7 @@ func TestAProcessInsideAPaneCannotAllowOverTheSocket(t *testing.T) {
 	}
 	go func() { _ = s.Serve() }()
 	t.Cleanup(func() { _ = s.Close() })
-	plantAsk(t, s.cfg.GateRoot, "ask-3")
+	plantAsk(t, s.cfg.WardenRoot, "ask-3")
 
 	self, err := os.Executable()
 	if err != nil {
@@ -76,7 +76,7 @@ func TestAProcessInsideAPaneCannotAllowOverTheSocket(t *testing.T) {
 			if !strings.Contains(text, "unauthorized") || !strings.Contains(text, "cannot allow") {
 				t.Fatalf("the pane's allow was not refused: %q", text)
 			}
-			if _, err := os.Stat(filepath.Join(s.cfg.GateRoot, "answers", "ask-3.json")); err == nil {
+			if _, err := os.Stat(filepath.Join(s.cfg.WardenRoot, "answers", "ask-3.json")); err == nil {
 				t.Fatal("a refused allow wrote an answer")
 			}
 			return
@@ -89,7 +89,7 @@ func TestAProcessInsideAPaneCannotAllowOverTheSocket(t *testing.T) {
 	t.Fatal("the helper never printed a reply")
 }
 
-// The gate hook in a pane learns the server's data directory from
+// The warden hook in a pane learns the server's data directory from
 // COPPICE_DATA_DIR, as an absolute path, whatever the pane's own env says.
 func TestAPaneIsToldTheServersDataDir(t *testing.T) {
 	dir := t.TempDir()

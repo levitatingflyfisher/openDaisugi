@@ -14,7 +14,7 @@ const settle = () => new Promise((r) => setImmediate(r));
 function p(id, tier) {
   const ask = { id: 'toolu_' + id, tool: 'Bash', summary: 'git push --force' };
   if (tier !== undefined) ask.tier = tier;
-  return { id, label: 'gate-refactor', state: 'blocked', harness: 'claude', cwd: '/w/' + id, ts: 1, ask };
+  return { id, label: 'gear-refactor', state: 'blocked', harness: 'claude', cwd: '/w/' + id, ts: 1, ask };
 }
 
 function floorStub(panes) {
@@ -43,6 +43,7 @@ function cardStub(panes) {
   reset();
   setFloor(null);
   element('roster');
+  element('needs');
   element('roster-empty');
   const calls = [];
   global.window.coppice = {
@@ -51,7 +52,7 @@ function cardStub(panes) {
     state: {},
   };
   render(paneRows(panes, 1));
-  return { list: element('roster'), calls };
+  return { list: element('needs'), calls };
 }
 
 // The x that stops an agent sits on every card and is not an answer.
@@ -69,7 +70,7 @@ test('a missing or unknown tier is permanent', () => {
 });
 
 test('a pane is named by its label, else its id', () => {
-  assert.equal(paneName({ id: 'w1:p1', label: 'gate-refactor' }), 'gate-refactor');
+  assert.equal(paneName({ id: 'w1:p1', label: 'gear-refactor' }), 'gear-refactor');
   assert.equal(paneName({ id: 'w1:p1', label: '' }), 'w1:p1');
 });
 
@@ -117,18 +118,18 @@ test('floor: Allow on an undoable ask posts the pane and no confirm', async () =
 test('floor: the name then Enter allows a permanent ask, and a wrong name posts nothing', async () => {
   const { doc, calls } = floorStub([p('a', 'permanent')]);
   const input = doc.querySelector('[data-tile="a"] .askbar').querySelector('input');
-  input.value = 'gate-refactr';
+  input.value = 'warden-refactr';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', stopPropagation() {}, preventDefault() {} });
   await settle();
   assert.equal(calls.filter((c) => c.path).length, 0, 'a wrong name posted');
   assert.ok(element('status').textContent.includes('not the pane name'));
-  input.value = 'gate-refactor';
+  input.value = 'gear-refactor';
   input.dispatchEvent({ type: 'keydown', key: 'Enter', stopPropagation() {}, preventDefault() {} });
   await settle();
   const posts = calls.filter((c) => c.path === '/api/ask/answer');
   assert.equal(posts.length, 1);
   assert.equal(posts[0].body.decision, 'allow');
-  assert.equal(posts[0].body.confirm, 'gate-refactor');
+  assert.equal(posts[0].body.confirm, 'gear-refactor');
 });
 
 test('phone card: a permanent ask shows Deny, Look, and a name field, no Allow', () => {
@@ -163,18 +164,18 @@ test('phone card: Deny posts a deny and Look opens the pane at its ask', async (
 });
 
 test('phone card: a pane with no ask has no answer controls', () => {
-  const { list } = cardStub([{ id: 'b', label: 'b', state: 'working', ts: 1 }]);
-  const card = list.querySelector('[data-pane="b"]');
+  cardStub([{ id: 'b', label: 'b', state: 'working', ts: 1 }]);
+  const card = element('roster').querySelector('[data-pane="b"]');
   assert.equal(answers(card.querySelectorAll('button')).length, 0);
 });
 
 test('floor: typed text in the name field survives a repaint of the same ask', () => {
   const { doc } = floorStub([p('a', 'permanent')]);
   const input = doc.querySelector('[data-tile="a"] .askbar').querySelector('input');
-  input.value = 'gate-ref';
+  input.value = 'warden-ref';
   input.dispatchEvent({ type: 'input' });
   const again = floorStub([p('a', 'permanent')]).doc.querySelector('[data-tile="a"] .askbar').querySelector('input');
-  assert.equal(again.value, 'gate-ref');
+  assert.equal(again.value, 'warden-ref');
   const other = floorStub([{ ...p('b', 'permanent') }]).doc.querySelector('[data-tile="b"] .askbar').querySelector('input');
   assert.equal(other.value, '', 'text typed for one ask showed on another');
 });

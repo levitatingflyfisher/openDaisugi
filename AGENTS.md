@@ -21,12 +21,14 @@ tests and reality disagree, reality wins.
 
 | Part | Path | Language |
 |---|---|---|
-| **daisugi**, the oracle: gate, verifier, journal, garden, gateway, orchestrator, MCP server, CLI | `src/opendaisugi/`, tests in `tests/` | Python 3.12+ |
-| **daisugi** in Go: `daisugi`, `daisugi-gate`, `conform`, the probes | `clients/go/` (`cmd/`, `internal/`) | Go, cgo |
+| **daisugi**, the oracle: warden, verifier, journal, garden, router, orchestrator, MCP server, CLI | `src/opendaisugi/`, tests in `tests/` | Python 3.12+ |
+| **daisugi** in Go: `daisugi`, `daisugi-warden`, `conform`, the probes | `clients/go/` (`cmd/`, `internal/`) | Go, cgo |
 | **daisugi** in Rust: the same binaries | `clients/rust/` (`src/`, `src/bin/`) | Rust |
+| **pando** (Pando R2, the conversation memory) in Go | `clients/go/pando/` (no cgo; coppice links it; `daisugi pando`) | Go |
+| **pando** in Python (read only) | `src/opendaisugi/pando/` | Python |
 | Verifier-core clients for cross-checks | `clients/ts/`, `clients/lean/` | TypeScript, Lean 4 |
 | Golden cases the oracle writes | `clients/fixtures/<component>/` | JSONL + manifest |
-| Case writers and compare scripts | `clients/*_cases.py`, `clients/*_compare.py`, `clients/gate_fuzz.py`, `clients/fake_proxy.py` | Python |
+| Case writers and compare scripts | `clients/*_cases.py`, `clients/*_compare.py`, `clients/warden_fuzz.py`, `clients/fake_proxy.py` | Python |
 | Every disagreement and its ruling | `clients/ADJUDICATIONS.md` | |
 | **coppice**, the floor | `harness/coppice/` (read its `README.md`, `PROTOCOL.md`, `PINS.md`) | Go, cgo (libghostty-vt) |
 | **sprig**, the loop, with `sprig-hook`, `sprig-mcp`, `weave` | `harness/sprig/` | Go |
@@ -45,31 +47,34 @@ Inside `src/opendaisugi/`, by concern:
 
 | You are touching | Go to |
 |---|---|
-| The allow/deny decision | `gate.py`, `verify.py`, `subsumption.py`, `z3_checks.py`, `predicate_z3.py`, `regex_to_z3.py`, `effects.py`, `floor_config.py`, `pane_rule.py`, `rank_rule.py` |
+| The allow/deny decision | `warden.py`, `verify.py`, `subsumption.py`, `z3_checks.py`, `predicate_z3.py`, `regex_to_z3.py`, `effects.py`, `floor_config.py`, `pane_rule.py`, `rank_rule.py` |
 | The data model | `models.py`, `permissions.py`, `predicate.py`, `aliases.py` |
 | What runs and how it is supervised | `supervisor.py`, `executor.py`, `delegating_executor.py`, `approval.py`, `fallback.py` |
 | Envelope generation | `envelope.py`, `tier1.py`, `llm.py`, `claude_code_llm.py` |
-| Memory and reuse | `journal.py`, `distiller.py`, `gardener/`, `pathway*.py`, `signing.py` |
+| Memory and reuse | `journal.py`, `distiller.py`, `gardener/`, `pathway*.py`, `signing.py`, `pando/` (Pando R2, read only; ADR-0023) |
+| Ranking, the delegation tree and branching | `rank.py`, `rank_judge.py`, `rank_pivot.py`, `tree.py`, `tree_branch.py` |
 | Prompt to answer | `orchestrator.py`, `decomposer.py`, `model_sizer.py`, `budget.py`, `routing.py` |
-| The gateway and router | `gateway*.py`, `router_switchyard.py` |
-| Surfaces | `cli.py`, `mcp_server.py`, `install.py` |
+| The router and routing mode | `router*.py`, `routing_switchyard.py` |
+| Surfaces | `cli.py`, `mcp_server.py`, `install.py`, `recipes/` (the recipe JSON files and `daisugi recipe`) |
 
 ## Install
 
 Commands that work today. Run `--dry-run` first to see what a command writes.
 
 ```bash
-daisugi install --gate               # the gate hook for Claude Code and Codex; audit mode
-daisugi install --gate --enforce     # needs a registered envelope: run `daisugi gate init --workspace ~/Work` first
+daisugi install                      # the skill, the MCP server, the capture hook, the pathway instructions, and the warden hook in audit mode (Claude Code and Codex)
+daisugi install --enforce            # the warden denies; needs a registered envelope: run `daisugi warden init --workspace ~/Work` first
+daisugi install --list               # the components install can write
+daisugi install --only warden,capture   # only the components you name; --uninstall --only removes the same ones
 daisugi install --harness pi         # or: opencode
-daisugi install --gate --gateway     # also point the harness at the gateway
+daisugi install --router            # also point the harness at the router
+daisugi recipe apply warden-only    # a recipe: shows what it writes; add --yes to write it; `recipe revert` undoes it
 daisugi modules --pieces             # which pieces run here, and the command for each
 coppice                              # the multiplexer; or: coppice web, for the browser and the phone
 ```
 
-The Go `daisugi` installs only the gate and gateway layers. The Python `daisugi install` always
-adds the skill, the MCP server, the capture hook and the pathway instructions. A gate-only or
-gateway-only Python install flag does not exist yet. Hermes gets no `install --gateway` yet (it
+All three ports write the same five layers; the CLI cases prove it. Hermes and OpenClaw get no
+warden hook yet and the plan says so as an honest gap. Hermes gets no `install --router` yet (it
 expects an OpenAI wire that `install` does not write).
 
 Memory over MCP alone: register the server by hand. Claude Code reads it from `~/.claude.json`.
@@ -78,8 +83,8 @@ Memory over MCP alone: register the server by hand. Claude Code reads it from `~
 {"mcpServers": {"opendaisugi": {"type": "stdio", "command": "daisugi", "args": ["mcp", "serve"]}}}
 ```
 
-Codex speaks the OpenAI wire. The gateway answers it on `/chat/completions`; see
-[the gateway guide](docs/how-to/token-saving-gateway.md).
+Codex speaks the OpenAI wire. The router answers it on `/chat/completions`; see
+[the router guide](docs/how-to/router.md).
 
 ### Get the binaries
 
@@ -98,7 +103,7 @@ None of these needs Python at run time.
   `tar -xzf opendaisugi-VERSION-linux-x86_64.tar.gz --strip-components=1 -C ~/.local/bin`.
 - **Omarchy and the AUR**: `omarchy-mise-install github:levitatingflyfisher/openDaisugi coppice`,
   or the packages in `packaging/aur/`: `opendaisugi` (or `opendaisugi-bin`) puts `daisugi` (the
-  Go build), `daisugi-rs`, `daisugi-gate-rs`, `coppice` and `sprig` in `/usr/bin`, and
+  Go build), `daisugi-rs`, `daisugi-warden-rs`, `coppice` and `sprig` in `/usr/bin`, and
   `daisugi-py` adds the Python one, so the three can check each other. `daisugi install` writes
   hooks that run the Go `daisugi`; with `DAISUGI_PORT=rust` or `DAISUGI_PORT=python` it hands the
   install to `daisugi-rs` or `daisugi-py`, whose hooks then run that port directly. Both routes
@@ -120,10 +125,10 @@ HTTP: the Anthropic API, Ollama, llamafile), `[mcp]` (the MCP server), `[search]
 
 | Binary | Language | What it carries |
 |---|---|---|
-| `daisugi` (Python) | Python | Everything: the gate, verify, pathways, garden, gateway, orchestrator, supervisor, MCP server, onboarding, dashboard. The oracle. |
-| `daisugi` (Go) | Go | Gate commands, `install` (`--gate`, `--harness`, `--gateway`), `pathways`, the garden (`gardener`, `tend`, `hook auto-tend`, `distill-repeats`), `gateway`, `gateway-report`, `router`, `route`, `status`, `config`, `start --no-ui`, `journal`. |
-| `daisugi` (Rust) | Rust | The same as the Go binary, except `status`, `config`, `start` and `journal`. |
-| `daisugi-gate` | Go and Rust | The hook contract alone. |
+| `daisugi` (Python) | Python | Everything: the warden, verify, pathways, garden, router, orchestrator, supervisor, MCP server, onboarding, dashboard. The oracle. |
+| `daisugi` (Go) | Go | These top-level commands: `warden`, `viz`, `install`, `recipe`, `pathways`, `gardener`, `tend`, `hook`, `distill-repeats`, `router`, `graft`, `rank`, `tree`, `agent-profiles`, `route`, `config`, `status`, `journal`, `pando`, `start`, `generate-envelope`, `run`, `weave`, `orchestrate`, `mcp`, `onboard`, `tiers`, `models`, `pack`, `lora`, `setup`, `modules`, `dashboard`, `metrics`, `registry`, `batch`, `release`, `voice`, `verify`, `backup`, `restore`. Inside them, `daisugi warden audit` and `daisugi warden replay` print `is not in this binary yet.`, as do `dashboard --tui` and `--serve`, `pathways import` of a skill file with front matter this binary does not read, and a few conformance-record forms. |
+| `daisugi` (Rust) | Rust | The same top-level commands as the Go binary: `warden`, `viz`, `install`, `recipe`, `pathways`, `gardener`, `tend`, `hook`, `distill-repeats`, `router`, `graft`, `rank`, `tree`, `agent-profiles`, `route`, `config`, `status`, `journal`, `pando`, `start`, `generate-envelope`, `run`, `weave`, `orchestrate`, `mcp`, `onboard`, `tiers`, `models`, `pack`, `lora`, `setup`, `modules`, `dashboard`, `metrics`, `registry`, `batch`, `release`, `voice`, `verify`, `backup`, `restore`. Inside them, `daisugi warden audit`, `dashboard --tui` and `--serve`, and a few conformance-record forms print `is not in this binary yet.` |
+| `daisugi-warden` | Go and Rust | The hook contract alone. |
 | `coppice` | Go | The floor. |
 | `sprig` | Go | The loop, plus `sprig-hook`, `sprig-mcp` and `weave`. (grove is retired: coppice replaced it.) |
 
@@ -150,15 +155,15 @@ agreement.
 
 | Suite | Cases | Go | Rust |
 |---|---|---|---|
-| gate cases (`clients/fixtures/gate/`) | 1,310 | 0 disagreements | 0 disagreements |
-| CLI cases (`clients/fixtures/cli/`) | 472 | 451 agree, 12 not ported, 9 refused, 0 disagreements | last full run at 306 cases: 0 disagreements; `status`, `config`, `start`, `journal` not ported |
+| warden cases (`clients/fixtures/warden/`) | 3,741 | 0 disagreements (2026-11-02) | 0 disagreements (2026-11-02) |
+| CLI cases (`clients/fixtures/cli/`) | 863 | 842 agree, 4 not ported, 17 refused, 0 disagreements (2026-11-02) | 842 agree, 4 not ported, 17 refused, 0 disagreements (2026-11-02, a real `cli_compare.py` run) |
 | pathway commands, matcher queries, verify messages | 158, 380, 577 | 0 disagreements | 0 disagreements |
 | garden cases | 215 | 0 disagreements; at 200 cases: 188 agree, 12 refused | the same |
-| gateway cases | 223 | 0 disagreements; 1 refused (GW-8) | the same |
+| router cases | 223 | 0 disagreements; 1 refused (GW-8) | the same |
 | weave cases (`clients/fixtures/weave/`, 2026-09-30) | 88 | 86 agree, 2 refused (WV-R-10), 0 disagreements | the same |
 
 - **Fuzz.** Seeded differential fuzz against the in-process oracle, for example 36,000 shell
-  commands plus 24,000 heredoc, multi-line, non-ASCII and envelope calls for the Go gate
+  commands plus 24,000 heredoc, multi-line, non-ASCII and envelope calls for the Go warden
   ([clients/go/README.md](clients/go/README.md)). No run found a call a binary allowed and the
   oracle denied.
 - **The verifier corpus.** 11,450 cases recorded from real use. It holds local paths, so it is
@@ -168,8 +173,8 @@ agreement.
 - **Adjudications.** Every disagreement, and every oracle bug a port found, has an entry in
   [clients/ADJUDICATIONS.md](clients/ADJUDICATIONS.md). Several were fail-open bugs in the
   oracle itself, now fixed.
-- **Speed.** A gate call, cold process, p50: Go 8.8 ms, Rust 6.1 ms, Python about 430 ms. A call
-  that needs the Z3 vacuity check takes about 20 ms. From tarball to the first gate decision:
+- **Speed.** A warden call, cold process, p50: Go 8.8 ms, Rust 6.1 ms, Python about 430 ms. A call
+  that needs the Z3 vacuity check takes about 20 ms. From tarball to the first warden decision:
   0.52 s.
 
 The method is in [docs/spec/conformance.md](docs/spec/conformance.md).
@@ -178,15 +183,14 @@ The method is in [docs/spec/conformance.md](docs/spec/conformance.md).
 ## Honest limits
 
 - **Usefulness is not measured yet.** Every number above comes from synthetic cases. The next
-  step is a week of daily use: the gate's false-deny rate from its audit log, the gateway on
+  step is a week of daily use: the warden's false-deny rate from its audit log, the router on
   real traffic, and a friction log for coppice.
-- **Not an OS sandbox.** The gate decides tool calls a harness sends through its hook. For
+- **Not an OS sandbox.** The warden decides tool calls a harness sends through its hook. For
   process isolation, use SELinux, AppArmor or seccomp under it.
 - **Codex hooks fail open.** A Codex hook that crashes, times out or prints bad JSON lets the
-  tool run (`src/opendaisugi/install.py`). A deny works; a dead gate does not block.
-- **sprig and weave run with the gate off unless you pass `--gate`**
-  (`harness/sprig/cli.go`). The owner agreed to turn it on by default once it runs smoothly. That
-  is not done.
+  tool run (`src/opendaisugi/install.py`). A deny works; a dead warden does not block.
+- **The warden places shell file accesses through a closed table of commands; interpreter
+  work and other commands are not placed** ([docs/limitations.md](docs/limitations.md)).
 - **Actions, not understanding.** An envelope can prove an action stayed in bounds. It cannot
   prove the model understood the task. A perceptual check (`llm_check`) is a judgment, not a
   proof.
@@ -202,7 +206,7 @@ More in [docs/limitations.md](docs/limitations.md) and the scorecard in [VISION.
 ## Non-negotiables
 
 - **Fail closed.** Unprovable means reject; undeclared means deny. A new `match` on a step or
-  permission type needs a default case that rejects. A Z3 timeout or `unknown` denies at the gate.
+  permission type needs a default case that rejects. A Z3 timeout or `unknown` denies at the warden.
 - **Verify before execute.** No effect before its plan is proven inside its envelope.
 - **The caller's envelope is the ceiling** for reused pathways, delegated skills and plans from
   outside.
@@ -219,8 +223,8 @@ Python is the oracle. The Go and Rust binaries are standalone (no Python at run 
 agree with it.
 
 1. **The oracle writes the golden cases.** Each component has a case writer
-   (`clients/gate_cases.py`, `cli_cases.py`, `pathway_cases.py`, `garden_cases.py`,
-   `gateway_cases.py`). It runs the Python code and records stdin, argv, env and files in, and
+   (`clients/warden_cases.py`, `cli_cases.py`, `pathway_cases.py`, `garden_cases.py`,
+   `router_cases.py`). It runs the Python code and records stdin, argv, env and files in, and
    exit code, stdout, stderr, logs and files out. Cases are synthetic (fake paths such as
    `/work`), so they are committed, pinned by a manifest. `clients/fixture_paths.py` fails a
    generator that leaks a local path.
@@ -254,18 +258,18 @@ Each line below is a heavy job. Run it under the cap in the memory rules, one at
 
 ```bash
 clients/go/scripts/native.sh           # once: the pinned native prefix (Z3, tree-sitter, libghostty-vt)
-clients/go/scripts/build.sh            # daisugi-gate, daisugi, conform; then check-paths.sh
+clients/go/scripts/build.sh            # daisugi-warden, daisugi, conform; then check-paths.sh
 (cd clients/go && go test -p 1 ./...)
 . clients/rust/tools/z3-build-env.sh   # before any cargo build
 CARGO_BUILD_JOBS=2 cargo build --release --manifest-path clients/rust/Cargo.toml
-uv run --no-sync python clients/gate_compare.py --binary clients/go/daisugi-gate --oracle
+uv run --no-sync python clients/warden_compare.py --binary clients/go/daisugi-warden --oracle
 (cd harness/coppice && go vet ./... && go test -race ./...)
 ```
 
 The native prefix lives in `$XDG_CACHE_HOME/opendaisugi/native/<stamp>` (`~/.cache` when unset).
 `clients/go/.native` is a git-ignored link to it.
 
-### Memory rules (this box has 4 cores and 15 GiB; parallel builds have killed sessions)
+### Memory rules (parallel builds have killed sessions on a small machine)
 
 - **One heavy job at a time.** A heavy job is a Z3 or cgo build, a cargo release build, a fuzz
   run, a full compare, or the full pytest suite. Do not start a second one, and do not run one
@@ -280,8 +284,8 @@ The native prefix lives in `$XDG_CACHE_HOME/opendaisugi/native/<stamp>` (`~/.cac
 - **Scratch on real disk,** never `/tmp` (it is RAM here).
 - **Never touch the owner's live state.** A trial gets its own `--socket` and `--data-dir` on
   scratch; environment variables do not select the coppice server. Never touch
-  `~/.opendaisugi/gate`. Never run `daisugi install` in a trial; use
-  `claude --settings "$(daisugi gate settings --root <scratch>)"`. Tests never run a real
+  `~/.opendaisugi/warden`. Never run `daisugi install` in a trial; use
+  `claude --settings "$(daisugi warden settings --root <scratch>)"`. Tests never run a real
   `claude`, `sprig`, `codex`, `pi` or `opencode`, and use no network but loopback.
 
 ### Lockfiles and pins
@@ -302,9 +306,11 @@ licence, the reason and the status of each one that exists.
 - **Plain English (ASD-STE100 register).** Short sentences, plain words, active voice. No em
   dashes. No three-part flourishes.
 - **Names.** The parts are **daisugi**, **coppice** and **sprig**. Never write "the layer";
-  write "daisugi". "The gate" means only the allow/deny part. Never use the word "seam"; write
-  gap, boundary, interface or join. "Simplex" always means Sha's 1996 runtime-assurance
-  architecture. Renames in `docs/correspondence.md` Part D are candidates, not decisions.
+  write "daisugi". "The warden" means only the allow/deny part. The other names are the router
+  (with its routing mode), the steward and Pando R2 ([ADR-0026](docs/adr/0026-names-warden-router-steward-pando.md)).
+  Never use the word "seam"; write gap, boundary, interface or join. "Simplex" always means
+  Sha's runtime-assurance architecture (canonical paper 2001, early work 1996).
+- **Write the current state.** Do not tell readers about changes they never saw (changelog voice).
 - **Honest docs.** Mark what is built and tested, what is designed, and what is open. Every
   number names its source. Synthetic cases prove correctness, not usefulness.
 - **Roadmaps are problems,** not dated feature lists.

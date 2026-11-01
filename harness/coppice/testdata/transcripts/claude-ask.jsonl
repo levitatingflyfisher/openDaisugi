@@ -1,0 +1,3 @@
+{"type":"summary","summary":"FAKE-SUMMARY","leafUuid":"fake-leaf"}
+{"type":"user","uuid":"fake-u1","timestamp":"2099-01-01T00:00:00Z","cwd":"/fake"                                                                                                                                                                                                                                                ,"message":{"role":"user","content":"fix the fake test, it fails on CI"}}
+{"type":"assistant","uuid":"fake-a9","timestamp":"2099-01-01T00:00:09Z","message":{"id":"msg_fake_9","model":"claude-fake-1","role":"assistant","content":[{"type":"text","text":"Fixed the fake test.\nShould I push it?"}]}}

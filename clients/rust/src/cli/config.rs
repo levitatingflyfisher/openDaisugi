@@ -1,12 +1,12 @@
 //! `~/.opendaisugi/config.yaml` as `opendaisugi.config.load_config` reads
-//! it, for the settings the gate commands read, and the gate hook mode
+//! it, for the settings the warden commands read, and the warden hook mode
 //! installed in Claude Code's settings. Python validates the whole file
 //! with pydantic: one bad field anywhere makes load_config raise. The Go
 //! client's `config` package is the reference.
 
-use super::words::{gate_hook_kind, gate_hook_mode, gate_hook_program, is_stale_mode_hook, KIND_UNKNOWN};
+use super::words::{warden_hook_kind, warden_hook_mode, warden_hook_program, is_stale_mode_hook, KIND_UNKNOWN};
 use super::yaml::{self, Kind, Node};
-use crate::gate::pyjson::{loads, LoadError, Value};
+use crate::warden::pyjson::{loads, LoadError, Value};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -56,17 +56,17 @@ const FIELDS: &[(&str, T)] = &[
     ("z3_timeout_ms", T::Int),
     ("data_dir", T::Path),
     ("auto_tend", T::OptBool),
-    ("gateway_local_model", T::OptStr),
-    ("gateway_router", T::Str),
-    ("gateway_router_model", T::OptStr),
-    ("gateway_grader", T::OptStr),
+    ("router_local_model", T::OptStr),
+    ("routing_mode", T::Str),
+    ("routing_model", T::OptStr),
+    ("router_grader", T::OptStr),
     ("switchyard_route_id", T::Str),
     ("switchyard_capable_model", T::Str),
     ("switchyard_efficient_model", T::OptStr),
     ("switchyard_api_key_env", T::OptStr),
     ("shell_allow_decomposition", T::Bool),
-    ("gate_mode", T::Str),
-    ("gate_ask", T::Bool),
+    ("warden_mode", T::Str),
+    ("warden_ask", T::Bool),
     ("dialect_enforce", T::OptStr),
     ("verifier_client", T::Str),
     ("matcher_model", T::Str),
@@ -94,10 +94,10 @@ const FIELDS: &[(&str, T)] = &[
 const FLOOR_FIELDS: &[(&str, T)] =
     &[("backend", T::Str), ("notify_cmd", T::OptStr), ("tmux_socket", T::OptStr), ("coppice_socket", T::OptStr)];
 
-/// The fields the gate commands read.
+/// The fields the warden commands read.
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub gate_mode: String,
+    pub warden_mode: String,
     pub shell_allow_decomposition: bool,
     pub verifier_client: String,
     /// The matcher `find` runs (`_search.selected_matcher`).
@@ -106,11 +106,11 @@ pub struct Config {
     pub llm_backend: Option<String>,
     /// `auto_tend`, None when unset or null.
     pub auto_tend: Option<bool>,
-    /// The gateway's fields; an optional one is None when unset or null.
-    pub gateway_local_model: Option<String>,
-    pub gateway_router: String,
-    pub gateway_router_model: Option<String>,
-    pub gateway_grader: Option<String>,
+    /// The router's fields; an optional one is None when unset or null.
+    pub router_local_model: Option<String>,
+    pub routing_mode: String,
+    pub routing_model: Option<String>,
+    pub router_grader: Option<String>,
     pub switchyard_route_id: String,
     pub switchyard_capable_model: String,
     pub switchyard_efficient_model: Option<String>,
@@ -138,16 +138,16 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            gate_mode: "audit".into(),
+            warden_mode: "audit".into(),
             shell_allow_decomposition: false,
             verifier_client: "python".into(),
             matcher_model: "lexical".into(),
             llm_backend: None,
             auto_tend: None,
-            gateway_local_model: None,
-            gateway_router: "rules".into(),
-            gateway_router_model: None,
-            gateway_grader: None,
+            router_local_model: None,
+            routing_mode: "rules".into(),
+            routing_model: None,
+            router_grader: None,
             switchyard_route_id: "daisugi".into(),
             switchyard_capable_model: "claude-sonnet-5".into(),
             switchyard_efficient_model: None,
@@ -333,8 +333,8 @@ fn from_map(m: &Node) -> Result<Config, ConfigErr> {
     if any_unsure {
         return Err(ConfigErr::Unsupported);
     }
-    if let Some(v) = m.map.get("gate_mode") {
-        cfg.gate_mode = v.text.clone();
+    if let Some(v) = m.map.get("warden_mode") {
+        cfg.warden_mode = v.text.clone();
     }
     if let Some(v) = m.map.get("matcher_model") {
         cfg.matcher_model = v.text.clone();
@@ -356,7 +356,7 @@ fn from_map(m: &Node) -> Result<Config, ConfigErr> {
         }
     }
     for (name, dst) in [
-        ("gateway_router", &mut cfg.gateway_router),
+        ("routing_mode", &mut cfg.routing_mode),
         ("switchyard_route_id", &mut cfg.switchyard_route_id),
         ("switchyard_capable_model", &mut cfg.switchyard_capable_model),
     ] {
@@ -365,9 +365,9 @@ fn from_map(m: &Node) -> Result<Config, ConfigErr> {
         }
     }
     for (name, dst) in [
-        ("gateway_local_model", &mut cfg.gateway_local_model),
-        ("gateway_router_model", &mut cfg.gateway_router_model),
-        ("gateway_grader", &mut cfg.gateway_grader),
+        ("router_local_model", &mut cfg.router_local_model),
+        ("routing_model", &mut cfg.routing_model),
+        ("router_grader", &mut cfg.router_grader),
         ("switchyard_efficient_model", &mut cfg.switchyard_efficient_model),
         ("switchyard_api_key_env", &mut cfg.switchyard_api_key_env),
         ("llm_base_url", &mut cfg.llm_base_url),
@@ -467,20 +467,20 @@ pub fn load(path: &str) -> Result<Config, ConfigErr> {
     }
 }
 
-/// `gate.resolve_gate_mode(None, root=...)`: the gate_mode of the
-/// config.yaml beside the gate root, or audit when that file does not
+/// `warden.resolve_warden_mode(None, root=...)`: the warden_mode of the
+/// config.yaml beside the warden root, or audit when that file does not
 /// validate or names another mode.
-pub fn gate_mode(config_path: &str) -> Result<String, ConfigErr> {
+pub fn warden_mode(config_path: &str) -> Result<String, ConfigErr> {
     match load(config_path) {
         Err(ConfigErr::Invalid | ConfigErr::Yaml(_)) => Ok("audit".into()),
         Err(e) => Err(e),
-        Ok(c) if c.gate_mode == "audit" || c.gate_mode == "enforce" => Ok(c.gate_mode),
+        Ok(c) if c.warden_mode == "audit" || c.warden_mode == "enforce" => Ok(c.warden_mode),
         Ok(_) => Ok("audit".into()),
     }
 }
 
-/// `gate._configured_dialect_pin`: the dialect_enforce of the config.yaml
-/// beside the gate root, or None when it names none or the file does not
+/// `warden._configured_dialect_pin`: the dialect_enforce of the config.yaml
+/// beside the warden root, or None when it names none or the file does not
 /// validate.
 pub fn dialect_pin(config_path: &str) -> Result<Option<String>, ConfigErr> {
     match load(config_path) {
@@ -490,8 +490,8 @@ pub fn dialect_pin(config_path: &str) -> Result<Option<String>, ConfigErr> {
     }
 }
 
-/// `config.installed_hook_mode`: the --mode of the first gate hook in a
-/// settings.json PreToolUse list, "" when none, and "unknown" when a gate
+/// `config.installed_hook_mode`: the --mode of the first warden hook in a
+/// settings.json PreToolUse list, "" when none, and "unknown" when a warden
 /// hook is in a form not read and no read hook enforces. `Err` where
 /// Python would raise instead of answering.
 pub fn installed_hook_mode(settings_path: &str) -> Result<String, ConfigErr> {
@@ -546,18 +546,18 @@ pub fn installed_hook_mode(settings_path: &str) -> Result<String, ConfigErr> {
                 _ => return Err(ConfigErr::Unsupported),
             };
             let command = hook.value("command");
-            if gate_hook_kind(command) == KIND_UNKNOWN || is_stale_mode_hook(command) {
+            if warden_hook_kind(command) == KIND_UNKNOWN || is_stale_mode_hook(command) {
                 // A --mode shadow hook denies every call, so it counts as
                 // a hook that may enforce, never as audit.
                 unknown = true;
             }
-            let mode = gate_hook_mode(command);
+            let mode = warden_hook_mode(command);
             if !mode.is_empty() && first.is_empty() {
                 first = mode;
             }
         }
     }
-    // A gate hook in a form not read may enforce: only a read enforce hook
+    // A warden hook in a form not read may enforce: only a read enforce hook
     // outranks it, never a read audit one.
     if first == "enforce" || !unknown {
         return Ok(first);
@@ -565,14 +565,14 @@ pub fn installed_hook_mode(settings_path: &str) -> Result<String, ConfigErr> {
     Ok(KIND_UNKNOWN.into())
 }
 
-/// One gate hook whose program is not there.
+/// One warden hook whose program is not there.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GoneHook {
     pub program: String,
     pub mode: String,
 }
 
-/// `config.missing_hook_programs`: each gate hook in the settings file
+/// `config.missing_hook_programs`: each warden hook in the settings file
 /// whose program is an absolute path that is not there, such as a binary a
 /// package manager removed on upgrade. That hook fails on every call.
 /// Anything that is not the usual shape is skipped.
@@ -589,11 +589,11 @@ pub fn missing_hook_programs(settings_path: &str) -> Vec<GoneHook> {
         for h in hs {
             let Value::Obj(hook) = h else { continue };
             let command = hook.value("command");
-            let program = gate_hook_program(command);
+            let program = warden_hook_program(command);
             if !program.starts_with('/') || std::fs::metadata(&program).is_ok() {
                 continue;
             }
-            let g = GoneHook { program, mode: gate_hook_mode(command) };
+            let g = GoneHook { program, mode: warden_hook_mode(command) };
             if !out.contains(&g) {
                 out.push(g);
             }
@@ -603,7 +603,7 @@ pub fn missing_hook_programs(settings_path: &str) -> Vec<GoneHook> {
 }
 
 /// `config.stale_mode_hooks`: whether the settings file holds a
-/// PreToolUse gate hook that passes --mode shadow. Anything that is not
+/// PreToolUse warden hook that passes --mode shadow. Anything that is not
 /// the usual shape is skipped.
 pub fn stale_mode_hooks(settings_path: &str) -> bool {
     let Ok(raw) = std::fs::read(settings_path) else { return false };
@@ -625,28 +625,28 @@ pub fn stale_mode_hooks(settings_path: &str) -> bool {
     false
 }
 
-/// `config.stale_mode_warning`: what gate status says about a gate hook
+/// `config.stale_mode_warning`: what warden status says about a warden hook
 /// that passes --mode shadow.
 pub fn stale_mode_warning(settings_path: &str) -> String {
     format!(
-        "warning: the gate hook in {settings_path} passes --mode shadow, which is now --mode audit, \
-         so the gate refuses every call. Run: daisugi install --gate --uninstall, then daisugi install --gate"
+        "warning: the warden hook in {settings_path} passes --mode shadow, which is now --mode audit, \
+         so the warden refuses every call. Run: daisugi install --uninstall, then daisugi install"
     )
 }
 
-/// `config.missing_hook_warning`: what gate status says about a gate hook
+/// `config.missing_hook_warning`: what warden status says about a warden hook
 /// whose program is gone.
 pub fn missing_hook_warning(settings_path: &str, g: &GoneHook) -> String {
     if g.mode == "enforce" {
         format!(
-            "warning: the gate hook in {settings_path} runs {}, which does not exist, so every call is denied. \
-             Run: daisugi install --gate --enforce",
+            "warning: the warden hook in {settings_path} runs {}, which does not exist, so every call is denied. \
+             Run: daisugi install --enforce",
             g.program
         )
     } else {
         format!(
-            "warning: the gate hook in {settings_path} runs {}, which does not exist, so the gate sees no call. \
-             Run: daisugi install --gate",
+            "warning: the warden hook in {settings_path} runs {}, which does not exist, so the warden sees no call. \
+             Run: daisugi install",
             g.program
         )
     }
@@ -740,7 +740,7 @@ mod tests {
 // would dump is Unsupported: the caller then refuses before it writes.
 // ---------------------------------------------------------------------------
 
-use crate::gate::pyjson::Object;
+use crate::warden::pyjson::Object;
 
 fn floor_object(backend: Value, coppice: Value, notify: Value, tmux: Value) -> Value {
     let mut o = Object::new();
@@ -762,17 +762,17 @@ fn defaults(home: &str) -> Vec<(&'static str, Value)> {
         ("z3_timeout_ms", i("500")),
         ("data_dir", s(&crate::datahome::dir(|k| std::env::var(k).ok(), home, crate::datahome::exists))),
         ("auto_tend", Value::Null),
-        ("gateway_local_model", Value::Null),
-        ("gateway_router", s("rules")),
-        ("gateway_router_model", Value::Null),
-        ("gateway_grader", Value::Null),
+        ("router_local_model", Value::Null),
+        ("routing_mode", s("rules")),
+        ("routing_model", Value::Null),
+        ("router_grader", Value::Null),
         ("switchyard_route_id", s("daisugi")),
         ("switchyard_capable_model", s("claude-sonnet-5")),
         ("switchyard_efficient_model", Value::Null),
         ("switchyard_api_key_env", Value::Null),
         ("shell_allow_decomposition", Value::Bool(false)),
-        ("gate_mode", s("audit")),
-        ("gate_ask", Value::Bool(false)),
+        ("warden_mode", s("audit")),
+        ("warden_ask", Value::Bool(false)),
         ("dialect_enforce", Value::Null),
         ("verifier_client", s("python")),
         ("matcher_model", s("lexical")),
@@ -825,7 +825,7 @@ fn plain(v: &Node) -> Result<Value, ConfigErr> {
             }
             let mut keys = v.keys.clone();
             keys.sort();
-            let mut o = crate::gate::pyjson::Object::with_capacity(keys.len());
+            let mut o = crate::warden::pyjson::Object::with_capacity(keys.len());
             for k in keys {
                 o.set(&k, plain(&v.map[&k])?);
             }
@@ -843,7 +843,7 @@ fn dumped(v: &Node, t: T) -> Result<Value, ConfigErr> {
     match t {
         T::Any => plain(v),
         T::Str | T::OptStr => Ok(Value::Str(v.text.clone())),
-        T::Path => Ok(Value::Str(super::gateroot::path_str(&v.text))),
+        T::Path => Ok(Value::Str(super::wardenroot::path_str(&v.text))),
         T::Int | T::OptInt => match v.kind {
             Kind::Int => big_int(&v.text.replace('_', "")),
             Kind::Bool => Ok(Value::Int(if v.b { "1" } else { "0" }.into())),
@@ -933,8 +933,8 @@ pub fn dump(path: &str, home: &str, updates: &[(String, Value)]) -> Result<Strin
 /// `save_config` does.
 pub fn save(path: &str, home: &str, updates: &[(String, Value)]) -> Result<(), SaveErr> {
     let text = dump(path, home, updates).map_err(SaveErr::Config)?;
-    std::fs::create_dir_all(super::gateroot::parent(path)).map_err(SaveErr::Io)?;
-    super::gateroot::write_file(path, &text).map_err(SaveErr::Io)?;
+    std::fs::create_dir_all(super::wardenroot::parent(path)).map_err(SaveErr::Io)?;
+    super::wardenroot::write_file(path, &text).map_err(SaveErr::Io)?;
     Ok(())
 }
 
@@ -1099,4 +1099,28 @@ pub fn rows(path: &str, home: &str) -> Result<(Vec<Row>, Vec<String>, Config), R
     }
     unknown.sort();
     Ok((out, unknown, cfg))
+}
+
+/// The six config keys the rename moved, longest old name first
+/// (config.RENAMED_CONFIG_KEYS). The old names are read on purpose.
+pub const RENAMED_KEYS: [(&str, &str); 6] = [
+    ("gateway_router_model", "routing_model"), // names-ok: old key
+    ("gateway_local_model", "router_local_model"), // names-ok: old key
+    ("gateway_router", "routing_mode"), // names-ok: old key
+    ("gateway_grader", "router_grader"), // names-ok: old key
+    ("gate_mode", "warden_mode"), // names-ok: old key
+    ("gate_ask", "warden_ask"), // names-ok: old key
+];
+
+/// `config.stale_config_keys`: the (old, new) pairs for each renamed key
+/// still at the top level of the file. A file that does not read or is not a
+/// mapping names none.
+pub fn stale_keys(path: &str) -> Vec<(&'static str, &'static str)> {
+    let Ok(raw) = std::fs::read(path) else { return vec![] };
+    let Ok(text) = String::from_utf8(raw) else { return vec![] };
+    let Ok(v) = yaml::parse(&text) else { return vec![] };
+    if !matches!(v.kind, Kind::Map) {
+        return vec![];
+    }
+    RENAMED_KEYS.iter().filter(|(old, _)| v.map.contains_key(*old)).copied().collect()
 }

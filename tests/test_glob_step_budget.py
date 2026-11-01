@@ -1,7 +1,7 @@
 """The file-scope glob matcher stops after a fixed number of steps.
 
 `_match_glob` is exponential in the number of `**` segments. It used to run
-until the gate's wall-clock verify budget ran out, so whether a glob denied
+until the warden's wall-clock verify budget ran out, so whether a glob denied
 depended on the speed of the box, and a faster port could allow what the
 oracle denied. It now counts its own steps (calls of its inner matcher) and
 raises `GlobTooComplex` past `GLOB_MATCH_STEP_LIMIT`, the same count on

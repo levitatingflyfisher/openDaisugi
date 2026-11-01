@@ -11,9 +11,9 @@ import (
 )
 
 // The page names only commands the CLI has, and exactly the thirteen the
-// foreman needs. It never teaches the foreman to say yes to an ask.
+// steward needs. It never teaches the steward to say yes to an ask.
 func TestTheSkillPageNamesOnlyCommandsThatExist(t *testing.T) {
-	page, err := os.ReadFile("../../skills/foreman/SKILL.md")
+	page, err := os.ReadFile("../../skills/steward/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,24 +36,24 @@ func TestTheSkillPageNamesOnlyCommandsThatExist(t *testing.T) {
 
 // The binary carries the page, so a floor on another machine still has it.
 func TestTheBinaryCarriesTheSamePage(t *testing.T) {
-	page, err := os.ReadFile("../../skills/foreman/SKILL.md")
+	page, err := os.ReadFile("../../skills/steward/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if skills.Foreman != string(page) {
-		t.Fatal("skills.Foreman differs from skills/foreman/SKILL.md")
+	if skills.Steward != string(page) {
+		t.Fatal("skills.Steward differs from skills/steward/SKILL.md")
 	}
 }
 
-// coppice skill foreman prints the page and dials no socket.
-func TestSkillForemanPrintsThePageWithNoServer(t *testing.T) {
+// coppice skill steward prints the page and dials no socket.
+func TestSkillStewardPrintsThePageWithNoServer(t *testing.T) {
 	t.Setenv("COPPICE_NO_AUTOSTART", "1")
 	var out, errb bytes.Buffer
 	c := &CLI{Socket: t.TempDir() + "/none.sock", DataDir: t.TempDir(), Out: &out, Err: &errb}
-	if code := c.Run([]string{"skill", "foreman"}); code != 0 {
+	if code := c.Run([]string{"skill", "steward"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
-	if out.String() != skills.Foreman {
+	if out.String() != skills.Steward {
 		t.Fatalf("printed %q", out.String())
 	}
 }
@@ -64,7 +64,7 @@ func TestSkillWithAnUnknownNameIsRefused(t *testing.T) {
 	if code := c.Run([]string{"skill", "nope"}); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	if !strings.Contains(errb.String(), "foreman") {
+	if !strings.Contains(errb.String(), "steward") {
 		t.Fatalf("refusal does not name the known page: %q", errb.String())
 	}
 }
@@ -78,7 +78,7 @@ func TestEveryCommandOnTheSkillPageParses(t *testing.T) {
 		"<dir>", "/srv/repo", "<ms>", "5000", "<argv>", "sh", "<ask>", "toolu_1", "<id>", "t1", "[", "", "]", "",
 	)
 	alt := regexp.MustCompile(`([a-z_]+)(\|[a-z_]+)+`)
-	lines := regexp.MustCompile("(?m)^coppice .*$").FindAllString(skills.Foreman, -1)
+	lines := regexp.MustCompile("(?m)^coppice .*$").FindAllString(skills.Steward, -1)
 	if len(lines) != 13 {
 		t.Fatalf("%d command lines, want 13", len(lines))
 	}
@@ -106,24 +106,24 @@ func TestEveryCommandOnTheSkillPageParses(t *testing.T) {
 		t.Fatal("the agent prompt line does not teach --wait")
 	}
 	for _, want := range []string{"coppice task create", "--task <id>", "coppice project list",
-		"Always name the project", "one line per agent", "The gate stays outside you",
+		"Always name the project", "one line per agent", "The warden stays outside you",
 		"An ask that cannot be undone\n   is never yours"} {
-		if !strings.Contains(skills.Foreman, want) {
+		if !strings.Contains(skills.Steward, want) {
 			t.Fatalf("the page does not teach %q", want)
 		}
 	}
-	for _, never := range []string{"task set-foreman", "task move"} {
-		if strings.Contains(skills.Foreman, never) {
+	for _, never := range []string{"task set-steward", "task move"} {
+		if strings.Contains(skills.Steward, never) {
 			t.Fatalf("the page teaches %q", never)
 		}
 	}
-	if !strings.Contains(skills.Foreman, "may never come") {
+	if !strings.Contains(skills.Steward, "may never come") {
 		t.Fatal("the page does not say the typed line may never come")
 	}
-	if strings.Contains(skills.Foreman, "when the note says") || !strings.Contains(skills.Foreman, "hold id") {
+	if strings.Contains(skills.Steward, "when the note says") || !strings.Contains(skills.Steward, "hold id") {
 		t.Fatal("the page does not say the typed line carries the hold id and the time")
 	}
-	if !strings.Contains(skills.Foreman, "only one that you hold") {
-		t.Fatal("the page does not say the foreman may refuse only the asks it holds")
+	if !strings.Contains(skills.Steward, "only one that you hold") {
+		t.Fatal("the page does not say the steward may refuse only the asks it holds")
 	}
 }

@@ -1,7 +1,7 @@
 # The manifest tick: what it writes when it applies a screen, and why it
 # leaves one alone. agent.get waits, by retry, for the tick's state to win
 # over the process source, so the detail the tick wrote is compared.
-# Pane ids: w1:p1 a question, w1:p2 the trust screen, w1:p3 a gate hold,
+# Pane ids: w1:p1 a question, w1:p2 the trust screen, w1:p3 a warden hold,
 # w1:p4 done.
 #!config [harness.claude]
 #!config command = "/bin/sh"
@@ -19,10 +19,10 @@
 {"id":"$id","ok":true,"result":{"pane":"$t","state":"blocked","source":"manifest","detail":"asks to trust this folder (rule=coppice_first_run_trust region=whole_recent)"}}
 {"id":"5","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/blocked-1.raw"],"cols":160,"rows":5}
 {"id":"$id","ok":true,"result":{"pane":"$g"}}
-{"id":"6","cmd":"pane.report_state","pane":"$g","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$g","state":"blocked","source":"gate","ask":{"id":"toolu_09","tool":"Bash","summary":"make","deadline":4102444800},"detail":"verdict=ask"}}
-{"id":"$id","ok":true,"result":{"pane":"$g","state":"blocked","source":"gate"}}
+{"id":"6","cmd":"pane.report_state","pane":"$g","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$g","state":"blocked","source":"warden","ask":{"id":"toolu_09","tool":"Bash","summary":"make","deadline":4102444800},"detail":"verdict=ask"}}
+{"id":"$id","ok":true,"result":{"pane":"$g","state":"blocked","source":"warden"}}
 {"id":"7","cmd":"pane.explain","pane":"$g"}
-{"id":"$id","ok":true,"result":{"pane":"$g","effective_state":"blocked","effective_source":"gate","tick":"skipped: gate blocked on an ask until 2100-01-01T00:00:00Z"}}
+{"id":"$id","ok":true,"result":{"pane":"$g","effective_state":"blocked","effective_source":"warden","tick":"skipped: warden blocked on an ask until 2100-01-01T00:00:00Z"}}
 {"id":"8","cmd":"pane.create","cwd":"{FIXTURES}","harness":"claude","args":["{FIXTURES}/screens/claude/idle-1.raw"],"cols":160,"rows":6}
 {"id":"$id","ok":true,"result":{"pane":"$d"}}
 {"id":"9","cmd":"pane.report_state","pane":"$d","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","pane":"$d","state":"done","source":"process","detail":"exit=0"}}

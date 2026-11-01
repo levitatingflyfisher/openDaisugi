@@ -1,11 +1,11 @@
 // Package state holds master spec section 3.1 in one place: the precedence
-// between sources, the gate's hold on blocked, and the rule that idle is
+// between sources, the warden's hold on blocked, and the rule that idle is
 // never a default. Every path into a pane's state goes through Merge; every
 // path that reads a cached state with nothing fresh to merge against goes
 // through EffectiveState. Amended 2026-09-09: the two-second precedence
 // window now holds back only an incoming manifest event (every other source
-// is a fact and applies at once), and a gate blocked hold releases only to a
-// gate event, a terminal done, or the ask's deadline - not to an operator
+// is a fact and applies at once), and a warden blocked hold releases only to a
+// warden event, a terminal done, or the ask's deadline - not to an operator
 // fact. Go's Merge is required to agree with the Python reference
 // (opendaisugi.floor.events.merge / effective_state) on every input; where
 // this file still diverges from that reference on purpose, the divergence is
@@ -22,7 +22,7 @@ import (
 // applies ONLY to an incoming manifest event - manifest is the fallback
 // source with no real signal of its own, so it alone may lose a race to a
 // still-fresh higher-precedence current state. Every other source (operator,
-// gate, headless, process) is a fact about what actually happened and always
+// warden, headless, process) is a fact about what actually happened and always
 // applies at once, window or not. Seconds.
 const HoldWindow = 2.0
 
@@ -46,20 +46,20 @@ func endsTheSession(in proto.PaneStateEvent) bool {
 //     everything after it. This rule is a deliberate divergence from the
 //     Python reference - see "Divergences from Python" below.
 //  3. A done from process or headless is terminal - it wins at once, before
-//     the gate hold and before the precedence window, because nothing ever
+//     the warden hold and before the precedence window, because nothing ever
 //     re-sends it. A done from any other source was already rejected by
 //     proto.Validate; if it reaches here anyway (a caller that skipped
 //     Validate), it is downgraded to unknown from that same source rather
 //     than silently dropped or accepted as done, because the source did
 //     observe something. This downgrade is a second divergence from
 //     Python - see below.
-//  4. A gate blocked (which always carries an ask) holds until a gate event
+//  4. A warden blocked (which always carries an ask) holds until a warden event
 //     clears it, or its ask's deadline has passed. While it holds, every
 //     other incoming source - INCLUDING operator - gets cur back: the ask's
-//     answer arrives through the gate, not through an arbitrary operator
+//     answer arrives through the warden, not through an arbitrary operator
 //     fact. Once the deadline has passed the hold releases and this falls
 //     through to rules 5 and 6 below; it does NOT synthesize a "working" event
-//     here - the gate always sends its own working report the moment its
+//     here - the warden always sends its own working report the moment its
 //     wait resolves, and a reader with nothing fresh to merge against calls
 //     EffectiveState instead.
 //  5. A manifest blocked read holds against a process idle: a question
@@ -93,9 +93,9 @@ func endsTheSession(in proto.PaneStateEvent) bool {
 //     (ParseStateEvent enforces the rule for parsed input, via Validate,
 //     but a caller can still build the struct literal directly), so this
 //     rule exists purely as defense in depth for that path.
-//   - Rule 6, the hold-window clock: Python's merge() gates the window on
+//   - Rule 6, the hold-window clock: Python's merge() checks the window on
 //     `now - current.ts` - the CURRENT event's own self-reported timestamp,
-//     which a hook with a skewed clock controls. Go gates on
+//     which a hook with a skewed clock controls. Go checks on
 //     `now - curReceived`, the server's own receive clock, which no hook
 //     can influence. On TestTheHoldWindowIgnoresASkewedEventTimestamp's
 //     input (a cur.TS nine billion seconds in the future, but received by
@@ -132,19 +132,19 @@ func Merge(cur *proto.PaneStateEvent, curReceived float64,
 	}
 
 	// The session ending outranks every hold, whatever the current state is.
-	// This is checked before the gate branch and before the precedence
-	// window, because a gate WORKING hold would otherwise discard a process
+	// This is checked before the warden branch and before the precedence
+	// window, because a warden WORKING hold would otherwise discard a process
 	// exit that arrives inside the two-second window.
 	if endsTheSession(in) {
 		return in
 	}
 
-	// A gate hold: blocked from the gate stands until the gate itself clears
+	// A warden hold: blocked from the warden stands until the warden itself clears
 	// it, or the ask's deadline passes. Amended 2026-09-09: the operator does
-	// NOT clear it either - only a gate event does, because the ask's answer
-	// is a gate event, not an arbitrary operator fact.
-	if cur.State == proto.StateBlocked && cur.Source == proto.SrcGate {
-		if in.Source == proto.SrcGate {
+	// NOT clear it either - only a warden event does, because the ask's answer
+	// is a warden event, not an arbitrary operator fact.
+	if cur.State == proto.StateBlocked && cur.Source == proto.SrcWarden {
+		if in.Source == proto.SrcWarden {
 			return in
 		}
 		expired := cur.Ask != nil && now >= cur.Ask.Deadline
@@ -167,7 +167,7 @@ func Merge(cur *proto.PaneStateEvent, curReceived float64,
 
 	// Ordinary precedence. Amended 2026-09-09: the two-second window holds
 	// back cur only when the incoming event is from manifest. Every other
-	// source - headless, process, operator, gate - is a fact about what
+	// source - headless, process, operator, warden - is a fact about what
 	// actually happened and applies at once, even inside the window and even
 	// against a higher-rank current state: holding one of those back would
 	// swallow a true state change and show a stale pane. The window is
@@ -182,7 +182,7 @@ func Merge(cur *proto.PaneStateEvent, curReceived float64,
 }
 
 // EffectiveState is the read-time counterpart to Merge's expiry rule. Merge
-// only releases a gate-blocked hold when a FRESH incoming event actually
+// only releases a warden-blocked hold when a FRESH incoming event actually
 // arrives; a reader holding nothing but a cached event - coppice-server
 // reading the last known state, a cockpit roster view - has no fresh event to
 // merge against. This returns cur unchanged unless it is blocked with an ask
@@ -190,9 +190,9 @@ func Merge(cur *proto.PaneStateEvent, curReceived float64,
 // State = working, Ask = nil and Detail = "ask deadline passed", so a stale
 // blocked hold never displays forever.
 //
-// This is not restricted to source == gate: any blocked event carrying an
+// This is not restricted to source == warden: any blocked event carrying an
 // ask expires the same way once its deadline passes - a headless- or
-// process-sourced block with a stale ask is just as stale as a gate one. A
+// process-sourced block with a stale ask is just as stale as a warden one. A
 // blocked event with no ask never expires here, matching Merge's own hold.
 func EffectiveState(cur *proto.PaneStateEvent, now float64) *proto.PaneStateEvent {
 	if cur == nil {

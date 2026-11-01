@@ -37,8 +37,11 @@ opendaisugi-session2summary.md
 gateway-spike-log/
 .superpowers/
 
-# clients/gate.py caches oracle verdicts beside the corpus it scored. Mismatch
+# clients/safety_check.py caches oracle verdicts beside the corpus it scored. Mismatch
 # samples embed corpus content, so the cache is never committed.
-.gate-cache/
+.safety-check-cache/
 harness/coppice/.smoke/
 .speed/
+
+# pictures written by examples/gallery3d/render_*.py
+examples/gallery3d/out/

@@ -18,7 +18,7 @@ pub const STATE_DONE: &str = "done";
 pub const STATE_UNKNOWN: &str = "unknown";
 
 pub const SRC_OPERATOR: &str = "operator";
-pub const SRC_GATE: &str = "gate";
+pub const SRC_WARDEN: &str = "warden";
 pub const SRC_HEADLESS: &str = "headless";
 pub const SRC_PROCESS: &str = "process";
 pub const SRC_MANIFEST: &str = "manifest";
@@ -43,7 +43,7 @@ fn valid_state(s: &str) -> bool {
 pub fn source_rank(src: &str) -> i32 {
     match src {
         SRC_OPERATOR => 5,
-        SRC_GATE => 4,
+        SRC_WARDEN => 4,
         SRC_HEADLESS => 3,
         SRC_PROCESS => 2,
         SRC_MANIFEST => 1,
@@ -138,7 +138,7 @@ impl Event {
         }
         if source_rank(&self.source) == 0 {
             return Err(format!(
-                "source {} is not one of operator gate headless process manifest",
+                "source {} is not one of operator warden headless process manifest",
                 crate::sys::go_quote(&self.source)
             ));
         }
@@ -161,8 +161,8 @@ impl Event {
         if let Some(a) = self.ask.as_mut() {
             a.tier = normal_tier(&a.tier);
         }
-        if self.source == SRC_GATE && self.state == STATE_BLOCKED && self.ask.is_none() {
-            return Err("a gate blocked event must carry the ask it is holding".into());
+        if self.source == SRC_WARDEN && self.state == STATE_BLOCKED && self.ask.is_none() {
+            return Err("a warden blocked event must carry the ask it is holding".into());
         }
         if self.who.is_some() && self.source != SRC_OPERATOR {
             return Err(format!(
@@ -344,7 +344,7 @@ pub fn parse_event(raw: &str) -> Result<Event, String> {
     Ok(ev)
 }
 
-/// The gate's decision on one tool call, as a gate hook reports it.
+/// The warden's decision on one tool call, as a warden hook reports it.
 #[derive(Clone, Debug, Default)]
 pub struct Verdict {
     pub decision: String,
@@ -352,7 +352,7 @@ pub struct Verdict {
     pub clause: String,
 }
 
-/// The optional fields a gate hook sends beside the event.
+/// The optional fields a warden hook sends beside the event.
 #[derive(Clone, Debug, Default)]
 pub struct ReportExtras {
     pub transcript_path: String,
@@ -432,8 +432,8 @@ pub fn merge(cur: Option<&Event>, cur_received: f64, mut inc: Event, now: f64) -
     if ends_the_session(&inc) {
         return inc;
     }
-    if cur.state == STATE_BLOCKED && cur.source == SRC_GATE {
-        if inc.source == SRC_GATE {
+    if cur.state == STATE_BLOCKED && cur.source == SRC_WARDEN {
+        if inc.source == SRC_WARDEN {
             return inc;
         }
         let expired = cur.ask.as_ref().is_some_and(|a| now >= a.deadline);
@@ -559,8 +559,8 @@ mod tests {
     }
 
     #[test]
-    fn a_gate_hold_waits_for_the_gate_or_the_deadline() {
-        let mut cur = ev(STATE_BLOCKED, SRC_GATE);
+    fn a_warden_hold_waits_for_the_warden_or_the_deadline() {
+        let mut cur = ev(STATE_BLOCKED, SRC_WARDEN);
         cur.ask = Some(Ask {
             id: "a".into(),
             deadline: 100.0,
@@ -598,14 +598,14 @@ mod tests {
         );
         assert_eq!(
             parse_event(
-                r#"{"v":1,"ts":1,"session_id":"s","harness":"h","state":"blocked","source":"gate"}"#
+                r#"{"v":1,"ts":1,"session_id":"s","harness":"h","state":"blocked","source":"warden"}"#
             )
             .unwrap_err(),
-            "a gate blocked event must carry the ask it is holding"
+            "a warden blocked event must carry the ask it is holding"
         );
         assert_eq!(
             parse_event(
-                r#"{"v":1,"ts":"1","session_id":"s","harness":"h","state":"idle","source":"gate"}"#
+                r#"{"v":1,"ts":"1","session_id":"s","harness":"h","state":"idle","source":"warden"}"#
             )
             .unwrap_err(),
             "ts must be a number"

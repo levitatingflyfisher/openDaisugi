@@ -179,7 +179,7 @@ func (h *weaveHook) choose(step *pyjson.Object, results []supervise.ExecResult) 
 		rows := rank.Sweep(h.dataDir, t)
 		if len(res.Value("order").([]any)) > 1 {
 			run := pyjson.NewObject().Set("run_id", h.runID).Set("step", sid).Set("downstream", h.below(sid))
-			row := rank.OpenedRow(r, res, t, run)
+			row := rank.OpenedRow(r, res, t, run, "")
 			id := row.Value("choice_id").(string)
 			cid = id
 			known := false

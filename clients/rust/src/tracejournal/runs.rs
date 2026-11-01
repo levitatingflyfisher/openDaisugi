@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use rusqlite::params;
 
 use super::{dag, unreadable, Journal};
-use crate::gate::pyjson::{any_json, dumps, Object, Value};
+use crate::warden::pyjson::{any_json, dumps, Object, Value};
 use crate::pathways::store::{sql_err, Col};
 use crate::pathways::yamldump::safe_dump;
 use crate::pathways::PwErr;
@@ -181,7 +181,7 @@ fn receipt_row_err() -> PwErr {
 /// A TEXT column that must hold a JSON object.
 fn json_object_col(c: &Col) -> Result<Object, PwErr> {
     let Col::Text(t) = c else { return Err(receipt_row_err()) };
-    match crate::gate::pyjson::loads(t) {
+    match crate::warden::pyjson::loads(t) {
         Ok(Value::Obj(o)) => Ok(o),
         _ => Err(receipt_row_err()),
     }
@@ -233,7 +233,7 @@ impl Journal {
                 // A reversal handle: the model reads it; this binary
                 // checks only that it is a JSON object, the form the
                 // supervisor writes.
-                Col::Text(t) => match crate::gate::pyjson::loads(t) {
+                Col::Text(t) => match crate::warden::pyjson::loads(t) {
                     Ok(Value::Obj(o)) => Some(o),
                     _ => return Err(receipt_row_err()),
                 },

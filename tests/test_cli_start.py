@@ -1,8 +1,8 @@
 """CLI: `daisugi start` — the one way in.
 
 The 3rd of the plan's subprocess-spawning CLI tests (see the plan's Method
-note): `test_start_runs_end_to_end_and_spawns_the_resident_gate` really
-spawns `daisugi gate serve` in a subprocess. It needs an editable install
+note): `test_start_runs_end_to_end_and_spawns_the_resident_warden` really
+spawns `daisugi warden serve` in a subprocess. It needs an editable install
 (`sys.executable -m opendaisugi.cli` resolving the package) and only works
 in this working tree, not an isolated git-archive scratch — that's expected.
 """
@@ -16,7 +16,7 @@ import subprocess
 from typer.testing import CliRunner
 
 from opendaisugi.cli import app
-from opendaisugi.gate_server import SOCK_NAME
+from opendaisugi.warden_server import SOCK_NAME
 
 runner = CliRunner()
 
@@ -43,7 +43,7 @@ def test_start_dry_run_prints_the_steps_and_writes_nothing(tmp_path, monkeypatch
         app, ["start", "--dry-run", "--no-ui", "--data-dir", str(tmp_path / "data")]
     )
     assert res.exit_code == 0, res.output
-    for key in ("harness", "hook", "envelope", "gate-server", "view"):
+    for key in ("harness", "hook", "envelope", "warden-server", "view"):
         assert key in res.output
     assert not (tmp_path / ".claude" / "settings.json").exists()
     assert not (tmp_path / "data").exists()
@@ -71,12 +71,12 @@ def test_ask_without_enforce_is_an_explicit_error(tmp_path, monkeypatch):
     assert "--enforce" in res.output
 
 
-def test_start_runs_end_to_end_and_spawns_the_resident_gate(tmp_path, monkeypatch):
+def test_start_runs_end_to_end_and_spawns_the_resident_warden(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/claude")
     data_dir = tmp_path / "data"
-    root = data_dir / "gate"
+    root = data_dir / "warden"
     res = runner.invoke(app, ["start", "--no-ui", "--data-dir", str(data_dir)])
     try:
         assert res.exit_code == 0, res.output

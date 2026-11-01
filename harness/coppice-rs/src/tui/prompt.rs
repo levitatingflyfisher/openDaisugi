@@ -1,5 +1,5 @@
 //! The prompt line: plumbing the floor runs itself, or talk meant for a
-//! foreman; and floor.json, the layout and the lock between runs.
+//! steward; and floor.json, the layout and the lock between runs.
 
 use std::io::Write;
 use std::path::Path;
@@ -21,26 +21,26 @@ pub const HARNESSES: &[&str] = &["claude", "codex", "pi", "sprig", "opencode"];
 /// The plumbing verbs the prompt line answers to.
 pub const VERBS: &[&str] = &[
     "list", "read", "close", "open", "swap", "rotate", "reset", "lock", "unlock", "layout", "tree",
-    "zoom", "foreman",
+    "zoom", "steward",
 ];
 
-/// The label of the pane "foreman <harness>" opens.
-pub const FOREMAN_LABEL: &str = "foreman";
+/// The label of the pane "steward <harness>" opens.
+pub const STEWARD_LABEL: &str = "steward";
 
-/// The one line that makes a pane the foreman.
+/// The one line that makes a pane the steward.
 #[cfg(test)]
 pub const PROMOTION_LINE: &str =
-    "Run: coppice skill foreman. Follow it. You are the foreman of this floor. Say ready.";
+    "Run: coppice skill steward. Follow it. You are the steward of this floor. Say ready.";
 
-/// The line that makes a pane the foreman of one task.
+/// The line that makes a pane the steward of one task.
 pub fn task_promotion_line(task: &str) -> String {
     format!(
-        "Run: coppice skill foreman. Follow it. You are the foreman of task {task}. Its panes' asks come to you first. Say ready."
+        "Run: coppice skill steward. Follow it. You are the steward of task {task}. Its panes' asks come to you first. Say ready."
     )
 }
 
-pub const NO_FOREMAN_ANSWER: &str =
-    "no foreman yet. Say a sentence and one starts, or type: foreman claude";
+pub const NO_STEWARD_ANSWER: &str =
+    "no steward yet. Say a sentence and one starts, or type: steward claude";
 
 pub const LOCKED_MESSAGE: &str = "Layout is locked. Type unlock first.";
 pub const SWAP_NEEDS_MESSAGE: &str = "swap needs two slot numbers, as in swap 1 2";

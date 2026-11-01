@@ -12,9 +12,9 @@
 
 use std::sync::OnceLock;
 
-use crate::gate::pydantic::{truncate_repr, DOCS_VERSION};
-use crate::gate::pyjson::{py_repr, py_type_name, Object, Value};
-use crate::gate::pymodel::{float_to_int, str_as_float, str_as_int};
+use crate::warden::pydantic::{truncate_repr, DOCS_VERSION};
+use crate::warden::pyjson::{py_repr, py_type_name, Object, Value};
+use crate::warden::pymodel::{float_to_int, str_as_float, str_as_int};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -277,7 +277,7 @@ fn empty_str() -> Value {
 
 /// Eight random hex digits, as `uuid4().hex[:8]` gives them.
 fn hex8() -> String {
-    crate::gate::random_hex(4).unwrap_or_else(|_| "00000000".into())
+    crate::warden::random_hex(4).unwrap_or_else(|_| "00000000".into())
 }
 
 fn int2() -> Value {
@@ -404,6 +404,9 @@ fn build() -> Models {
             def("shell_allowlist", list(Str), empty_list),
             def("shell_allow_decomposition", Bool, f_false),
             def("mcp_allowlist", list(Str), empty_list),
+            // models.McpRule entries are kept as given: the pathway store
+            // only round-trips them, and the verifier reads them with serde.
+            def("mcp_rules", list(Schema::Any), empty_list),
             def("custom_step_allowlist", list(Str), empty_list),
             def("max_execution_time_s", Int, || Value::Int("30".into())),
             def("max_output_size_mb", Int, || Value::Int("10".into())),
@@ -1044,7 +1047,7 @@ impl Schema {
                         return (v, vec![]);
                     }
                 }
-                let quoted: Vec<String> = choices.iter().map(|c| crate::gate::py::text::repr(c)).collect();
+                let quoted: Vec<String> = choices.iter().map(|c| crate::warden::py::text::repr(c)).collect();
                 let msg = if quoted.len() == 1 {
                     format!("Input should be {}", quoted[0])
                 } else {
@@ -1082,7 +1085,7 @@ fn go_num(f: f64) -> String {
     if f.fract() == 0.0 && f.abs() < 1e15 {
         format!("{}", f as i64)
     } else {
-        crate::gate::pyjson::float_repr(f)
+        crate::warden::pyjson::float_repr(f)
     }
 }
 
@@ -1185,11 +1188,11 @@ pub fn decode_dict_text(text: &str) -> Decoded {
     if text.chars().count() > 65_536 {
         return Decoded::default();
     }
-    let body = crate::gate::py::text::strip(text);
+    let body = crate::warden::py::text::strip(text);
     if !body.starts_with('{') {
         return Decoded::default();
     }
-    if let Ok(Value::Obj(o)) = crate::gate::pyjson::loads_py(body, 900) {
+    if let Ok(Value::Obj(o)) = crate::warden::pyjson::loads_py(body, 900) {
         return Decoded { dict: Some(o), ..Decoded::default() };
     }
     let lit = literal_eval(body);
@@ -1501,7 +1504,7 @@ mod tests {
         match (k, got) {
             ("int", Value::Int(t)) => inner.as_str() == Some(t.as_str()),
             ("float", Value::Float(f)) => {
-                let r = crate::gate::pyjson::float_repr(*f);
+                let r = crate::warden::pyjson::float_repr(*f);
                 let r = match r.as_str() {
                     "Infinity" => "inf".to_string(),
                     "-Infinity" => "-inf".to_string(),
@@ -1541,7 +1544,7 @@ mod tests {
         let text = std::fs::read_to_string(path).expect("clients/fixtures/literal (clients/literal_cases.py)");
         let (mut n, mut over, mut bad) = (0, 0, vec![]);
         for line in text.lines().filter(|l| !l.is_empty()) {
-            let c = crate::gate::pyjson::loads_py(line, 900).expect("a case line");
+            let c = crate::warden::pyjson::loads_py(line, 900).expect("a case line");
             let c = c.as_obj().expect("a case object");
             let t = c.value("text").as_str().expect("text").to_string();
             let warn = matches!(c.value("warn"), Value::Bool(true));
@@ -1618,7 +1621,7 @@ mod tests {
         let v = parse_json("GeneralizedTemplate", text).unwrap();
         let o = take_model(Id::GeneralizedTemplate, v, Mode::Python).unwrap();
         let steps = o.as_obj().unwrap().value("plan_template").as_obj().unwrap().value("steps").clone();
-        assert_eq!(crate::gate::pyjson::dumps(&steps, true).contains("\"command\": \"ls\""), true);
+        assert_eq!(crate::warden::pyjson::dumps(&steps, true).contains("\"command\": \"ls\""), true);
     }
 
     #[test]

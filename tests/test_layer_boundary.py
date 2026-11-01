@@ -103,10 +103,10 @@ def _resolve_relative(dotted: str, is_package: bool, level: int, module: str | N
 
 def test_resolve_relative_against_synthetic_inputs():
     """Unit-tests the resolver in isolation, without touching real files."""
-    assert _resolve_relative("opendaisugi.gate", False, 1, "floor") == "opendaisugi.floor"
+    assert _resolve_relative("opendaisugi.warden", False, 1, "floor") == "opendaisugi.floor"
     assert _resolve_relative("opendaisugi", True, 1, "floor") == "opendaisugi.floor"
     assert _resolve_relative("opendaisugi.sub.mod", False, 2, "floor") == "opendaisugi.floor"
-    assert _resolve_relative("opendaisugi.gate", False, 1, None) == "opendaisugi"
+    assert _resolve_relative("opendaisugi.warden", False, 1, None) == "opendaisugi"
 
 
 def _is_dynamic_import_call(func: ast.expr) -> bool:
@@ -134,7 +134,7 @@ def test_upper_package_prefix_matching_is_exact():
     assert _is_upper("opendaisugi.floor.pane")
     assert _is_upper("opendaisugi.coppice.client")
     assert not _is_upper("opendaisugi.floorplan")
-    assert not _is_upper("opendaisugi.gate")
+    assert not _is_upper("opendaisugi.warden")
 
 
 def test_layer_modules_import_with_upper_packages_hidden(monkeypatch):

@@ -1,11 +1,11 @@
-//! The gate's verdict journal: the audit log each gate call appends one
+//! The warden's verdict journal: the audit log each warden call appends one
 //! JSON line to, under `<root>/audit/<session>.jsonl`. `build` is
-//! `gate.audit_report`; `Report::text` is what `daisugi gate report`
+//! `warden.audit_report`; `Report::text` is what `daisugi warden report`
 //! prints. The Go client's `journal` package is the reference.
 
-use super::gateroot::{audit_dir, join, legacy_audit_dir, safe_session_id};
-use crate::gate::py::text::{repr, splitlines, strip};
-use crate::gate::pyjson::{dumps_indent, loads, py_float_repr, LoadError, Object, Value};
+use super::wardenroot::{audit_dir, join, legacy_audit_dir, safe_session_id};
+use crate::warden::py::text::{repr, splitlines, strip};
+use crate::warden::pyjson::{dumps_indent, loads, py_float_repr, LoadError, Object, Value};
 
 /// Why a report was not made.
 #[derive(Debug)]
@@ -33,11 +33,11 @@ pub struct Report {
     pub denied: Vec<Object>,
     pub fp: Vec<usize>,
     pub reasons: Object,
-    /// The records with a dialect audit line (`gate._word_lines`).
+    /// The records with a dialect audit line (`warden._word_lines`).
     pub word: Vec<Object>,
 }
 
-/// `gate._word_lines`: a record's word_audit list, else none.
+/// `warden._word_lines`: a record's word_audit list, else none.
 fn word_lines(r: &Object) -> &[Value] {
     match r.value("word_audit") {
         Value::List(l) => l,
@@ -45,7 +45,7 @@ fn word_lines(r: &Object) -> &[Value] {
     }
 }
 
-/// `gate.word_would_deny`: the records of the audit log under root with a
+/// `warden.word_would_deny`: the records of the audit log under root with a
 /// non-empty word_audit list. A file it cannot read, or that is not UTF-8,
 /// is skipped, and so is a line that is not a JSON object.
 pub fn word_would_deny(root: &str) -> R<usize> {
@@ -133,7 +133,7 @@ pub fn build(files: &[String]) -> R<Report> {
     summarize(rep)
 }
 
-/// `gate._build_report` over records already in hand (the records `gate
+/// `warden._build_report` over records already in hand (the records `warden
 /// replay` decides).
 pub fn from_records(records: Vec<Object>) -> R<Report> {
     summarize(Report { records, denied: vec![], fp: vec![], reasons: Object::new(), word: vec![] })

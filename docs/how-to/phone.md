@@ -1,6 +1,6 @@
 # Use the phone
 
-See every pane, open one, prompt it, and answer the gate, from a phone in the
+See every pane, open one, prompt it, and answer the warden, from a phone in the
 kitchen. No app store, no relay, and nothing of Google's in the default path.
 
 ## Before you start
@@ -154,7 +154,7 @@ open that box's own URL.
 
 Running two coppice servers, on one box or on two, means two phones.
 `--data-dir` and `--socket` are the global flags that give a second instance
-its own token, its own certificate directory, and its own gate root, all
+its own token, its own certificate directory, and its own warden root, all
 under a data directory of its own. The two phones never share a credential.
 
 ## Push
@@ -237,5 +237,5 @@ server with itself, so there is one process to keep alive instead of two.
 | Add to home screen is missing | The page is not a secure context. Fix the certificate first. |
 | No panes yet. Tap New to start one. | There really are no panes. A refusal is never shown this way; it shows on the status line as `server refused: ...`. Tap New to start one, or run `coppice pane list` on the box to confirm the server really has none. |
 | The CA download will not open, or times out | Either `coppice web serve` is not running yet, since the CA hand-off port is only live while it runs, or the QR points at an address the phone cannot reach. Start the server first, then re-run `coppice web cert init` with the address the phone actually uses. |
-| That ask is gone. The gate timed out, or another client answered it. | The answer is landing in the wrong directory, or the ask expired first. Check the `gate_root` the server logged at startup against your gate directory, and set `--gate-root` if they differ. It defaults to the data directory's own parent, plus `gate`: `~/.opendaisugi/gate` under the default data directory. |
+| That ask is gone. The warden timed out, or another client answered it. | The answer is landing in the wrong directory, or the ask expired first. Check the `warden_root` the server logged at startup against your warden directory, and set `--warden-root` if they differ. It defaults to the data directory's own parent, plus `warden`: `~/.opendaisugi/warden` under the default data directory. |
 | Push never arrives | Open Settings and press Test push. `Push is off. Restart the server with --ntfy URL and --ntfy-topic NAME.` means push was never configured. `ntfy did not accept the message. Check the URL and the token.` means ntfy itself refused it. `Sent. Watch the ntfy app.` means the box did its part; check the ntfy app's own subscription. |

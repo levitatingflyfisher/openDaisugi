@@ -9,14 +9,14 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::config;
-use super::gatecmds::DECOMPOSE_OPT;
-use super::gateroot::{self, join, path_str};
+use super::wardencmds::DECOMPOSE_OPT;
+use super::wardenroot::{self, join, path_str};
 use super::journalcmd::{result_dump, JOURNAL_DATA_DIR};
 use super::statuscmd::load_json;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::capture::infer_envelope;
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::{dumps_indent, py_type_name, Object, Value};
+use crate::warden::py::text::{repr, strip};
+use crate::warden::pyjson::{dumps_indent, py_type_name, Object, Value};
 use crate::llm::{self, CallError, Client};
 use crate::pathways::pmodel::decode_dict_text;
 use crate::pathways::PwErr;
@@ -106,26 +106,26 @@ impl Env {
         Client::new(self.env.clone(), &self.home)
     }
 
-    /// The gate part of `cli._echo_resolved`, which it works out before
+    /// The warden part of `cli._echo_resolved`, which it works out before
     /// it resolves the backend.
-    fn gate_state(&self) -> Result<String, String> {
+    fn warden_state(&self) -> Result<String, String> {
         let data = self.data_home();
-        if gateroot::is_disarmed(&join(&data, "gate")) {
+        if wardenroot::is_disarmed(&join(&data, "warden")) {
             return Ok("disarmed".into());
         }
-        config::gate_mode(&join(&data, "config.yaml")).map_err(|e| e.to_string())
+        config::warden_mode(&join(&data, "config.yaml")).map_err(|e| e.to_string())
     }
 
-    /// `cli._echo_resolved(DEFAULT_DATA_DIR)`: the backend, the gate's
+    /// `cli._echo_resolved(DEFAULT_DATA_DIR)`: the backend, the warden's
     /// state and the data directory, on stderr.
     fn echo_resolved(&mut self, cmd: &str) -> Res {
-        let gate = match self.gate_state() {
+        let warden = match self.warden_state() {
             Ok(g) => g,
             Err(why) => return self.refuse(cmd, &why),
         };
         let backend = self.llm_client().backend();
         let shown = self.tilde(&self.data_home());
-        self.note(&format!("backend: {backend} · gate: {gate} · data: {shown}"));
+        self.note(&format!("backend: {backend} · warden: {warden} · data: {shown}"));
         Ok(())
     }
 
@@ -146,7 +146,7 @@ impl Env {
         if !llm::renamed(&self.llm_client().backend()) {
             return Ok(());
         }
-        if let Err(why) = self.gate_state() {
+        if let Err(why) = self.warden_state() {
             return self.refuse(cmd, &why);
         }
         self.errf(&format!("{}\n", llm::RENAMED_TEXT));
@@ -178,6 +178,7 @@ impl Env {
             .current_dir(&dir)
             .env_clear()
             .envs(&self.env)
+            .env(pando::live::SKIP_VAR, "1") // a model call of ours, not the owner's chat
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -258,7 +259,7 @@ impl Env {
         const CMD: &str = "journal parse";
         let opts = [
             Opt::val(&["-o", "--output"], "PATH", "Path to write the episodes YAML/JSON file."),
-            Opt::val(&["--format"], "TEXT", "Parser format (default: claude-code)."),
+            Opt::val(&["--format"], "TEXT", "Parser format: claude-code | codex | pi | opencode (default: claude-code)."),
             Opt::val(&["--min-tools"], "INTEGER", "Merge episodes below this tool-call threshold."),
             Opt::val(&["--max-tools"], "INTEGER", "LLM-split episodes above this tool-call threshold."),
             Opt::val(&["--model"], "TEXT", "Model for LLM splitting (rarely needed)."),
@@ -289,19 +290,26 @@ impl Env {
         }
         self.renamed_backend(CMD)?;
         let format = p.str("--format", "claude-code");
-        if format != "claude-code" && format != "codex" {
+        if !["claude-code", "codex", "pi", "opencode"].contains(&format.as_str()) {
             self.echo_resolved(CMD)?;
-            self.errf(&format!("Unknown parser format: {}. Available: ['claude-code', 'codex']\n", repr(&format)));
+            self.errf(&format!("Unknown parser format: {}. Available: ['claude-code', 'codex', 'opencode', 'pi']\n", repr(&format)));
             return exit(2);
         }
         // The transcript is read before the note Python prints first, so a
         // refusal is the run's one line. An exception the parse raises is
         // printed after the note, as Python prints it.
-        let raw = match std::fs::read(&path) {
-            Ok(r) => r,
-            Err(e) => return Err(self.pw_err(CMD, PwErr::Io(e))),
+        // An OpenCode session is a tree: the file named is one session's
+        // record, and its messages sit beside it in the storage tree.
+        let read = if format == "opencode" {
+            transcript::read_opencode(&path)
+        } else {
+            let raw = match std::fs::read(&path) {
+                Ok(r) => r,
+                Err(e) => return Err(self.pw_err(CMD, PwErr::Io(e))),
+            };
+            transcript::read(&raw, &format)
         };
-        let eps = match transcript::read(&raw, &format) {
+        let eps = match read {
             Ok(e) => e,
             Err(Fail::Unreadable(why)) => return self.refuse(CMD, &why),
             Err(Fail::Parse(m)) => {
@@ -435,7 +443,7 @@ impl Env {
             }
         }
         let source_file = pr.value("source_file").as_str().unwrap_or("").to_string();
-        let sum = crate::gate::sha256::hexdigest(source_file.as_bytes());
+        let sum = crate::warden::sha256::hexdigest(source_file.as_bytes());
         let episodes = match pr.value("episodes") {
             Value::List(l) => l.clone(),
             _ => vec![],
@@ -540,7 +548,7 @@ impl Env {
             records.push(rec);
         }
         let env = infer_envelope(parser, &records, &it.task, decompose).map_err(|e| self.pw_err(cmd, e))?;
-        let plan_id = match crate::gate::random_hex(4) {
+        let plan_id = match crate::warden::random_hex(4) {
             Ok(h) => h,
             Err(_) => return self.fail(cmd, "OSError: no random bytes"),
         };
@@ -670,7 +678,7 @@ fn mkdtemp(tmpdir: &str) -> std::io::Result<String> {
     use std::os::unix::fs::DirBuilderExt;
     let base = if tmpdir.is_empty() { "/tmp" } else { tmpdir };
     for _ in 0..100 {
-        let hex = crate::gate::random_hex(4).map_err(|_| std::io::Error::other("no random bytes"))?;
+        let hex = crate::warden::random_hex(4).map_err(|_| std::io::Error::other("no random bytes"))?;
         let d = format!("{base}/opendaisugi-claude-{hex}");
         match std::fs::DirBuilder::new().mode(0o700).create(&d) {
             Ok(()) => return Ok(d),

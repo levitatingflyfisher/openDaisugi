@@ -61,16 +61,16 @@ func TestCLIToolsWallRefusesACallOutsideIt(t *testing.T) {
 	if code != 0 || strings.TrimSpace(out.String()) != "could not" {
 		t.Fatalf("exit %d out=%q stderr=%q", code, out.String(), errb.String())
 	}
-	if len(seen) < 3 || seen[2].Text != "REFUSED by the gate: unknown tool: bash" {
+	if len(seen) < 3 || seen[2].Text != "REFUSED by the warden: unknown tool: bash" {
 		t.Fatalf("a call outside the wall must be refused as an unknown tool, got %+v", seen)
 	}
 }
 
 func TestCLIToolsEmptyOrUnknownExit2(t *testing.T) {
 	for _, tc := range []struct{ arg, want string }{
-		{"", "sprig: --tools is empty; name one or more of read, write, edit, bash, spawn\n"},
-		{"read,grep", "sprig: --tools: unknown tool \"grep\"; the tools are read, write, edit, bash, spawn\n"},
-		{"read,", "sprig: --tools: unknown tool \"\"; the tools are read, write, edit, bash, spawn\n"},
+		{"", "sprig: --tools is empty; name one or more of read, write, edit, bash, spawn, help\n"},
+		{"read,grep", "sprig: --tools: unknown tool \"grep\"; the tools are read, write, edit, bash, spawn, help\n"},
+		{"read,", "sprig: --tools: unknown tool \"\"; the tools are read, write, edit, bash, spawn, help\n"},
 	} {
 		var got ModelOptions
 		var out, errb bytes.Buffer

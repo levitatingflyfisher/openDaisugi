@@ -34,7 +34,9 @@ def _write_success_trace(journal: Journal, task: str) -> str:
     env = Envelope(
         generated_by="test",
         task=task,
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",

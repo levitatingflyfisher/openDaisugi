@@ -34,7 +34,7 @@ def _make_verify_step_that_rejects(reject_step_id: str, real_verify_step):
     """Return a verify_step function that rejects a specific step id.
 
     v0.22+: the supervisor now calls ``verify_step(step, envelope)`` for
-    per-step gates rather than ``verify(singleton_plan, envelope)``. This
+    per-step checks rather than ``verify(singleton_plan, envelope)``. This
     helper mirrors the rejection shape on the new signature.
     """
 
@@ -67,7 +67,7 @@ async def test_supervisor_halts_on_per_step_rejection(tmp_path):
     """A step that fails per-step verification triggers the fallback handler.
 
     The whole-plan verify passes (both steps are allowlisted shell commands),
-    but per-step verify is patched to reject s2 — simulating a policy gate
+    but per-step verify is patched to reject s2 — simulating a policy warden
     that is stricter at the per-step level.
     """
     env = _env_shell_only(["echo"])
@@ -264,7 +264,9 @@ async def test_supervisor_tags_refinement_with_envelope_cache_key(tmp_path):
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
         cache_key="test_cache_key_xyz",  # stamped by (simulated) generator
     )
     plan = _plan(ShellStep(id="s1", command="echo blocked"))

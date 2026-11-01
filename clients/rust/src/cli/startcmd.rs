@@ -1,6 +1,6 @@
-//! `daisugi start`: the gate hook scoped to this directory, a starter
-//! envelope keyed to it, the resident gate, then the plain live view
-//! (K4-5); the gate-server step starts this binary's own `gate serve`, as
+//! `daisugi start`: the warden hook scoped to this directory, a starter
+//! envelope keyed to it, the resident warden, then the plain live view
+//! (K4-5); the warden-server step starts this binary's own `warden serve`, as
 //! Python's start starts its own (G2-4). The Go client's
 //! `startcmd.go` is the reference.
 
@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 
 use super::config;
 use super::envelope;
-use super::gateroot::{self, join, parent, path_str};
+use super::wardenroot::{self, join, parent, path_str};
 use super::install::{self, HookOptions};
 use super::servecmd::{probe, Probe};
 use super::statuscmd::DATA_DIR_OPT;
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::len as py_len;
+use crate::warden::py::text::len as py_len;
 
 /// `start.StartStep`.
 struct Step {
@@ -37,13 +37,13 @@ const SERVER_WAIT: Duration = Duration::from_secs(2);
 /// `start._session_key`: the resolved directory's name, made
 /// filename-safe, and 8 hex digits of the SHA-256 of its path.
 fn session_key(cwd: &str) -> std::io::Result<String> {
-    let resolved = gateroot::resolve(cwd)?;
+    let resolved = wardenroot::resolve(cwd)?;
     let base = resolved.rsplit('/').next().unwrap_or(&resolved);
     let safe: String =
         base.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' }).collect();
     let name = safe.trim_matches(|c| c == '.' || c == '_');
     let name = if name.is_empty() { "start" } else { name };
-    let sum = crate::gate::sha256::hexdigest(resolved.as_bytes());
+    let sum = crate::warden::sha256::hexdigest(resolved.as_bytes());
     Ok(format!("{name}-{}", &sum[..8]))
 }
 
@@ -51,8 +51,8 @@ impl Env {
     pub(super) fn start(&mut self, args: &[String]) -> Res {
         const CMD: &str = "start";
         let opts = [
-            Opt::flag(&["--enforce"], "Install the gate in enforce mode (default: audit)."),
-            Opt::flag(&["--ask"], "Let the gate hand a would-deny to a present operator. Needs --enforce."),
+            Opt::flag(&["--enforce"], "Install the warden in enforce mode (default: audit)."),
+            Opt::flag(&["--ask"], "Let the warden hand a would-deny to a present operator. Needs --enforce."),
             Opt::flag(&["--no-ui"], "Do the setup, do not open the view."),
             Opt::flag(&["--dry-run"], "Show the steps and their state; change nothing."),
             DATA_DIR_OPT,
@@ -65,7 +65,7 @@ impl Env {
             return self.cmd_help(
                 CMD,
                 "",
-                "Get a gated session over this directory and watch it in the live view.",
+                "Get a checked session over this directory and watch it in the live view.",
                 &opts,
             );
         }
@@ -78,7 +78,7 @@ impl Env {
             );
             return exit(2);
         }
-        let cwd = match gateroot::getwd() {
+        let cwd = match wardenroot::getwd() {
             Ok(c) => path_str(&c),
             Err(e) => return self.fail(CMD, &e.to_string()),
         };
@@ -102,6 +102,9 @@ impl Env {
         if failed {
             return exit(1);
         }
+        if !dry && !self.quiet && self.unconfined(&join(&data_dir, "warden")) {
+            self.errf(&format!("{}\n", super::fencenotice::UNCONFINED_LINE));
+        }
         if dry || no_ui {
             return Ok(());
         }
@@ -124,7 +127,7 @@ impl Env {
     ) -> Result<Vec<Step>, Stop> {
         const CMD: &str = "start";
         let view = step("view", if no_ui { "skipped" } else { "would" }, VIEW_TEXT);
-        let root = join(data_dir, "gate");
+        let root = join(data_dir, "warden");
         let mode = if enforce { "enforce" } else { "audit" };
         let settings = join(cwd, ".claude/settings.json");
         let key = match session_key(cwd) {
@@ -140,11 +143,16 @@ impl Env {
             ));
             out.push(step("hook", "skipped", "no harness to hook into"));
             out.push(step("envelope", "skipped", "no harness session to register an envelope for"));
-            out.push(step("gate-server", "skipped", "no harness session needs it yet"));
+            out.push(step("warden-server", "skipped", "no harness session needs it yet"));
             out.push(view);
             return Ok(out);
         };
         out.push(step("harness", "done", format!("Claude Code found at {claude}")));
+        // The hook bakes the warden root. A relative one is refused before any
+        // write, in a dry run too: a plan must not promise a hook it cannot write.
+        if let Err(e) = install::check_warden_root(&root) {
+            return Err(self.refuse(CMD, &e.to_string()).unwrap_err());
+        }
         const UNREADABLE: &str = "a Claude Code settings.json holds hooks this binary does not read yet";
         let global = join(&self.home, ".claude/settings.json");
         let mut global_note = String::new();
@@ -155,8 +163,8 @@ impl Env {
             };
             if !gm.is_empty() {
                 global_note = format!(
-                    " (note: a machine-global gate hook is ALSO installed at {global}, mode: {gm} — \
-                     `daisugi install --gate` put it there; it fires on every directory's sessions, including this one)"
+                    " (note: a machine-global warden hook is ALSO installed at {global}, mode: {gm} — \
+                     `daisugi install` put it there; it fires on every directory's sessions, including this one)"
                 );
             }
         }
@@ -181,25 +189,62 @@ impl Env {
                     ask,
                 },
             );
-            match install::plan_claude_gate(&settings, &entry) {
+            match install::plan_claude_warden(&settings, &entry) {
                 Ok(e) => edit = e,
                 Err(e) => return Err(self.refuse(CMD, &e.to_string()).unwrap_err()),
             }
         }
-        let env_path = join(&gateroot::envelopes_dir(&root), &format!("{key}.json"));
+        // `start --enforce` over an audit project hook rewrites it in place,
+        // as `install --enforce` does, and says so in one line. Never steps down.
+        let mut step_up: Option<install::Edit> = None;
+        if installed == "audit" && mode == "enforce" {
+            let me = self.self_path().map_err(|e| self.fail(CMD, &e).unwrap_err())?;
+            let env = self.env.clone();
+            let (me, _) = install::hook_path(&me, &self.env, &|tool: &str| install::mise_which(&env, tool));
+            let entry = install::hook_entry(
+                &me,
+                &HookOptions {
+                    mode: mode.into(),
+                    root: root.clone(),
+                    format: "claude".into(),
+                    captures_root: None,
+                    session: Some(key.clone()),
+                    ask,
+                },
+            );
+            match install::plan_claude_warden(&settings, &entry) {
+                Ok(Some(up)) if up.warning.is_empty() && !up.note_only && !up.note.is_empty() => step_up = Some(up),
+                Ok(_) => {}
+                Err(e) => return Err(self.refuse(CMD, &e.to_string()).unwrap_err()),
+            }
+        }
+        let env_path = join(&wardenroot::envelopes_dir(&root), &format!("{key}.json"));
         let env_exists = std::fs::metadata(&env_path).is_ok();
         let mut starter = None;
         if !env_exists && act {
-            let ws = gateroot::resolve(cwd).map_err(|e| self.fail(CMD, &e.to_string()).unwrap_err())?;
+            let ws = wardenroot::resolve(cwd).map_err(|e| self.fail(CMD, &e.to_string()).unwrap_err())?;
             match envelope::starter(&ws, false) {
                 Ok(o) => starter = Some(o),
                 Err(e) => return Err(self.fail(CMD, &e.to_string()).unwrap_err()),
             }
         }
-        if !installed.is_empty() {
+        if let Some(up) = &step_up {
+            if act {
+                let res = install::apply(up);
+                if let Ok(followed) = &res {
+                    self.note_file(&settings, followed);
+                }
+                if let Err(err) = res {
+                    return Err(self.pw_err(CMD, crate::pathways::PwErr::Io(err)));
+                }
+                out.push(step("hook", "done", format!("{}{global_note}", up.note)));
+            } else {
+                out.push(step("hook", "would", format!("would change the warden hook: {}{global_note}", up.note)));
+            }
+        } else if !installed.is_empty() {
             let hint = if installed != mode {
                 format!(
-                    "; it's already {installed} — to switch to {mode}, remove the gate hook line from {settings} and run \
+                    "; it's already {installed} — to switch to {mode}, remove the warden hook line from {settings} and run \
                      `daisugi start` again"
                 )
             } else {
@@ -209,17 +254,12 @@ impl Env {
                 "hook",
                 "skipped",
                 format!(
-                    "a gate hook is already installed in {settings} (mode: {installed}, this directory only){hint}{global_note}"
+                    "a warden hook is already installed in {settings} (mode: {installed}, this directory only){hint}{global_note}"
                 ),
             ));
         } else if act {
             if let Err(e) = std::fs::create_dir_all(parent(&settings)) {
                 return Err(self.pw_err(CMD, crate::pathways::PwErr::Io(e)));
-            }
-            // install._absolute_gate_root raises here, after the directory is made.
-            if let Err(install::InstErr::GateRoot(m)) = install::check_gate_root(&root) {
-                self.errf(&format!("Traceback (most recent call last): ...\nValueError: {m}\n"));
-                return Err(exit(1).unwrap_err());
             }
             if let Some(e) = &edit {
                 if !e.warning.is_empty() {
@@ -237,16 +277,16 @@ impl Env {
                 "hook",
                 "done",
                 format!(
-                    "installed the gate hook in {mode} mode into {settings} (this directory only){global_note} — a \
+                    "installed the warden hook in {mode} mode into {settings} (this directory only){global_note} — a \
                      project-settings hook needs Claude Code to trust this folder before it fires; confirm it did with \
-                     `daisugi gate report`"
+                     `daisugi warden report`"
                 ),
             ));
         } else {
             out.push(step(
                 "hook",
                 "would",
-                format!("install the gate hook in {mode} mode into {settings} (this directory only){global_note}"),
+                format!("install the warden hook in {mode} mode into {settings} (this directory only){global_note}"),
             ));
         }
         if env_exists {
@@ -261,53 +301,53 @@ impl Env {
         } else {
             out.push(step("envelope", "would", format!("register a starter envelope for {cwd}")));
         }
-        let sock = join(&root, "gate.sock");
-        // A socket file is not a running gate: a server stopped by SIGKILL
+        let sock = join(&root, "warden.sock");
+        // A socket file is not a running warden: a server stopped by SIGKILL
         // leaves it behind. Only one that answers is.
         let state = probe(&sock);
         if state == Probe::Live {
-            out.push(step("gate-server", "skipped", "the resident gate is already running"));
+            out.push(step("warden-server", "skipped", "the resident warden is already running"));
         } else if act {
             if state == Probe::Stale {
                 let _ = std::fs::remove_file(&sock);
             }
-            // start._detach: this binary's `gate serve`, in a session of
+            // start._detach: this binary's `warden serve`, in a session of
             // its own, with no terminal; then the socket must appear.
-            self.spawn_gate_server(&root);
+            self.spawn_warden_server(&root);
             let t0 = Instant::now();
-            while !gateroot::exists(&sock) && t0.elapsed() < SERVER_WAIT {
+            while !wardenroot::exists(&sock) && t0.elapsed() < SERVER_WAIT {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            if gateroot::exists(&sock) {
-                out.push(step("gate-server", "done", format!("started the resident gate on {sock}")));
+            if wardenroot::exists(&sock) {
+                out.push(step("warden-server", "done", format!("started the resident warden on {sock}")));
             } else {
                 out.push(step(
-                    "gate-server",
+                    "warden-server",
                     "failed",
                     format!(
-                        "started `daisugi gate serve` but {sock} never appeared after {}s. Run `daisugi gate serve --root \
+                        "started `daisugi warden serve` but {sock} never appeared after {}s. Run `daisugi warden serve --root \
                          {root}` in a terminal to see why it exited.",
                         SERVER_WAIT.as_secs()
                     ),
                 ));
             }
         } else {
-            out.push(step("gate-server", "would", "start the resident gate (daisugi gate serve)"));
+            out.push(step("warden-server", "would", "start the resident warden (daisugi warden serve)"));
         }
         out.push(view);
         Ok(out)
     }
 
-    /// Starts `<self> gate serve --root root --captures-root root/captures` detached, with this
+    /// Starts `<self> warden serve --root root --captures-root root/captures` detached, with this
     /// process's environment and no stdin, stdout or stderr. A spawn that
     /// fails is seen as a socket that never appears.
-    fn spawn_gate_server(&self, root: &str) {
+    fn spawn_warden_server(&self, root: &str) {
         use std::os::unix::process::CommandExt;
         let Ok(me) = self.self_path() else { return };
         let mut c = Command::new(me);
         // The first server wins, so start fixes the captures root the fence
         // fixes (FN-R-35).
-        c.args(start_gate_args(root))
+        c.args(start_warden_args(root))
             .env_clear()
             .envs(&self.env)
             .stdin(Stdio::null())
@@ -324,11 +364,11 @@ impl Env {
     }
 }
 
-/// The argv start gives `<self>`: `gate serve`, its root, and the captures
+/// The argv start gives `<self>`: `warden serve`, its root, and the captures
 /// root the fence gives (FN-R-35).
-fn start_gate_args(root: &str) -> Vec<String> {
-    let mut v: Vec<String> = ["gate", "serve", "--root", root].iter().map(|s| s.to_string()).collect();
-    v.extend(crate::fence::gate_captures_args(root));
+fn start_warden_args(root: &str) -> Vec<String> {
+    let mut v: Vec<String> = ["warden", "serve", "--root", root].iter().map(|s| s.to_string()).collect();
+    v.extend(crate::fence::warden_captures_args(root));
     v
 }
 
@@ -336,10 +376,10 @@ fn start_gate_args(root: &str) -> Vec<String> {
 mod captures_tests {
     /// tests/test_start.py is the oracle's copy.
     #[test]
-    fn start_gives_the_resident_gate_the_captures_root_the_fence_gives() {
+    fn start_gives_the_resident_warden_the_captures_root_the_fence_gives() {
         assert_eq!(
-            super::start_gate_args("/d/gate"),
-            ["gate", "serve", "--root", "/d/gate", "--captures-root", "/d/gate/captures"]
+            super::start_warden_args("/d/warden"),
+            ["warden", "serve", "--root", "/d/warden", "--captures-root", "/d/warden/captures"]
         );
     }
 }

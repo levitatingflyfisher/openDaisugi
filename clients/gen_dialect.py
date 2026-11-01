@@ -119,6 +119,64 @@ def go_source() -> str:
         f"var ddKeyList = []string{{{keys}}}",
         "",
     ]
+    lines += [
+        "// readerList is write_paths.READERS, by name. A command in both",
+        "// tables (cp, mv, ...) takes its flags from writerList; its entry here",
+        "// names the rule only.",
+        "var readerList = []writerSpec{",
+    ]
+    for name, spec in sorted(write_paths.READERS.items()):
+        fields = [f"Name: {_go_str(name)}", f"Rule: {_go_str(spec['rule'])}"]
+        for key, go in (
+            ("short", "Short"),
+            ("short_value", "ShortValue"),
+            ("short_optional", "ShortOptional"),
+        ):
+            if spec.get(key):
+                fields.append(f"{go}: {_go_str(spec[key])}")
+        for key, go in (
+            ("long", "Long"),
+            ("long_value", "LongValue"),
+            ("long_optional", "LongOptional"),
+        ):
+            if spec.get(key):
+                fields.append(f"{go}: []string{{{', '.join(_go_str(f) for f in spec[key])}}}")
+        lines.append(f"\t{{{', '.join(fields)}}},")
+    lines += [
+        "}",
+        "",
+        "// findArgList is write_paths.FIND_ARGS in order: a test or action and its",
+        "// argument count (-1: an -exec style clause, consumed through ; or +).",
+        "var findArgList = []struct {",
+        "\tName  string",
+        "\tCount int",
+        "}{",
+    ]
+    for name, count in write_paths.FIND_ARGS.items():
+        lines.append(f"\t{{{_go_str(name)}, {-1 if count == '*' else count}}},")
+    tar = write_paths.TAR
+    lines += [
+        "}",
+        "",
+        "// The tar flag sets (write_paths.TAR).",
+        "const (",
+        f"\ttarModes = {_go_str(tar['modes'])}",
+        f"\ttarFlags = {_go_str(tar['flags'])}",
+        f"\ttarValue = {_go_str(tar['value'])}",
+        ")",
+        "",
+        f"var tarLong = []string{{{', '.join(_go_str(f) for f in tar['long'])}}}",
+        f"var tarLongValue = []string{{{', '.join(_go_str(f) for f in tar['long_value'])}}}",
+        "",
+        "// cwdMoverList is write_paths.CWD_MOVERS.",
+        f"var cwdMoverList = []string{{{', '.join(_go_str(f) for f in sorted(write_paths.CWD_MOVERS))}}}",
+        "",
+        "// unknownReasons is write_paths.UNKNOWN_REASONS, in order. {head} is the command.",
+        "var unknownReasons = []string{",
+    ]
+    for r in write_paths.UNKNOWN_REASONS:
+        lines.append(f"\t{_go_str(r)},")
+    lines += ["}", ""]
     return "\n".join(lines)
 
 
@@ -202,6 +260,57 @@ def rust_source() -> str:
     ]
     for key in sorted(write_paths.DD_KEYS):
         lines.append(f"    {_rust_str(key)},")
+    lines += ["];", ""]
+    lines += [
+        "/// `write_paths.READERS`, by command name. A command in both tables takes",
+        "/// its flags from `WRITERS`; its entry here names the rule only.",
+        "pub const READERS: &[(&str, WriterSpec)] = &[",
+    ]
+    for name, spec in sorted(write_paths.READERS.items()):
+
+        def rlst(key: str, spec: dict = spec) -> str:
+            return "&[" + ", ".join(_rust_str(f) for f in spec.get(key, [])) + "]"
+
+        lines += [
+            f"    ({_rust_str(name)}, WriterSpec {{",
+            f"        rule: {_rust_str(spec['rule'])},",
+            f"        short: {_rust_str(spec.get('short', ''))},",
+            f"        short_value: {_rust_str(spec.get('short_value', ''))},",
+            f"        short_optional: {_rust_str(spec.get('short_optional', ''))},",
+            f"        long: {rlst('long')},",
+            f"        long_value: {rlst('long_value')},",
+            f"        long_optional: {rlst('long_optional')},",
+            "    }),",
+        ]
+    lines += [
+        "];",
+        "",
+        "/// `write_paths.FIND_ARGS` in order: a test or action and its argument count",
+        "/// (-1: an -exec style clause, consumed through ; or +).",
+        "pub const FIND_ARGS: &[(&str, i32)] = &[",
+    ]
+    for name, count in write_paths.FIND_ARGS.items():
+        lines.append(f"    ({_rust_str(name)}, {-1 if count == '*' else count}),")
+    tar = write_paths.TAR
+    movers = ", ".join(_rust_str(f) for f in sorted(write_paths.CWD_MOVERS))
+    lines += [
+        "];",
+        "",
+        "/// `write_paths.TAR`.",
+        f"pub const TAR_MODES: &str = {_rust_str(tar['modes'])};",
+        f"pub const TAR_FLAGS: &str = {_rust_str(tar['flags'])};",
+        f"pub const TAR_VALUE: &str = {_rust_str(tar['value'])};",
+        f"pub const TAR_LONG: &[&str] = &[{', '.join(_rust_str(f) for f in tar['long'])}];",
+        f"pub const TAR_LONG_VALUE: &[&str] = &[{', '.join(_rust_str(f) for f in tar['long_value'])}];",
+        "",
+        "/// `write_paths.CWD_MOVERS`.",
+        f"pub const CWD_MOVERS: &[&str] = &[{movers}];",
+        "",
+        "/// `write_paths.UNKNOWN_REASONS`, in order. `{head}` is the command.",
+        "pub const UNKNOWN_REASONS: &[&str] = &[",
+    ]
+    for r in write_paths.UNKNOWN_REASONS:
+        lines.append(f"    {_rust_str(r)},")
     lines += ["];", ""]
     return "\n".join(lines)
 

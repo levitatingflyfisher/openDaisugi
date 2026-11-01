@@ -29,9 +29,9 @@ READ_COMMANDS = [
     ["dashboard"],
     ["models", "list"],
     ["models", "search"],
-    ["gate", "status"],
-    ["gate", "report"],
-    ["gate", "audit"],
+    ["warden", "status"],
+    ["warden", "report"],
+    ["warden", "audit"],
     ["hook", "list"],
     ["pathways", "list"],
     ["pathways", "show"],
@@ -61,8 +61,8 @@ def test_read_command_accepts_json(cmd):
     assert "--json" in _click_params(cmd), f"{' '.join(cmd)} has no --json"
 
 
-def test_gate_status_json_has_mode(tmp_path):
-    res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate"), "--json"])
+def test_warden_status_json_has_mode(tmp_path):
+    res = runner.invoke(app, ["warden", "status", "--root", str(tmp_path / "warden"), "--json"])
     assert res.exit_code == 0, res.output
     body = json.loads(res.output)
     assert body["armed"] is True
@@ -70,8 +70,8 @@ def test_gate_status_json_has_mode(tmp_path):
     assert body["envelopes"] == []
 
 
-def test_gate_status_human_shows_mode(tmp_path, monkeypatch):
-    # gate_status_cmd reads both ~/.claude/settings.json and
+def test_warden_status_human_shows_mode(tmp_path, monkeypatch):
+    # warden_status_cmd reads both ~/.claude/settings.json and
     # ./.claude/settings.json for an installed hook's --mode (plan 5's fix 2:
     # the effective mode is the stricter of the two). Left unpatched, this
     # test's outcome depends on whatever hook (if any) happens to be
@@ -81,13 +81,13 @@ def test_gate_status_human_shows_mode(tmp_path, monkeypatch):
     # of the fresh --root.
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.chdir(tmp_path)
-    res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate")])
+    res = runner.invoke(app, ["warden", "status", "--root", str(tmp_path / "warden")])
     assert res.exit_code == 0
     assert "mode: audit" in res.output
 
 
-def test_gate_status_reports_a_cwd_only_enforce_hook(tmp_path, monkeypatch):
-    """`gate status` is THE command for "is the gate armed and in what mode" —
+def test_warden_status_reports_a_cwd_only_enforce_hook(tmp_path, monkeypatch):
+    """`warden status` is THE command for "is the warden armed and in what mode" —
     it must not show audit/config while a daisugi start --enforce hook (no
     global hook installed) is actually denying calls in this directory."""
     home = tmp_path / "home"
@@ -103,7 +103,7 @@ def test_gate_status_reports_a_cwd_only_enforce_hook(tmp_path, monkeypatch):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "py -m opendaisugi.gate_client --mode enforce --root /r",
+                                    "command": "py -m opendaisugi.warden_client --mode enforce --root /r",
                                 }
                             ]
                         }
@@ -114,7 +114,7 @@ def test_gate_status_reports_a_cwd_only_enforce_hook(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.chdir(proj)
-    res = runner.invoke(app, ["gate", "status", "--root", str(tmp_path / "gate"), "--json"])
+    res = runner.invoke(app, ["warden", "status", "--root", str(tmp_path / "warden"), "--json"])
     assert res.exit_code == 0, res.output
     body = json.loads(res.output)
     assert body["mode"] == "enforce"
@@ -133,8 +133,8 @@ def test_pathways_list_json_empty(tmp_path):
     assert json.loads(res.output) == []
 
 
-def test_gate_check_rejects_unknown_mode(tmp_path):
+def test_warden_check_rejects_unknown_mode(tmp_path):
     res = runner.invoke(
-        app, ["gate", "check", "--mode", "bogus", "--root", str(tmp_path)], input="{}"
+        app, ["warden", "check", "--mode", "bogus", "--root", str(tmp_path)], input="{}"
     )
     assert res.exit_code != 0

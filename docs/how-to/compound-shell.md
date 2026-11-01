@@ -30,7 +30,7 @@ daisugi hook to-trace sess --no-allow-shell-decomposition   # this run, off
 ```
 
 The flag is available on `onboard`, `journal ingest`, `hook to-trace`, `hook auto-tend`,
-`generate-envelope`, and `gate init`.
+`generate-envelope`, and `warden init`.
 
 Persisting it is not a convenience. `daisugi hook auto-tend` is how captures become traces
 in the background — it runs from cron and from a detached spawn, with no argv to carry a
@@ -49,8 +49,14 @@ Since ADR-0014 the grammar also proves *effects*, not just structure:
 | `sort x > out.txt`, `wc < in.txt` | the literal target is checked against the envelope's `file_write` / `file_read` scopes — `> /etc/passwd` is rejected by *scope* unless your envelope authorizes it |
 | `> /dev/null`, `2>&1`, `2>&-` | sanctioned pathless sinks and fd operations — always pass |
 | `echo $(git rev-parse HEAD)`, backticks, `<(sort a)` | the substitution body is recursively decomposed; `git` faces the allowlist like any head |
-| `timeout 30 git fetch`, `nice -n10 make`, `xargs rm`, `sh -c '…'` | the wrapped command is extracted and recursively verified — the wrapper *and* its payload's head both face the allowlist |
+| `timeout 30 git fetch`, `nice -n10 make`, `xargs rm`, `sh -c '…'` | the wrapped command is extracted and recursively verified — the wrapper *and* its payload's head both face the allowlist (a reader or writer under `xargs` has unknown operands, so it denies unless the scope is `**`) |
 | `grep "a\|b" f` | quoted metacharacters are data; the grammar has proved it, so the part is not re-rejected |
+
+Operands are placed too. `cp a /etc/x`, `cat /etc/passwd`, `tar -xzf in.tgz -C /` and
+`grep -r key ~/` face `file_write` and `file_read` like a redirect does; a recursive access
+needs a glob that ends in `/**`. A relative path is placed from the call's cwd. `ls | xargs cat`
+is denied: `xargs` adds operands the line does not show. See
+[What the warden places](warden.md#what-the-warden-places).
 
 These still fail closed, because the touched path or program genuinely is not known
 until runtime:
@@ -72,7 +78,7 @@ targets, and 49 parse errors — nothing else.
 With the field on and the grammar *not* installed, every compound command is denied — the
 verifier never treats a missing capability as permission. That is the one state worth
 watching for, because it looks exactly like the problem you turned the opt-in on to solve.
-`daisugi status` names it, and `gate init`, `journal ingest`, `generate-envelope` and
+`daisugi status` names it, and `warden init`, `journal ingest`, `generate-envelope` and
 `install` warn at the moment they write it.
 
 ## What it recovers, honestly

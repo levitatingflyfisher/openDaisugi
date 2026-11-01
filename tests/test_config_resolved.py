@@ -17,9 +17,9 @@ def _by_key(fields):
 
 
 def test_file_values_are_marked_file_and_others_default(tmp_path):
-    (tmp_path / "config.yaml").write_text("gate_mode: enforce\n")
+    (tmp_path / "config.yaml").write_text("warden_mode: enforce\n")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=tmp_path, cwd=tmp_path, env={}))
-    assert got["gate_mode"].value == "enforce" and got["gate_mode"].source == "file"
+    assert got["warden_mode"].value == "enforce" and got["warden_mode"].source == "file"
     assert got["z3_timeout_ms"].source == "default"
 
 
@@ -56,7 +56,7 @@ def test_installed_hook_mode_reads_claude_settings(tmp_path):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "/py -m opendaisugi.gate --mode enforce --root /r",
+                                    "command": "/py -m opendaisugi.warden --mode enforce --root /r",
                                 }
                             ],
                         }
@@ -68,16 +68,16 @@ def test_installed_hook_mode_reads_claude_settings(tmp_path):
     assert installed_hook_mode(settings) == "enforce"
     assert installed_hook_mode(tmp_path / "nope.json") is None
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=tmp_path, cwd=tmp_path, env={}))
-    assert got["gate_mode (resolved)"].value == "enforce"
-    assert got["gate_mode (resolved)"].source == "global"
+    assert got["warden_mode (resolved)"].value == "enforce"
+    assert got["warden_mode (resolved)"].source == "global"
 
 
-def test_gate_mode_falls_back_to_file_then_default(tmp_path):
+def test_warden_mode_falls_back_to_file_then_default(tmp_path):
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=tmp_path, cwd=tmp_path, env={}))
-    assert got["gate_mode (resolved)"].source == "default"
-    (tmp_path / "config.yaml").write_text("gate_mode: enforce\n")
+    assert got["warden_mode (resolved)"].source == "default"
+    (tmp_path / "config.yaml").write_text("warden_mode: enforce\n")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=tmp_path, cwd=tmp_path, env={}))
-    assert got["gate_mode (resolved)"].source == "file"
+    assert got["warden_mode (resolved)"].source == "file"
 
 
 def _write_hook(settings_path, mode):
@@ -91,7 +91,7 @@ def _write_hook(settings_path, mode):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": f"py -m opendaisugi.gate_client --mode {mode} --root /r",
+                                    "command": f"py -m opendaisugi.warden_client --mode {mode} --root /r",
                                 }
                             ]
                         }
@@ -104,13 +104,13 @@ def _write_hook(settings_path, mode):
 
 def test_cwd_only_hook_reads_as_a_directory_hook_not_default(tmp_path):
     """A `daisugi start --enforce` hook with no global hook installed must not
-    under-report as `default` — that would hide an active enforce gate."""
+    under-report as `default` — that would hide an active enforce warden."""
     home = tmp_path / "home"
     cwd = tmp_path / "proj"
     _write_hook(cwd / ".claude" / "settings.json", "enforce")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
-    assert got["gate_mode (resolved)"].value == "enforce"
-    assert got["gate_mode (resolved)"].source == "project"
+    assert got["warden_mode (resolved)"].value == "enforce"
+    assert got["warden_mode (resolved)"].source == "project"
 
 
 def test_global_only_hook_reads_as_global(tmp_path):
@@ -118,8 +118,8 @@ def test_global_only_hook_reads_as_global(tmp_path):
     cwd = tmp_path / "proj"
     _write_hook(home / ".claude" / "settings.json", "audit")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
-    assert got["gate_mode (resolved)"].value == "audit"
-    assert got["gate_mode (resolved)"].source == "global"
+    assert got["warden_mode (resolved)"].value == "audit"
+    assert got["warden_mode (resolved)"].source == "global"
 
 
 def test_both_hooks_present_reports_the_stricter_and_lists_both(tmp_path):
@@ -129,13 +129,13 @@ def test_both_hooks_present_reports_the_stricter_and_lists_both(tmp_path):
     _write_hook(cwd / ".claude" / "settings.json", "enforce")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
     # effective = the stricter of the two, never just one of them
-    assert got["gate_mode (resolved)"].value == "enforce"
-    assert got["gate_mode (resolved)"].source == "project+global"
+    assert got["warden_mode (resolved)"].value == "enforce"
+    assert got["warden_mode (resolved)"].source == "project+global"
     # each hook is still named individually
-    assert got["gate_mode (project)"].value == "enforce"
-    assert got["gate_mode (global)"].value == "audit"
+    assert got["warden_mode (project)"].value == "enforce"
+    assert got["warden_mode (global)"].value == "audit"
     # and how they combine is spelled out, not left implicit
-    assert "intersection" in got["gate_mode (coexistence)"].value
+    assert "intersection" in got["warden_mode (coexistence)"].value
 
 
 def test_a_global_audit_hook_cannot_soften_a_cwd_enforce_hook(tmp_path):
@@ -146,7 +146,7 @@ def test_a_global_audit_hook_cannot_soften_a_cwd_enforce_hook(tmp_path):
     _write_hook(home / ".claude" / "settings.json", "enforce")
     _write_hook(cwd / ".claude" / "settings.json", "audit")
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=home, cwd=cwd, env={}))
-    assert got["gate_mode (resolved)"].value == "enforce"
+    assert got["warden_mode (resolved)"].value == "enforce"
 
 
 def test_a_deleted_cwd_falls_back_instead_of_crashing(tmp_path, monkeypatch):
@@ -158,11 +158,11 @@ def test_a_deleted_cwd_falls_back_instead_of_crashing(tmp_path, monkeypatch):
 
     monkeypatch.setattr("pathlib.Path.cwd", _raise)
     got = _by_key(resolved_config(tmp_path / "config.yaml", home=tmp_path, env={}))
-    assert got["gate_mode (resolved)"].source == "default"
+    assert got["warden_mode (resolved)"].source == "default"
 
 
 def test_unknown_keys_are_reported_not_hidden(tmp_path):
-    (tmp_path / "config.yaml").write_text("gate_mode: audit\nbanana: 1\n")
+    (tmp_path / "config.yaml").write_text("warden_mode: audit\nbanana: 1\n")
     assert unknown_config_keys(tmp_path / "config.yaml") == ["banana"]
 
 

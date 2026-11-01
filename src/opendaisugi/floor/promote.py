@@ -1,6 +1,6 @@
-"""Promotion: one line makes a pane the foreman of the floor.
+"""Promotion: one line makes a pane the steward of the floor.
 
-The line tells the pane to run ``coppice skill foreman``, which prints the
+The line tells the pane to run ``coppice skill steward``, which prints the
 page the coppice binary carries. The pane needs no path to a file, so the
 line works on any machine that has coppice. The Go floor sends the same
 line: ``harness/coppice/internal/tui/prompt.go`` holds it as PromotionLine.
@@ -17,7 +17,7 @@ import time
 from opendaisugi.exceptions import OpenDaisugiError
 from opendaisugi.floor.backend import PaneBackend, PaneRef
 
-PROMOTION = "Run: coppice skill foreman. Follow it. You are the foreman of this floor. Say ready."
+PROMOTION = "Run: coppice skill steward. Follow it. You are the steward of this floor. Say ready."
 
 # The detail coppice gives a pane that has drawn nothing yet. Such a pane
 # reads idle, but its harness has not started.

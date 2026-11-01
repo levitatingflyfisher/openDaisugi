@@ -5,6 +5,7 @@
 mod backupcmd;
 mod client;
 mod goflag;
+mod serverpath;
 pub mod gofmt;
 mod tree;
 mod verbs;
@@ -61,7 +62,7 @@ pub const USAGE: &str = "coppice: panes, agents and their state, on one machine.
   coppice                                  open the floor
   coppice claude [ARGS...]                 open that harness here and attach
   coppice open HARNESS [ARGS...]           the long form
-  coppice server start|stop|status|token
+  coppice server start|stop|status|token|install
   coppice workspace create [--cwd DIR] [--label TEXT]
   coppice workspace list
   coppice tab create [--label TEXT] [--workspace ID]
@@ -82,21 +83,23 @@ pub const USAGE: &str = "coppice: panes, agents and their state, on one machine.
   coppice new [PROJECT] [--no-attach]     the default harness, in a project by name or
                                            path, or here; attaches, unless --no-attach
   coppice project add|list|rm [DIR]       pin, list or unpin a working directory
+  coppice envelope propose PROJECT FILE   a steward proposes a project envelope; the owner approves it
+  coppice envelope list|approve|decline [PROJECT]   the owner answers (a pane cannot)
   coppice agent list|get|prompt|wait|read
-  coppice agent allow|deny PANE ASK [--reason TEXT]   answer a gate ask; a pane cannot,
-                                           but a foreman may deny an ask it holds
+  coppice agent allow|deny PANE ASK [--reason TEXT]   answer a warden ask; a pane cannot,
+                                           but a steward may deny an ask it holds
   coppice agent allow PANE ASK --confirm NAME  allow a permanent ask by its pane name
   coppice agent allow PANE ASK --scope task    allow an undoable ask for the task
   coppice floor note TEXT                  print one line on the floor
-  coppice floor talk TEXT                  say TEXT to the floor's foreman; starts one if none runs
-  coppice skill foreman                    print the page that makes a pane the foreman
-  coppice backup [FILE]                    foreman log and memory, layout and config in one .tgz
+  coppice floor talk TEXT                  say TEXT to the floor's steward; starts one if none runs
+  coppice skill steward                    print the page that makes a pane the steward
+  coppice backup [FILE]                    Pando R2 log, layout and config in one .tgz
   coppice restore FILE [--force]           put it back; stop the server first
   coppice task create --label NAME [--parent ID] [--cwd DIR] [--worktree] [--model NAME]
   coppice task list [--tree]
   coppice task close ID [--keep-worktree]
   coppice task move ID --parent ID
-  coppice task set-foreman ID --pane PANE  name the pane that hears the task's asks first
+  coppice task set-steward ID --pane PANE  name the pane that hears the task's asks first
   coppice attach [PANE]
   coppice tmux-mirror [--session NAME] [--tmux-socket PATH]
                                            one tmux window per pane, each attached
@@ -128,6 +131,31 @@ pub fn socket_path() -> PathBuf {
 /// under the data home (crate::datahome).
 pub fn data_dir() -> PathBuf {
     crate::datahome::default().join("coppice")
+}
+
+/// The socket a command dials when no --socket flag names one. Inside a
+/// pane (COPPICE_PANE set, which only the server does) it is the pane's own
+/// COPPICE_SOCK, so a steward on a server with a non-default socket reaches
+/// that server. Outside a pane the environment does not choose the server:
+/// a stray COPPICE_SOCK must not point a command at a live one.
+pub fn cli_socket_path() -> PathBuf {
+    if std::env::var_os("COPPICE_PANE").is_some_and(|v| !v.is_empty()) {
+        if let Some(s) = std::env::var_os("COPPICE_SOCK").filter(|v| !v.is_empty()) {
+            return PathBuf::from(s);
+        }
+    }
+    socket_path()
+}
+
+/// `data_dir`, or inside a pane the pane's COPPICE_DATA_DIR. See
+/// `cli_socket_path`.
+pub fn cli_data_dir() -> PathBuf {
+    if std::env::var_os("COPPICE_PANE").is_some_and(|v| !v.is_empty()) {
+        if let Some(d) = std::env::var_os("COPPICE_DATA_DIR").filter(|v| !v.is_empty()) {
+            return PathBuf::from(d);
+        }
+    }
+    data_dir()
 }
 
 /// Go's os.Getwd: $PWD when it names the working directory, else the
@@ -200,11 +228,11 @@ pub struct Cli {
 
 pub fn run(argv: Vec<String>) -> i32 {
     let mut c = Cli {
-        socket: socket_path(),
-        data_dir: data_dir(),
+        socket: cli_socket_path(),
+        data_dir: cli_data_dir(),
     };
     let mut remote = String::new();
-    // The --data-dir the command line named, for coppice foreman.
+    // The --data-dir the command line named, for coppice steward.
     let mut data_dir_flag: Option<PathBuf> = None;
     let mut args = argv.as_slice();
     while let Some(a) = args.first() {
@@ -252,25 +280,25 @@ pub fn run(argv: Vec<String>) -> i32 {
         return c.run_floor(&remote);
     };
     match first.as_str() {
-        "foreman" => {
-            // Hidden: it reads the foreman's chat files and dials no socket.
+        "steward" => {
+            // Hidden: it reads the steward's chat files and dials no socket.
             if !remote.is_empty() {
-                errln("coppice foreman reads local files; it is not wired for --remote.");
+                errln("coppice steward reads local files; it is not wired for --remote.");
                 return 1;
             }
             let flag = data_dir_flag.as_deref();
             let (mut stdin, mut stdout, mut stderr) =
                 (std::io::stdin(), std::io::stdout(), std::io::stderr());
             match args.get(1).map(String::as_str) {
-                Some("tools") => crate::foreman::tools::tools_main(
+                Some("tools") => crate::steward::tools::tools_main(
                     flag,
                     &args[2..],
                     &mut stdin,
                     &mut stdout,
                     &mut stderr,
                 ),
-                Some("hook") => crate::foreman::turns::hook_main(&mut stdin, &mut stderr),
-                _ => crate::foreman::cli::main(&args[1..], flag, &mut stdout, &mut stderr),
+                Some("hook") => crate::steward::turns::hook_main(&mut stdin, &mut stderr),
+                _ => crate::steward::cli::main(&args[1..], flag, &mut stdout, &mut stderr),
             }
         }
         "server" => c.run_server(&remote, &args[1..]),
@@ -301,6 +329,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         }
         "new" => c.run_new(&remote, &args[1..]),
         "project" => c.run_project(&remote, &args[1..]),
+        "envelope" => c.run_envelope(&remote, &args[1..]),
         _ => c.open_at(&remote, args, true, "", false),
     }
 }
@@ -323,19 +352,19 @@ impl Cli {
     }
 
     fn run_skill(&self, argv: &[String]) -> i32 {
-        let names = "foreman";
+        let names = "steward";
         if argv.len() != 1 {
             errln(&format!("skill needs one page name. Pages: {names}"));
             return 1;
         }
-        if argv[0] != "foreman" {
+        if argv[0] != "steward" {
             errln(&format!(
                 "no skill page {}. Pages: {names}",
                 sys::go_quote(&argv[0])
             ));
             return 1;
         }
-        out(server::foreman::FOREMAN_PAGE);
+        out(server::steward::STEWARD_PAGE);
         0
     }
 
@@ -398,6 +427,9 @@ impl Cli {
                         ));
                     }
                     return 1;
+                }
+                for n in config::found_notes(&disc) {
+                    errln(&n);
                 }
                 save = Some(config::from_found(&disc, name));
             }
@@ -667,6 +699,15 @@ impl Cli {
         let before = cfg.projects.len();
         cfg.projects.retain(|p| p != &resolved);
         if cfg.projects.len() == before {
+            // project list also shows the directories panes started in,
+            // which are not in coppice.toml. The server keeps those, and
+            // its project.remove takes them out. A server that is not
+            // running holds no list to take it from, so nothing is started
+            // for this.
+            if self.remove_recent(&resolved) {
+                out(&format!("removed {a}\n"));
+                return 0;
+            }
             errln(&format!(
                 "{resolved} is not a project. Run: coppice project list"
             ));
@@ -678,6 +719,19 @@ impl Cli {
         }
         out(&format!("removed {a}\n"));
         0
+    }
+
+    /// Asks a running server to drop dir from its recent directory list. True
+    /// when the server removed it.
+    fn remove_recent(&self, dir: &str) -> bool {
+        let Ok(mut cl) = dial_existing(&self.socket, None) else {
+            return false;
+        };
+        let mut params = serde_json::Map::new();
+        params.insert("path".into(), serde_json::json!(dir));
+        let ok = cl.call("project.remove", params).is_ok();
+        cl.close();
+        ok
     }
 
     fn run_verb(&self, remote: &str, argv: &[String]) -> i32 {
@@ -711,6 +765,117 @@ impl Cli {
             return 0;
         }
         print_human(group, verb, &res);
+        0
+    }
+
+    /// coppice envelope propose|list|approve|decline. propose writes
+    /// nothing: the server keeps the proposal pending for the owner.
+    fn run_envelope(&self, remote: &str, argv: &[String]) -> i32 {
+        let Some(sub) = argv.first() else {
+            errln("envelope needs a verb: propose, list, approve or decline");
+            return 1;
+        };
+        let rest = &argv[1..];
+        let mut params = Map::new();
+        let mut cmd = format!("envelope.{sub}");
+        match sub.as_str() {
+            "propose" => {
+                if rest.len() < 2 {
+                    errln("usage: coppice envelope propose PROJECT FILE [--tokens N] [--turns N] [--help-wait SECONDS]\nFILE holds the envelope object, or {\"envelope\": {...}, \"tokens\": N, \"turns\": N}.");
+                    return 1;
+                }
+                let b = match std::fs::read(&rest[1]) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        errln(&format!("cannot read {}: open {}: {}", rest[1], rest[1], sys::go_errno_text(&e)));
+                        return 1;
+                    }
+                };
+                let text = String::from_utf8_lossy(&b).into_owned();
+                let doc: Option<Value> = serde_json::from_str(&text).ok();
+                let mut env = doc.clone().unwrap_or(Value::Null);
+                if let Some(Value::Object(o)) = &doc {
+                    if let Some(e) = o.get("envelope") {
+                        env = e.clone();
+                        params.insert("tokens".into(), json!(o.get("tokens").and_then(Value::as_i64).unwrap_or(0)));
+                        params.insert("turns".into(), json!(o.get("turns").and_then(Value::as_i64).unwrap_or(0)));
+                        if let Some(h) = o.get("help_wait_s").and_then(Value::as_i64).filter(|h| *h > 0) {
+                            params.insert("help_wait_s".into(), json!(h));
+                        }
+                    }
+                }
+                params.insert("project".into(), json!(rest[0]));
+                params.insert("envelope".into(), env);
+                let mut i = 2;
+                while i + 1 < rest.len() {
+                    let Ok(n) = rest[i + 1].parse::<i64>() else {
+                        errln(&format!("{} needs a number", rest[i]));
+                        return 1;
+                    };
+                    match rest[i].as_str() {
+                        "--tokens" => params.insert("tokens".into(), json!(n)),
+                        "--turns" => params.insert("turns".into(), json!(n)),
+                        "--help-wait" => params.insert("help_wait_s".into(), json!(n)),
+                        other => {
+                            errln(&format!("unknown flag {other}"));
+                            return 1;
+                        }
+                    };
+                    i += 2;
+                }
+            }
+            "list" => cmd = "envelope.pending".into(),
+            "approve" | "decline" => {
+                if rest.len() != 1 {
+                    errln(&format!("usage: coppice envelope {sub} PROJECT"));
+                    return 1;
+                }
+                let name = rest[0].trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+                params.insert("project".into(), json!(name));
+            }
+            _ => {
+                errln(&format!(
+                    "unknown envelope verb {}. Known verbs: propose, list, approve, decline",
+                    sys::go_quote(sub)
+                ));
+                return 1;
+            }
+        }
+        let mut cl = match self.dial(remote) {
+            Ok(c) => c,
+            Err(code) => return code,
+        };
+        if sub.as_str() == "approve" {
+            // Approve names the proposal it looked at: read the pending
+            // card first and send its stamp, so a replacement made since
+            // is caught.
+            let pend = match cl.call("envelope.pending", Map::new()) {
+                Ok(r) => r,
+                Err(e) => return self.report(&mut cl, e),
+            };
+            let at = pend
+                .get("proposals")
+                .and_then(Value::as_array)
+                .and_then(|l| l.iter().find(|c| c.get("project") == params.get("project")))
+                .and_then(|c| c.get("at"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if at.is_empty() {
+                errln(&format!(
+                    "no pending envelope for {}. It may be approved, declined or replaced already.",
+                    params.get("project").and_then(Value::as_str).unwrap_or("")
+                ));
+                return 1;
+            }
+            params.insert("at".into(), json!(at));
+        }
+        let res = match cl.call(&cmd, params) {
+            Ok(r) => r,
+            Err(e) => return self.report(&mut cl, e),
+        };
+        cl.close();
+        out(&format!("{}\n", gofmt::marshal(&Value::Object(res))));
         0
     }
 
@@ -788,15 +953,15 @@ impl Cli {
 
     fn run_server(&self, remote: &str, argv: &[String]) -> i32 {
         let Some(sub) = argv.first() else {
-            errln("coppice server needs start, stop, status or token");
+            errln("coppice server needs start, stop, status, token or install");
             return 1;
         };
         let known: &[&str] = match sub.as_str() {
             "start" => &["foreground", "json"],
-            "stop" | "status" | "token" => &["json"],
+            "stop" | "status" | "token" | "install" => &["json"],
             _ => {
                 errln(&format!(
-                    "unknown server command {}. Try start, stop, status or token",
+                    "unknown server command {}. Try start, stop, status, token or install",
                     sys::go_quote(sub)
                 ));
                 return 1;
@@ -833,6 +998,7 @@ impl Cli {
             }
             "stop" => self.server_stop(remote, as_json),
             "status" => self.server_status(remote, as_json),
+            "install" => self.server_install(),
             _ => self.server_token(as_json),
         }
     }
@@ -897,6 +1063,7 @@ impl Cli {
         if !fence_config_ok() {
             return 1;
         }
+        self.warn_path();
         // Signals are blocked before any thread starts, so only the waiter
         // below ever takes them.
         let signals = sys_signals::block();
@@ -905,12 +1072,12 @@ impl Cli {
             data_dir: self.data_dir.clone(),
             start_dir: PathBuf::new(),
             voice: voice_config(),
-            foreman: server::foreman_chat::foreman_config(),
+            steward: server::steward_chat::steward_config(),
         });
         s.set_hook_home(crate::sys::home_dir().unwrap_or_default());
         let cfg = config::load().ok().flatten().unwrap_or_default();
         s.set_fence_mode(&cfg.fence_mode());
-        crate::broken::set_keep(cfg.broken_keep_n());
+        apply_broken_keep(&cfg);
         s.set_layout_settle(cfg.layout_settle());
         if let Err(e) = s.acquire_start_lock() {
             errln(&e.to_string());
@@ -925,6 +1092,10 @@ impl Cli {
                 crate::proto::ok_resp(&r.id, crate::gojson::map(vec![("stopping", json!(true))]))
             }),
         );
+        // Once at server start: the warden is on and no fence runs.
+        if let Some(line) = s.unconfined_notice() {
+            errln(&line);
+        }
         s.start_detection();
         let ln = match s.listen() {
             Ok(l) => l,
@@ -941,9 +1112,9 @@ impl Cli {
             s.close();
             return 1;
         }
-        // In chat mode the foreman's log opens now, and its compactor
+        // In chat mode the steward's log opens now, and its compactor
         // starts.
-        s.start_foreman_chat();
+        s.start_steward_chat();
         // Voice starts on its own thread, so a model that loads slowly
         // never holds up the socket or the started line.
         s.voice.ensure();
@@ -967,11 +1138,12 @@ impl Cli {
                 tokens: crate::web::token::TokenStore::new(crate::web::config::token_path(
                     &self.data_dir,
                 )),
-                gate_root: crate::web::config::gate_root(&self.data_dir),
+                warden_root: crate::web::config::warden_root(&self.data_dir),
                 push: None,
                 voice_url: String::new(),
                 voice_token_file: String::new(),
                 views: crate::web::serve::views_of(&enabled),
+                extra_data_dirs: vec![crate::steward::log_dir(&self.data_dir).join("work")],
                 events: None,
                 listening: None,
                 cert_check_every: None,
@@ -1597,5 +1769,59 @@ fn fence_config_ok() -> bool {
             false
         }
         None => true,
+    }
+}
+
+/// Sets how many .broken copies stay, from the owner's broken_keep: coppice's
+/// own copies and the Pando store's, which keeps its own count.
+fn apply_broken_keep(cfg: &config::Config) {
+    crate::broken::set_keep(cfg.broken_keep_n());
+    pando::store::set_broken_keep(cfg.broken_keep_n());
+}
+
+#[cfg(test)]
+mod keep_tests {
+    /// The owner's broken_keep reaches the Pando store too, not only
+    /// coppice's own copies.
+    #[test]
+    fn broken_keep_reaches_the_pando_store() {
+        let was = pando::store::broken_keep();
+        pando::store::set_broken_keep(5);
+        let cfg = crate::config::Config { broken_keep: Some(0), ..Default::default() };
+        super::apply_broken_keep(&cfg);
+        let got = pando::store::broken_keep();
+        pando::store::set_broken_keep(was);
+        crate::broken::set_keep(crate::broken::DEFAULT_KEEP);
+        assert_eq!(got, 0);
+    }
+}
+
+#[cfg(test)]
+mod pane_dial_tests {
+    use super::*;
+
+    /// Inside a pane (COPPICE_PANE set) a command dials the pane's own
+    /// server; outside one the environment does not choose the server.
+    #[test]
+    fn a_command_in_a_pane_dials_the_panes_server() {
+        static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<_> = ["COPPICE_PANE", "COPPICE_SOCK", "COPPICE_DATA_DIR"].iter().map(|k| (*k, std::env::var_os(k))).collect();
+        std::env::set_var("COPPICE_SOCK", "/odd/server.sock");
+        std::env::set_var("COPPICE_DATA_DIR", "/odd/data");
+        std::env::remove_var("COPPICE_PANE");
+        assert_eq!(cli_socket_path(), socket_path());
+        assert_eq!(cli_data_dir(), data_dir());
+        std::env::set_var("COPPICE_PANE", "w1:p1");
+        assert_eq!(cli_socket_path(), PathBuf::from("/odd/server.sock"));
+        assert_eq!(cli_data_dir(), PathBuf::from("/odd/data"));
+        std::env::set_var("COPPICE_SOCK", "");
+        assert_eq!(cli_socket_path(), socket_path());
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
     }
 }

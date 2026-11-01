@@ -6,42 +6,46 @@ import (
 	"io"
 	"strings"
 	"syscall"
+	"time"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var installOpts = []opt{
 	{names: []string{"--dry-run"}, help: "Show what would change without writing anything."},
 	{names: []string{"--yes", "-y"}, help: "Skip confirmation prompt."},
 	{names: []string{"--print-skill"}, help: "Print the opendaisugi-checklist skill content to stdout."},
+	{names: []string{"--list"}, help: "List the components install can write, and stop."},
 	{names: []string{"--uninstall"}, help: "Reverse all managed changes."},
 	{names: []string{"--runtime"}, value: true, multiple: true, metavar: "TEXT",
 		help: "Target named runtime(s) only, e.g. --runtime claude."},
 	{names: []string{"--harness"}, value: true, multiple: true, metavar: "TEXT",
-		help: "Install a loop harness's gate extension. Supported: pi, opencode."},
-	{names: []string{"--gate"}, neg: "--no-gate", help: "Also install the fail-closed verify hook (opt-in; audit by default)."},
-	{names: []string{"--enforce"}, neg: "--audit", help: "Gate mode: --enforce denies out-of-envelope calls; --audit only observes."},
+		help: "Install a loop harness's warden extension. Supported: pi, opencode."},
+	{names: []string{"--only"}, value: true, multiple: true, metavar: "TEXT",
+		help: "Install only these components, comma-separated or repeated: skill, mcp, capture, instructions, warden, pando, router. Default: all but router. See --list."},
+	{names: []string{"--warden"}, hidden: true},
+	{names: []string{"--enforce"}, neg: "--audit", help: "Warden mode: --enforce denies out-of-envelope calls; --audit records them and allows."},
 	{names: []string{"--shadow"}, hidden: true},
 	{names: []string{"--ask"}, neg: "--no-ask", help: "Hand an enforce-mode would-deny to a present operator for a bounded time."},
-	{names: []string{"--gateway"}, neg: "--no-gateway", help: "Also point the harness at the local token-saving gateway (opt-in)."},
+	{names: []string{"--router"}, neg: "--no-router", help: "Also point the harness at the local token-saving router (opt-in)."},
 	{names: []string{"--allow-shell-decomposition"}, neg: "--no-allow-shell-decomposition",
 		help: "Let the envelope admit compound shell (ADR-0010)."},
-	{names: []string{"--base-url"}, value: true, metavar: "TEXT", help: "Gateway base_url to wire in when --gateway is set."},
-	{names: []string{"--report"}, value: true, metavar: "TEXT", help: "Report gate state to a floor host: herdr or coppice."},
-	{names: []string{"--router"}, value: true, metavar: "TEXT", help: "Who picks the model for each gateway turn: rules, switchyard, knn, or off."},
+	{names: []string{"--base-url"}, value: true, metavar: "TEXT", help: "Router base_url to wire in when --router is set."},
+	{names: []string{"--report"}, value: true, metavar: "TEXT", help: "Report warden state to a floor host: herdr or coppice."},
+	{names: []string{"--routing-mode"}, value: true, metavar: "TEXT", help: "Who picks the model for each router turn: rules, switchyard, knn, or off."},
 	{names: []string{"--efficient-model"}, value: true, metavar: "TEXT", help: "The model id of Switchyard's efficient tier."},
 	{names: []string{"--capable-model"}, value: true, metavar: "TEXT", help: "The model id of Switchyard's capable tier."},
 	{names: []string{"--api-key-env"}, value: true, metavar: "TEXT", help: "An environment variable holding an Anthropic API key for Switchyard's cloud tiers."},
 }
 
-// EnforceNeedsPolicy is what install --gate --enforce says when no
+// EnforceNeedsPolicy is what install --enforce says when no
 // envelope is registered: Python's cli.ENFORCE_NEEDS_POLICY.
-const EnforceNeedsPolicy = "Enforce needs a policy first. Run: daisugi gate init --workspace DIR " +
+const EnforceNeedsPolicy = "Enforce needs a policy first. Run: daisugi warden init --workspace DIR " +
 	"for a starter envelope, then this command again. " +
-	"Or install in audit mode: daisugi install --gate"
+	"Or run: daisugi install (audit mode records every call and blocks none)"
 
 func (e *Env) install(args []string) error {
 	if handed, err := e.portHop(args); handed || err != nil {
@@ -53,19 +57,60 @@ func (e *Env) install(args []string) error {
 	}
 	if p.help {
 		return e.cmdHelp("install", "", "Wire openDaisugi into every detected agent harness: the skill, the MCP "+
-			"server, the capture hook and the pathway instructions; --gate adds the gate hook, --gateway points "+
-			"the harness at the token-saving gateway, --harness writes the pi or OpenCode extension.", installOpts)
+			"server, the capture hook, the pathway instructions and the warden hook in audit mode; --enforce makes the "+
+			"warden deny, --router points the harness at the token-saving router, --harness writes the pi or "+
+			"OpenCode extension.", installOpts)
 	}
 	if p.flag("--shadow") {
 		// cli._shadow_moved: the old name of --audit, one line.
 		return e.usage("install", &usageError{"Invalid value for '--shadow': shadow mode is now audit mode: use --audit"})
 	}
+	if p.flag("--warden") {
+		// cli._warden_flag_moved: the warden hook is part of every install, one line.
+		return e.usage("install", &usageError{"Invalid value for '--warden': the warden hook is part of every install: drop --warden (add --enforce to make it deny)"})
+	}
 	if p.flag("--print-skill") {
 		e.out("%s\n", install.SkillText())
 		return nil
 	}
+	if p.flag("--list") {
+		e.out("%s\n", install.ListComponents())
+		return nil
+	}
+	var only map[string]bool
+	if names := p.vals["--only"]; len(names) > 0 {
+		var err error
+		if only, err = install.ComponentLayers(names); err != nil {
+			e.errf("%v\n", err)
+			return exit(2)
+		}
+		if !p.flag("--uninstall") && len(p.vals["--harness"]) == 0 {
+			if p.flag("--enforce") && !only[install.LayerWarden] {
+				e.errf("--enforce needs the warden component: add warden to --only\n")
+				return exit(2)
+			}
+			if p.flag("--router") && !only[install.LayerBaseURL] {
+				e.errf("--router is a component: add router to --only, or drop --router\n")
+				return exit(2)
+			}
+		}
+	}
+	if !p.flag("--uninstall") {
+		// The names of the warden and the router changed: move the owner's
+		// own state once, before anything new is written.
+		if _, err := install.MoveOldState(e.dataHome(), e.home, e.env, time.Now(), e.Stdout, p.flag("--dry-run")); err != nil {
+			var refused *install.MoveRefused
+			if errors.As(err, &refused) {
+				return exit(2)
+			}
+			return e.fail("install", err)
+		}
+	}
 	harness := p.vals["--harness"]
 	if len(harness) > 0 {
+		if only != nil {
+			e.out("Note: --only does not apply to --harness.\n")
+		}
 		return e.installHarness(harness, p)
 	}
 	lookPath := install.LookPath(e.env)
@@ -85,20 +130,20 @@ func (e *Env) install(args []string) error {
 		return nil
 	}
 	if p.flag("--uninstall") {
-		return e.uninstallAll(runtimes)
+		return e.uninstallAll(runtimes, only)
 	}
-	gate, gw := p.flag("--gate"), p.flag("--gateway")
-	// base_url or DEFAULT_GATEWAY_BASE_URL: an empty one is the default.
+	gw := p.flag("--router") || only[install.LayerBaseURL]
+	// base_url or DEFAULT_ROUTER_BASE_URL: an empty one is the default.
 	baseURL := p.str("--base-url", "")
 	if baseURL == "" {
 		baseURL = install.DefaultBaseURL
 	}
 	enforce, ask := p.flag("--enforce"), p.flag("--ask")
-	root := gateroot.Join(e.dataHome(), "gate")
+	root := wardenroot.Join(e.dataHome(), "warden")
 	// With no envelope registered, an enforce hook denies every call, so
 	// the agent can do nothing at all. Refuse before anything is written.
-	if gate && enforce {
-		envs, err := gateroot.Envelopes(root)
+	if enforce {
+		envs, err := wardenroot.Envelopes(root)
 		if err != nil {
 			return e.refuse("install", err)
 		}
@@ -107,31 +152,22 @@ func (e *Env) install(args []string) error {
 			return exit(1)
 		}
 	}
-	if enforce && !gate {
-		e.out("Note: --enforce only applies with --gate; no gate hook will be installed.\n")
+	if ask && !enforce {
+		e.out("Note: --ask only applies with --enforce; no operator ask will be wired.\n")
 	}
-	if ask && !(gate && enforce) {
-		e.out("Note: --ask only applies with --gate --enforce; no operator ask will be wired.\n")
-	}
-	effectiveAsk := ask && gate && enforce
+	effectiveAsk := ask && enforce
 	report := p.str("--report", "")
 	if p.has("--report") && report != "herdr" && report != "coppice" {
-		e.errf("Error: --report must be herdr or coppice. Run: daisugi install --gate --report herdr\n")
+		e.errf("Error: --report must be herdr or coppice. Run: daisugi install --report herdr\n")
 		return exit(1)
 	}
-	if p.has("--report") && !gate {
-		e.out("Note: --report needs --gate. This run installs no floor-report hooks.\n")
-	}
-	if !gate {
-		report = ""
-	}
-	// The router choice is checked before anything is written, so a bad
+	// The routing mode is checked before anything is written, so a bad
 	// value leaves the harness and config.yaml as they were.
-	router, err := e.planRouterUpdate(p, gw)
+	router, err := e.planRoutingUpdate(p, gw)
 	if err != nil {
 		return err
 	}
-	self, err := install.Self()
+	self, err := install.SelfEntry()
 	if err != nil {
 		return e.fail("install", err)
 	}
@@ -139,10 +175,10 @@ func (e *Env) install(args []string) error {
 	// shim, or an Omarchy stub, which survive an upgrade, when one runs
 	// this binary.
 	self, versioned := install.HookPath(self, e.env, e.miseWhich)
-	if versioned && gate {
+	if versioned {
 		e.errf("%s\n", install.VersionedNote(self))
 	}
-	o := install.Opts{Gate: gate, Gateway: gw, Enforce: enforce, Ask: effectiveAsk, URL: baseURL, Report: report}
+	o := install.Opts{Router: gw, Enforce: enforce, Ask: effectiveAsk, URL: baseURL, Report: report, Only: only}
 	// Decide every change before printing the plan: a file this binary
 	// cannot edit refuses the run with nothing written.
 	plan := func() ([]*install.Change, error) {
@@ -154,13 +190,10 @@ func (e *Env) install(args []string) error {
 			}
 			changes = append(changes, ch)
 		}
+		install.DedupeUnitEdits(changes)
 		return changes, nil
 	}
 	planned, err := plan()
-	var badRoot *install.GateRootError
-	if errors.As(err, &badRoot) {
-		return e.pyTraceback("ValueError", badRoot.Msg)
-	}
 	if err != nil {
 		return e.refuse("install", err)
 	}
@@ -174,12 +207,23 @@ func (e *Env) install(args []string) error {
 	}
 	e.out("\nopenDaisugi will make these changes:\n\n")
 	var gaps []string
+	wardenWired := false
+	unitShown := false
 	for _, rt := range runtimes {
 		e.out("[%s]\n", rt.Name)
 		for _, s := range install.PlanAllSteps(rt, e.home, o) {
+			if s.Layer == install.LayerPando && strings.HasSuffix(s.Target, install.PandoUnitName) {
+				if unitShown {
+					continue // Claude Code and Hermes share the one unit
+				}
+				unitShown = true
+			}
 			target, marker := "", "+"
 			if s.Target != "" {
 				target = "  → " + s.Target
+			}
+			if s.Layer == "warden" && s.Supported {
+				wardenWired = true
 			}
 			if !s.Supported {
 				marker = "!"
@@ -193,14 +237,18 @@ func (e *Env) install(args []string) error {
 		e.out("Honest gaps (selected but not wired for this harness):\n%s\n\n", strings.Join(gaps, "\n"))
 	}
 	e.out("Skill is discovered on demand — zero added tokens for simple sessions.\n")
-	e.out("Tool calls are captured to %s/ for distillation.\n\n", e.tilde(gateroot.Join(e.dataHome(), "captures")))
-	if gate {
-		e.out("The gate checks each call against a registered envelope — this install writes the hook, " +
-			"not the policy. Run `daisugi gate init` to register one (add --allow-shell-decomposition " +
+	if o.Has(install.LayerCapture) {
+		e.out("Tool calls are captured to %s/ for distillation.\n\n", e.tilde(wardenroot.Join(e.dataHome(), "captures")))
+	} else {
+		e.out("\n")
+	}
+	if wardenWired {
+		e.out("The warden checks each call against a registered envelope — this install writes the hook, " +
+			"not the policy. Run `daisugi warden init` to register one (add --allow-shell-decomposition " +
 			"to admit `a && b` and pipes).\n\n")
 	}
 	if router != nil {
-		e.out("Router: set gateway_router to %s.\n", router["gateway_router"])
+		e.out("Router: set routing_mode to %s.\n", router["routing_mode"])
 	}
 	if p.flag("--dry-run") {
 		e.out("Dry run — no files written.\n")
@@ -221,7 +269,9 @@ func (e *Env) install(args []string) error {
 	if err != nil {
 		return e.refuse("install", err)
 	}
-	var written, failed []string
+	var written, failed, notes []string
+	install.UnitHook = e.unitHook()
+	defer func() { install.UnitHook = nil }()
 	for _, ch := range changes {
 		for _, ed := range ch.Edits {
 			if ed.Warning != "" {
@@ -243,22 +293,42 @@ func (e *Env) install(args []string) error {
 		} else {
 			written = append(written, ch.Written()...)
 		}
+		for _, ed := range ch.Edits {
+			if ed != nil && ed.Note != "" {
+				notes = append(notes, ed.Note)
+			}
+		}
 	}
 	if len(written) > 0 {
 		e.out("\nDone. Files modified:\n")
 		for _, f := range written {
 			e.out("  %s\n", f)
 		}
-		e.out("\nRestart your agent session to pick up the changes.\n")
+		for _, n := range notes {
+			e.out("%s\n", n)
+		}
+		e.out("\n%s\n", install.RestartLine)
 	} else if len(failed) == 0 {
-		e.out("\nAll runtimes were already configured — nothing changed.\n")
+		// A hook install left as it is was not configured by this run.
+		left := false
+		for _, n := range notes {
+			left = left || install.LeftAsIs(n)
+		}
+		if left {
+			e.out("\n")
+		} else {
+			e.out("\nAll runtimes were already configured — nothing changed.\n")
+		}
+		for _, n := range notes {
+			e.out("%s\n", n)
+		}
 	}
 	// A runtime that failed wrote nothing: name it and exit 1, never
 	// report it as configured.
 	for _, f := range failed {
 		e.errf("Failed: %s. Nothing was written for it.\n", f)
 	}
-	cfgPath := gateroot.Join(e.dataHome(), "config.yaml")
+	cfgPath := wardenroot.Join(e.dataHome(), "config.yaml")
 	if p.flagSet("--allow-shell-decomposition") {
 		allow := p.flag("--allow-shell-decomposition")
 		if err := e.saveInstallConfig(cfgPath, map[string]any{"shell_allow_decomposition": allow}); err != nil {
@@ -272,7 +342,7 @@ func (e *Env) install(args []string) error {
 			"--uninstall; edit or delete the file to reset it.\n", state, cfgPath)
 	}
 	if router != nil {
-		if err := e.applyRouterUpdate(router); err != nil {
+		if err := e.applyRoutingUpdate(router); err != nil {
 			return err
 		}
 	}
@@ -308,7 +378,20 @@ func (e *Env) install(args []string) error {
 			}
 		}
 	}
-	if len(failed) > 0 {
+	var okRuntimes []install.Runtime
+	for _, ch := range changes {
+		if !ch.Failed {
+			okRuntimes = append(okRuntimes, ch.Runtime)
+		}
+	}
+	broken := install.UnrunnableCommands(okRuntimes, e.home)
+	for _, line := range broken {
+		e.errf("%s\n", line)
+	}
+	if line := install.TemporaryExeNote(self); line != "" {
+		e.errf("%s\n", line)
+	}
+	if len(failed) > 0 || len(broken) > 0 {
 		return exit(1)
 	}
 	return nil
@@ -383,17 +466,20 @@ func (e *Env) confirm(text string) (bool, error) {
 
 // uninstallAll is install.uninstall: every managed change reversed for
 // each runtime.
-func (e *Env) uninstallAll(runtimes []install.Runtime) error {
+func (e *Env) uninstallAll(runtimes []install.Runtime, only map[string]bool) error {
 	var changes []*install.Change
 	gone := map[string]bool{}
 	for _, rt := range runtimes {
-		ch, err := install.PlanReverseAll(rt, e.home, gone)
+		ch, err := install.PlanReverseAll(rt, e.home, gone, only)
 		if err != nil {
 			return e.refuse("install --uninstall", err)
 		}
 		changes = append(changes, ch)
 	}
+	install.DedupeUnitEdits(changes)
 	var written, failed []string
+	install.UnitHook = e.unitHook()
+	defer func() { install.UnitHook = nil }()
 	for _, ch := range changes {
 		if ch.Failed {
 			failed = append(failed, ch.Runtime.Name+": "+ch.Why)
@@ -410,7 +496,11 @@ func (e *Env) uninstallAll(runtimes []install.Runtime) error {
 	for i, rt := range runtimes {
 		names[i] = rt.Name
 	}
-	e.out("Uninstalled from: %s\n", strings.Join(names, ", "))
+	what := ""
+	if only != nil {
+		what = strings.Join(install.ComponentNames(only), ", ") + " "
+	}
+	e.out("Uninstalled %sfrom: %s\n", what, strings.Join(names, ", "))
 	if len(failed) > 0 {
 		e.out("Failures (left untouched): %s\n", strings.Join(failed, "; "))
 	}
@@ -442,7 +532,7 @@ func (e *Env) installHarness(names []string, p *parsed) error {
 		for _, h := range names {
 			target := install.Target(h, e.home, e.env)
 			if h == "pi" {
-				target = gateroot.Parent(target)
+				target = wardenroot.Parent(target)
 			}
 			if p.flag("--dry-run") {
 				e.out("[%s] would remove %s\n", h, target)
@@ -475,11 +565,11 @@ func (e *Env) installHarness(names []string, p *parsed) error {
 			}
 			return e.fail("install", err)
 		}
-		e.out("[%s] gate extension installed. %s\n", h, restart[h])
+		e.out("[%s] warden extension installed. %s\n", h, restart[h])
 	}
 	for _, h := range names {
-		e.out("%s asks the gate in-process. The gate only watches until you set "+
-			"gate_mode: enforce. Start it with `daisugi start`.\n", label[h])
+		e.out("%s asks the warden in-process. The warden only watches until you set "+
+			"warden_mode: enforce. Start it with `daisugi start`.\n", label[h])
 	}
 	return nil
 }

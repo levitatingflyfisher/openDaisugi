@@ -140,7 +140,7 @@ def test_torn_last_line_is_ignored(tmp_path: Path):
 
 
 def test_cold_head_lookup_does_not_decode_the_whole_file(tmp_path: Path, monkeypatch):
-    """S6: the gate opens a fresh SessionTree per call, then asks for head()
+    """S6: the warden opens a fresh SessionTree per call, then asks for head()
     to parent its first append. That must not re-decode every prior line —
     only the tail, since the just-appended entry is almost always the head."""
     t = SessionTree.create(tmp_path / "s", session_id="s1", harness="x", cwd="/")
@@ -194,7 +194,7 @@ def test_state_entries_do_not_move_the_head(tmp_path: Path):
     c = t.append("tool_call", {"name": "Bash"})
     v = t.append("verdict", {"toolUseId": c.id, "decision": "allow"})
     assert t.head() == v.id
-    s = t.append("state", {"state": "working", "source": "gate"})
+    s = t.append("state", {"state": "working", "source": "warden"})
     assert t.head() == v.id
     assert s.parent_id == v.id
 

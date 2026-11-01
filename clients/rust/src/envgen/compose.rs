@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use super::{list_of, obj, PyError};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{Object, Value};
 use crate::pathways::pathway::Pathway;
 use crate::pathways::store::Store;
 use crate::pathways::PwErr;

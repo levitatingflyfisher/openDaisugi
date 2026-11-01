@@ -9,7 +9,7 @@ import (
 	"io/fs"
 )
 
-//go:embed _lib tree minimap kanban colony shift-log herdr-grid inbox merge-on-green close-quiet turn-budget notify-ntfy notify-lockscreen notify-voice
+//go:embed _lib cards tree minimap kanban colony shift-log herdr-grid inbox merge-on-green close-quiet turn-budget notify-ntfy notify-lockscreen notify-voice
 var files embed.FS
 
 // Files is the shipped plugins, one directory per plugin id.

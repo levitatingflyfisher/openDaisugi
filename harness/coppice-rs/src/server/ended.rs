@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::panes::{unix_secs, ENDED_TTL_SECS};
-use super::role::{clean_label, is_foreman_label, DEFAULT_FOREMAN_LABEL};
+use super::role::{clean_label, is_steward_label, DEFAULT_STEWARD_LABEL};
 use super::{Client, RestoreReport, Server};
 use crate::config;
 use crate::gojson;
@@ -158,12 +158,12 @@ impl Server {
                 "pane.resume takes positive cols and rows, or neither.",
             );
         }
-        let router = r.s("router");
-        if !router.is_empty() && !super::swap::valid_router_word(&router) {
+        let route = r.s("route");
+        if !route.is_empty() && !super::swap::valid_route_word(&route) {
             return proto::err_resp(
                 &r.id,
                 proto::ERR_BAD_REQUEST,
-                super::swap::ROUTER_WORDS_REFUSAL,
+                super::swap::ROUTE_WORDS_REFUSAL,
             );
         }
         if !self.claim_resume(&id) {
@@ -174,20 +174,20 @@ impl Server {
             );
         }
         let fenced = self.caller_fenced(&c.role());
-        let resp = self.resume_claimed(r, &id, cols, rows, &router, fenced);
+        let resp = self.resume_claimed(r, &id, cols, rows, &route, fenced);
         self.release_resume(&id);
         resp
     }
 
-    /// pane.resume once the id is claimed. router is "" for the record's
-    /// own env, or direct or gateway for a base URL set on the new pane.
+    /// pane.resume once the id is claimed. route is "" for the record's
+    /// own env, or direct or router for a base URL set on the new pane.
     pub(super) fn resume_claimed(
         self: &Arc<Server>,
         r: &Request,
         id: &str,
         cols: Option<i64>,
         rows: Option<i64>,
-        router: &str,
+        route: &str,
         fenced: bool,
     ) -> Response {
         let Some(rec) = self.tree.pane(id) else {
@@ -227,24 +227,24 @@ impl Server {
         }
         let cols = cols.unwrap_or(rec.cols);
         let rows = rows.unwrap_or(rec.rows);
-        // A record labelled foreman is the floor's foreman again only when
+        // A record labelled steward is the floor's steward again only when
         // it is the one the server tracks. The talk lock is held to the
-        // end, so a talk cannot start a foreman in between.
+        // end, so a talk cannot start a steward in between.
         let mut label = clean_label(&rec.label);
         let tracked = {
             let mut t = self.talk_lock();
-            self.tracked_foreman(&mut t) == id
+            self.tracked_steward(&mut t) == id
         };
-        let talk_held = is_foreman_label(&label) || tracked;
+        let talk_held = is_steward_label(&label) || tracked;
         let mut talk = talk_held.then(|| self.talk_lock());
         if let Some(t) = talk.as_mut() {
-            if self.tracked_foreman(t) != id && is_foreman_label(&label) {
-                label = format!("{DEFAULT_FOREMAN_LABEL}-old");
+            if self.tracked_steward(t) != id && is_steward_label(&label) {
+                label = format!("{DEFAULT_STEWARD_LABEL}-old");
             }
         }
         let mut env = rec.env.clone();
-        if !router.is_empty() {
-            match self.router_env(&rec.harness, router) {
+        if !route.is_empty() {
+            match self.route_env(&rec.harness, route) {
                 Ok((k, v)) => {
                     env.insert(k, v);
                 }
@@ -270,6 +270,8 @@ impl Server {
                 extra_args: rec.extra_args.clone(),
                 fence: super::fence::fence_or(&rec.fence, fenced),
                 model: rec.model.clone(),
+                started_at: super::panes::unix_secs(),
+                made_by: rec.made_by.clone(),
                 ..Default::default()
             },
         );
@@ -299,7 +301,7 @@ impl Server {
         }
         self.drop_record(id);
         if let Some(t) = talk.as_mut() {
-            self.follow_foreman_locked(t, id, &new_rec.id, resumed);
+            self.follow_steward_locked(t, id, &new_rec.id, resumed);
         }
         drop(talk);
         let mut out = vec![
@@ -308,8 +310,8 @@ impl Server {
             ("tab", json!(new_rec.tab)),
             ("resumed", json!(resumed)),
         ];
-        if !router.is_empty() {
-            out.push(("router", json!(router)));
+        if !route.is_empty() {
+            out.push(("route", json!(route)));
         }
         proto::ok_resp(&r.id, gojson::map(out))
     }
@@ -435,7 +437,7 @@ impl Server {
             .unwrap_or_else(|e| e.into_inner())
             .insert(rec.id.clone());
         let _ = self.tree.close_pane(&rec.id, rec.exit_code, unix_secs());
-        self.tree.drop_foreman(&rec.id);
+        self.tree.drop_steward(&rec.id);
         let harness = if rec.harness.is_empty() {
             "shell".to_string()
         } else {

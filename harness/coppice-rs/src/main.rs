@@ -14,7 +14,7 @@ mod cli;
 mod config;
 mod datahome;
 mod detect;
-mod foreman;
+mod steward;
 mod godec;
 mod gojson;
 mod layout;

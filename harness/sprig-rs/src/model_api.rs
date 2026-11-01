@@ -1,10 +1,10 @@
 //! The model over the Messages API wire, with native tool use: a tiny
 //! system prompt and the four tool schemas. It needs ANTHROPIC_API_KEY, so
-//! it is off unless SPRIG_BACKEND=api. The gate is unchanged: every call
+//! it is off unless SPRIG_BACKEND=api. The warden is unchanged: every call
 //! still goes through the executor.
 
 use crate::agent::{Message, Model};
-use crate::gate::ToolCall;
+use crate::warden::ToolCall;
 use crate::json::{jmap, Map, J};
 use crate::session::Usage;
 use std::os::unix::ffi::OsStrExt;
@@ -339,6 +339,27 @@ pub fn api_tools() -> J {
             "Start a child agent on a task inside a narrower envelope, wait, and return its answer.",
             spawn_schema(),
         ),
+        tool("help", crate::help::HELP_DESCRIPTION, help_schema()),
+    ])
+}
+
+/// The help tool's input: kind, one of three, and the text.
+pub fn help_schema() -> J {
+    let ty = |t: &str| jmap(vec![("type", J::s(t))]);
+    let kinds = J::Arr(crate::help::HELP_KINDS.iter().map(|k| J::s(k)).collect());
+    jmap(vec![
+        ("type", J::s("object")),
+        (
+            "properties",
+            jmap(vec![
+                (
+                    "kind",
+                    jmap(vec![("type", J::s("string")), ("enum", kinds)]),
+                ),
+                ("text", ty("string")),
+            ]),
+        ),
+        ("required", J::Arr(vec![J::s("kind"), J::s("text")])),
     ])
 }
 
@@ -363,6 +384,8 @@ pub fn spawn_schema() -> J {
                 ("tokens", ty("integer")),
                 ("turns", ty("integer")),
                 ("max_turns", ty("integer")),
+                ("attempts", ty("integer")),
+                ("why", ty("string")),
             ]),
         ),
         ("required", J::Arr(vec![J::s("task"), J::s("envelope")])),

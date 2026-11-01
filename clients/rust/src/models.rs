@@ -19,7 +19,8 @@ use serde_json::Value;
 pub const SHELL_INTERPRETERS: &[&str] = &[
     "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "xargs", "find", "python", "python3", "python2",
     "perl", "ruby", "node", "deno", "make", "awk", "gawk", "sed", "eval", "exec", "source", "env", "timeout",
-    "nice", "nohup", "time", "stdbuf", "command", "setsid", "ionice", "sudo", "doas", "watch",
+    "nice", "nohup", "time", "stdbuf", "command", "setsid", "ionice", "sudo", "doas", "watch", "chroot", "flock",
+    "busybox", "script", "parallel", "coproc", "trap", "systemd-run", "screen", "unbuffer", "expect", "runuser", "taskset", "chrt", "prlimit", "unshare", "nsenter", "entr", "batch",
 ];
 
 fn default_true() -> bool {
@@ -36,6 +37,17 @@ fn default_low() -> String {
 }
 fn default_surface() -> String {
     "surface".to_string()
+}
+
+/// `models.McpRule`: the tool pattern, the predicate expressions (raw JSON,
+/// parsed when a call is checked), and the known keys when named.
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpRule {
+    pub tool: String,
+    #[serde(default)]
+    pub args: Vec<Value>,
+    #[serde(default)]
+    pub known: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +68,8 @@ pub struct Permission {
     pub shell_allow_decomposition: bool,
     #[serde(default)]
     pub mcp_allowlist: Vec<String>,
+    #[serde(default)]
+    pub mcp_rules: Vec<McpRule>,
     #[serde(default)]
     pub custom_step_allowlist: Vec<String>,
     #[serde(default = "default_max_exec")]
@@ -102,6 +116,7 @@ impl Default for Permission {
             shell_allowlist: vec![],
             shell_allow_decomposition: false,
             mcp_allowlist: vec![],
+            mcp_rules: vec![],
             custom_step_allowlist: vec![],
             max_execution_time_s: 30,
             max_output_size_mb: 10,
@@ -356,7 +371,7 @@ pub fn parse_plan(v: &Value) -> Result<ActionPlan, String> {
 }
 
 /// The 13 built-in step types with a verification story (permission-stage
-/// case, dedicated z3/robotics handler, or gating elsewhere). Mirrors
+/// case, dedicated z3/robotics handler, or checking elsewhere). Mirrors
 /// `verify._KNOWN_STEP_TYPES`.
 pub const KNOWN_STEP_TYPES: [&str; 13] = [
     "shell",

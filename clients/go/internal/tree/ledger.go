@@ -12,12 +12,15 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
+	"daisugi-verify/internal/branchgit"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/rank"
 	"daisugi-verify/internal/statefile"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // Error is tree.TreeError: what the command tried, why not, and the fix.
@@ -74,6 +77,25 @@ func allStrs(v any) bool {
 	return true
 }
 
+// IsObjectID is tree.is_object_id: a full git object id, 40 or 64 lower-case
+// hex digits, nothing else.
+func IsObjectID(s string) bool { return branchgit.IsObjectID(s) }
+
+// baseRepoOK is the spawn row's base and repo: both or neither, the base an
+// object id, the repo a non-empty text.
+func baseRepoOK(row *pyjson.Object) bool {
+	b, r := row.Value("base"), row.Value("repo")
+	if (b == nil) != (r == nil) {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	bs, ok1 := b.(string)
+	rs, ok2 := r.(string)
+	return ok1 && ok2 && IsObjectID(bs) && rs != ""
+}
+
 // fits is tree._fits.
 func fits(row *pyjson.Object) bool {
 	if !finite(row.Value("ts")) {
@@ -88,6 +110,9 @@ func fits(row *pyjson.Object) bool {
 		_, proved := row.Value("proved").(bool)
 		extrasOK := (row.Value("profile") == nil || isStr(row, "profile")) &&
 			(row.Value("model") == nil || isStr(row, "model")) &&
+			(row.Value("branch_of") == nil || isStr(row, "branch_of")) &&
+			(row.Value("why") == nil || isStr(row, "why")) &&
+			baseRepoOK(row) &&
 			count(row.Value("parent_tokens_used")) && count(row.Value("parent_turns_used"))
 		return isStr(row, "parent") && isStr(row, "session") && isStr(row, "envelope_id") &&
 			count(row.Value("tokens")) && count(row.Value("turns")) && deadlineOK && proved && extrasOK
@@ -132,6 +157,14 @@ type Node struct {
 	// Profile and Model are the agent profile and model the starter ran
 	// it on, as its spawn row holds them; nil for none.
 	Profile, Model *string
+	// BranchOf is the ranking a branch belongs to, and Why the reason the
+	// branch was started.
+	BranchOf, Why *string
+	// Base is the commit a branch started from and Repo the repository's
+	// git directory, as the parent recorded them; nil for none.
+	Base, Repo *string
+	// EndedAt is the ts of its end row; 0 while it runs.
+	EndedAt float64
 	// OwnTokensUsed and OwnTurnsUsed are its own use as the latest spawn
 	// under it reported it.
 	OwnTokensUsed, OwnTurnsUsed *big.Int
@@ -142,6 +175,8 @@ type Node struct {
 
 // Tree is tree.Tree.
 type Tree struct {
+	// Order holds the sessions in the order their rows were read.
+	Order   []string
 	Nodes   map[string]*Node
 	Roots   []string
 	Asks    map[string]*pyjson.Object
@@ -325,8 +360,21 @@ func ReadTree(dataDir string) *Tree {
 				if s, ok := row.Value("model").(string); ok {
 					node.Model = &s
 				}
+				if s, ok := row.Value("branch_of").(string); ok {
+					node.BranchOf = &s
+				}
+				if s, ok := row.Value("why").(string); ok {
+					node.Why = &s
+				}
+				if s, ok := row.Value("base").(string); ok {
+					node.Base = &s
+				}
+				if s, ok := row.Value("repo").(string); ok {
+					node.Repo = &s
+				}
 			}
 			t.Nodes[sid] = node
+			t.Order = append(t.Order, sid)
 			if parent == nil {
 				t.Roots = append(t.Roots, sid)
 			} else {
@@ -373,6 +421,7 @@ func ReadTree(dataDir string) *Tree {
 				continue
 			}
 			n.State = "ended"
+			n.EndedAt, _ = Num(row.Value("ts"))
 			n.TokensUsed = optBig(row.Value("tokens_used"))
 			n.TurnsUsed = optBig(row.Value("turns_used"))
 		case "group":
@@ -486,24 +535,24 @@ func hasControl(s string) bool {
 	return false
 }
 
-func envelopeFile(gateRoot, session string) string {
-	return gateroot.Join(gateroot.EnvelopesDir(gateRoot), session+".json")
+func envelopeFile(wardenRoot, session string) string {
+	return wardenroot.Join(wardenroot.EnvelopesDir(wardenRoot), session+".json")
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // LoadRegisteredChecked is tree.load_registered_checked: the envelope
-// registered for a session, read as the gate reads it (GR-R-1). env is nil
+// registered for a session, read as the warden reads it (GR-R-1). env is nil
 // when there is none or it does not read as one; refusal is not empty when
 // the root, envelopes/ or the file is a link, is owned by another user, has
 // a second link or is writable by group or others. A refusal means "cannot
 // be read" (GR-R-7).
-func LoadRegisteredChecked(session, gateRoot string) (env *pyjson.Object, refusal string) {
+func LoadRegisteredChecked(session, wardenRoot string) (env *pyjson.Object, refusal string) {
 	name := "default"
 	if session != "" {
-		name = gateroot.SafeSessionID(session)
+		name = wardenroot.SafeSessionID(session)
 	}
-	raw, present, refusal, err := statefile.ProbeRead(gateRoot, []string{"envelopes"}, name+".json")
+	raw, present, refusal, err := statefile.ProbeRead(wardenRoot, []string{"envelopes"}, name+".json")
 	if refusal != "" {
 		return nil, refusal
 	}
@@ -519,10 +568,10 @@ func LoadRegisteredChecked(session, gateRoot string) (env *pyjson.Object, refusa
 }
 
 // LoadRegistered is tree.load_registered: the envelope registered for a
-// session, or nil when there is none, it does not read as one or the gate
+// session, or nil when there is none, it does not read as one or the warden
 // would refuse to read it.
-func LoadRegistered(session, gateRoot string) *pyjson.Object {
-	env, _ := LoadRegisteredChecked(session, gateRoot)
+func LoadRegistered(session, wardenRoot string) *pyjson.Object {
+	env, _ := LoadRegisteredChecked(session, wardenRoot)
 	return env
 }
 
@@ -534,7 +583,7 @@ func bigAny(b *big.Int) any {
 }
 
 // MakeRoot is tree.make_root.
-func MakeRoot(dataDir, gateRoot string, env *pyjson.Object, session string, tokens, turns *big.Int) (path string, err error) {
+func MakeRoot(dataDir, wardenRoot string, env *pyjson.Object, session string, tokens, turns *big.Int) (path string, err error) {
 	what := "Tried to make session " + session + " a root of the tree."
 	if err := checkSession(session, what); err != nil {
 		return "", err
@@ -544,7 +593,7 @@ func MakeRoot(dataDir, gateRoot string, env *pyjson.Object, session string, toke
 	}
 	err = locked(dataDir, func() error {
 		t := ReadTree(dataDir)
-		if t.Nodes[session] != nil || fileExists(envelopeFile(gateRoot, session)) {
+		if t.Nodes[session] != nil || fileExists(envelopeFile(wardenRoot, session)) {
 			return &Error{what, "Session " + session + " is in use already.", "Pick another session id.", 1}
 		}
 		row := pyjson.NewObject().Set("event", "root").Set("session", session).Set("envelope_id", env.Value("id")).
@@ -552,7 +601,7 @@ func MakeRoot(dataDir, gateRoot string, env *pyjson.Object, session string, toke
 		if err := appendRows(dataDir, row); err != nil {
 			return err
 		}
-		path, err = gateroot.Register(env, session, gateRoot)
+		path, err = wardenroot.Register(env, session, wardenRoot)
 		return err
 	})
 	return path, err
@@ -572,6 +621,8 @@ type Spawn struct {
 // model of the child (nil for none) and the parent's own use so far.
 type SpawnOpts struct {
 	Profile, Model                    *string
+	BranchOf, Why                     *string
+	Base, Repo                        *string
 	ParentTokensUsed, ParentTurnsUsed *big.Int
 }
 
@@ -603,13 +654,12 @@ func budgetReasons(t *Tree, parent *Node, tokens, turns *big.Int) []string {
 func strOf(o *pyjson.Object, k string) string { s, _ := o.Value(k).(string); return s }
 
 // DoSpawn is tree.spawn with no profile, model or parent use.
-func DoSpawn(dataDir, gateRoot string, env *pyjson.Object, parent, session string, tokens, turns *big.Int, timeoutMs int) (*Spawn, error) {
-	return DoSpawnOpts(dataDir, gateRoot, env, parent, &session, tokens, turns, timeoutMs, SpawnOpts{})
+func DoSpawn(dataDir, wardenRoot string, env *pyjson.Object, parent, session string, tokens, turns *big.Int, timeoutMs int) (*Spawn, error) {
+	return DoSpawnOpts(dataDir, wardenRoot, env, parent, &session, tokens, turns, timeoutMs, SpawnOpts{})
 }
 
-// DoSpawnOpts is tree.spawn. A nil session is minted (MintSession).
-func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, sessionP *string,
-	tokens, turns *big.Int, timeoutMs int, o SpawnOpts) (*Spawn, error) {
+// checkSpawnArgs is tree._check_spawn_args.
+func checkSpawnArgs(parent string, sessionP *string, tokens, turns *big.Int, o SpawnOpts) error {
 	session := "None"
 	if sessionP != nil {
 		session = *sessionP
@@ -617,27 +667,63 @@ func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, se
 	what := "Tried to start session " + session + " under " + parent + "."
 	if sessionP != nil {
 		if err := checkSession(session, what); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if err := checkSession(parent, what); err != nil {
-		return nil, err
+		return err
 	}
 	if err := checkCounts([]string{"tokens", "turns", "parent-tokens-used", "parent-turns-used"},
 		[]*big.Int{tokens, turns, o.ParentTokensUsed, o.ParentTurnsUsed}); err != nil {
-		return nil, err
+		return err
 	}
 	if o.Model != nil && hasControl(*o.Model) {
-		return nil, &Error{"Tried to read the model id.", "The model id holds a control character.",
+		return &Error{"Tried to read the model id.", "The model id holds a control character.",
 			"Name the model with no control character.", 2}
+	}
+	for _, nv := range []struct {
+		name string
+		v    *string
+	}{{"branch_of", o.BranchOf}, {"why", o.Why}} {
+		if nv.v != nil {
+			if n := utf8.RuneCountInString(*nv.v); n == 0 || n > 200 {
+				return &Error{what, nv.name + " must be 1 to 200 characters of text.", "Fix it.", 1}
+			}
+		}
+	}
+	return nil
+}
+
+// DoSpawnOpts is tree.spawn. A nil session is minted (MintSession).
+func DoSpawnOpts(dataDir, wardenRoot string, env *pyjson.Object, parent string, sessionP *string,
+	tokens, turns *big.Int, timeoutMs int, o SpawnOpts) (*Spawn, error) {
+	if err := checkSpawnArgs(parent, sessionP, tokens, turns, o); err != nil {
+		return nil, err
 	}
 	var out *Spawn
 	err := locked(dataDir, func() error {
+		var e error
+		out, e = spawnLocked(dataDir, wardenRoot, env, parent, sessionP, tokens, turns, timeoutMs, o)
+		return e
+	})
+	return out, err
+}
+
+// spawnLocked is tree._spawn_locked: spawn with the ledger lock held.
+func spawnLocked(dataDir, wardenRoot string, env *pyjson.Object, parent string, sessionP *string,
+	tokens, turns *big.Int, timeoutMs int, o SpawnOpts) (*Spawn, error) {
+	session := "None"
+	if sessionP != nil {
+		session = *sessionP
+	}
+	what := "Tried to start session " + session + " under " + parent + "."
+	var out *Spawn
+	{
 		t := ReadTree(dataDir)
 		if sessionP == nil {
 			n := t.Proposals[parent]
 			session = MintSession(parent, n)
-			for t.Nodes[session] != nil || fileExists(envelopeFile(gateRoot, session)) {
+			for t.Nodes[session] != nil || fileExists(envelopeFile(wardenRoot, session)) {
 				n++
 				session = MintSession(parent, n)
 			}
@@ -645,15 +731,15 @@ func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, se
 		}
 		pnode := t.Running(parent)
 		if pnode == nil {
-			return &Error{what, parent + " is not a running node of the tree.",
+			return nil, &Error{what, parent + " is not a running node of the tree.",
 				"Start the child under a running node; daisugi tree status lists them.", 1}
 		}
-		if t.Nodes[session] != nil || fileExists(envelopeFile(gateRoot, session)) {
-			return &Error{what, "Session " + session + " is in use already.", "Pick another session id.", 1}
+		if t.Nodes[session] != nil || fileExists(envelopeFile(wardenRoot, session)) {
+			return nil, &Error{what, "Session " + session + " is in use already.", "Pick another session id.", 1}
 		}
 		for _, a := range t.OpenAsks() {
 			if a.Value("session") == session {
-				return &Error{what, "An ask for session " + session + " is open.",
+				return nil, &Error{what, "An ask for session " + session + " is open.",
 					"Wait for the operator's answer, or pick another session id.", 1}
 			}
 		}
@@ -663,7 +749,7 @@ func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, se
 		if o.ParentTurnsUsed != nil {
 			pnode.OwnTurnsUsed = o.ParentTurnsUsed
 		}
-		penv := LoadRegistered(parent, gateRoot)
+		penv := LoadRegistered(parent, wardenRoot)
 		var res *Result
 		var reasons []string
 		if penv != nil && penv.Value("stakes") == "physical" {
@@ -681,18 +767,18 @@ func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, se
 					Set("session", session).Set("tokens", bigAny(tokens)).Set("turns", bigAny(turns)).
 					Set("envelope", env).Set("reasons", anys(reasons)).Set("ts", ts)
 				if err := appendRows(dataDir, row); err != nil {
-					return err
+					return nil, err
 				}
 				out = &Spawn{Status: "asked", Reasons: reasons, AskID: id, Session: session}
-				return nil
+				return out, nil
 			}
 			row := pyjson.NewObject().Set("event", "refused").Set("parent", parent).Set("session", session).
 				Set("reasons", anys(reasons)).Set("ts", ts)
 			if err := appendRows(dataDir, row); err != nil {
-				return err
+				return nil, err
 			}
 			out = &Spawn{Status: "refused", Reasons: reasons, Session: session}
-			return nil
+			return out, nil
 		}
 		child := withKey(res.Child, "parent_envelope", penv.Value("id"))
 		row := pyjson.NewObject().Set("event", "spawn").Set("parent", parent).Set("session", session).
@@ -710,25 +796,123 @@ func DoSpawnOpts(dataDir, gateRoot string, env *pyjson.Object, parent string, se
 		if o.ParentTurnsUsed != nil {
 			row.Set("parent_turns_used", bigAny(o.ParentTurnsUsed))
 		}
+		if o.BranchOf != nil {
+			row.Set("branch_of", *o.BranchOf)
+		}
+		if o.Why != nil {
+			row.Set("why", *o.Why)
+		}
+		if o.Base != nil {
+			row.Set("base", *o.Base)
+		}
+		if o.Repo != nil {
+			row.Set("repo", *o.Repo)
+		}
 		row.Set("ts", ts)
 		if err := appendRows(dataDir, row); err != nil {
-			return err
+			return nil, err
 		}
-		path, err := gateroot.Register(child, session, gateRoot)
+		path, err := wardenroot.Register(child, session, wardenRoot)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		out = &Spawn{Status: "started", Path: path, Session: session}
 		if res.Inherited {
 			out.Inherited = child.Value("deadline")
 		}
+		return out, nil
+	}
+}
+
+// Branches is tree.Branches: the result of reserving all the branches of one
+// task, or none.
+type Branches struct {
+	Status   string // started, refused or asked
+	Reasons  []string
+	Sessions []string
+	AskID    string
+}
+
+// SpawnBranches is tree.spawn_branches: every branch of one task reserved
+// under one lock, in branch order, or none (W3K-9, W3K-13).
+func SpawnBranches(dataDir, wardenRoot string, env *pyjson.Object, parent string, sessions []string,
+	tokens, turns *big.Int, timeoutMs int, o SpawnOpts) (*Branches, error) {
+	n := len(sessions)
+	if err := checkSpawnArgs(parent, nil, tokens, turns, o); err != nil {
+		return nil, err
+	}
+	if (o.Base == nil) != (o.Repo == nil) || (o.Base != nil && !IsObjectID(*o.Base)) {
+		return nil, &Error{"Tried to start branches under " + parent + ".",
+			"base must be a 40 or 64 digit hex object id, and repo must come with it.", "Fix it.", 1}
+	}
+	for _, sid := range sessions {
+		if err := checkSession(sid, "Tried to start session "+sid+" under "+parent+"."); err != nil {
+			return nil, err
+		}
+	}
+	var out *Branches
+	err := locked(dataDir, func() error {
+		t := ReadTree(dataDir)
+		if pnode := t.Running(parent); pnode != nil {
+			if o.ParentTokensUsed != nil {
+				pnode.OwnTokensUsed = o.ParentTokensUsed
+			}
+			if o.ParentTurnsUsed != nil {
+				pnode.OwnTurnsUsed = o.ParentTurnsUsed
+			}
+			for _, ax := range []struct {
+				name string
+				want *big.Int
+			}{{"tokens", tokens}, {"turns", turns}} {
+				left := t.Left(pnode, ax.name)
+				if left != nil && ax.want != nil && new(big.Int).Mul(ax.want, big.NewInt(int64(n))).Cmp(left) > 0 {
+					out = &Branches{Status: "refused", Reasons: []string{fmt.Sprintf(
+						"the parent has %s %s left; %d branches of %s each need %s", left, ax.name, n, ax.want,
+						new(big.Int).Mul(ax.want, big.NewInt(int64(n))))}}
+					return nil
+				}
+			}
+		}
+		var done []string
+		undo := func() {
+			// End what started, with no report: each keeps its whole reservation.
+			for _, sid := range done {
+				_, _ = endLocked(dataDir, wardenRoot, sid, nil, nil)
+			}
+		}
+		for _, sid := range sessions {
+			sid := sid
+			sp, e := spawnLocked(dataDir, wardenRoot, env, parent, &sid, tokens, turns, timeoutMs, o)
+			if e != nil {
+				var te *Error
+				if errors.As(e, &te) {
+					undo()
+					out = &Branches{Status: "refused", Reasons: []string{te.Why}}
+					return nil
+				}
+				return e
+			}
+			if sp.Status != "started" {
+				// The same envelope and budget were proved for the first
+				// branch, so a later refusal is a race.
+				if len(done) == 0 {
+					out = &Branches{Status: sp.Status, Reasons: sp.Reasons, AskID: sp.AskID}
+					return nil
+				}
+				undo()
+				out = &Branches{Status: "refused", Reasons: sp.Reasons}
+				return nil
+			}
+			done = append(done, sid)
+		}
+		out = &Branches{Status: "started", Sessions: done}
 		return nil
 	})
 	return out, err
 }
 
 // End is tree.end.
-func End(dataDir, gateRoot, session string, tokensUsed, turnsUsed *big.Int) (*Node, error) {
+func End(dataDir, wardenRoot, session string, tokensUsed, turnsUsed *big.Int) (*Node, error) {
 	what := "Tried to end session " + session + "."
 	if err := checkSession(session, what); err != nil {
 		return nil, err
@@ -738,10 +922,21 @@ func End(dataDir, gateRoot, session string, tokensUsed, turnsUsed *big.Int) (*No
 	}
 	var node *Node
 	err := locked(dataDir, func() error {
+		var e error
+		node, e = endLocked(dataDir, wardenRoot, session, tokensUsed, turnsUsed)
+		return e
+	})
+	return node, err
+}
+
+// endLocked is tree._end_locked: end with the ledger lock held.
+func endLocked(dataDir, wardenRoot, session string, tokensUsed, turnsUsed *big.Int) (*Node, error) {
+	what := "Tried to end session " + session + "."
+	{
 		t := ReadTree(dataDir)
-		node = t.Running(session)
+		node := t.Running(session)
 		if node == nil {
-			return &Error{what, session + " is not a running node of the tree.",
+			return nil, &Error{what, session + " is not a running node of the tree.",
 				"daisugi tree status lists the running nodes.", 1}
 		}
 		var busy []string
@@ -751,32 +946,32 @@ func End(dataDir, gateRoot, session string, tokensUsed, turnsUsed *big.Int) (*No
 			}
 		}
 		if len(busy) > 0 {
-			return &Error{what, "It has running children: " + strings.Join(busy, ", ") + ".", "End them first.", 1}
+			return nil, &Error{what, "It has running children: " + strings.Join(busy, ", ") + ".", "End them first.", 1}
 		}
 		tokensTotal := t.BranchTotal(node, "tokens", tokensUsed)
 		turnsTotal := t.BranchTotal(node, "turns", turnsUsed)
 		row := pyjson.NewObject().Set("event", "end").Set("session", session).
 			Set("tokens_used", bigAny(tokensTotal)).Set("turns_used", bigAny(turnsTotal)).Set("ts", Now())
 		if err := appendRows(dataDir, row); err != nil {
-			return err
+			return nil, err
 		}
 		// Removed through the directory fd (GR-R-9). A refused envelopes/ is
-		// one the gate refuses to read as well, so nothing there stays honored.
+		// one the warden refuses to read as well, so nothing there stays honored.
 		var wr *statefile.WriteRefused
 		why := ""
-		removed, err := statefile.UnlinkFile(gateRoot, []string{"envelopes"}, session+".json")
+		removed, err := statefile.UnlinkFile(wardenRoot, []string{"envelopes"}, session+".json")
 		switch {
 		case err == nil && !removed:
 			why = "it was not found" // N3: envelopes/ moved aside, or never there
 		case err != nil && errors.As(err, &wr):
 			why = wr.Text
 		case err != nil:
-			return err
+			return nil, err
 		}
 		if why != "" {
 			// The end row is written, so the exit code stays; the file left
 			// behind is said (N1, N3).
-			left := gateRoot
+			left := wardenRoot
 			if !strings.HasSuffix(left, "/") {
 				left += "/"
 			}
@@ -785,15 +980,14 @@ func End(dataDir, gateRoot, session string, tokensUsed, turnsUsed *big.Int) (*No
 		}
 		node.State = "ended"
 		node.TokensUsed, node.TurnsUsed = tokensTotal, turnsTotal
-		return nil
-	})
-	return node, err
+		return node, nil
+	}
 }
 
 // EndSubtree is tree.end_subtree: end every running node under session
 // (and session, with includeSelf), leaves first, each with no report, so
 // each keeps its whole reservation. It returns the sessions it ended.
-func EndSubtree(dataDir, gateRoot, session string, includeSelf bool) []string {
+func EndSubtree(dataDir, wardenRoot, session string, includeSelf bool) []string {
 	t := ReadTree(dataDir)
 	var order []string
 	var walk func(string)
@@ -809,13 +1003,13 @@ func EndSubtree(dataDir, gateRoot, session string, includeSelf bool) []string {
 		walk(session)
 	}
 	for _, sid := range order {
-		_, _ = End(dataDir, gateRoot, sid, nil, nil)
+		_, _ = End(dataDir, wardenRoot, sid, nil, nil)
 	}
 	return order
 }
 
 // Answer is tree.answer: the ask, and the registered path on an allow.
-func Answer(dataDir, gateRoot, id, verdict string) (*pyjson.Object, string, error) {
+func Answer(dataDir, wardenRoot, id, verdict string) (*pyjson.Object, string, error) {
 	what := "Tried to answer ask " + id + "."
 	if verdict != "allow" && verdict != "deny" {
 		return nil, "", &Error{what, "The answer must be allow or deny.", "Run it again with allow or deny.", 2}
@@ -841,7 +1035,7 @@ func Answer(dataDir, gateRoot, id, verdict string) (*pyjson.Object, string, erro
 		if pnode == nil {
 			return &Error{what, parent + " is not a running node of the tree.", "Deny the ask.", 1}
 		}
-		if t.Nodes[session] != nil || fileExists(envelopeFile(gateRoot, session)) {
+		if t.Nodes[session] != nil || fileExists(envelopeFile(wardenRoot, session)) {
 			return &Error{what, "Session " + session + " is in use already.", "Deny the ask.", 1}
 		}
 		if over := budgetReasons(t, pnode, optBig(ask.Value("tokens")), optBig(ask.Value("turns"))); len(over) > 0 {
@@ -852,12 +1046,12 @@ func Answer(dataDir, gateRoot, id, verdict string) (*pyjson.Object, string, erro
 			return verr
 		}
 		// One read of the parent serves the check and the edge below. A parent
-		// the gate would refuse to read cannot be shown not to be physical,
+		// the warden would refuse to read cannot be shown not to be physical,
 		// so an allow is refused (GR-R-7). AT-5 holds under an allow too: a
 		// physical parent starts no agent.
-		ppar, refusal := LoadRegisteredChecked(parent, gateRoot)
+		ppar, refusal := LoadRegisteredChecked(parent, wardenRoot)
 		if refusal != "" {
-			return &Error{what, "The envelope of " + parent + " cannot be read: the gate refuses it.",
+			return &Error{what, "The envelope of " + parent + " cannot be read: the warden refuses it.",
 				"Deny the ask, then fix the file's owner, links or mode.", 1}
 		}
 		if ppar != nil && ppar.Value("stakes") == "physical" {
@@ -873,10 +1067,10 @@ func Answer(dataDir, gateRoot, id, verdict string) (*pyjson.Object, string, erro
 		// absence means the file was removed or spoiled: AT-5 cannot be
 		// shown to hold under an allow (N2, GR-R-17).
 		if ppar == nil && parent != root {
-			return &Error{what, "The envelope of " + parent + " is missing or not valid: the gate cannot read it.",
+			return &Error{what, "The envelope of " + parent + " is missing or not valid: the warden cannot read it.",
 				"Deny the ask, then register the parent's envelope again.", 1}
 		}
-		edge := EdgeOK(LoadRegistered(root, gateRoot), v.(*pyjson.Object), DefaultTimeoutMs)
+		edge := EdgeOK(LoadRegistered(root, wardenRoot), v.(*pyjson.Object), DefaultTimeoutMs)
 		if !edge.Holds || edge.Child == nil {
 			return &Error{what, "The child does not fit inside the root " + root + ": " + strings.Join(edge.Reasons, "; ") + ".",
 				"Deny the ask, or register the child as a root of its own.", 1}
@@ -892,7 +1086,7 @@ func Answer(dataDir, gateRoot, id, verdict string) (*pyjson.Object, string, erro
 			return err
 		}
 		var err error
-		path, err = gateroot.Register(child, session, gateRoot)
+		path, err = wardenroot.Register(child, session, wardenRoot)
 		return err
 	})
 	return ask, path, err
@@ -924,6 +1118,12 @@ func StatusDoc(dataDir string) *pyjson.Object {
 		if n.Model != nil {
 			doc.Set("model", *n.Model)
 		}
+		if n.BranchOf != nil {
+			doc.Set("branch_of", *n.BranchOf)
+		}
+		if n.Why != nil {
+			doc.Set("why", *n.Why)
+		}
 		nodes = append(nodes, doc)
 		for _, c := range n.Children {
 			walk(c)
@@ -938,7 +1138,69 @@ func StatusDoc(dataDir string) *pyjson.Object {
 			Set("session", a.Value("session")).Set("tokens", a.Value("tokens")).Set("turns", a.Value("turns")).
 			Set("reasons", a.Value("reasons")))
 	}
-	return pyjson.NewObject().Set("nodes", nodes).Set("asks", asks).Set("skipped", pyjson.Int{Text: fmt.Sprint(t.Skipped)})
+	doc := pyjson.NewObject().Set("nodes", nodes).Set("asks", asks).Set("skipped", pyjson.Int{Text: fmt.Sprint(t.Skipped)})
+	if groups := branchGroups(t, dataDir); len(groups) > 0 {
+		doc.Set("branches", groups)
+	}
+	return doc
+}
+
+// branchGroups is tree._branch_groups: the branches of each ranking, in the
+// order their first branch was reserved, with the leader and the eliminated
+// count when the ranking opened a card.
+func branchGroups(t *Tree, dataDir string) []any {
+	var order []string
+	members := map[string][]*Node{}
+	for _, sid := range t.Order {
+		n := t.Nodes[sid]
+		if n.BranchOf != nil {
+			if _, ok := members[*n.BranchOf]; !ok {
+				order = append(order, *n.BranchOf)
+			}
+			members[*n.BranchOf] = append(members[*n.BranchOf], n)
+		}
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	cards := map[string]*rank.Card{}
+	for _, c := range rank.ReadCards(dataDir) {
+		if rid, ok := c.Opened.Value("ranking_id").(string); ok {
+			cards[rid] = c
+		}
+	}
+	out := []any{}
+	for _, rid := range order {
+		nodes := members[rid]
+		sessions := []string{}
+		ended := 0
+		sum := new(big.Int)
+		for _, n := range nodes {
+			sessions = append(sessions, n.Session)
+			if n.State == "ended" {
+				ended++
+			}
+			sum.Add(sum, t.Charge(n, "tokens"))
+		}
+		if sum.Cmp(maxCount) > 0 {
+			sum = new(big.Int).Set(maxCount)
+		}
+		why := ""
+		if nodes[0].Why != nil {
+			why = *nodes[0].Why
+		}
+		g := pyjson.NewObject().Set("ranking_id", rid).Set("why", why).Set("sessions", anys(sessions)).
+			Set("ended", pyjson.Int{Text: fmt.Sprint(ended)}).Set("tokens", bigAny(sum))
+		if card := cards[rid]; card != nil {
+			opts, _ := card.Opened.Value("options").(*pyjson.Object)
+			surv, _ := opts.Value("survivors").([]any)
+			elim, _ := opts.Value("eliminated").([]any)
+			g.Set("leader", card.Opened.Value("chosen")).Set("ran", pyjson.Int{Text: fmt.Sprint(len(surv) + len(elim))}).
+				Set("eliminated", pyjson.Int{Text: fmt.Sprint(len(elim))})
+		}
+		out = append(out, g)
+	}
+	return out
 }
 
 func anysOrEmpty(ss []string) []any {
@@ -1006,6 +1268,17 @@ func StatusText(doc *pyjson.Object) string {
 	if len(lines) == 0 {
 		lines = append(lines, "The tree is empty.")
 	}
+	for _, x := range listOf(doc.Value("branches")) {
+		g := obj(x)
+		sessions := listOf(g.Value("sessions"))
+		body := fmt.Sprintf("%d started, %s ended", len(sessions), intText(g.Value("ended")))
+		if g.Value("leader") != nil {
+			body = fmt.Sprintf("%d started, %s ended, %s eliminated, leader %s", len(sessions), intText(g.Value("ended")),
+				intText(g.Value("eliminated")), anyText(g.Value("leader")))
+		}
+		lines = append(lines, fmt.Sprintf("  branches of %s (%s): %s, %s tokens", strOf(g, "ranking_id"), strOf(g, "why"),
+			body, intText(g.Value("tokens"))))
+	}
 	if asks := listOf(doc.Value("asks")); len(asks) > 0 {
 		lines = append(lines, "Open asks:")
 		for _, x := range asks {
@@ -1023,4 +1296,16 @@ func StatusText(doc *pyjson.Object) string {
 		lines = append(lines, sk+" ledger rows did not read or fit; skipped.")
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func anyText(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
+}
+
+// EnvelopeExists is tree._envelope_file(...).exists().
+func EnvelopeExists(wardenRoot, session string) bool {
+	return fileExists(envelopeFile(wardenRoot, session))
 }

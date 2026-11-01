@@ -8,10 +8,10 @@ import (
 	"daisugi-verify/internal/pyjson"
 )
 
-// GateHookProgram is config.gate_hook_program: the program of a gate hook
-// in the `daisugi gate check` form (the form the Go and Rust installs
+// WardenHookProgram is config.warden_hook_program: the program of a warden hook
+// in the `daisugi warden check` form (the form the Go and Rust installs
 // write, under any file name), or "" for any other command.
-func GateHookProgram(command any) string {
+func WardenHookProgram(command any) string {
 	s, isStr := command.(string)
 	if !isStr {
 		return ""
@@ -21,17 +21,17 @@ func GateHookProgram(command any) string {
 		return ""
 	}
 	for _, seg := range segments(tokens) {
-		if _, ok := binaryGateArgs(seg); ok {
+		if _, ok := binaryWardenArgs(seg); ok {
 			return skipEnv(seg)[0]
 		}
 	}
 	return ""
 }
 
-// GoneHook is one gate hook whose program is not there.
+// GoneHook is one warden hook whose program is not there.
 type GoneHook struct{ Program, Mode string }
 
-// MissingHookPrograms is config.missing_hook_programs: each gate hook in
+// MissingHookPrograms is config.missing_hook_programs: each warden hook in
 // the settings file whose program is an absolute path that is not there,
 // such as a binary a package manager removed on upgrade. That hook fails
 // on every call. Anything that is not the usual shape is skipped.
@@ -66,14 +66,14 @@ func MissingHookPrograms(settingsPath string) []GoneHook {
 				continue
 			}
 			command := hook.Value("command")
-			prog := GateHookProgram(command)
+			prog := WardenHookProgram(command)
 			if prog == "" || !strings.HasPrefix(prog, "/") {
 				continue
 			}
 			if _, err := os.Stat(prog); err == nil {
 				continue
 			}
-			g := GoneHook{Program: prog, Mode: GateHookMode(command)}
+			g := GoneHook{Program: prog, Mode: WardenHookMode(command)}
 			dup := false
 			for _, o := range out {
 				dup = dup || o == g
@@ -86,19 +86,19 @@ func MissingHookPrograms(settingsPath string) []GoneHook {
 	return out
 }
 
-// MissingHookWarning is config.missing_hook_warning: what gate status says
-// about a gate hook whose program is gone.
+// MissingHookWarning is config.missing_hook_warning: what warden status says
+// about a warden hook whose program is gone.
 func MissingHookWarning(settingsPath string, g GoneHook) string {
 	if g.Mode == "enforce" {
-		return "warning: the gate hook in " + settingsPath + " runs " + g.Program +
-			", which does not exist, so every call is denied. Run: daisugi install --gate --enforce"
+		return "warning: the warden hook in " + settingsPath + " runs " + g.Program +
+			", which does not exist, so every call is denied. Run: daisugi install --enforce"
 	}
-	return "warning: the gate hook in " + settingsPath + " runs " + g.Program +
-		", which does not exist, so the gate sees no call. Run: daisugi install --gate"
+	return "warning: the warden hook in " + settingsPath + " runs " + g.Program +
+		", which does not exist, so the warden sees no call. Run: daisugi install"
 }
 
 // StaleModeHooks is config.stale_mode_hooks: whether the settings file
-// holds a PreToolUse gate hook that passes --mode shadow. Anything that is
+// holds a PreToolUse warden hook that passes --mode shadow. Anything that is
 // not the usual shape is skipped.
 func StaleModeHooks(settingsPath string) bool {
 	raw, err := os.ReadFile(settingsPath)
@@ -133,10 +133,10 @@ func StaleModeHooks(settingsPath string) bool {
 	return false
 }
 
-// StaleModeWarning is config.stale_mode_warning: what gate status says
-// about a gate hook that passes --mode shadow.
+// StaleModeWarning is config.stale_mode_warning: what warden status says
+// about a warden hook that passes --mode shadow.
 func StaleModeWarning(settingsPath string) string {
-	return "warning: the gate hook in " + settingsPath + " passes --mode shadow, which is now " +
-		"--mode audit, so the gate refuses every call. Run: daisugi install --gate --uninstall, " +
-		"then daisugi install --gate"
+	return "warning: the warden hook in " + settingsPath + " passes --mode shadow, which is now " +
+		"--mode audit, so the warden refuses every call. Run: daisugi install --uninstall, " +
+		"then daisugi install"
 }

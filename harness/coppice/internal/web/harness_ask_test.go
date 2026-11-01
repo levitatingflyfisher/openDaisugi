@@ -10,7 +10,7 @@ import (
 )
 
 // A harness holds some asks itself, such as OpenCode's permission prompts.
-// The gate has no file for them, so the phone cannot answer them. It says
+// The warden has no file for them, so the phone cannot answer them. It says
 // where to answer, offers no Allow, and never calls the ask gone.
 
 func heldEvent(pane string) StateEvent {
@@ -53,7 +53,7 @@ func agentsWithHeldAsk(id string) func(map[string]any) []map[string]any {
 func TestAnAnswerToAHarnessHeldAskSaysWhereToAnswerNotGone(t *testing.T) {
 	for _, decision := range []string{"allow", "deny"} {
 		_, d := newFakeServer(t, agentsWithHeldAsk("per_1"))
-		ts, _, tok := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: t.TempDir()}})
+		ts, _, tok := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: t.TempDir()}})
 		req, _ := http.NewRequest("POST", ts.URL+"/api/ask/answer",
 			bytes.NewReader([]byte(`{"tool_use_id":"per_1","decision":"`+decision+`","confirm":"oc pane"}`)))
 		req.Header.Set("Authorization", "Bearer "+tok)

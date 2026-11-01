@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from opendaisugi.config import Config
-from opendaisugi.gateway_journal import GatewayJournal
+from opendaisugi.router_journal import RouterJournal
 from opendaisugi.routing import estimate_difficulty
 from opendaisugi.voice.cleanup import CLEANUP_PROMPT_V1, CleanupResult, clean_transcript
 
@@ -34,7 +34,7 @@ def test_clean_transcript_returns_original_when_cleanup_is_disabled(tmp_path):
     result = clean_transcript("hello  world", config=config, transport=transport)
     assert result == CleanupResult(text="hello  world", cleaned=False, reason=None)
     assert transport.calls == []
-    assert not (tmp_path / "gateway" / "turns.jsonl").exists()
+    assert not (tmp_path / "router" / "turns.jsonl").exists()
 
 
 def test_clean_transcript_returns_original_when_no_model_is_configured(tmp_path):
@@ -43,7 +43,7 @@ def test_clean_transcript_returns_original_when_no_model_is_configured(tmp_path)
     result = clean_transcript("hello world", config=config, transport=transport)
     assert result == CleanupResult(text="hello world", cleaned=False, reason=None)
     assert transport.calls == []
-    assert not (tmp_path / "gateway" / "turns.jsonl").exists()
+    assert not (tmp_path / "router" / "turns.jsonl").exists()
 
 
 def test_clean_transcript_calls_the_transport_with_the_fixed_prompt(tmp_path):
@@ -56,7 +56,7 @@ def test_clean_transcript_calls_the_transport_with_the_fixed_prompt(tmp_path):
 
 def test_clean_transcript_falls_back_to_the_original_on_an_empty_correction(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
 
     result = clean_transcript(
         "hello world", config=config, transport=FakeTransport("   "), journal=journal
@@ -77,7 +77,7 @@ def test_clean_transcript_keeps_the_corrected_text_when_the_journal_cannot_be_wr
     blocker = tmp_path / "not_a_directory"
     blocker.write_text("")
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=blocker / "sub" / "turns.jsonl")
+    journal = RouterJournal(path=blocker / "sub" / "turns.jsonl")
 
     result = clean_transcript(
         "hello world", config=config, transport=FakeTransport("Hello, world."), journal=journal
@@ -92,7 +92,7 @@ def test_clean_transcript_keeps_the_corrected_text_when_the_journal_cannot_be_wr
 
 def test_clean_transcript_returns_the_raw_transcript_when_the_transport_raises(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
     transport = RaisingTransport(ConnectionError("local endpoint refused the connection"))
 
     result = clean_transcript("hello world", config=config, transport=transport, journal=journal)
@@ -107,7 +107,7 @@ def test_clean_transcript_returns_the_raw_transcript_when_the_transport_raises(t
 
 def test_clean_transcript_journals_the_real_transcript_as_the_task(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
 
     clean_transcript(
         "first thing said",
@@ -124,7 +124,7 @@ def test_clean_transcript_journals_the_real_transcript_as_the_task(tmp_path):
 
     records = journal.load()
     assert len(records) == 2
-    # The real transcript is the task, the same way the gateway journals any
+    # The real transcript is the task, the same way the router journals any
     # other turn.
     assert records[0].task == "first thing said"
     assert records[1].task == "second thing said"
@@ -144,7 +144,7 @@ def test_clean_transcript_journals_the_real_transcript_as_the_task(tmp_path):
 
 def test_clean_transcript_gives_the_same_transcript_the_same_signature(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
 
     clean_transcript(
         "say the weather",
@@ -166,7 +166,7 @@ def test_clean_transcript_gives_the_same_transcript_the_same_signature(tmp_path)
 
 def test_clean_transcript_pins_difficulty_to_the_real_transcript(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
     text = "please schedule a meeting with the whole team tomorrow at nine"
 
     clean_transcript(
@@ -184,5 +184,103 @@ def test_clean_transcript_pins_difficulty_to_the_real_transcript(tmp_path):
 def test_clean_transcript_uses_the_default_journal_under_config_data_dir(tmp_path):
     config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/llama3.2:3b")
     clean_transcript("hello world", config=config, transport=FakeTransport("Hello, world."))
-    journal = GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl")
+    journal = RouterJournal(path=tmp_path / "router" / "turns.jsonl")
     assert len(journal.load()) == 1
+
+
+def test_a_cut_cleanup_keeps_the_raw_text_of_that_chunk(tmp_path):
+    from opendaisugi.voice.engines import Transcript
+
+    config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/x")
+
+    class Truncating:
+        def complete(self, *, model, system, user):
+            return user[: len(user) // 2], {"input_tokens": 1, "output_tokens": 1}
+
+    t = Transcript(
+        text="window one window two",
+        segments=[],
+        duration_s=60.0,
+        rtf=0.1,
+        parts=("window one", "window two"),
+    )
+    from opendaisugi.voice.cleanup import clean_parts
+
+    res = clean_parts(t, config=config, transport=Truncating())
+    assert res.text == "window one window two"
+    assert not res.cleaned
+    assert res.reason and "much less text" in res.reason
+
+
+def test_cleanup_runs_per_window_and_skips_gaps(tmp_path):
+    from opendaisugi.voice.cleanup import clean_parts
+    from opendaisugi.voice.engines import GAP_MARKER, Transcript
+
+    config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/x")
+
+    class Tidy:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, *, model, system, user):
+            self.calls.append(user)
+            return user.capitalize() + ".", {"input_tokens": 1, "output_tokens": 1}
+
+    tidy = Tidy()
+    t = Transcript(
+        text=f"alpha beta {GAP_MARKER}",
+        segments=[],
+        duration_s=90.0,
+        rtf=0.1,
+        parts=("alpha", "beta", GAP_MARKER),
+    )
+    res = clean_parts(t, config=config, transport=tidy)
+    assert res.text == f"Alpha. Beta. {GAP_MARKER}"
+    assert res.cleaned
+    assert tidy.calls == ["alpha", "beta"]
+
+
+def test_cleanup_stops_calling_a_model_that_did_not_answer(tmp_path):
+    from opendaisugi.voice.cleanup import clean_parts
+    from opendaisugi.voice.engines import Transcript
+
+    config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/x")
+
+    class Dead:
+        calls = 0
+
+        def complete(self, *, model, system, user):
+            Dead.calls += 1
+            raise OSError("no route")
+
+    parts = tuple(f"window {i}" for i in range(6))
+    t = Transcript(text=" ".join(parts), segments=[], duration_s=180.0, rtf=0.1, parts=parts)
+    res = clean_parts(t, config=config, transport=Dead())
+    assert Dead.calls == 1
+    assert res.text == " ".join(parts)
+    assert not res.cleaned
+    assert res.reason and "failed to respond" in res.reason
+
+
+def test_cleanup_past_its_time_budget_keeps_the_raw_text_of_the_rest(tmp_path):
+    from opendaisugi.voice.cleanup import clean_parts
+    from opendaisugi.voice.engines import Transcript
+
+    config = Config(data_dir=tmp_path, voice_cleanup=True, voice_cleanup_model="ollama/x")
+    now = [0.0]
+
+    class Slow:
+        calls = 0
+
+        def complete(self, *, model, system, user):
+            Slow.calls += 1
+            now[0] += 50.0  # each call takes 50 s on the fake clock
+            return user.capitalize() + ".", {"input_tokens": 1, "output_tokens": 1}
+
+    parts = tuple(f"window {i}" for i in range(6))
+    t = Transcript(text=" ".join(parts), segments=[], duration_s=180.0, rtf=0.1, parts=parts)
+    res = clean_parts(t, config=config, transport=Slow(), clock=lambda: now[0], budget_s=120.0)
+    assert Slow.calls == 3  # 0, 50, 100 s; at 150 s the budget is gone
+    assert res.text.startswith("Window 0. Window 1. Window 2. window 3 window 4 window 5")
+    assert res.cleaned
+    assert res.reason and "took too long" in res.reason

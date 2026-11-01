@@ -1,0 +1,4 @@
+#!/bin/bash
+# A mise wrapper, as ~/.local/bin/claude is on the owner's box. Never run.
+mise use -g claude@latest >/dev/null 2>&1
+exec mise x claude -- claude "$@"

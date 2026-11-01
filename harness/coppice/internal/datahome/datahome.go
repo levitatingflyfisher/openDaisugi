@@ -10,13 +10,13 @@
 //     The user keeps the old state, and Legacy says so in one line.
 //
 // Before this rule, the answer depended on whether ~/.opendaisugi
-// existed, and `daisugi install --gate` creates it: the same box used two
+// existed, and `daisugi install` creates it: the same box used two
 // places, depending on the order of two commands. Both places are in the
-// set the gate and the fence guard (datahome.guarded_data_dirs), so no
-// ruling here leaves the foreman's log open. Step 2 needs the variable
+// set the warden and the fence guard (datahome.guarded_data_dirs), so no
+// ruling here leaves the steward's log open. Step 2 needs the variable
 // to be set: when XDG_DATA_HOME is unset, ~/.local/share/opendaisugi is in
 // no guard set, so the default stays ~/.opendaisugi. coppice's data directory, its
-// fallback socket and the foreman's directory sit under it.
+// fallback socket and the steward's directory sit under it.
 package datahome
 
 import (
@@ -66,7 +66,8 @@ func Resolve(getenv func(string) string, home string, has func(string) bool) (di
 	if xdg == "" {
 		return dot, false // XDG_DATA_HOME not set: ~/.opendaisugi, whether or not it exists
 	}
-	if !has(filepath.Join(xdg, "coppice")) && has(filepath.Join(dot, "coppice")) {
+	if !has(filepath.Join(xdg, "coppice")) && !has(filepath.Join(xdg, "foreman")) && // names-ok: the on-disk store name
+		(has(filepath.Join(dot, "coppice")) || has(filepath.Join(dot, "foreman"))) { // names-ok: the on-disk store name
 		return dot, true
 	}
 	return xdg, false
@@ -100,8 +101,8 @@ func Legacy() string {
 	if !legacy {
 		return ""
 	}
-	return "coppice: keeping the data in " + filepath.Join(dir, "coppice") +
-		". New installs keep it in " + filepath.Join(xdgDir(os.Getenv, home), "coppice") + "."
+	return "coppice: keeping the data in " + dir + " (coppice/ and foreman/)" + // names-ok: the on-disk store name
+		". New installs keep it in " + xdgDir(os.Getenv, home) + "."
 }
 
 // Has reports whether p exists and holds data: a file, or a directory

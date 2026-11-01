@@ -22,7 +22,7 @@ def test_predicate_invariant_satisfied_passes():
     envelope = Envelope(
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(shell=True, shell_allowlist=["ls"], file_read=["**"]),
         invariants=[
             Invariant(
                 type="must_be_shell",
@@ -45,7 +45,7 @@ def test_predicate_invariant_violated_rejects():
     envelope = Envelope(
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["rm"]),
+        permissions=Permission(shell=True, shell_allowlist=["rm"], file_write=["**"]),
         invariants=[
             Invariant(
                 type="no_destructive",

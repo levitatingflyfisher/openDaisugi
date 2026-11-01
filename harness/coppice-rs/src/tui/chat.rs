@@ -1,6 +1,6 @@
-//! The chat window on the desk: the foreman's window draws the messages of
+//! The chat window on the desk: the steward's window draws the messages of
 //! floor.chat, with an input line of its own that sends floor.talk. The
-//! header word Screen shows the foreman's terminal, and Chat returns.
+//! header word Screen shows the steward's terminal, and Chat returns.
 
 use serde_json::json;
 
@@ -10,7 +10,7 @@ use super::model::{s, Model, Obj};
 use super::render::{pad, wrap_words, SGR_ACCENT, SGR_AMBER, SGR_FAINT, SGR_RESET};
 use super::run::{call, list_of, params, Floor};
 
-/// One line of the chat with the foreman, from floor.chat. Role is owner,
+/// One line of the chat with the steward, from floor.chat. Role is owner,
 /// agent, note, work or past. Tool is set on a tool use line.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChatMsg {
@@ -23,42 +23,42 @@ pub struct ChatMsg {
 /// How many messages one floor.chat read asks for.
 pub const CHAT_LIMIT: i64 = 50;
 
-/// The foot line of the foreman's window while its input line is empty.
-pub const CHAT_PLACEHOLDER: &str = "Tell the foreman. Type and press Enter.";
+/// The foot line of the steward's window while its input line is empty.
+pub const CHAT_PLACEHOLDER: &str = "Tell the steward. Type and press Enter.";
 
-/// What the foreman's window says before any message.
-pub const CHAT_EMPTY: &str = "No messages yet. Type a sentence below. It goes to the foreman.";
+/// What the steward's window says before any message.
+pub const CHAT_EMPTY: &str = "No messages yet. Type a sentence below. It goes to the steward.";
 
-/// What the foreman's window says when the server refuses floor.chat: it
+/// What the steward's window says when the server refuses floor.chat: it
 /// counts a process inside one of its own panes as a pane, and a pane may
 /// not read the chat.
-pub const CHAT_REFUSED: &str = "The server will not show this chat here. This floor runs inside a coppice pane, and a pane may not read the chat or talk to the foreman. Run the floor outside a coppice pane.";
+pub const CHAT_REFUSED: &str = "The server will not show this chat here. This floor runs inside a coppice pane, and a pane may not read the chat or talk to the steward. Run the floor outside a coppice pane.";
 
-/// The state word of the foreman's rail row while it holds a reply and no
+/// The state word of the steward's rail row while it holds a reply and no
 /// window shows it.
 pub const REPLY_MARK: &str = "reply";
 
-/// The header words that switch the foreman's window between its chat and
+/// The header words that switch the steward's window between its chat and
 /// its terminal.
 pub const SCREEN_WORD: &str = "Screen";
 pub const CHAT_WORD: &str = "Chat";
 
 impl Model {
-    /// True when pane id is the foreman and its window draws the chat.
+    /// True when pane id is the steward and its window draws the chat.
     pub fn chat_window(&self, id: &str) -> bool {
-        !id.is_empty() && id == self.foreman_id && !self.chat_screen && self.has(id)
+        !id.is_empty() && id == self.steward_id && !self.chat_screen && self.has(id)
     }
 
     /// True when pane id's window takes whole lines in an input line of its
-    /// own: a headless agent, and the foreman's chat.
+    /// own: a headless agent, and the steward's chat.
     pub fn takes_line(&self, id: &str) -> bool {
         self.is_headless(id) || self.chat_window(id)
     }
 
-    /// The header word of the foreman's window: Screen while it draws the
+    /// The header word of the steward's window: Screen while it draws the
     /// chat, Chat while it draws the terminal. Other windows have none.
     pub fn toggle_word(&self, id: &str) -> &'static str {
-        if id.is_empty() || id != self.foreman_id || !self.has(id) {
+        if id.is_empty() || id != self.steward_id || !self.has(id) {
             ""
         } else if self.chat_screen {
             CHAT_WORD
@@ -67,26 +67,26 @@ impl Model {
         }
     }
 
-    /// True when pane id is the foreman and holds a reply no window showed,
+    /// True when pane id is the steward and holds a reply no window showed,
     /// so it fills right after the agents that need you.
-    pub fn foreman_first(&self, id: &str) -> bool {
-        !id.is_empty() && id == self.foreman_id && self.chat_unseen() && !self.chat_screen
+    pub fn steward_first(&self, id: &str) -> bool {
+        !id.is_empty() && id == self.steward_id && self.chat_unseen() && !self.chat_screen
     }
 
-    /// True when pane id is the foreman with an unseen reply and no window
+    /// True when pane id is the steward with an unseen reply and no window
     /// to show it. Its rail row says so.
     pub fn reply_waiting(&self, id: &str) -> bool {
-        self.foreman_first(id) && !self.tiles.as_ref().is_some_and(|t| t.slot_of(id).is_some())
+        self.steward_first(id) && !self.tiles.as_ref().is_some_and(|t| t.slot_of(id).is_some())
     }
 
-    /// True when the foreman has a reply no chat window showed.
+    /// True when the steward has a reply no chat window showed.
     pub fn chat_unseen(&self) -> bool {
         let last = last_reply(&self.chat);
-        !self.foreman_id.is_empty() && !last.is_empty() && last != self.chat_seen
+        !self.steward_id.is_empty() && !last.is_empty() && last != self.chat_seen
     }
 }
 
-/// The id of the newest message the foreman wrote in words, or "". A tool
+/// The id of the newest message the steward wrote in words, or "". A tool
 /// use is not a reply, and neither is the owner's line.
 pub fn last_reply(msgs: &[ChatMsg]) -> String {
     msgs.iter()
@@ -134,7 +134,7 @@ pub fn chat_rows(msgs: &[ChatMsg], w: i64) -> Vec<String> {
     for c in msgs {
         let who = match c.role.as_str() {
             "owner" => "you ",
-            "agent" => "foreman ",
+            "agent" => "steward ",
             _ => "",
         };
         if !c.tool.is_empty() {
@@ -171,7 +171,7 @@ pub fn chat_rows(msgs: &[ChatMsg], w: i64) -> Vec<String> {
     out
 }
 
-/// The body of the foreman's window: the newest messages that fit h lines,
+/// The body of the steward's window: the newest messages that fit h lines,
 /// w cells wide.
 pub fn chat_lines(m: &Model, w: i64, h: i64) -> Vec<String> {
     if h <= 0 {
@@ -202,7 +202,7 @@ pub fn chat_lines(m: &Model, w: i64, h: i64) -> Vec<String> {
 }
 
 impl Floor<'_> {
-    /// Turns the foreman's window between its chat and its terminal. The
+    /// Turns the steward's window between its chat and its terminal. The
     /// caller gives the keys to the window after it.
     pub fn toggle_screen(&mut self) {
         self.m.chat_screen = !self.m.chat_screen;
@@ -223,10 +223,10 @@ impl Floor<'_> {
     }
 
     /// Asks floor.chat for the newest messages. A failed read keeps the
-    /// last chat. With no foreman it reads nothing. A reply no window
+    /// last chat. With no steward it reads nothing. A reply no window
     /// showed then claims a window.
     pub fn read_chat(&mut self) {
-        if self.m.foreman_id.is_empty() {
+        if self.m.steward_id.is_empty() {
             self.m.chat.clear();
             self.m.import_line.clear();
             return;
@@ -249,11 +249,11 @@ impl Floor<'_> {
         self.m.chat_err.clear();
     }
 
-    /// Names pane id as the floor's foreman, or none for "". The chat and
+    /// Names pane id as the floor's steward, or none for "". The chat and
     /// the Screen choice start over. A window that has the keys and now
     /// takes lines, or no longer does, gets its key reader set again.
-    pub fn set_foreman(&mut self, id: &str) {
-        let old = std::mem::replace(&mut self.m.foreman_id, id.to_string());
+    pub fn set_steward(&mut self, id: &str) {
+        let old = std::mem::replace(&mut self.m.steward_id, id.to_string());
         self.m.chat_screen = false;
         self.m.chat.clear();
         self.m.chat_err.clear();

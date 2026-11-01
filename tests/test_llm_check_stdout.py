@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("fmt", ["hermes", "openclaw"])
 def test_a_failed_model_call_leaves_the_body_alone(tmp_path, fmt):
-    root = tmp_path / "gate"
+    root = tmp_path / "warden"
     (root / "envelopes").mkdir(parents=True)
     env_doc = {
         "generated_by": "t",
@@ -45,7 +45,7 @@ def test_a_failed_model_call_leaves_the_body_alone(tmp_path, fmt):
         [
             sys.executable,
             "-m",
-            "opendaisugi.gate",
+            "opendaisugi.warden",
             "--mode",
             "enforce",
             "--root",

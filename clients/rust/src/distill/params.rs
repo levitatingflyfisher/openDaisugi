@@ -2,7 +2,7 @@
 //! salvage of divergent positions.
 
 use crate::glob_engine::{normpath, path_matches_any};
-use crate::gate::pyjson::{py_repr, Object, Value};
+use crate::warden::pyjson::{py_repr, Object, Value};
 use crate::pathways::pmodel::{steps as step_models, take_model, Id, Loc, Mode};
 use crate::tracejournal::dag::{topo_order, PyError};
 

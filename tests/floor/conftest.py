@@ -16,7 +16,7 @@ def write_manifest(directory: Path, agent: str, rules_toml: str) -> Path:
     """Write one manifest file with the given agent id and rules.
 
     ``rules_toml`` is the already-formatted ``[[rules]]`` block text a test
-    wants, so a rule that needs a gate or a non-default region can be
+    wants, so a rule that needs a warden or a non-default region can be
     written directly in the real schema instead of through a helper that
     cannot express one.
     """
@@ -115,7 +115,7 @@ def fake_floor_backend(monkeypatch):
                 session_id="s1",
                 harness="claude-code",
                 state="working",
-                source="gate",
+                source="warden",
                 ts=_time.time(),
                 pane="p1",
             )

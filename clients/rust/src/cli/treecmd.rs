@@ -3,9 +3,9 @@
 
 use num_bigint::BigInt;
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Parsed, Res, Stop};
-use crate::gate::pyjson::{dumps_indent, loads_py, Object, Value};
+use crate::warden::pyjson::{dumps_indent, loads_py, Object, Value};
 use crate::pathways::pmodel::{validate_model, Id, Mode, ValidationError};
 use crate::tree::{self, Fail};
 
@@ -17,14 +17,26 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  check   Prove that the child's envelope fits inside the parent's.
-  root    Make a root of the tree: the operator's envelope and budget.
-  spawn   Prove the edge, reserve the child's budget and register its...
-  run     Start a child of the tree on sprig, wait for it, and end it:...
-  end     Record that a node ended; its parent gets the unspent budget...
-  answer  Answer an ask: allow starts the child as proposed, marked not...
-  status  Show the tree: each node's state, budgets and deadline, and...
+  check           Prove that the child's envelope fits inside the parent's.
+  root            Make a root of the tree: the operator's envelope and...
+  spawn           Prove the edge, reserve the child's budget and register...
+  run             Start a child of the tree on sprig, wait for it, and...
+  prune-branches  Remove the worktrees of branches whose card is closed...
+  adopt           Apply a branch's edits to your working tree.
+  end             Record that a node ended; its parent gets the unspent...
+  answer          Answer an ask: allow starts the child as proposed,...
+  status          Show the tree: each node's state, budgets and deadline,...
 ";
+
+/// What a session id looks like in the resume field: a letter or digit,
+/// then letters, digits, dot, dash and underscore, 128 in all at most.
+fn resume_shape(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b.len() <= 128
+        && b[0].is_ascii_alphanumeric()
+        && b[1..].iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
 
 /// `tree_run.read_request`: the request, or a line that says what is
 /// wrong.
@@ -39,7 +51,7 @@ fn tree_run_request(data: &[u8]) -> Result<Object, String> {
     let Value::Obj(doc) = doc else {
         return Err("It is not a JSON object.".into());
     };
-    if doc.value("task").as_str().is_none_or(|t| crate::gate::py::text::strip(t).is_empty()) {
+    if doc.value("task").as_str().is_none_or(|t| crate::warden::py::text::strip(t).is_empty()) {
         return Err("task must be text.".into());
     }
     if doc.value("envelope").as_obj().is_none() {
@@ -49,16 +61,39 @@ fn tree_run_request(data: &[u8]) -> Result<Object, String> {
         Value::List(l) if l.iter().all(|t| t.as_str().is_some()) => {}
         _ => return Err("tools must be a list of text.".into()),
     }
+    // resume: the session of an earlier segment of this worker.
+    match doc.value("resume") {
+        Value::Null => {}
+        Value::Str(r) if resume_shape(r) => {}
+        _ => return Err("resume must be a session id.".into()),
+    }
     match doc.value("max_turns") {
         Value::Null => {}
         Value::Int(t) if t.parse::<BigInt>().is_ok_and(|n| n >= BigInt::from(1)) => {}
         _ => return Err("max_turns must be a whole number of 1 or more.".into()),
     }
+    // tree_run.read_request: attempts is 1 or absent, or 2 to 8 with a why.
+    let at = doc.value("attempts");
+    if !at.is_null() {
+        let single = match at {
+            Value::Int(t) => t == "1",
+            _ => false,
+        };
+        if !single {
+            let ok = matches!(at, Value::Int(t) if t.parse::<BigInt>().is_ok_and(|n| n >= BigInt::from(2) && n <= BigInt::from(8)));
+            if !ok {
+                return Err("attempts must be a whole number from 2 to 8.".into());
+            }
+            if !matches!(doc.value("why").as_str(), Some("failed_verify" | "failed_tests" | "low_confidence" | "operator")) {
+                return Err("why must be one of failed_verify, failed_tests, low_confidence, operator.".into());
+            }
+        }
+    }
     Ok(doc)
 }
 
 const DATA_OPT: Opt = Opt::val(&["--data-dir"], "PATH", "Daisugi data directory.");
-const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Gate state directory (default: the data directory's gate).");
+const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Warden state directory (default: the data directory's warden).");
 const Z3_OPT: Opt = Opt::val(&["--z3-timeout-ms"], "INTEGER", "Z3 budget for each proof, in ms.");
 const JSON_OPT: Opt = Opt::flag(&["--json"], "Machine-readable JSON output.");
 
@@ -86,6 +121,8 @@ impl Env {
             "root" => self.tree_root(&args[1..]),
             "spawn" => self.tree_spawn(&args[1..]),
             "run" => self.tree_run(&args[1..]),
+            "prune-branches" => self.tree_prune(&args[1..]),
+            "adopt" => self.tree_adopt(&args[1..]),
             "end" => self.tree_end(&args[1..]),
             "answer" => self.tree_answer(&args[1..]),
             "status" => self.tree_status(&args[1..]),
@@ -100,8 +137,8 @@ impl Env {
 
     fn tree_dirs(&self, p: &Parsed) -> (String, String) {
         let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
-        let gate_root = path_str(&p.str("--root", &join(&data_dir, "gate")));
-        (data_dir, gate_root)
+        let warden_root = path_str(&p.str("--root", &join(&data_dir, "warden")));
+        (data_dir, warden_root)
     }
 
     /// `cli._tree_envelope`: an envelope file (JSON); a bad one exits 2.
@@ -155,7 +192,7 @@ impl Env {
                 let _ = self.usage_args(
                     cmd,
                     args,
-                    &format!("Invalid value for {name}: {} is not a valid integer.", crate::gate::py::text::repr(&v)),
+                    &format!("Invalid value for {name}: {} is not a valid integer.", crate::warden::py::text::repr(&v)),
                 );
                 Err(Stop::Exit(2))
             }
@@ -190,6 +227,9 @@ impl Env {
             DATA_OPT,
             ROOT_OPT,
             Opt::flag(&["--sprig-fence"], "Start nothing unless DAISUGI_SPRIG_FENCE names the fence sprig runs under."),
+            Opt::val(&["--parallel"], "INTEGER", "Branches live at once when the request has attempts (default 4)."),
+            Opt::many(&["--check"], "TEXT", "NAME=COMMAND: a hard check run in each branch's worktree."),
+            Opt::val(&["--judge"], "TEXT", "PROFILE/MODEL that judges the branches (another family)."),
         ];
         let p = match parse_args(args, &opts, 1) {
             Ok(p) => p,
@@ -204,7 +244,7 @@ impl Env {
             }
         }
         let mut counts = std::collections::HashMap::new();
-        for name in ["--tokens", "--turns", "--parent-tokens-used", "--parent-turns-used", "--keys-fd"] {
+        for name in ["--tokens", "--turns", "--parent-tokens-used", "--parent-turns-used", "--keys-fd", "--parallel"] {
             let n = self.tree_count(CMD, ARGS, &p, name)?;
             counts.insert(name, n);
         }
@@ -248,7 +288,7 @@ impl Env {
             }
         }
         let profiles = crate::agentprof::from_bundle(&bundle);
-        let (data_dir, gate_root) = self.tree_dirs(&p);
+        let (data_dir, warden_root) = self.tree_dirs(&p);
         let me = match self.self_path() {
             Ok(m) => m,
             Err(e) => return self.fail(CMD, &e),
@@ -305,6 +345,69 @@ impl Env {
                 _ => None,
             })
             .unwrap_or(30);
+        if let Value::Int(at) = req.value("attempts") {
+            if at != "1" {
+                if p.has("--session") {
+                    return Err(self.fail3(what, "--session cannot name a child when the request has attempts.", fix, 2));
+                }
+                if !req.value("resume").is_null() {
+                    return Err(self.fail3(what, "resume cannot be combined with attempts.", fix, 2));
+                }
+                let tools = crate::supervise::treerun::without_help(&tools);
+                let mut checks = vec![];
+                for raw in p.list("--check") {
+                    let (name, cmd_text, sep) = match raw.split_once('=') {
+                        Some((n, c)) => (n.to_string(), c.to_string(), true),
+                        None => (raw.clone(), String::new(), false),
+                    };
+                    let argv = crate::interpreter_parse::shlex_split(&cmd_text).unwrap_or_default();
+                    if !sep || name.is_empty() || argv.is_empty() {
+                        let shown = crate::warden::pyjson::repr(&raw).unwrap_or_default();
+                        return Err(self.fail3(what, &format!("--check wants NAME=COMMAND, not {shown}."), fix, 2));
+                    }
+                    checks.push(crate::supervise::branch::Check { name, argv, required: true });
+                }
+                let judge = p.has("--judge").then(|| p.str("--judge", ""));
+                let par = counts["--parallel"].as_ref().and_then(|n| usize::try_from(n.clone()).ok()).unwrap_or(0);
+                let bo = crate::supervise::branch::BranchOpts {
+                    parent: p.str("--parent", ""),
+                    envelope: envelope.clone(),
+                    profiles: profiles.clone(),
+                    profile_name: Some(p.str("--profile", "")),
+                    model: p.str("--model", ""),
+                    tokens: counts["--tokens"].clone(),
+                    turns: counts["--turns"].clone(),
+                    parent_tokens_used: counts["--parent-tokens-used"].clone(),
+                    parent_turns_used: counts["--parent-turns-used"].clone(),
+                    task: req.value("task").as_str().unwrap_or("").to_string(),
+                    tools: tools.clone(),
+                    tools_repr: crate::warden::pyjson::py_repr(req.value("tools")).unwrap_or_default(),
+                    max_turns: max_turns.clone(),
+                    cwd: cwd.clone(),
+                    timeout_s,
+                    timeout_ms: timeout,
+                    attempts: at.parse().unwrap_or(2),
+                    why: req.value("why").as_str().unwrap_or("").to_string(),
+                    parallel: par,
+                    checks,
+                    judge: judge.clone(),
+                    start: None,
+                    fold: None,
+                };
+                let judge_fn = self.branch_judge(profiles.clone());
+                let run = match starter.run_branches(&data_dir, &warden_root, bo, Some(&judge_fn)) {
+                    Ok(r) => r,
+                    Err(f) => return self.tree_fail(CMD, f),
+                };
+                self.out(&format!("{}\n", crate::warden::pyjson::dumps(&Value::Obj(run.doc()), true)));
+                return match run.status {
+                    "ran" => Ok(()),
+                    "asked" => exit(3),
+                    _ if run.usage => exit(2),
+                    _ => exit(1),
+                };
+            }
+        }
         let opts = crate::supervise::treerun::NodeOpts {
             parent: p.str("--parent", ""),
             session: if p.has("--session") { Some(p.str("--session", "")) } else { None },
@@ -318,23 +421,111 @@ impl Env {
             parent_turns_used: counts["--parent-turns-used"].clone(),
             task: req.value("task").as_str().unwrap_or("").to_string(),
             tools,
-            tools_repr: crate::gate::pyjson::py_repr(req.value("tools")).unwrap_or_default(),
+            tools_repr: crate::warden::pyjson::py_repr(req.value("tools")).unwrap_or_default(),
             max_turns,
             cwd,
             timeout_s,
             default_model: "haiku".into(),
             timeout_ms: timeout,
+            reserved: false,
+            resume: req.value("resume").as_str().unwrap_or("").to_string(),
         };
-        let node = match starter.run_node(&data_dir, &gate_root, opts) {
+        let node = match starter.run_node(&data_dir, &warden_root, opts) {
             Ok(n) => n,
             Err(f) => return self.tree_fail(CMD, f),
         };
-        self.out(&format!("{}\n", crate::gate::pyjson::dumps(&Value::Obj(node.doc()), true)));
+        self.out(&format!("{}\n", crate::warden::pyjson::dumps(&Value::Obj(node.doc()), true)));
         match node.status {
             "started" => Ok(()),
             "asked" => exit(3),
             _ => exit(1),
         }
+    }
+
+    /// The judge loop of `tree_branch.run_branches`: ask while the fit names
+    /// a next pair and a vote was recorded.
+    fn branch_judge(&self, profiles: crate::agentprof::Profiles) -> impl Fn(&Value, &str, Object) -> Result<Object, String> {
+        let client = self.llm_client();
+        let env = self.env.clone();
+        move |doc: &Value, data_dir: &str, mut res: Object| {
+            let call = |model: &str, base: &str, key: &str, msgs: &[(String, String)]| -> Result<String, (String, String)> {
+                let get = |k: &str| env.get(k).cloned();
+                let t = crate::llm::wire::timeout(&get);
+                match client.complete_with(model, base, key, msgs, &crate::llm::wire::Opts::default(), t) {
+                    Ok(reply) => Ok(reply.text),
+                    Err(crate::llm::CallError::Model(m)) => Err(("ModelCallError".into(), m)),
+                    Err(crate::llm::CallError::Os(e)) => Err(("OSError".into(), e.to_string())),
+                    Err(crate::llm::CallError::Unported(m)) => Err(("Error".into(), m)),
+                }
+            };
+            let getenv = |k: &str| env.get(k).cloned();
+            while !res.value("next").is_null() {
+                let out = crate::rank_judge::judge_once(
+                    &|| crate::rank_judge::parse_doc(doc),
+                    data_dir,
+                    &profiles,
+                    &getenv,
+                    None,
+                    crate::rank::now(),
+                    &call,
+                )?;
+                if !out.recorded {
+                    break;
+                }
+                if let Some(f) = out.fit {
+                    res = f;
+                }
+            }
+            Ok(res)
+        }
+    }
+
+    fn tree_prune(&mut self, args: &[String]) -> Res {
+        const CMD: &str = "tree prune-branches";
+        let opts = [DATA_OPT, JSON_OPT];
+        let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
+        if p.help {
+            return self.cmd_help(CMD, "", "Remove the worktrees of branches whose card is closed or never opened.", &opts);
+        }
+        let (data_dir, _) = self.tree_dirs(&p);
+        let removed = crate::supervise::branch::prune_branches(&data_dir);
+        if p.flag("--json") {
+            let mut o = Object::new();
+            o.set("removed", Value::List(removed.iter().map(|r| Value::Str(r.clone())).collect()));
+            self.out(&format!("{}\n", crate::warden::pyjson::dumps(&Value::Obj(o), true)));
+        } else if removed.is_empty() {
+            self.out("No worktree to remove.\n");
+        } else {
+            self.out(&format!("Removed the worktrees of {}.\n", removed.join(", ")));
+        }
+        Ok(())
+    }
+
+    fn tree_adopt(&mut self, args: &[String]) -> Res {
+        const CMD: &str = "tree adopt";
+        let opts = [Opt::val(&["--cwd"], "TEXT", "The tree to apply to. Default: the repository the branch came from."), DATA_OPT, JSON_OPT];
+        let p = match parse_args(args, &opts, 1) {
+            Ok(p) => p,
+            Err(m) => return self.usage_args(CMD, "SESSION", &m),
+        };
+        if p.help {
+            return self.cmd_help(CMD, " SESSION", "Apply a branch's edits to your working tree.", &opts);
+        }
+        if p.args.is_empty() {
+            return self.usage_args(CMD, "SESSION", "Missing argument 'SESSION'.");
+        }
+        let (data_dir, _) = self.tree_dirs(&p);
+        let cwd = p.has("--cwd").then(|| p.str("--cwd", ""));
+        let res = crate::supervise::branch::adopt(&data_dir, &p.args[0], cwd.as_deref());
+        if p.flag("--json") {
+            self.out(&format!("{}\n", crate::warden::pyjson::dumps(&Value::Obj(res.doc()), true)));
+        } else {
+            self.out(&format!("{}\n", res.why));
+        }
+        if res.status == "refused" {
+            return exit(2);
+        }
+        Ok(())
     }
 
     fn tree_check(&mut self, args: &[String]) -> Res {
@@ -392,9 +583,9 @@ impl Env {
         let tokens = self.tree_count(CMD, "ENVELOPE", &p, "--tokens")?;
         let turns = self.tree_count(CMD, "ENVELOPE", &p, "--turns")?;
         let env = self.tree_envelope(CMD, &p.args[0])?;
-        let (data_dir, gate_root) = self.tree_dirs(&p);
+        let (data_dir, warden_root) = self.tree_dirs(&p);
         let session = p.str("--session", "");
-        match tree::make_root(&data_dir, &gate_root, &env, &session, tokens, turns) {
+        match tree::make_root(&data_dir, &warden_root, &env, &session, tokens, turns) {
             Ok(path) => {
                 self.out(&format!("root {session} registered → {path}\n"));
                 Ok(())
@@ -433,10 +624,10 @@ impl Env {
         let turns = self.tree_count(CMD, "ENVELOPE", &p, "--turns")?;
         let timeout = self.tree_timeout(CMD, "ENVELOPE", &p)?;
         let env = self.tree_envelope(CMD, &p.args[0])?;
-        let (data_dir, gate_root) = self.tree_dirs(&p);
+        let (data_dir, warden_root) = self.tree_dirs(&p);
         let parent = p.str("--parent", "");
         let session = p.str("--session", "");
-        let res = match tree::spawn(&data_dir, &gate_root, &env, &parent, &session, tokens, turns, timeout) {
+        let res = match tree::spawn(&data_dir, &warden_root, &env, &parent, &session, tokens, turns, timeout) {
             Ok(r) => r,
             Err(f) => return self.tree_fail(CMD, f),
         };
@@ -485,9 +676,9 @@ impl Env {
         }
         let tokens = self.tree_count(CMD, "SESSION", &p, "--tokens-used")?;
         let turns = self.tree_count(CMD, "SESSION", &p, "--turns-used")?;
-        let (data_dir, gate_root) = self.tree_dirs(&p);
+        let (data_dir, warden_root) = self.tree_dirs(&p);
         let session = p.args[0].clone();
-        let node = match tree::end(&data_dir, &gate_root, &session, tokens, turns) {
+        let node = match tree::end(&data_dir, &warden_root, &session, tokens, turns) {
             Ok(n) => n,
             Err(f) => return self.tree_fail(CMD, f),
         };
@@ -522,9 +713,9 @@ impl Env {
             let missing = if p.args.len() == 1 { "VERDICT" } else { "ASK_ID" };
             return self.usage_args(CMD, "ASK_ID VERDICT", &format!("Missing argument '{missing}'."));
         }
-        let (data_dir, gate_root) = self.tree_dirs(&p);
+        let (data_dir, warden_root) = self.tree_dirs(&p);
         let id = p.args[0].clone();
-        let (ask, path) = match tree::answer(&data_dir, &gate_root, &id, &p.args[1]) {
+        let (ask, path) = match tree::answer(&data_dir, &warden_root, &id, &p.args[1]) {
             Ok(r) => r,
             Err(f) => return self.tree_fail(CMD, f),
         };

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/opendaisugi/coppice/internal/plugins"
+	"github.com/opendaisugi/coppice/internal/steward"
 	"github.com/opendaisugi/coppice/internal/web"
 )
 
@@ -38,7 +39,7 @@ const webUsage = `coppice web - the floor in a browser
       box's MagicDNS name.
   coppice web serve [--listen ADDR] [--tls tailscale|localca|files|off]
                     [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR]
-                    [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]]
+                    [--external-url URL] [--warden-root DIR] [--voice-url URL [--voice-token-file FILE]]
                     [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR]
                     [--persist|--forget] [--web-push] [--qr]
       Serve the phone client. Mints a token on the first run and prints it.
@@ -317,7 +318,7 @@ func (c *CLI) webServeCommand(args []string) int {
 	ntfy := fs.String("ntfy", "", "your ntfy server, for push")
 	ntfyTopic := fs.String("ntfy-topic", "", "the ntfy topic to publish to")
 	ntfyTokenEnv := fs.String("ntfy-token-env", "", "name of the environment variable holding the ntfy token")
-	gateRoot := fs.String("gate-root", web.GateRoot(c.DataDir), "the gate's ask directory")
+	wardenRoot := fs.String("warden-root", web.WardenRoot(c.DataDir), "the warden's ask directory")
 	voiceURL := fs.String("voice-url", "", "the address of daisugi voice serve, for the phone's record button")
 	voiceTokenFile := fs.String("voice-token-file", "", "the token file that voice server checks; needed when --voice-url is on another machine")
 	webPush := fs.Bool("web-push", false, "not built. Use ntfy.")
@@ -361,7 +362,7 @@ func (c *CLI) webServeCommand(args []string) int {
 		Enabled: true, Listen: *listen, TLS: *tlsSource,
 		CertFile: *certFile, KeyFile: *keyFile, CADir: *caDir, CAListen: *caListen,
 		Ntfy: *ntfy, NtfyTopic: *ntfyTopic, NtfyTokenEnv: *ntfyTokenEnv,
-		ExternalURL: *externalURL, GateRoot: *gateRoot, VoiceURL: *voiceURL,
+		ExternalURL: *externalURL, WardenRoot: *wardenRoot, VoiceURL: *voiceURL,
 		VoiceTokenFile: *voiceTokenFile,
 	}
 	if *forget {
@@ -482,7 +483,8 @@ func (c *CLI) webServeCommand(args []string) int {
 	err = serve(ctx, cfg, web.Options{
 		Dial:           web.UnixDialer{Path: c.Socket},
 		Tokens:         store,
-		Gate:           web.AskChannel{Root: *gateRoot},
+		Warden:         web.AskChannel{Root: *wardenRoot},
+		ExtraDataDirs:  []string{filepath.Join(steward.LogDir(c.DataDir), "work")},
 		VoiceURL:       *voiceURL,
 		VoiceTokenFile: *voiceTokenFile,
 		Views:          plugins.ViewsOf(c.loadPlugins()),

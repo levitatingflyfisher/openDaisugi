@@ -55,7 +55,7 @@ DEFAULT_BOOTSTRAP = 1000
 MAX_BOOTSTRAP = 10000
 MAX_ITER = 500
 TOL = 1e-10
-DECAY_SECONDS = 7 * 86400
+DECAY_SECONDS = 14 * 86400
 
 _RANKING_ID = re.compile(r"[A-Za-z0-9._:#-]{1,96}")
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9._#-]{1,32}")
@@ -87,7 +87,7 @@ class Attempt:
     started_by_parent: bool = False
     ran_plan: bool = False
     verify: dict[str, Any] | None = None
-    gate: dict[str, int] | None = None
+    warden: dict[str, int] | None = None
     tests: list[dict[str, Any]] = field(default_factory=list)
     features: list[dict[str, Any]] = field(default_factory=list)
     cost: dict[str, Any] = field(default_factory=dict)
@@ -210,11 +210,11 @@ def _attempt(raw: Any, i: int) -> Attempt:
             "ok": _flag(v.get("ok"), f"{w}: verify.ok"),
             "violations": _count(v.get("violations", 0), f"{w}: verify.violations"),
         }
-    if o.get("gate") is not None:
-        g = _obj(o["gate"], f"{w}: gate")
-        a.gate = {
-            "denies": _count(g.get("denies", 0), f"{w}: gate.denies"),
-            "override_allows": _count(g.get("override_allows", 0), f"{w}: gate.override_allows"),
+    if o.get("warden") is not None:
+        g = _obj(o["warden"], f"{w}: warden")
+        a.warden = {
+            "denies": _count(g.get("denies", 0), f"{w}: warden.denies"),
+            "override_allows": _count(g.get("override_allows", 0), f"{w}: warden.override_allows"),
         }
     for j, t in enumerate(_list(o.get("tests", []), f"{w}: tests")):
         t = _obj(t, f"{w}: tests[{j}]")
@@ -443,6 +443,7 @@ class Vote:
     j: str  # the higher id
     win: float  # 1.0 when i won, 0.0 when j won, 0.5 for a tie
     judge: str
+    w: float = 1.0  # the vote's weight (a judge's sampled weight)
 
 
 def _verdict(c: Comparison) -> str | None:
@@ -519,10 +520,10 @@ def bt_fit(members: list[str], votes: list[Vote], prior: float) -> dict[str, flo
     games = [[0.0] * n for _ in range(n)]
     for v in votes:
         a, b = idx[v.i], idx[v.j]
-        wins[a] = wins[a] + v.win
-        wins[b] = wins[b] + (1.0 - v.win)
-        games[a][b] = games[a][b] + 1.0
-        games[b][a] = games[b][a] + 1.0
+        wins[a] = wins[a] + v.w * v.win
+        wins[b] = wins[b] + v.w * (1.0 - v.win)
+        games[a][b] = games[a][b] + v.w
+        games[b][a] = games[b][a] + v.w
     s = [1.0] * n
     for _ in range(MAX_ITER):
         new = [0.0] * n
@@ -563,9 +564,15 @@ def canonical(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
 
-def seed_of(r: Ranking, comparisons: list[Comparison], owner: list[tuple[str, str]]) -> str:
-    """The hex of the first 8 bytes of sha256 over what the fit reads."""
-    doc = {
+def seed_of(
+    r: Ranking,
+    comparisons: list[Comparison],
+    owner: list[tuple[str, str]],
+    weights: dict[str, float] | None = None,
+) -> str:
+    """The hex of the first 8 bytes of sha256 over what the fit reads. The
+    judge weights are part of it only when the fit uses them."""
+    doc: dict[str, Any] = {
         "attempts": [
             {
                 "content_hash": a.content_hash,
@@ -590,6 +597,8 @@ def seed_of(r: Ranking, comparisons: list[Comparison], owner: list[tuple[str, st
         },
         "ranking_id": r.ranking_id,
     }
+    if weights is not None:
+        doc["judge_weights"] = weights
     return hashlib.sha256(canonical(doc).encode("utf-8")).hexdigest()[:16]
 
 
@@ -668,11 +677,13 @@ def fit(
     comparisons: list[Comparison] | None = None,
     owner: list[tuple[str, str]] | None = None,
     warnings: list[str] | None = None,
+    weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """The ranking of ``r``. ``comparisons`` and ``owner`` stand in for the
-    file's own when it has none."""
+    file's own when it has none. ``weights`` (judge to vote weight) scale each
+    vote; a judge with no entry has no vote (RK-5, W3K-2)."""
     warnings = list(warnings or [])
-    comps = r.comparisons if r.comparisons is not None else (comparisons or [])
+    comps = r.comparisons if r.comparisons else (comparisons or [])
     owner_pairs = r.owner if r.owner is not None else (owner or [])
     by_id = {a.id: a for a in r.attempts}
     eliminated = []
@@ -683,12 +694,12 @@ def fit(
             eliminated.append({"id": a.id, "reasons": why})
         else:
             survivors.append(a)
-            if a.gate and a.gate["override_allows"]:
+            if a.warden and a.warden["override_allows"]:
                 warnings.append(
-                    f"{a.id} was let out of its envelope {a.gate['override_allows']} times "
+                    f"{a.id} was let out of its envelope {a.warden['override_allows']} times "
                     "by an operator allow; it is kept"
                 )
-    seed_hex = seed_of(r, comps, owner_pairs)
+    seed_hex = seed_of(r, comps, owner_pairs, weights)
     out: dict[str, Any] = {
         "ranking_id": r.ranking_id,
         "status": "none_survived",
@@ -706,6 +717,8 @@ def fit(
         "warnings": warnings,
         "seed": seed_hex,
     }
+    if weights is not None:
+        out["judge_weights"] = {j: weights[j] for j in sorted(weights)}
     if not survivors:
         return out
     surv_ids = {a.id for a in survivors}
@@ -723,6 +736,12 @@ def fit(
         for v in votes_from(comps, by_id, warnings)
         if v.i in surv_ids and v.j in surv_ids and tier_of[v.i] == tier_of[v.j]
     ]
+    if weights is not None:
+        votes = [
+            Vote(i=v.i, j=v.j, win=v.win, judge=v.judge, w=r9(v.w * weights[v.judge]))
+            for v in votes
+            if v.judge in weights
+        ]
     edges = owner_edges(owner_pairs, surv_ids, warnings)
     closure = _closure(edges)
     prior = r.policy.prior
@@ -849,6 +868,8 @@ def fit(
     for m in sorted(rivals, key=nearness):
         i, j = sorted((leader, m))
         for judge in r.policy.judges:
+            if weights is not None and judge not in weights:
+                continue
             if (judge, i, j) not in voted:
                 p = r9(point[leader] / (point[leader] + point[m]))
                 out["next"] = {
@@ -995,6 +1016,20 @@ def read_cards(data_dir: Path) -> list[Card]:
     return list(cards.values())
 
 
+def _answer_pairs(card: Card) -> list[tuple[str, str]]:
+    """The (before, after) pairs an answered card fixes."""
+    if card.answer is None:
+        return []
+    surv = [s["id"] for s in card.opened["options"]["survivors"]]
+    chosen = card.opened["chosen"]
+    if card.answer["event"] == "confirmed":
+        return [(chosen, x) for x in surv if x != chosen]
+    pick = card.answer["pick"]
+    if pick not in surv or pick == chosen:
+        return []
+    return [(pick, chosen)]
+
+
 def owner_answers(
     data_dir: Path, ranking_id: str, by_id: dict[str, Attempt], warnings: list[str]
 ) -> list[tuple[str, str]]:
@@ -1010,14 +1045,7 @@ def owner_answers(
                 f"the owner's answer on {card.id} binds to attempts that changed; ignored"
             )
             continue
-        chosen = card.opened["chosen"]
-        if card.answer["event"] == "confirmed":
-            pairs = [(chosen, x) for x in surv if x != chosen]
-        else:
-            pick = card.answer["pick"]
-            if pick not in surv or pick == chosen:
-                continue
-            pairs = [(pick, chosen)]
+        pairs = _answer_pairs(card)
         for p in pairs:
             if p not in out:
                 out.append(p)
@@ -1165,10 +1193,11 @@ def opened_row(
     *,
     now: float,
     run: dict[str, Any] | None = None,
+    adopt: str | None = None,
 ) -> dict[str, Any]:
     by_id = {a.id: a for a in r.attempts}
     surv = [(m, by_id[m].content_hash) for m in res["order"]]
-    return {
+    row = {
         "choice_id": choice_id(r.ranking_id, surv),
         "ranking_id": r.ranking_id,
         "project": r.project,
@@ -1192,6 +1221,9 @@ def opened_row(
         },
         "ts": now,
     }
+    if adopt is not None:
+        row["facts"]["adopt"] = adopt
+    return row
 
 
 _WHY = {
@@ -1255,7 +1287,7 @@ def card_view(card: Card, data_dir: Path, now: float) -> dict[str, Any]:
         la = lines_of(a)
         if base is not None and la is not None and abs(la - base) > impact:
             impact = abs(la - base)
-    return {
+    view = {
         "choice_id": card.id,
         "ranking_id": o["ranking_id"],
         "project": o.get("project") if isinstance(o.get("project"), str) else "",
@@ -1272,6 +1304,9 @@ def card_view(card: Card, data_dir: Path, now: float) -> dict[str, Any]:
         "switch": {"cost": sc["cost"], "undo_steps": sc["undo_steps"], "text": sc["text"]},
         "impact_lines": impact,
     }
+    if isinstance(facts.get("adopt"), str) and facts["adopt"]:
+        view["adopt"] = facts["adopt"]
+    return view
 
 
 SORTS = ("reversibility", "impact", "date", "project")
@@ -1328,6 +1363,8 @@ def queue_text(doc: dict[str, Any]) -> str:
         if v["why"]:
             lines.append(f"  Why: {v['why']}")
         lines.append(f"  Switching ({v['switch']['cost']}): {v['switch']['text']}")
+        if v.get("adopt"):
+            lines.append(f"  To take the kept edits into your tree: {v['adopt']}")
         lines.append(
             f"  Decays in {v['decays_in_days']} days unless switching gets expensive first."
         )
@@ -1336,6 +1373,397 @@ def queue_text(doc: dict[str, Any]) -> str:
             f"{doc['decayed']} cards decayed unread; the next writer records them as ignored."
         )
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Judge trust (RK-5) and judge weights (W3K-2, owner ruling A3)
+# ---------------------------------------------------------------------------
+
+TRUST_FLOOR = 0.5
+TRUST_MIN_CARDS = 5
+
+
+def _sign(x: float) -> int:
+    return (x > 0) - (x < 0)
+
+
+def _positions(order: list[Any]) -> dict[str, int]:
+    pos: dict[str, int] = {}
+    for k, g in enumerate(order):
+        for x in g if isinstance(g, list) else [g]:
+            pos[x] = k
+    return pos
+
+
+def kendall_tau_b(a: list[Any], b: list[Any]) -> float | None:
+    """Kendall tau-b of two orders over the items both hold. An item of a
+    list may itself be a list: a tie group. None under 2 shared items or
+    when one order ties every pair."""
+    pa, pb = _positions(a), _positions(b)
+    items = sorted(x for x in pa if x in pb)
+    n = len(items)
+    if n < 2:
+        return None
+    conc = disc = ta = tb = 0
+    for x in range(n):
+        for y in range(x + 1, n):
+            sa = _sign(pa[items[x]] - pa[items[y]])
+            sb = _sign(pb[items[x]] - pb[items[y]])
+            if sa == 0:
+                ta += 1
+            if sb == 0:
+                tb += 1
+            if sa != 0 and sb != 0:
+                if sa == sb:
+                    conc += 1
+                else:
+                    disc += 1
+    n0 = n * (n - 1) // 2
+    denom = (n0 - ta) * (n0 - tb)
+    if denom == 0:
+        return None
+    return r9((conc - disc) / math.sqrt(denom))
+
+
+def cyclic_magnitude(votes: list[Vote]) -> float | None:
+    """The share of one judge's voted pairs that lie on a cycle of majority
+    directions (A over B over C over A): the part of its opinion no single
+    order explains. None when the votes cover fewer than 3 attempts or close
+    no loop: not measurable, never 0. A consistent judge reads 0.0.
+
+    This is not the HodgeRank curl share: with unit flows a transitive
+    triangle has a curl share of 1/9, which would call a consistent judge
+    cyclic."""
+    flow: dict[tuple[str, str], float] = {}
+    for v in votes:
+        key = (v.i, v.j) if v.i < v.j else (v.j, v.i)
+        f = 2.0 * v.win - 1.0
+        flow[key] = flow.get(key, 0.0) + (f if v.i < v.j else -f)
+    nodes = sorted({x for k in flow for x in k})
+    if len(nodes) < 3:
+        return None
+    parent = {x: x for x in nodes}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            x = parent[x]
+        return x
+
+    for lo, hi in sorted(flow):
+        parent[find(lo)] = find(hi)
+    comps = len({find(x) for x in nodes})
+    if len(flow) - len(nodes) + comps <= 0:
+        return None
+    idx = {x: k for k, x in enumerate(nodes)}
+    n = len(nodes)
+    reach = [[False] * n for _ in range(n)]
+    arcs: list[tuple[str, str]] = []
+    for (lo, hi), f in sorted(flow.items()):
+        if f > 0:
+            arcs.append((lo, hi))
+        elif f < 0:
+            arcs.append((hi, lo))
+    for u, v in arcs:
+        reach[idx[u]][idx[v]] = True
+    for k in range(n):
+        for i in range(n):
+            if reach[i][k]:
+                for j in range(n):
+                    if reach[k][j]:
+                        reach[i][j] = True
+    on_cycle = sum(1 for u, v in arcs if reach[idx[v]][idx[u]])
+    return r9(on_cycle / len(flow))
+
+
+def beta_sample(alpha: int, beta: int, rng: SplitMix64) -> float:
+    """A Beta(alpha, beta) draw for whole parameters: the alpha-th smallest
+    of alpha + beta - 1 uniforms. No logarithm, so the ports match bit for bit."""
+    us = sorted((rng.next() >> 11) / 9007199254740992.0 for _ in range(alpha + beta - 1))
+    return r9(us[alpha - 1])
+
+
+def judge_weights(trust: dict[str, Any], seed_hex: str) -> dict[str, float]:
+    """One vote weight per judge that is not dropped: twice a sample of its
+    Beta(1 + agreed, 1 + disagreed) posterior, seeded from the ranking's seed
+    and the judge, so the same journal gives the same weights."""
+    out: dict[str, float] = {}
+    for judge in sorted(trust):
+        t = trust[judge]
+        if t.get("dropped"):
+            continue
+        seed = int(hashlib.sha256((seed_hex + judge).encode("utf-8")).hexdigest()[:16], 16)
+        agreed, disagreed = int(t.get("agreed", 0)), int(t.get("disagreed", 0))
+        out[judge] = r9(2.0 * beta_sample(1 + agreed, 1 + disagreed, SplitMix64(seed)))
+    return out
+
+
+def _group(scores: dict[str, float]) -> list[Any]:
+    """Items by score, best first; equal scores make a tie group."""
+    out: list[Any] = []
+    for sc in sorted({v for v in scores.values()}, reverse=True):
+        g = sorted(k for k, v in scores.items() if v == sc)
+        out.append(g if len(g) > 1 else g[0])
+    return out
+
+
+def judge_trust(
+    data_dir: Path, floor: float = TRUST_FLOOR, min_cards: int = TRUST_MIN_CARDS
+) -> dict[str, dict[str, Any]]:
+    """Per judge: how often its votes agree with the owner's answers.
+
+    A judge's vote on a pair the owner ordered agrees or not (a tie vote is
+    neither). A card counts for a judge when it voted on an ordered pair; the
+    judge agrees on the card when more of those votes agree than not. Where a
+    ranking has no owner answer, a vote agrees when it matches the majority of
+    the other judges on that pair (ties and single-judge pairs are skipped);
+    these counts feed the weight only. The sample is biased toward hard cards:
+    the owner answers the ones that look doubtful. Reads only."""
+    rows, _ = _read_rows(rankings_dir(data_dir) / "comparisons.jsonl")
+    by_rank: dict[str, list[Comparison]] = {}
+    for row in rows:
+        rid = row.get("ranking_id")
+        if not isinstance(rid, str):
+            continue
+        try:
+            by_rank.setdefault(rid, []).append(_comparison(row, 0))
+        except RankError:
+            continue
+    answered: dict[str, Card] = {}
+    for card in read_cards(data_dir):
+        if card.answer is not None:
+            answered.setdefault(card.opened["ranking_id"], card)
+    stat: dict[str, dict[str, Any]] = {}
+
+    def st(j: str) -> dict[str, Any]:
+        return stat.setdefault(
+            j, {"cards": 0, "good": 0, "agreed": 0, "disagreed": 0, "taus": [], "cyclic": {}}
+        )
+
+    for rid in sorted(by_rank):
+        comps = by_rank[rid]
+        card = answered.get(rid)
+        if card is not None:
+            by_id = {
+                s["id"]: Attempt(id=s["id"], content_hash=s["content_hash"])
+                for s in card.opened["options"]["survivors"]
+            }
+        else:
+            by_id = {}
+            for c in comps:
+                by_id.setdefault(c.a, Attempt(id=c.a, content_hash=c.a_hash))
+                by_id.setdefault(c.b, Attempt(id=c.b, content_hash=c.b_hash))
+        votes = votes_from(comps, by_id, [])
+        judges = sorted({v.judge for v in votes})
+        for j in judges:
+            mine = [v for v in votes if v.judge == j]
+            st(j)["cyclic"][rid] = cyclic_magnitude(mine)
+        if card is not None:
+            pairs = _answer_pairs(card)
+            fixed = {frozenset(p): p for p in pairs}
+            owner_order: list[Any] = list(card.opened.get("facts", {}).get("order") or [])
+            surv_ids = [s["id"] for s in card.opened["options"]["survivors"]]
+            if not owner_order:
+                owner_order = surv_ids
+            if card.answer and card.answer["event"] == "overridden":
+                pick = card.answer["pick"]
+                owner_order = [pick] + [x for x in owner_order if x != pick]
+            for j in judges:
+                mine = [v for v in votes if v.judge == j]
+                ag = dis = 0
+                for v in mine:
+                    p = fixed.get(frozenset((v.i, v.j)))
+                    if p is None or v.win == 0.5:
+                        continue
+                    winner = v.i if v.win == 1.0 else v.j
+                    if winner == p[0]:
+                        ag += 1
+                    else:
+                        dis += 1
+                if ag + dis:
+                    t = st(j)
+                    t["cards"] += 1
+                    t["good"] += 1 if ag > dis else 0
+                    t["agreed"] += ag
+                    t["disagreed"] += dis
+                score = {x: 0.0 for x in surv_ids}
+                for v in mine:
+                    if v.i in score and v.j in score:
+                        score[v.i] += v.win
+                        score[v.j] += 1.0 - v.win
+                tau = kendall_tau_b(_group(score), owner_order)
+                if tau is not None and mine:
+                    st(j)["taus"].append(tau)
+        else:
+            pair_votes: dict[tuple[str, str], list[Vote]] = {}
+            for v in votes:
+                if v.win != 0.5:
+                    pair_votes.setdefault((v.i, v.j), []).append(v)
+            for key in sorted(pair_votes):
+                pv = pair_votes[key]
+                for v in pv:
+                    others = [o for o in pv if o.judge != v.judge]
+                    first = sum(1 for o in others if o.win == 1.0)
+                    second = len(others) - first
+                    if not others or first == second:
+                        continue
+                    majority_first = first > second
+                    if (v.win == 1.0) == majority_first:
+                        st(v.judge)["agreed"] += 1
+                    else:
+                        st(v.judge)["disagreed"] += 1
+    out: dict[str, dict[str, Any]] = {}
+    for j in sorted(stat):
+        t = stat[j]
+        agree = r9(t["good"] / t["cards"]) if t["cards"] else None
+        dropped = t["cards"] >= min_cards and agree is not None and agree < floor
+        why = f"agreement {agree!r} over {t['cards']} answered cards" if dropped else ""
+        out[j] = {
+            "cards": t["cards"],
+            "agree": agree,
+            "agreed": t["agreed"],
+            "disagreed": t["disagreed"],
+            "tau": r9(sum(t["taus"]) / len(t["taus"])) if t["taus"] else None,
+            "cyclic": {k: t["cyclic"][k] for k in sorted(t["cyclic"])},
+            "dropped": dropped,
+            "why": why,
+        }
+    return out
+
+
+def weights_for(
+    data_dir: Path, judges: list[str], seed_hex: str
+) -> tuple[dict[str, float], dict[str, dict[str, Any]]]:
+    """The weights a fit uses for ``judges``, and the trust behind them. A
+    judge with no history gets the prior; a dropped judge gets none."""
+    trust = judge_trust(data_dir)
+    need = {
+        j: trust.get(j, {"agreed": 0, "disagreed": 0, "dropped": False})
+        for j in sorted(set(judges))
+    }
+    return judge_weights(need, seed_hex), trust
+
+
+def judges_text(doc: dict[str, Any]) -> str:
+    judges = doc["judges"]
+    if not judges:
+        return "No judge has voted yet.\n"
+    lines = []
+    for j, t in judges.items():
+        agree = "none yet" if t["agree"] is None else repr(t["agree"])
+        w = doc["weights"].get(j)
+        wtext = "none (dropped)" if w is None else repr(w)
+        lines.append(
+            f"{j}: agreement {agree} over {t['cards']} answered cards; "
+            f"agreed {t['agreed']}, disagreed {t['disagreed']}; weight {wtext}"
+        )
+        if t["dropped"]:
+            lines.append(f"  dropped: {t['why']}")
+        if t["tau"] is not None:
+            lines.append(f"  tau-b with the owner's orders: {t['tau']!r}")
+    return "\n".join(lines) + "\n"
+
+
+def show_doc(
+    data_dir: Path, *, ranking_id: str | None, choice_id: str | None, now: float
+) -> dict[str, Any]:
+    """One ranking as the journal holds it: the vote rows, the choice rows,
+    the card and the owner's answers. Reads only; creates nothing."""
+    if (ranking_id is None) == (choice_id is None):
+        raise RankError("Give --ranking or --choice, not both.")
+    cards = read_cards(data_dir)
+    if choice_id is not None:
+        card = next((c for c in cards if c.id == choice_id), None)
+        if card is None:
+            raise RankError(f"No choice {choice_id}.")
+        ranking_id = card.opened["ranking_id"]
+    else:
+        card = next((c for c in cards if c.opened["ranking_id"] == ranking_id), None)
+    comp_rows, bad = _read_rows(rankings_dir(data_dir) / "comparisons.jsonl")
+    comps = [r for r in comp_rows if r.get("ranking_id") == ranking_id]
+    choice_rows, _ = _read_rows(rankings_dir(data_dir) / "choices.jsonl")
+    choices = [r for r in choice_rows if r.get("ranking_id") == ranking_id]
+    if not comps and not choices:
+        raise RankError(f"No ranking {ranking_id}.")
+    warnings: list[str] = []
+    if bad:
+        warnings.append(f"{bad} comparison rows did not read")
+    answers: list[list[str]] = []
+    if card is not None:
+        by_id = {
+            s["id"]: Attempt(id=s["id"], content_hash=s["content_hash"])
+            for s in card.opened["options"]["survivors"]
+        }
+        answers = [list(p) for p in owner_answers(data_dir, str(ranking_id), by_id, warnings)]
+    return {
+        "ranking_id": ranking_id,
+        "comparisons": comps,
+        "choices": choices,
+        "card": card_view(card, data_dir, now) if card is not None else None,
+        "owner_answers": answers,
+        "warnings": warnings,
+    }
+
+
+def show_text(doc: dict[str, Any]) -> str:
+    lines = [f"Ranking {doc['ranking_id']}"]
+    lines.append(f"Votes: {len(doc['comparisons'])} comparison rows.")
+    for c in doc["comparisons"]:
+        lines.append(
+            f"  {c.get('judge')} {c.get('pair_id')} shown {c.get('shown')}: "
+            f"{c.get('a')} vs {c.get('b')} -> {c.get('outcome')}"
+        )
+    lines.append(f"Choices: {len(doc['choices'])} rows.")
+    for r in doc["choices"]:
+        lines.append(f"  {r.get('choice_id')} {r.get('event')}")
+    card = doc["card"]
+    if card is not None:
+        lines.append(f"Card {card['choice_id']}: {card['headline']}")
+    for before, after in doc["owner_answers"]:
+        lines.append(f"Owner: {before} before {after}")
+    for w in doc["warnings"]:
+        lines.append(f"Warning: {w}")
+    return "\n".join(lines) + "\n"
+
+
+_FAMILY_MERGE = {
+    "o1": "gpt",
+    "o3": "gpt",
+    "o4": "gpt",
+    "chatgpt": "gpt",
+    "gemma": "gemini",
+    # Bare Claude aliases the harness accepts (haiku, sonnet, opus, fable).
+    "haiku": "claude",
+    "sonnet": "claude",
+    "opus": "claude",
+    "fable": "claude",
+}
+
+
+def family_of(model_id: str) -> str:
+    """The family of a model id (W3K-1): the first word, lowercased, with these
+    merges: the gpt and o-series names, gemini with gemma, and the bare Claude
+    aliases (haiku, sonnet, opus, fable) into claude. Empty when
+    the id is empty or starts with a digit. One leading ``provider/`` is
+    dropped when something follows it. No other table."""
+    model_id = re.sub(r"^[a-z0-9_]+/(?=.)", "", model_id.strip().lower())
+    word = re.split(r"[-./:]", model_id.strip().lower(), maxsplit=1)[0]
+    if word in _FAMILY_MERGE:
+        return _FAMILY_MERGE[word]
+    m = re.match(r"[a-z]*", word)
+    letters = m.group(0) if m else ""
+    return _FAMILY_MERGE.get(letters, letters)
+
+
+def append_comparisons(data_dir: Path, rows: list[dict[str, Any]]) -> None:
+    """Append vote rows to the comparison journal, all in one write."""
+    if not rows:
+        return
+    d = rankings_dir(data_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / "comparisons.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("".join(json.dumps(r) + "\n" for r in rows))
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def now() -> float:
@@ -1351,14 +1779,22 @@ __all__ = [
     "RankError",
     "Ranking",
     "SplitMix64",
+    "append_comparisons",
     "append_rows",
     "bt_fit",
     "card_view",
     "choice_id",
     "decay",
+    "family_of",
     "fit",
     "fit_text",
+    "beta_sample",
+    "cyclic_magnitude",
     "journal_comparisons",
+    "judge_trust",
+    "judge_weights",
+    "judges_text",
+    "kendall_tau_b",
     "opened_row",
     "owner_answers",
     "parse",
@@ -1366,6 +1802,8 @@ __all__ = [
     "queue_text",
     "read_cards",
     "seed_of",
+    "show_doc",
+    "show_text",
     "sweep",
     "switch_cost",
     "votes_from",

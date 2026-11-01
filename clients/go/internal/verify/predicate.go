@@ -78,6 +78,13 @@ type IsEmpty struct{ Path string }
 
 func (IsEmpty) Op() string { return "is_empty" }
 
+// PathIn is predicate.PathIn: the string (or each string of a list) at Path
+// is a path the envelope's Scope globs admit. It is meaningful only inside
+// mcp_rules; elsewhere it is false.
+type PathIn struct{ Path, Scope string }
+
+func (PathIn) Op() string { return "path_in" }
+
 type And struct{ Children []Expression }
 
 func (And) Op() string { return "and" }
@@ -157,6 +164,7 @@ type exprJSON struct {
 	Name     *string                `json:"name"`
 	Args     map[string]interface{} `json:"args"`
 	Rule     *string                `json:"rule"`
+	Scope    *string                `json:"scope"`
 }
 
 func str(p *string) string {
@@ -227,6 +235,11 @@ func ParseExpression(raw json.RawMessage) (Expression, error) {
 		return Exists{Path: str(e.Path)}, nil
 	case "is_empty":
 		return IsEmpty{Path: str(e.Path)}, nil
+	case "path_in":
+		if e.Scope == nil || (*e.Scope != "file_read" && *e.Scope != "file_write") {
+			return nil, fmt.Errorf("path_in scope is not file_read or file_write")
+		}
+		return PathIn{Path: str(e.Path), Scope: *e.Scope}, nil
 	case "and":
 		children, err := decodeExprSlice(e.Children)
 		return And{Children: children}, err

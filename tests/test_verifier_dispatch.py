@@ -21,7 +21,9 @@ from opendaisugi.verifier_dispatch import last_dispatch, verify_via
 ENV_STRICT = Envelope(
     generated_by="test",
     task="run tests",
-    permissions=Permission(shell=True, shell_allowlist=["pytest"]),
+    permissions=Permission(
+        shell=True, shell_allowlist=["pytest"], file_read=["**"], file_write=["**"]
+    ),
 )
 
 
@@ -98,7 +100,7 @@ for line in sys.stdin:
 
 def test_a_working_client_answers_and_is_named(register_fake, tmp_path):
     name = register_fake(AGREEING)
-    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is True
     assert result.client == name
     assert result.fallback is None
@@ -107,7 +109,7 @@ def test_a_working_client_answers_and_is_named(register_fake, tmp_path):
 
 def test_a_working_client_reproduces_a_denial(register_fake, tmp_path):
     name = register_fake(AGREEING)
-    result = verify_via(name, _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via(name, _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is False
     assert result.violations
     assert result.fallback is None
@@ -158,7 +160,7 @@ def test_dispatch_never_allows_what_the_oracle_denies(register_fake, tmp_path):
     assert verify(plan, envelope, strict=None).ok is False
 
     name = register_fake(CORE_PROFILE, name="core", profile="core")
-    result = verify_via(name, plan, envelope, root=tmp_path / "gate")
+    result = verify_via(name, plan, envelope, root=tmp_path / "warden")
     assert result.ok is False, "a core-profile allow overrode the oracle"
     assert result.client_verdict is True, "the client's own allow is still recorded"
     assert result.client == name
@@ -169,7 +171,7 @@ def test_dispatch_never_allows_what_the_oracle_denies(register_fake, tmp_path):
 def test_a_disagreement_is_logged_as_a_warning(register_fake, tmp_path, caplog):
     name = register_fake(CORE_PROFILE, name="core-warn", profile="core")
     with caplog.at_level(logging.WARNING, logger="opendaisugi.verifier_dispatch"):
-        verify_via(name, _mixed_plan(), _invariant_envelope(), root=tmp_path / "gate")
+        verify_via(name, _mixed_plan(), _invariant_envelope(), root=tmp_path / "warden")
     assert any("core-warn" in r.message and "disagree" in r.message for r in caplog.records)
 
 
@@ -177,7 +179,7 @@ def test_a_client_may_tighten_an_allow_into_a_deny(register_fake, tmp_path):
     """The other direction is allowed. Diversity exists to catch what the
     oracle missed, so a client that refuses what the oracle accepts wins."""
     name = register_fake(REFUSING, name="strict")
-    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is False
     assert result.client_verdict is False
     assert any("strict" in v.message for v in result.violations)
@@ -191,7 +193,7 @@ def test_a_dispatched_denial_keeps_the_oracle_s_own_violations(register_fake, tm
 
     oracle = verify(_plan("rm -rf /"), ENV_STRICT, strict=None)
     name = register_fake(AGREEING, name="agree")
-    result = verify_via(name, _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via(name, _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "warden")
     oracle_messages = [v.message for v in oracle.violations]
     assert oracle_messages
     assert [v.message for v in result.violations][: len(oracle_messages)] == oracle_messages
@@ -203,7 +205,7 @@ def test_dispatch_never_allows_on_client_failure(register_fake, tmp_path):
     for body in (CRASHING, GARBAGE, HANGING):
         name = register_fake(body, name=f"fake-{len(body)}")
         result = verify_via(
-            name, _plan("rm -rf /"), ENV_STRICT, timeout_s=1.0, root=tmp_path / "gate"
+            name, _plan("rm -rf /"), ENV_STRICT, timeout_s=1.0, root=tmp_path / "warden"
         )
         assert result.ok is False, body[:20]
         assert result.fallback == "python"
@@ -211,13 +213,13 @@ def test_dispatch_never_allows_on_client_failure(register_fake, tmp_path):
 
 
 def test_an_unknown_client_name_falls_back_and_never_allows(tmp_path):
-    result = verify_via("no-such-client", _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via("no-such-client", _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is False
     assert result.fallback == "python"
 
 
 def test_a_failure_still_returns_the_oracle_s_allow_when_the_plan_is_fine(tmp_path):
-    result = verify_via("no-such-client", _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+    result = verify_via("no-such-client", _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is True
     assert result.fallback == "python"
     assert result.client == "no-such-client"
@@ -228,7 +230,7 @@ def test_an_unbuilt_client_falls_back_with_its_build_command(monkeypatch, tmp_pa
 
     monkeypatch.setattr(options, "client_is_built", lambda spec: spec.probe is None)
     with caplog.at_level(logging.WARNING, logger="opendaisugi.verifier_dispatch"):
-        result = verify_via("rust", _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "gate")
+        result = verify_via("rust", _plan("rm -rf /"), ENV_STRICT, root=tmp_path / "warden")
     assert result.ok is False
     assert result.fallback == "python"
     assert any("cargo build" in r.message for r in caplog.records)
@@ -237,13 +239,13 @@ def test_an_unbuilt_client_falls_back_with_its_build_command(monkeypatch, tmp_pa
 def test_the_fallback_warns_and_names_the_failure(register_fake, tmp_path, caplog):
     name = register_fake(CRASHING, name="crashy")
     with caplog.at_level(logging.WARNING, logger="opendaisugi.verifier_dispatch"):
-        verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+        verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert any("crashy" in r.message for r in caplog.records)
     assert any("python" in r.message for r in caplog.records)
 
 
 def test_the_last_dispatch_is_recorded_for_the_module_map(register_fake, tmp_path):
-    root = tmp_path / "gate"
+    root = tmp_path / "warden"
     name = register_fake(AGREEING, name="recorded")
     verify_via(name, _plan("pytest -q"), ENV_STRICT, root=root)
     record = last_dispatch(root)
@@ -305,7 +307,7 @@ def test_an_allow_that_lists_violations_is_a_failed_client_not_an_allow(
     finding must not be lost behind the allow, so the verdict is refused."""
     name = register_fake(INCONSISTENT, name="inconsistent")
     with caplog.at_level(logging.WARNING, logger="opendaisugi.verifier_dispatch"):
-        result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+        result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert result.fallback == "python"
     assert result.client_verdict is None
     assert any("inconsistent" in r.message for r in caplog.records)
@@ -316,7 +318,7 @@ def test_two_verdicts_for_one_case_are_a_failed_client(register_fake, tmp_path, 
     allow. More than one verdict for one id is refused as a whole."""
     name = register_fake(TWO_VERDICTS, name="twice")
     with caplog.at_level(logging.WARNING, logger="opendaisugi.verifier_dispatch"):
-        result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "gate")
+        result = verify_via(name, _plan("pytest -q"), ENV_STRICT, root=tmp_path / "warden")
     assert result.fallback == "python"
     assert result.client_verdict is None
     assert any("2 verdicts" in r.message for r in caplog.records)
@@ -324,7 +326,7 @@ def test_two_verdicts_for_one_case_are_a_failed_client(register_fake, tmp_path, 
 
 def test_the_client_only_gets_the_time_the_oracle_left(register_fake, tmp_path, monkeypatch):
     """`timeout_s` bounds the whole call. A slow oracle leaves the client
-    less, and a client with no time left is a failed client, so the gate's
+    less, and a client with no time left is a failed client, so the warden's
     join never fires on the client's account."""
     import importlib
     import time
@@ -339,11 +341,13 @@ def test_the_client_only_gets_the_time_the_oracle_left(register_fake, tmp_path, 
     monkeypatch.setattr(verify_mod, "verify", _slow)
     name = register_fake(HANGING, name="hang")
     t0 = time.monotonic()
-    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, timeout_s=0.2, root=tmp_path / "gate")
+    result = verify_via(
+        name, _plan("pytest -q"), ENV_STRICT, timeout_s=0.2, root=tmp_path / "warden"
+    )
     assert time.monotonic() - t0 < 1.0
     assert result.ok is True
     assert result.fallback == "python"
-    assert "no time left" in last_dispatch(tmp_path / "gate")["error"]
+    assert "no time left" in last_dispatch(tmp_path / "warden")["error"]
 
 
 def test_a_fast_oracle_leaves_the_client_the_rest_of_the_budget(register_fake, tmp_path):
@@ -351,7 +355,9 @@ def test_a_fast_oracle_leaves_the_client_the_rest_of_the_budget(register_fake, t
 
     name = register_fake(HANGING, name="hang")
     t0 = time.monotonic()
-    result = verify_via(name, _plan("pytest -q"), ENV_STRICT, timeout_s=0.5, root=tmp_path / "gate")
+    result = verify_via(
+        name, _plan("pytest -q"), ENV_STRICT, timeout_s=0.5, root=tmp_path / "warden"
+    )
     elapsed = time.monotonic() - t0
     assert 0.4 < elapsed < 1.5, elapsed
     assert result.fallback == "python"
@@ -387,7 +393,7 @@ def test_a_client_past_its_timeout_leaves_nothing_behind(register_fake, tmp_path
     t0 = time.monotonic()
     try:
         result = verify_via(
-            name, _plan("rm -rf /"), ENV_STRICT, timeout_s=1.0, root=tmp_path / "gate"
+            name, _plan("rm -rf /"), ENV_STRICT, timeout_s=1.0, root=tmp_path / "warden"
         )
         assert time.monotonic() - t0 < 5
         assert result.ok is False

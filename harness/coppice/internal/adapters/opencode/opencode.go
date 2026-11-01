@@ -1,8 +1,8 @@
 // Package opencode drives `opencode serve` as a headless coppice pane. The
 // adapter starts one server per pane on a loopback port with a per-pane
 // basic-auth password, creates or resumes one session on it, sends prompts
-// with prompt_async and reads pane state from the /event stream. The gate
-// plugin in src/opendaisugi/harness_opencode gates each tool call inside
+// with prompt_async and reads pane state from the /event stream. The warden
+// plugin in src/opendaisugi/harness_opencode checks each tool call inside
 // that server. This package never decides a tool call.
 //
 // Facts about OpenCode's endpoints and event shapes are recorded in
@@ -90,15 +90,15 @@ func serveArgs(extra []string) []string {
 }
 
 // pureEnv is the variable that makes OpenCode skip every external plugin,
-// the gate plugin too. The --pure flag sets it.
+// the warden plugin too. The --pure flag sets it.
 const pureEnv = "OPENCODE_PURE"
 
 // refusePure fails when the pane's argv asks OpenCode to skip its plugins.
-// A pane that ran that way would run with no gate.
+// A pane that ran that way would run with no warden.
 func refusePure(argv []string) error {
 	for _, a := range argv {
 		if a == "--pure" || strings.HasPrefix(a, "--pure=") {
-			return errors.New("opencode: --pure makes OpenCode skip the gate plugin. Remove --pure from the pane's argv")
+			return errors.New("opencode: --pure makes OpenCode skip the warden plugin. Remove --pure from the pane's argv")
 		}
 	}
 	return nil
@@ -119,7 +119,7 @@ func baseEnv(environ []string) []string {
 // opencodeEnv copies the pane's env and sets the server's credentials in the
 // copy. The pane env can hold anything else, but never the password or the
 // user name, so a pane cannot break the adapter's own auth, and never
-// OPENCODE_PURE, so a pane cannot turn the gate plugin off.
+// OPENCODE_PURE, so a pane cannot turn the warden plugin off.
 func opencodeEnv(optsEnv map[string]string, token string) map[string]string {
 	env := make(map[string]string, len(optsEnv)+2)
 	for k, v := range optsEnv {
@@ -153,10 +153,10 @@ func parseListenLine(line string) (string, error) {
 	return "http://127.0.0.1:" + strconv.Itoa(port), nil
 }
 
-// gatePluginPath is where the server will load the gate plugin from, read
+// wardenPluginPath is where the server will load the warden plugin from, read
 // from the environment it starts with: $XDG_CONFIG_HOME/opencode/plugins
 // when XDG_CONFIG_HOME is absolute, else $HOME/.config/opencode/plugins.
-func gatePluginPath(env []string) (string, error) {
+func wardenPluginPath(env []string) (string, error) {
 	var home, xdg string
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -174,40 +174,40 @@ func gatePluginPath(env []string) (string, error) {
 	case filepath.IsAbs(home):
 		base = filepath.Join(home, ".config")
 	default:
-		return "", errors.New("opencode: neither XDG_CONFIG_HOME nor HOME names a config directory, so the adapter cannot find the gate plugin")
+		return "", errors.New("opencode: neither XDG_CONFIG_HOME nor HOME names a config directory, so the adapter cannot find the warden plugin")
 	}
-	return filepath.Join(base, "opencode", "plugins", "daisugi-gate.ts"), nil
+	return filepath.Join(base, "opencode", "plugins", "daisugi-warden.ts"), nil
 }
 
-// gatePluginSHA256 is the SHA-256 of the gate plugin the Python package
-// ships, src/opendaisugi/harness_opencode/plugin/daisugi-gate.ts. A test
+// wardenPluginSHA256 is the SHA-256 of the warden plugin the Python package
+// ships, src/opendaisugi/harness_opencode/plugin/daisugi-warden.ts. A test
 // fails when the two differ.
-const gatePluginSHA256 = "68f4bda2dca4ef6443fb51baf5f1ca02cfe14eed5d4df2c1fa9a614cf8217864"
+const wardenPluginSHA256 = "607ec704dcbc327ce982fd7544ca4f351d7ccfcb5bf8e34e19b512b836afff7e"
 
 // maxPluginBytes bounds the read of the plugin file.
 const maxPluginBytes = 1 << 20
 
-// requireGatePlugin fails unless the file where the server will look for
-// the gate plugin is the plugin this coppice ships, byte for byte. A
-// missing, edited or old copy would leave OpenCode ungated or gated by
+// requireWardenPlugin fails unless the file where the server will look for
+// the warden plugin is the plugin this coppice ships, byte for byte. A
+// missing, edited or old copy would leave OpenCode ungated or checked by
 // code no one reviewed.
-func requireGatePlugin(env []string) error {
-	p, err := gatePluginPath(env)
+func requireWardenPlugin(env []string) error {
+	p, err := wardenPluginPath(env)
 	if err != nil {
 		return err
 	}
 	fix := "Run: daisugi install --harness opencode"
 	st, err := os.Stat(p)
 	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 || st.Size() > maxPluginBytes {
-		return fmt.Errorf("opencode: the gate plugin is not at %s, so OpenCode would run ungated. %s", p, fix)
+		return fmt.Errorf("opencode: the warden plugin is not at %s, so OpenCode would run ungated. %s", p, fix)
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return fmt.Errorf("opencode: cannot read the gate plugin at %s: %v. %s", p, err, fix)
+		return fmt.Errorf("opencode: cannot read the warden plugin at %s: %v. %s", p, err, fix)
 	}
 	sum := sha256.Sum256(b)
-	if hex.EncodeToString(sum[:]) != gatePluginSHA256 {
-		return fmt.Errorf("opencode: the gate plugin at %s is not the one this coppice ships. %s", p, fix)
+	if hex.EncodeToString(sum[:]) != wardenPluginSHA256 {
+		return fmt.Errorf("opencode: the warden plugin at %s is not the one this coppice ships. %s", p, fix)
 	}
 	return nil
 }
@@ -237,10 +237,10 @@ func (a adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pan
 	name, args := pane.Wrapped(o.Wrap, bin, serveArgs(o.Argv))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
-	// Rule 1: the only path by which the gate plugin finds COPPICE_SOCK and
+	// Rule 1: the only path by which the warden plugin finds COPPICE_SOCK and
 	// COPPICE_PANE.
 	cmd.Env = pane.BuildEnv(baseEnv(os.Environ()), opencodeEnv(o.Env, token), o.Sock, o.PaneID, o.DataDir)
-	if err := requireGatePlugin(cmd.Env); err != nil {
+	if err := requireWardenPlugin(cmd.Env); err != nil {
 		cancel()
 		return nil, err
 	}

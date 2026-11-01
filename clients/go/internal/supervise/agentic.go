@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"daisugi-verify/internal/agentprof"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/install"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tree"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // agenticToolCapabilities is verify._AGENTIC_TOOL_CAPABILITIES: the
@@ -36,9 +36,9 @@ var agenticToolCapabilities = map[string]string{
 const edgeTimeoutMs = 2000
 
 // Agentic is agentic_executor.AgenticExecutor: an agentic step run as
-// `claude -p` or sprig in its workspace, under the call-time gate in
+// `claude -p` or sprig in its workspace, under the call-time warden in
 // enforce mode. Every step runs as a delegation tree (tree mode): a fresh
-// private directory holds gate/ (the gate root) and tree/ (the ledger);
+// private directory holds warden/ (the warden root) and tree/ (the ledger);
 // its root is the caller's envelope with the budget Tokens and Turns, and
 // the sub-agent is the root's child under agentic-<step id>, proved,
 // reserved, started and ended by the one starter.
@@ -50,7 +50,7 @@ type Agentic struct {
 	Model string
 	// Claude runs `claude -p`.
 	Claude *llm.Client
-	// Self is this binary: the gate hook runs `<Self> gate check`, and
+	// Self is this binary: the warden hook runs `<Self> warden check`, and
 	// sprig's spawn tool `<Self> tree run`.
 	Self string
 	// TempDir is where the tree directory is made ($TMPDIR, as mkdtemp
@@ -77,9 +77,9 @@ type Agentic struct {
 var sprigTools = map[string]string{"Read": "read", "Write": "write", "Edit": "edit", "Bash": "bash",
 	"Spawn": "spawn"}
 
-// SprigSpaceText is the failed step when a word of sprig's gate command
-// would hold whitespace: sprig splits --gate-cmd at whitespace.
-const SprigSpaceText = "the sprig gate command has a word with a space in it, and sprig splits that " +
+// SprigSpaceText is the failed step when a word of sprig's warden command
+// would hold whitespace: sprig splits --warden-cmd at whitespace.
+const SprigSpaceText = "the sprig warden command has a word with a space in it, and sprig splits that " +
 	"command at spaces. Use a TMPDIR path and a daisugi path with no spaces."
 
 func strList(v any) []string {
@@ -168,38 +168,38 @@ func (a *Agentic) Run(step *pyjson.Object, timeoutS, maxOutputBytes int) (ExecRe
 	}
 	// The tree lives outside the workspace: the sub-agent must not be able
 	// to rewrite its hook settings, its envelope or the ledger
-	// mid-session. gate/ and tree/ under one directory, so the gate guards
+	// mid-session. warden/ and tree/ under one directory, so the warden guards
 	// both, each private.
 	dataDir, err := os.MkdirTemp(a.TempDir, "daisugi-agentic-")
 	if err != nil {
 		return ExecResult{}, err
 	}
-	gateRoot := gateroot.Join(dataDir, "gate")
-	for _, d := range []string{gateRoot, gateroot.Join(dataDir, "tree")} {
+	wardenRoot := wardenroot.Join(dataDir, "warden")
+	for _, d := range []string{wardenRoot, wardenroot.Join(dataDir, "tree")} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			return ExecResult{}, err
 		}
 	}
 	// The executor, not the sub-agent, picks the session the envelope
-	// binds to, and pins the gate to it.
-	session := "agentic-" + gateroot.SafeSessionID(str(step, "id"))
-	if _, err := tree.MakeRoot(dataDir, gateRoot, a.Envelope, RootSession, a.Tokens, a.Turns); err != nil {
+	// binds to, and pins the warden to it.
+	session := "agentic-" + wardenroot.SafeSessionID(str(step, "id"))
+	if _, err := tree.MakeRoot(dataDir, wardenRoot, a.Envelope, RootSession, a.Tokens, a.Turns); err != nil {
 		return ExecResult{}, err
 	}
 	defer func() {
-		tree.EndSubtree(dataDir, gateRoot, session, true)
-		_, _ = tree.End(dataDir, gateRoot, RootSession, new(big.Int), new(big.Int))
+		tree.EndSubtree(dataDir, wardenRoot, session, true)
+		_, _ = tree.End(dataDir, wardenRoot, RootSession, new(big.Int), new(big.Int))
 	}()
 	if runtimeName == "sprig" {
-		return a.runSprigNode(step, proposed, profileName, model, workspace, dataDir, gateRoot, session,
+		return a.runSprigNode(step, proposed, profileName, model, workspace, dataDir, wardenRoot, session,
 			timeoutS, maxOutputBytes, started)
 	}
-	return a.runClaudeNode(step, proposed, profileName, model, allowed, workspace, dataDir, gateRoot, session,
+	return a.runClaudeNode(step, proposed, profileName, model, allowed, workspace, dataDir, wardenRoot, session,
 		timeoutS, maxOutputBytes, started)
 }
 
 func (a *Agentic) runSprigNode(step, proposed *pyjson.Object, profileName *string, model, workspace, dataDir,
-	gateRoot, session string, timeoutS, maxOutputBytes int, started time.Time) (ExecResult, error) {
+	wardenRoot, session string, timeoutS, maxOutputBytes int, started time.Time) (ExecResult, error) {
 	fail := func(msg string) (ExecResult, error) {
 		return ExecResult{RC: 1, Stdout: TruncateOutput(msg, maxOutputBytes), DurationMs: ms(started)}, nil
 	}
@@ -209,7 +209,7 @@ func (a *Agentic) runSprigNode(step, proposed *pyjson.Object, profileName *strin
 	}
 	s := &Starter{Self: a.Self, TempDir: a.TempDir, Sprig: a.Sprig, Environ: a.Environ, LookPath: a.LookPath}
 	sess := session
-	node, err := s.RunNode(dataDir, gateRoot, NodeOpts{Parent: RootSession, Session: &sess, Envelope: proposed,
+	node, err := s.RunNode(dataDir, wardenRoot, NodeOpts{Parent: RootSession, Session: &sess, Envelope: proposed,
 		Profiles: a.Profiles, ProfileName: profileName, Model: model, Tokens: a.Tokens, Turns: a.Turns,
 		Task: str(step, "prompt"), Tools: strList(step.Value("tools")), ToolsRepr: pmodel.Repr(step.Value("tools")),
 		MaxTurns: maxTurns, Cwd: workspace, TimeoutS: timeoutS, DefaultModel: a.Model, TimeoutMs: tree.DefaultTimeoutMs})
@@ -226,7 +226,7 @@ func (a *Agentic) runSprigNode(step, proposed *pyjson.Object, profileName *strin
 }
 
 func (a *Agentic) runClaudeNode(step, proposed *pyjson.Object, profileName *string, model string, allowed []string,
-	workspace, dataDir, gateRoot, session string, timeoutS, maxOutputBytes int, started time.Time) (ExecResult, error) {
+	workspace, dataDir, wardenRoot, session string, timeoutS, maxOutputBytes int, started time.Time) (ExecResult, error) {
 	fail := func(msg string) (ExecResult, error) {
 		return ExecResult{RC: 1, Stdout: TruncateOutput(msg, maxOutputBytes), DurationMs: ms(started)}, nil
 	}
@@ -236,7 +236,7 @@ func (a *Agentic) runClaudeNode(step, proposed *pyjson.Object, profileName *stri
 	}
 	m := model
 	sess := session
-	sp, err := tree.DoSpawnOpts(dataDir, gateRoot, proposed, RootSession, &sess, a.Tokens, a.Turns,
+	sp, err := tree.DoSpawnOpts(dataDir, wardenRoot, proposed, RootSession, &sess, a.Tokens, a.Turns,
 		tree.DefaultTimeoutMs, tree.SpawnOpts{Profile: profName, Model: &m})
 	if err != nil {
 		return ExecResult{}, err
@@ -244,8 +244,8 @@ func (a *Agentic) runClaudeNode(step, proposed *pyjson.Object, profileName *stri
 	if sp.Status != "started" {
 		return fail("the child envelope is refused: " + strings.Join(sp.Reasons, "; "))
 	}
-	settings := install.SettingsJSON(a.Self, install.HookOptions{Mode: "enforce", Root: gateRoot,
-		CapturesRoot: gateroot.Join(gateRoot, "captures"), Session: &sess})
+	settings := install.SettingsJSON(a.Self, install.HookOptions{Mode: "enforce", Root: wardenRoot,
+		CapturesRoot: wardenroot.Join(wardenRoot, "captures"), Session: &sess})
 	extra := []string{"--output-format", "json", "--settings", settings, "--allowedTools", strings.Join(allowed, " ")}
 	var maxTurns *big.Int
 	if mt, ok := step.Value("max_turns").(pyjson.Int); ok {
@@ -298,7 +298,7 @@ func (a *Agentic) runClaudeNode(step, proposed *pyjson.Object, profileName *stri
 			turns = clampCount(v)
 		}
 	}
-	if _, err := tree.End(dataDir, gateRoot, session, own, turns); err != nil {
+	if _, err := tree.End(dataDir, wardenRoot, session, own, turns); err != nil {
 		return ExecResult{}, err
 	}
 	return ExecResult{RC: 0, Stdout: TruncateOutput(result, maxOutputBytes), DurationMs: ms(started)}, nil

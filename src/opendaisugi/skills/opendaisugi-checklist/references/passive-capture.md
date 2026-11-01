@@ -33,13 +33,13 @@ can stay as raw captures and get garbage-collected.
 `daisugi hook auto-tend` closes the captures → traces → distillation
 loop in one cron-friendly call. It iterates captured sessions not yet
 converted, runs `to-trace` on each, and if any new traces land, runs
-`Daisugi.tend()`. A min-interval gate (default 1h) prevents thrashing.
+`Daisugi.tend()`. A min-interval check (default 1h) prevents thrashing.
 
 Wire it into cron, systemd-timer, or Claude's `/loop` skill — whichever
 scheduler your environment provides:
 
 ```bash
-# cron — every 30 minutes, real work only every 1h via the gate
+# cron — every 30 minutes, real work only every 1h via the warden
 */30 * * * * /usr/local/bin/daisugi hook auto-tend
 ```
 

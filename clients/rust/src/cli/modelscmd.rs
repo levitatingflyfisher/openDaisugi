@@ -3,13 +3,13 @@
 //! the Go client's `internal/catalog` and `cli/modelscmd.go` are the
 //! reference.
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::pathwayscmd::py_int;
 use super::setupcmd::py_g;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::argparse::py_float;
-use crate::gate::py::text;
-use crate::gate::pyjson::{dumps_indent, loads_py, Object, Value};
+use crate::warden::argparse::py_float;
+use crate::warden::py::text;
+use crate::warden::pyjson::{dumps_indent, loads_py, Object, Value};
 use crate::netproxy;
 
 /// `src/opendaisugi/model_catalog.json`, the file Python ships.

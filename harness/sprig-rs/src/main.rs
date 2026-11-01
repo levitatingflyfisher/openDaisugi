@@ -1,5 +1,5 @@
 //! sprig: a minimal, automatable coding-agent harness with a fail-closed
-//! gate. The thin binary; the harness is the library.
+//! warden. The thin binary; the harness is the library.
 
 use sprig::agent::Model;
 use sprig::cli::ModelOptions;

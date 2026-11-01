@@ -6,8 +6,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use super::{get, lines, load_line, no_attr, or2, pystr_of, unhashable, Fail, Message, R};
-use crate::gate::py::text::strip;
-use crate::gate::pyjson::{py_type_name, Object, Value};
+use crate::warden::py::text::strip;
+use crate::warden::pyjson::{py_type_name, Object, Value};
 use crate::interpreter_parse::shlex_quote;
 
 const ROLLOUT_KINDS: &[&str] = &["session_meta", "response_item", "event_msg", "turn_context", "compacted"];
@@ -84,7 +84,7 @@ fn text_of(content: &Value) -> String {
     }
 }
 
-fn tool_use(name: &str, input: Object) -> Value {
+pub(super) fn tool_use(name: &str, input: Object) -> Value {
     Value::Obj(Object::new().with("type", "tool_use").with("name", name).with("input", input))
 }
 

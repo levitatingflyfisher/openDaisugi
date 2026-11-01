@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// newAct is a fresh client act id for one sentence to the foreman (FM-R-65):
+// newAct is a fresh client act id for one sentence to the steward (FM-R-65):
 // a random version 4 UUID. The server uses it to log the sentence once and
 // to queue one turn, however many times it arrives.
 func newAct() string {

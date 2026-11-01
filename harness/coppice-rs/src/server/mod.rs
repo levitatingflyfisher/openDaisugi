@@ -22,6 +22,7 @@ use crate::state;
 use crate::sys;
 
 mod agents;
+mod askline;
 pub mod ask;
 mod attach;
 mod children;
@@ -29,33 +30,42 @@ mod detect;
 mod ended;
 mod escalate;
 mod facts;
-mod fence;
-pub mod foreman;
-pub mod foreman_chat;
-mod foreman_failover;
-mod foreman_freeze;
-mod foreman_standing;
-mod foreman_tools;
-mod foreman_turn;
-mod foreman_pool;
-mod foreman_work;
-pub mod gatefs;
+pub mod fence;
+pub mod steward;
+pub mod steward_chat;
+mod steward_child;
+mod steward_failover;
+mod steward_freeze;
+mod steward_standing;
+mod steward_tools;
+mod steward_turn;
+mod steward_pool;
+mod steward_help;
+mod steward_work;
+pub mod wardenfs;
 mod handoff;
 mod layout_save;
 mod journal;
 pub mod lock;
-pub mod foreman_import;
+pub mod steward_import;
 pub mod machines;
 mod messages;
 mod mode;
 mod panes;
+mod panes_pando;
+#[cfg(test)]
+mod panes_pando_tests;
 pub mod plugins;
+mod envelope;
+#[cfg(test)]
+mod envelope_tests;
 mod projects;
 mod ready;
 mod role;
 pub(crate) mod saved;
 pub mod speech;
 mod swap;
+mod taskenv;
 mod tasks;
 pub mod voice;
 
@@ -64,21 +74,23 @@ mod datadir_tests;
 #[cfg(test)]
 mod fit_tests;
 #[cfg(test)]
-mod foreman_import_tests;
+mod steward_import_tests;
 #[cfg(test)]
-mod foreman_tests;
+mod steward_tests;
 #[cfg(test)]
 mod handoff_tests;
 #[cfg(test)]
 mod process_tests;
+#[cfg(test)]
+mod madeby_tests;
 
 pub use panes::LivePane;
 
-/// The foreman's directory, for the test that keeps tests out of the real
+/// The steward's directory, for the test that keeps tests out of the real
 /// home.
 #[cfg(test)]
-pub fn foreman_dir_for_tests() -> String {
-    Server::foreman_dir()
+pub fn steward_dir_for_tests() -> String {
+    Server::default_steward_dir()
 }
 pub use role::PeerFacts;
 
@@ -104,8 +116,8 @@ pub struct Config {
     pub start_dir: PathBuf,
     /// Whether the server runs a voice server of its own.
     pub voice: voice::VoiceConfig,
-    /// The [foreman] table.
-    pub foreman: foreman_chat::ForemanConfig,
+    /// The [steward] table.
+    pub steward: steward_chat::StewardConfig,
 }
 
 /// What a restart achieved, as server.status reports it.
@@ -316,12 +328,12 @@ pub struct Server {
     /// What each pane's hook reported beyond its state, and the
     /// transcripts each pane reads.
     facts: Mutex<facts::FactsMaps>,
-    /// The gateway address and router, read at most every few seconds,
+    /// The router address and route, read at most every few seconds,
     /// and whether it answered.
     outside: Mutex<facts::Outside>,
-    /// The last verdicts a gate told the server. See journal.rs.
+    /// The last verdicts a warden told the server. See journal.rs.
     journal: Mutex<journal::Journal>,
-    /// What floor.facts last read from the gateway turn journal.
+    /// What floor.facts last read from the router turn journal.
     saved: Mutex<saved::SavedCache>,
     /// This server, for the threads a handler starts.
     me: Weak<Server>,
@@ -331,21 +343,25 @@ pub struct Server {
     tick_stop: Arc<crate::pane::Flag>,
     /// The prompt queues and the trust answers.
     prompt: Mutex<ready::PromptState>,
-    /// The asks held for a foreman and the input marks.
+    /// The asks read from transcripts, by path.
+    pub(super) ask_lines: Mutex<std::collections::HashMap<String, (i64, i64, String)>>,
+    /// The asks held for a steward and the input marks.
     holds: Mutex<escalate::HoldState>,
-    /// The owner's words on their way to the floor's foreman.
-    talk: Mutex<foreman::TalkQueue>,
-    /// The foreman's chat in chat mode.
-    fm: Mutex<foreman_chat::ChatModeState>,
+    /// The line being typed into each unprompted Hermes pane.
+    hermes_line: Mutex<HashMap<String, messages::LineIn>>,
+    /// The owner's words on their way to the floor's steward.
+    talk: Mutex<steward::TalkQueue>,
+    /// The steward's chat in chat mode.
+    fm: Mutex<steward_chat::ChatModeState>,
     /// The queue of chat-mode turns, and the threads that run them.
-    turns: Mutex<foreman_turn::TurnState>,
-    turns_wg: foreman_turn::WaitGroup,
-    /// The foreman's workers, and the threads that run them.
-    work: Mutex<foreman_work::WorkState>,
-    work_wg: foreman_turn::WaitGroup,
-    /// The pane foreman's standing tool socket.
-    stand: Mutex<foreman_standing::StandingState>,
-    /// True when the foreman started last has the tools.
+    turns: Mutex<steward_turn::TurnState>,
+    turns_wg: steward_turn::WaitGroup,
+    /// The steward's workers, and the threads that run them.
+    work: Mutex<steward_work::WorkState>,
+    work_wg: steward_turn::WaitGroup,
+    /// The pane steward's standing tool socket.
+    stand: Mutex<steward_standing::StandingState>,
+    /// True when the steward started last has the tools.
     tools_mounted: AtomicBool,
     /// The chat files this process checked. Taken after talk, never
     /// before it.
@@ -394,15 +410,17 @@ pub struct Server {
     /// "auto" here; the CLI always sets it from the config, whose default is
     /// "off" (FN-R-33). Set once at start by `set_fence_mode`.
     fence_mode: Mutex<String>,
-    /// The home whose guarded data dirs hold gate roots the fence follows.
-    /// Empty (a test's server): only the gate beside the data dir. Set once
+    /// A test's answer to "can this kernel fence?"; None asks the kernel.
+    landlock_override: Mutex<Option<i64>>,
+    /// The home whose guarded data dirs hold warden roots the fence follows.
+    /// Empty (a test's server): only the warden beside the data dir. Set once
     /// at start by `set_hook_home`.
     hook_home: Mutex<PathBuf>,
 }
 
 impl Server {
     pub fn new(mut cfg: Config) -> Arc<Server> {
-        // Every pane is told the data dir, and the gate takes only an
+        // Every pane is told the data dir, and the warden takes only an
         // absolute path there, so a relative one is made absolute once.
         if let Ok(abs) = sys::abs_path(&cfg.data_dir) {
             cfg.data_dir = abs;
@@ -412,7 +430,7 @@ impl Server {
                 cfg.start_dir = wd;
             }
         }
-        cfg.foreman.fill();
+        cfg.steward.fill();
         let voice = voice::Voice::new(cfg.voice.clone(), cfg.data_dir.clone());
         let s = Arc::new_cyclic(|me| Server {
             cfg,
@@ -444,8 +462,10 @@ impl Server {
             detect_set: RwLock::new(None),
             tick_stop: Arc::new(crate::pane::Flag::default()),
             prompt: Mutex::new(ready::PromptState::default()),
+            ask_lines: Mutex::new(Default::default()),
             holds: Mutex::new(escalate::HoldState::default()),
-            talk: Mutex::new(foreman::TalkQueue::default()),
+            hermes_line: Mutex::new(HashMap::new()),
+            talk: Mutex::new(steward::TalkQueue::default()),
             fm: Mutex::new(Default::default()),
             turns: Mutex::new(Default::default()),
             turns_wg: Default::default(),
@@ -471,10 +491,11 @@ impl Server {
             before_data_write: std::sync::OnceLock::new(),
             layout_save: Mutex::new(Default::default()),
             fence_mode: Mutex::new(String::new()),
+            landlock_override: Mutex::new(None),
             hook_home: Mutex::new(PathBuf::new()),
         });
-        if !s.cfg.foreman.problem.is_empty() {
-            s.note(&s.cfg.foreman.problem, "");
+        if !s.cfg.steward.problem.is_empty() {
+            s.note(&s.cfg.steward.problem, "");
         }
         let _ = s.handle("server.status", Arc::new(|s, c, r| s.handle_status(c, r)));
         panes::register(&s);
@@ -486,14 +507,15 @@ impl Server {
         facts::register(&s);
         journal::register(&s);
         ready::register(&s);
-        foreman::register(&s);
+        steward::register(&s);
         messages::register(&s);
         ended::register(&s);
         projects::register(&s);
+        envelope::register(&s);
         voice::register(&s);
         speech::register(&s);
         machines::register(&s);
-        foreman_import::register(&s);
+        steward_import::register(&s);
         s
     }
 
@@ -512,11 +534,11 @@ impl Server {
         detect::register(self);
     }
 
-    /// The gate directory beside the data dir, where agent.allow and
+    /// The warden directory beside the data dir, where agent.allow and
     /// agent.deny answer.
-    pub fn gate_root(&self) -> PathBuf {
+    pub fn warden_root(&self) -> PathBuf {
         PathBuf::from(sys::clean(&format!(
-            "{}/../gate",
+            "{}/../warden",
             self.cfg.data_dir.to_string_lossy()
         )))
     }
@@ -917,13 +939,13 @@ impl Server {
         // A create that was already running when close began is caught by
         // this second pass.
         self.teardown_live_panes();
-        // The foreman's turns end before its chat closes: their last
+        // The steward's turns end before its chat closes: their last
         // records are written, then nothing writes the log again. The
         // compactor stops and the chat closes before the data dir is shut.
         self.turns_wg.wait(Duration::from_secs(30));
         self.close_workers();
         self.close_standing();
-        self.close_foreman_chat();
+        self.close_steward_chat();
         // The voice process goes before the lock, so a server started right
         // after this one never finds the old voice server still running.
         self.voice.stop();

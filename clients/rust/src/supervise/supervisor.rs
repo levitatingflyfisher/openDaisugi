@@ -6,8 +6,8 @@ use super::executors::Executor;
 use super::fallback::Fallback;
 use super::{hex8, now_iso, py_int, str_of, Approver, Decision, ExecResult, Outcome, Session};
 use super::{ABORTED, FAILED, HALTED, PENDING, REJECTED, RUNNING, SUCCEEDED};
-use crate::gate::py::text::{head, strip};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{head, strip};
+use crate::warden::pyjson::{Object, Value};
 use crate::pathways::verify::{Outcome as Verified, StepCheck};
 use crate::tracejournal::dag::{steps, topo_order};
 use crate::tracejournal::runs::{now, Receipt, Run};
@@ -693,7 +693,7 @@ impl Supervisor<'_> {
             run_id: &sess.id,
             status: &sess.status,
             failed_step_id: failed,
-            total_duration_ms: crate::gateway::report::sum_floats(&durations),
+            total_duration_ms: crate::router::report::sum_floats(&durations),
         };
         match j.log_run(&r, &trace_id, &created) {
             Ok(()) => sess.trace_id = Some(trace_id),

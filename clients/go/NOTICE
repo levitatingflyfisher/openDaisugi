@@ -1,4 +1,4 @@
-daisugi, daisugi-gate and conform (clients/go) link the following third-party code
+daisugi, daisugi-warden and conform (clients/go) link the following third-party code
 statically. Each is built from the pinned source archive named here by
 scripts/native.sh, which checks the SHA-256 before it builds anything.
 

@@ -48,7 +48,7 @@ A single Rust binary that is faster and *provably safer* than pi at the same tok
 config, one obvious affordance. The expert surface is flags, not chrome.
 
 **Shape:**
-- The loop: stream from the model, parse tool calls, **gate each call** (`verify(call, envelope)`),
+- The loop: stream from the model, parse tool calls, **warden each call** (`verify(call, envelope)`),
   execute or refuse with the proven reason, feed the result back. That's it.
 - Four tools. Bash is the universal escape hatch (Zechner's lesson: a CLI script + README beats a
   13–18k-token MCP; `sprig` ships *zero* MCP and lets bash + skills do the rest at ~225 tokens).
@@ -87,12 +87,12 @@ printed in the chrome (lazygit), a `:` command line (k9s/Bloomberg), color that 
 the value of games here is **glanceable state encoding, not gameplay.** Steal the *readout*, not the
 animation:
 - A **fleet minimap** (RTS/`htop` hybrid): one row/tile per agent, color = state — `thinking` (dim),
-  `blocked-on-gate` (amber: the envelope refused a call, needs your ruling), `awaiting-review` (cyan:
+  `blocked-on-warden` (amber: the envelope refused a call, needs your ruling), `awaiting-review` (cyan:
   a diff is ready), `running` (green), `done`/`failed`. The whole fleet's health in one screen — the
   thing tmux can't give you.
 - **Hotkey to warp** to any agent's transcript/diff (StarCraft control-groups: number keys jump to
   units). Tab cycles "needs-you" agents only.
-- **The gate as a game event.** When an agent hits the envelope, it *pauses as a unit* and flashes
+- **The warden as a game event.** When an agent hits the envelope, it *pauses as a unit* and flashes
   amber — you approve/deny/edit-envelope from the fleet view. This is the differentiator turned into
   the core interaction: you supervise *decisions*, the envelope supervises *safety*.
 - **Cut the eye-candy.** No real-time animated factory belts, no isometric world. Doctrine law:
@@ -118,13 +118,13 @@ same rubric the openDaisugi dashboard just passed 6/6.
 **The bet:** the most *automatable* harness is one you drive with a tiny declarative workflow DSL —
 a formal surface the model proposes in and the machine checks (Anka: a purpose DSL hit 99.9% parse /
 +40pp over Python because "the space of valid code it can generate is so much smaller"). Workflows
-become data: a DAG of steps, each an agent action, each gated by the envelope.
+become data: a DAG of steps, each an agent action, each checked by the envelope.
 
 **Pole (doctrine):** *infant-simple to run a workflow, expert to author one.* `weave run ship-pr`
 is one command; the `ship-pr.weave` file is the expert surface.
 
 **Shape:**
-- A minimal workflow grammar (`step`, `parallel`, `gate`, `on-fail`) — the same shape as openDaisugi's
+- A minimal workflow grammar (`step`, `parallel`, `warden`, `on-fail`) — the same shape as openDaisugi's
   own Workflow tool, but as a first-class, checkable harness primitive on disk. The grammar *is* a
   safety boundary: a step that isn't in the language can't run.
 - Deterministic control flow (loops, fan-out, retries) in the harness; the model fills the leaves.
@@ -155,8 +155,8 @@ These are not rivals; they stack, and the honest MVP order is **A → C → B**:
   coolest demo. Build last, and only if the minimap beats `tmux + ntfy` at "who needs me now."
 
 The through-line in all three is the envelope. That is the openDaisugi-modular part: `sprig` is
-"another switchable module" — you can run the loop with the gate on (proven) or off (just pi), and
-you can point the gate at any envelope source. Take it or leave it.
+"another switchable module" — you can run the loop with the warden on (proven) or off (just pi), and
+you can point the warden at any envelope source. Take it or leave it.
 
 ## Rust vs Go — my prior (research to confirm)
 
@@ -172,7 +172,7 @@ prompt asks this head-to-head.
 ## What's next
 1. Deep-research (`wu83vibdh`) lands → refine the token-checklist, the Rust/Go call, and the
    game-UI verdict against measured evidence.
-2. TDD-prototype **`sprig` (Design A)** first — the minimal loop + the in-process envelope gate — in
+2. TDD-prototype **`sprig` (Design A)** first — the minimal loop + the in-process envelope warden — in
    the chosen language, superpowers TDD, atomic commits. It's the smallest thing that proves the
    whole thesis: rent the loop, own the boundary.
 
@@ -209,9 +209,9 @@ itself a client), a machine-readable **OpenAPI 3.1** contract at `/doc`, and liv
 **SSE** at `/event` (opencode docs). Multi-client + Tailscale/phone falls out of this.
 
 **Assurance boundary — DECIDED and BUILT.** AgentSpec (arXiv 2503.18666 + 2606.26057): the clean
-gate is **out-of-process, on the only path, fail-closed at request+system levels, externalized
+warden is **out-of-process, on the only path, fail-closed at request+system levels, externalized
 signed policy (P1–P4)**; ms overhead; >90% unsafe executions prevented. This *is* openDaisugi's
-PreToolUse-hook contract → shipped as `DaisugiGate` (subprocess, exit-0=allow, else deny).
+PreToolUse-hook contract → shipped as `DaisugiWarden` (subprocess, exit-0=allow, else deny).
 
 **Rust vs Go — decision stands (the head-to-head died to quota).** Go for `sprig` (built, tested,
 fast iteration, goroutines for `grove`, an openDaisugi Go client exists, opencode precedent);

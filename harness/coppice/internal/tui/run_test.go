@@ -36,20 +36,20 @@ func newTestServer(t *testing.T) *testServer {
 	toolchain.RequireOrSkip(t)
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "server.sock")
-	// The foreman's wait is short, so a floor test sees the server's
+	// The steward's wait is short, so a floor test sees the server's
 	// not-ready note in seconds.
-	// The home holds a gate hook, so a floor here does not show the
+	// The home holds a warden hook, so a floor here does not show the
 	// install hint and every test sees the layout it measures.
 	home := filepath.Join(dir, "home")
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hook := `{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "DAISUGI_GATE_HOOK=opendaisugi.gate /x/daisugi gate check --mode audit"}]}]}}`
+	hook := `{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "DAISUGI_WARDEN_HOOK=opendaisugi.warden /x/daisugi warden check --mode audit"}]}]}}`
 	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(hook), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s, err := server.New(server.Config{SocketPath: sock, DataDir: dir, HookHome: home,
-		ForemanDir: filepath.Join(dir, "state", "foreman"), ForemanWait: 1500 * time.Millisecond})
+		StewardDir: filepath.Join(dir, "state", "steward"), StewardWait: 1500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

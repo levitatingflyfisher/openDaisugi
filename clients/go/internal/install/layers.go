@@ -6,14 +6,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/pyyaml"
+	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is install's four default layers (skill, MCP, capture and
@@ -42,18 +44,160 @@ const mdBlock = mdMarker + `
 ## openDaisugi — automatic pathway routing
 
 Before planning any task with 3 or more steps, call the ` + "`find_pathway`" + `
-MCP tool. If similarity ≥ 0.85, use the returned cached plan via
+MCP tool first. If similarity ≥ 0.85, use the returned cached plan via
 ` + "`run_plan`" + ` instead of re-planning from scratch. When a cached pathway is
-used, note it explicitly: "Using cached opendaisugi pathway (similarity
-X.XX) — skipping re-plan."
+used, say so: "Using cached opendaisugi pathway (similarity X.XX) —
+skipping re-plan."
 
-If no pathway matches, proceed normally. After execution, the run is
-journaled automatically and will feed distillation on the next
-` + "`daisugi tend`" + ` cycle.
+A job you will repeat goes through ` + "`verify_plan`" + `, then ` + "`run_plan`" + `. Make
+one action in each tool call.
+
+If no pathway matches, proceed normally.
 ` + mdMarker + "\n"
 
-// codexMCPBlock is install._CODEX_MCP_BLOCK.
-const codexMCPBlock = "\n[mcp_servers.opendaisugi]\ncommand = \"daisugi\"\nargs = [\"mcp\", \"serve\"]\n"
+// codexMCPRe is install._CODEX_MCP_RE: the block an install wrote, with any
+// command (a bare daisugi from an older install, or an absolute path).
+var codexMCPRe = regexp.MustCompile(`\n\[mcp_servers\.opendaisugi\]\ncommand = "((?:[^"\\\n]|\\.)*)"\nargs = \["mcp", "serve"\]\n`)
+
+// codexMCPBlock is install._codex_mcp_block.
+func codexMCPBlock(self string) string {
+	return "\n[mcp_servers.opendaisugi]\ncommand = " + pyjson.Dumps(self, true) + "\nargs = [\"mcp\", \"serve\"]\n"
+}
+
+// recordCommand is install._record_command: `<self> hook record <args>`.
+func recordCommand(self, args string) string {
+	return verify.ShlexQuote(self) + " hook record " + args
+}
+
+// leftAsIs is install.LEFT_AS_IS: a note that says a hook was not rewritten
+// contains this phrase.
+const leftAsIs = "was left as it is"
+
+// LeftAsIs is whether a note says a hook was left as it is.
+func LeftAsIs(note string) bool { return strings.Contains(note, leftAsIs) }
+
+// plainRecord is install._PLAIN_RECORD: one plain command, a program word
+// (bare, or one single-quoted path) and plain words. No operator,
+// redirection, quote, expansion, newline or NAME=val prefix can match.
+var plainRecord = regexp.MustCompile("^([ \\t]*)('[^']*'|[^ \\t\\n\\r\\f\\v'\"\\\\;|&<>()$`]+)" +
+	"((?:[ \\t]+[A-Za-z0-9_./:=@%+,-]+)*[ \\t]*)$")
+
+// rebindRecordCommand is install._rebind_record_command: a daisugi hook
+// record command pointed at self, and whether it had to be left alone. Only
+// one plain command is rewritten, and only its program word; every other
+// byte stays. A command with an operator, a redirection, an env or NAME=val
+// prefix, a quote or an expansion comes back as it was with left true,
+// unless its program is already self. Any other command comes back as it
+// was with left false.
+func rebindRecordCommand(command, self string) (out string, left bool) {
+	programs := config.RecordHookPrograms(command)
+	if len(programs) == 0 {
+		return command, false
+	}
+	if m := plainRecord.FindStringSubmatch(command); m != nil {
+		word := m[2]
+		if strings.HasPrefix(word, "'") {
+			word = word[1 : len(word)-1]
+		}
+		tail := strings.Fields(m[3])
+		if config.IsEntryWord(word) && len(tail) >= 2 && tail[0] == "hook" && tail[1] == "record" {
+			if word == self {
+				return command, false
+			}
+			if strings.Contains(word, "/") && !strings.Contains(self, "/") {
+				// Install found no path to write. A bare word is less than
+				// the path the hook has now: keep the path and say so.
+				return command, true
+			}
+			return m[1] + verify.ShlexQuote(self) + m[3], false
+		}
+	}
+	for _, p := range programs {
+		if p != self {
+			return command, true
+		}
+	}
+	return command, false
+}
+
+// keepsPath is install._keeps_path: install would write a bare word over a
+// command that names a path. It never does.
+func keepsPath(old any, want any) bool {
+	o, ok1 := old.(string)
+	w, ok2 := want.(string)
+	return ok1 && ok2 && strings.Contains(o, "/") && !strings.Contains(w, "/")
+}
+
+// leftMCPNote is install._left_mcp_note.
+func leftMCPNote(p, old, want string) string {
+	return "The MCP command `" + old + "` in " + p + " " + leftAsIs + ": install found no daisugi on PATH, " +
+		"so the only word it could write is `" + want + "`, and the entry already names a path."
+}
+
+// leftHookNote is install._left_hook_note.
+func leftHookNote(runtime, command, self string) string {
+	if m := plainRecord.FindStringSubmatch(command); m != nil && strings.Contains(strings.Trim(m[2], "'"), "/") && !strings.Contains(self, "/") {
+		return "[" + runtime + "] The hook `" + command + "` " + leftAsIs + ": install found no daisugi on PATH, " +
+			"so the only word it could write is `" + self + "`, and the hook already names a path."
+	}
+	return "[" + runtime + "] The hook `" + command + "` " + leftAsIs + ": it is not one plain command, so " +
+		"install did not rewrite it. If the agent cannot find daisugi, make its first word " +
+		verify.ShlexQuote(self) + "."
+}
+
+// rebindHookEntries is install._rebind_hook_entries: every record hook in a
+// list of {"hooks": [...]} entries (or flat {"command": ...} entries)
+// pointed at self. It says whether one changed, and gives a note for each
+// hook it left as it is.
+func rebindHookEntries(entries []any, self, runtime string) (changed bool, notes []string) {
+	for _, e := range entries {
+		eo, ok := e.(*pyjson.Object)
+		if !ok {
+			continue
+		}
+		var holders []any
+		if _, flat := eo.Get("command"); flat {
+			holders = []any{eo}
+		} else {
+			holders = asList(eo.Value("hooks"))
+		}
+		for _, h := range holders {
+			ho, ok := h.(*pyjson.Object)
+			if !ok {
+				continue
+			}
+			cmd, isStr := ho.Value("command").(string)
+			if isStr && config.IsRecordHook(cmd, "") {
+				n, left := rebindRecordCommand(cmd, self)
+				if left {
+					notes = append(notes, leftHookNote(runtime, cmd, self))
+				}
+				if n != cmd {
+					ho.Set("command", n)
+					changed = true
+				}
+			}
+		}
+	}
+	return changed, notes
+}
+
+// withNotes puts the notes of left hooks on the edit of a file, or on an
+// edit that only carries them when nothing is written.
+func withNotes(e *Edit, p string, notes []string) *Edit {
+	if len(notes) == 0 {
+		return e
+	}
+	text := strings.Join(notes, "\n")
+	if e == nil {
+		return &Edit{Path: p, NoteOnly: true, Note: text}
+	}
+	if e.Note != "" {
+		text = e.Note + "\n" + text
+	}
+	e.Note = text
+	return e
+}
 
 // AssetFile is one file of an embedded tree.
 type AssetFile struct{ Rel, Text string }
@@ -90,76 +234,100 @@ func exists(p string) bool {
 
 // AgentsSkillTarget is install._agents_skill_target.
 func AgentsSkillTarget(home, fallback string) string {
-	agents := gateroot.Join(home, ".agents/skills")
-	if exists(agents) || !exists(gateroot.Join(home, fallback)) {
-		return gateroot.Join(agents, SkillName)
+	agents := wardenroot.Join(home, ".agents/skills")
+	if exists(agents) || !exists(wardenroot.Join(home, fallback)) {
+		return wardenroot.Join(agents, SkillName)
 	}
-	return gateroot.Join(gateroot.Join(home, fallback), SkillName)
+	return wardenroot.Join(wardenroot.Join(home, fallback), SkillName)
 }
 
 // Opts are the layers an install writes beyond the four default ones.
 type Opts struct {
-	Gate, Gateway, Enforce, Ask bool
-	URL                         string
-	// Report is the floor report the gate layer wires ("", "herdr" or
+	Router, Enforce, Ask bool
+	URL                  string
+	// Report is the floor report the warden layer wires ("", "herdr" or
 	// "coppice").
 	Report string
+	// Only names the layers to write (--only); nil means the default five.
+	// The router layer is Router, not an entry here.
+	Only map[string]bool
 }
+
+// Has is whether the layer is selected.
+func (o Opts) Has(layer string) bool { return o.Only == nil || o.Only[layer] }
 
 // skillTarget is where a runtime's skill goes.
 func skillTarget(rt Runtime, home string) string {
 	switch rt.Key {
 	case "claude":
-		return AgentsSkillTarget(home, ".claude/skills")
+		// Claude Code reads only ~/.claude/skills: a skill in
+		// ~/.agents/skills is not in its skills list (checked live on
+		// 2.1.319). Codex reads ~/.agents/skills.
+		return wardenroot.Join(home, ".claude/skills/"+SkillName)
 	case "codex":
 		return AgentsSkillTarget(home, ".codex/skills")
 	case "hermes":
-		return gateroot.Join(home, ".hermes/skills/opendaisugi/"+SkillName)
+		return wardenroot.Join(home, ".hermes/skills/opendaisugi/"+SkillName)
 	}
-	return gateroot.Join(home, ".openclaw/workspace/skills/"+SkillName)
+	return wardenroot.Join(home, ".openclaw/workspace/skills/"+SkillName)
 }
 
 // PlanAllSteps is Runtime.plan for the default layers and the opt-in ones:
 // the supported steps in layer order, then the gap notes.
 func PlanAllSteps(rt Runtime, home string, o Opts) []Step {
-	j := func(rel string) string { return gateroot.Join(home, rel) }
+	j := func(rel string) string { return wardenroot.Join(home, rel) }
 	var steps []Step
 	add := func(layer, desc, target string) {
 		steps = append(steps, Step{Layer: layer, Description: desc, Target: target, Supported: true})
 	}
-	add(LayerSkill, "Copy opendaisugi-checklist skill", skillTarget(rt, home))
+	// layer adds a step only for a selected layer.
+	layer := func(l, desc, target string) {
+		if o.Has(l) {
+			add(l, desc, target)
+		}
+	}
+	layer(LayerSkill, "Copy opendaisugi-checklist skill", skillTarget(rt, home))
 	switch rt.Key {
 	case "claude":
-		add(LayerMCP, `Register MCP server "opendaisugi"`, j(".claude.json"))
-		add(LayerCapture, "Add PreToolUse capture hook", j(".claude/settings.json"))
-		add(LayerInstructions, "Append pathway guidance", j(".claude/CLAUDE.md"))
+		layer(LayerMCP, `Register MCP server "opendaisugi"`, j(".claude.json"))
+		layer(LayerCapture, "Add PreToolUse capture hook", j(".claude/settings.json"))
+		layer(LayerInstructions, pathwayGuidanceTitle(j(".claude/CLAUDE.md")), j(".claude/CLAUDE.md"))
 	case "codex":
-		add(LayerMCP, "Register opendaisugi MCP server", j(".codex/config.toml"))
-		add(LayerInstructions, "Append pathway guidance", j(".codex/AGENTS.md"))
+		layer(LayerMCP, "Register opendaisugi MCP server", j(".codex/config.toml"))
+		layer(LayerInstructions, pathwayGuidanceTitle(j(".codex/AGENTS.md")), j(".codex/AGENTS.md"))
 	case "hermes":
-		add(LayerMCP, "Register opendaisugi MCP server", j(".hermes/config.yaml"))
-		add(LayerCapture, "Add pre_tool_call capture hook", j(".hermes/config.yaml"))
+		layer(LayerMCP, "Register opendaisugi MCP server", j(".hermes/config.yaml"))
+		layer(LayerCapture, "Add pre_tool_call capture hook", j(".hermes/config.yaml"))
+		layer(LayerInstructions, pathwayGuidanceTitle(j(".hermes/SOUL.md")), j(".hermes/SOUL.md"))
 	case "openclaw":
-		add(LayerMCP, "Register opendaisugi MCP server", j(".openclaw/openclaw.json"))
-		add(LayerCapture, "Install before_tool_call capture plugin", j(".openclaw/extensions/opendaisugi"))
-		add(LayerInstructions, "Append pathway guidance", j(".openclaw/workspace/AGENTS.md"))
+		layer(LayerMCP, "Register opendaisugi MCP server", j(".openclaw/openclaw.json"))
+		layer(LayerCapture, "Install before_tool_call capture plugin", j(".openclaw/extensions/opendaisugi"))
+		layer(LayerInstructions, pathwayGuidanceTitle(j(".openclaw/workspace/AGENTS.md")), j(".openclaw/workspace/AGENTS.md"))
 	}
-	rest := PlanSteps(rt, home, o.Gate, o.Gateway, o.Enforce, o.Ask, o.URL)
+	rest := PlanSteps(rt, home, o.Router, o.Enforce, o.Ask, o.URL)
 	var gaps []Step
 	for _, s := range rest {
+		if s.Layer == LayerWarden && !o.Has(LayerWarden) {
+			continue
+		}
 		if !s.Supported {
 			gaps = append(gaps, s)
 			continue
 		}
 		steps = append(steps, s)
-		if s.Layer == LayerGate && rt.Key == "claude" {
+		if s.Layer == LayerWarden && rt.Key == "claude" {
 			if o.Report == "herdr" {
-				add(LayerGate, "Add Stop + Notification floor-report hooks (Herdr)", j(".claude/settings.json"))
+				add(LayerWarden, "Add Stop + Notification floor-report hooks (Herdr)", j(".claude/settings.json"))
 			}
 			if o.Report == "herdr" || o.Report == "coppice" {
-				add(LayerGate, "Add SubagentStart + SubagentStop hooks (subagent rows)", j(".claude/settings.json"))
+				add(LayerWarden, "Add SubagentStart + SubagentStop hooks (subagent rows)", j(".claude/settings.json"))
 			}
 		}
+	}
+	// The pando layer comes after the warden and the router, as it is
+	// written last (the Python oracle's order).
+	if o.hasPando() {
+		steps = append(steps, pandoPlanSteps(rt, home)...)
 	}
 	return append(steps, gaps...)
 }
@@ -169,7 +337,7 @@ func PlanAllSteps(rt Runtime, home string, o Opts) []Step {
 func priorOf(ch *Change, p string) *Edit {
 	var prior *Edit
 	for _, e := range ch.Edits {
-		if e != nil && e.Path == p && e.Kind == "" && e.Warning == "" {
+		if e != nil && e.Path == p && e.Kind == "" && e.Warning == "" && !e.NoteOnly {
 			prior = e
 		}
 	}
@@ -193,6 +361,11 @@ func PlanSkill(target string) *Edit {
 // PlanMCP is _patch_mcp: entry set at key path in a JSON (or JSON5) file
 // unless one is there, the file left alone when it does not parse.
 func PlanMCP(p string, json5 bool, keys []string, entry *pyjson.Object, what string, prior *Edit) (*Edit, error) {
+	return planMCPNamed("opendaisugi", p, json5, keys, entry, what, prior)
+}
+
+// planMCPNamed is PlanMCP for the server called name.
+func planMCPNamed(name, p string, json5 bool, keys []string, entry *pyjson.Object, what string, prior *Edit) (*Edit, error) {
 	text, existed, err := textOf(p, prior)
 	if err != nil {
 		return nil, err
@@ -229,8 +402,20 @@ func PlanMCP(p string, json5 bool, keys []string, entry *pyjson.Object, what str
 	if !ok {
 		return nil, ErrUnsupported // `in` and item assignment on another type
 	}
-	if _, has := lo.Get("opendaisugi"); has {
-		return nil, nil
+	if old, has := lo.Get(name); has {
+		// An entry from an older install names a bare daisugi. Point it at
+		// the absolute program; every other key of it stays as it is.
+		want := entry.Value("command")
+		oo, isObj := old.(*pyjson.Object)
+		if !isObj || !config.IsEntryWord(oo.Value("command")) || oo.Value("command") == want {
+			return nil, nil
+		}
+		if keepsPath(oo.Value("command"), want) {
+			return withNotes(nil, p, []string{leftMCPNote(p, oo.Value("command").(string), want.(string))}), nil
+		}
+		oo.Set("command", want)
+	} else {
+		lo.Set(name, entry)
 	}
 	e := &Edit{Path: p, Existed: existed}
 	if existed && json5 && json5Comment.MatchString(text) {
@@ -238,17 +423,16 @@ func PlanMCP(p string, json5 bool, keys []string, entry *pyjson.Object, what str
 			"JSON). The pre-write backup at " + p + ".bak* preserves the original text — restore from it if you " +
 			"need the comments back. Tracked as M7 in REVIEW_FINDINGS.md."
 	}
-	lo.Set("opendaisugi", entry)
 	e.Content = dumpSettings(cfg)
 	return e, nil
 }
 
-func mcpEntry(withType bool) *pyjson.Object {
+func mcpEntry(withType bool, self string) *pyjson.Object {
 	o := pyjson.NewObject()
 	if withType {
 		o.Set("type", "stdio")
 	}
-	return o.Set("command", "daisugi").Set("args", []any{"mcp", "serve"})
+	return o.Set("command", self).Set("args", []any{"mcp", "serve"})
 }
 
 // settingsOf reads a Claude settings.json for a capture or report edit:
@@ -318,7 +502,7 @@ func commandsOf(entries []any) ([]any, error) {
 }
 
 // PlanClaudeCapture is _patch_claude_settings.
-func PlanClaudeCapture(p string, prior *Edit) (*Edit, error) {
+func PlanClaudeCapture(p string, prior *Edit, self string) (*Edit, error) {
 	s, existed, warn, err := settingsOf(p, prior, p+" is not valid JSON; skipping hook registration to avoid "+
 		"overwriting your Claude Code settings (permissions/env). Fix the file and re-run `daisugi install`.")
 	if err != nil || warn != nil {
@@ -333,6 +517,7 @@ func PlanClaudeCapture(p string, prior *Edit) (*Edit, error) {
 		return nil, err
 	}
 	changed := true
+	var notes []string
 	for _, c := range cmds {
 		if config.IsRecordHook(c, "") {
 			changed = false
@@ -341,7 +526,11 @@ func PlanClaudeCapture(p string, prior *Edit) (*Edit, error) {
 	if changed {
 		hooks.Set("PreToolUse", append(pre, pyjson.NewObject().
 			Set("matcher", "Bash|Edit|Write|Read|Glob|Grep|WebFetch|WebSearch").
-			Set("hooks", []any{pyjson.NewObject().Set("type", "command").Set("command", "daisugi hook record --format claude")})))
+			Set("hooks", []any{pyjson.NewObject().Set("type", "command").Set("command", recordCommand(self, "--format claude"))})))
+	} else {
+		c, n := rebindHookEntries(pre, self, "Claude Code")
+		changed = c || changed
+		notes = append(notes, n...)
 	}
 	// The v0.27.1 print-skill SessionStart hook is taken out.
 	if ss, ok := hooks.Value("SessionStart").([]any); ok && len(ss) > 0 {
@@ -388,9 +577,9 @@ func PlanClaudeCapture(p string, prior *Edit) (*Edit, error) {
 		}
 	}
 	if !changed {
-		return nil, nil
+		return withNotes(nil, p, notes), nil
 	}
-	return &Edit{Path: p, Existed: existed, Content: dumpSettings(s)}, nil
+	return withNotes(&Edit{Path: p, Existed: existed, Content: dumpSettings(s)}, p, notes), nil
 }
 
 func asList(v any) []any {
@@ -400,7 +589,7 @@ func asList(v any) []any {
 
 // PlanReportHooks is _patch_claude_report_hooks (herdr: Stop and
 // Notification) or _patch_claude_subagent_hooks.
-func PlanReportHooks(p string, prior *Edit, subagent bool) (*Edit, error) {
+func PlanReportHooks(p string, prior *Edit, subagent bool, self string) (*Edit, error) {
 	what := "floor-report hook"
 	if subagent {
 		what = "subagent hook"
@@ -416,6 +605,7 @@ func PlanReportHooks(p string, prior *Edit, subagent bool) (*Edit, error) {
 		evs = []ev{{"SubagentStart", "--event subagent_start"}, {"SubagentStop", "--event subagent_stop"}}
 	}
 	changed := false
+	var notes []string
 	for _, e := range evs {
 		hooks, list, err := eventList(s, e.name)
 		if err != nil {
@@ -434,25 +624,96 @@ func PlanReportHooks(p string, prior *Edit, subagent bool) (*Edit, error) {
 		}
 		if !have {
 			entry := pyjson.NewObject().Set("hooks", []any{pyjson.NewObject().Set("type", "command").
-				Set("command", "daisugi hook record --format claude "+e.flag)})
+				Set("command", recordCommand(self, "--format claude "+e.flag))})
 			hooks.Set(e.name, append(list, entry))
 			changed = true
+		} else {
+			c, n := rebindHookEntries(list, self, "Claude Code")
+			changed = c || changed
+			notes = append(notes, n...)
 		}
 	}
 	if !changed {
-		return nil, nil
+		return withNotes(nil, p, notes), nil
 	}
-	return &Edit{Path: p, Existed: existed, Content: dumpSettings(s)}, nil
+	return withNotes(&Edit{Path: p, Existed: existed, Content: dumpSettings(s)}, p, notes), nil
+}
+
+// markerStarts are the places the marker stands alone on its line (LF or
+// CRLF ends). A marker inside a line of prose is not one.
+func markerStarts(text string) []int {
+	var out []int
+	from := 0
+	for {
+		i := strings.Index(text[from:], mdMarker)
+		if i < 0 {
+			return out
+		}
+		i += from
+		after := i + len(mdMarker)
+		atStart := i == 0 || text[i-1] == '\n'
+		atEnd := after == len(text) || text[after] == '\n' || strings.HasPrefix(text[after:], "\r\n")
+		if atStart && atEnd {
+			out = append(out, i)
+		}
+		from = after
+	}
+}
+
+// managedSpan is the [start, end) of the marker-bounded block in text, or
+// ok false. The first two markers that stand alone on a line bound it; one
+// alone is not a block.
+func managedSpan(text string) (start, end int, ok bool) {
+	st := markerStarts(text)
+	if len(st) < 2 {
+		return 0, 0, false
+	}
+	return st[0], st[1] + len(mdMarker), true
+}
+
+// blockFor is the current block with the line ends of the block it replaces.
+func blockFor(spanText string) string {
+	cur := strings.TrimRight(mdBlock, "\n")
+	if strings.Contains(spanText, "\r\n") {
+		return strings.ReplaceAll(cur, "\n", "\r\n")
+	}
+	return cur
+}
+
+// pathwayGuidanceTitle is the plan line for the instruction layer: what the
+// install does to the file. Update when the file holds an older managed
+// block, a keep line when the current block is there already, else Append.
+// A file that cannot be read reads as no block.
+func pathwayGuidanceTitle(p string) string {
+	text, _, err := readText(p)
+	if err == nil {
+		if s, e, ok := managedSpan(text); ok {
+			if text[s:e] != blockFor(text[s:e]) {
+				return "Update pathway guidance"
+			}
+			return "Keep pathway guidance (already current)"
+		}
+	}
+	return "Append pathway guidance"
 }
 
 // PlanInstructions is _patch_instructions: the managed block appended
-// once. It makes the file's directory, and keeps no backup.
+// once; an older block is replaced in place and the rest of the file is
+// kept byte for byte, line ends included. The block takes the line ends of
+// the one it replaces. It makes the file's directory, and keeps no backup.
 func PlanInstructions(p string) (*Edit, error) {
 	text, _, err := readText(p)
 	if err != nil {
 		return nil, err
 	}
-	if strings.Contains(text, mdMarker) {
+	if s, e, ok := managedSpan(text); ok {
+		cur := blockFor(text[s:e])
+		if text[s:e] == cur {
+			return nil, nil
+		}
+		return &Edit{Path: p, Kind: "md", Content: text[:s] + cur + text[e:]}, nil
+	}
+	if len(markerStarts(text)) > 0 {
 		return nil, nil
 	}
 	sep := ""
@@ -462,20 +723,45 @@ func PlanInstructions(p string) (*Edit, error) {
 	return &Edit{Path: p, Kind: "md", Content: strings.TrimRight(text, "\n") + sep + mdBlock}, nil
 }
 
+// PlanHermesSoul is _patch_hermes_soul: the managed block in Hermes's
+// SOUL.md. A missing SOUL.md is left alone, with a warning, because a file
+// made here would hold only the block and replace Hermes's built-in identity.
+func PlanHermesSoul(p string) (*Edit, error) {
+	if _, err := os.Stat(p); err != nil {
+		return &Edit{Path: p, Warning: p + " does not exist yet; skipping the Hermes instructions. " +
+			"Start Hermes once, then re-run `daisugi install`."}, nil
+	}
+	return PlanInstructions(p)
+}
+
 // PlanCodexMCP is _patch_codex_config.
-func PlanCodexMCP(p string) (*Edit, error) {
+func PlanCodexMCP(p, self string) (*Edit, error) {
 	text, existed, err := readText(p)
 	if err != nil {
 		return nil, err
 	}
+	block := codexMCPBlock(self)
 	if strings.Contains(text, "[mcp_servers.opendaisugi]") {
-		return nil, nil
+		// An older install wrote a bare daisugi. That block is replaced by
+		// the absolute one; a block the user edited is left as it is.
+		loc := codexMCPRe.FindStringSubmatchIndex(text)
+		if loc == nil || text[loc[0]:loc[1]] == block {
+			return nil, nil
+		}
+		old, lerr := pyjson.Loads(`"` + text[loc[2]:loc[3]] + `"`)
+		if lerr != nil || !config.IsEntryWord(old) {
+			return nil, nil
+		}
+		if keepsPath(old, self) {
+			return withNotes(nil, p, []string{leftMCPNote(p, old.(string), self)}), nil
+		}
+		return &Edit{Path: p, Existed: existed, Content: text[:loc[0]] + block + text[loc[1]:]}, nil
 	}
 	sep := ""
 	if text != "" {
 		sep = "\n"
 	}
-	return &Edit{Path: p, Existed: existed, Content: strings.TrimRight(text, "\n") + sep + codexMCPBlock}, nil
+	return &Edit{Path: p, Existed: existed, Content: strings.TrimRight(text, "\n") + sep + block}, nil
 }
 
 // yamlOf is yaml.safe_load(path.read_text()) or {} for a Hermes config: a
@@ -485,6 +771,19 @@ func yamlOf(p string) (*pyjson.Object, bool, *pyjson.Object, error) {
 	if err != nil || !existed {
 		return nil, existed, nil, err
 	}
+	return yamlOfText(text)
+}
+
+// yamlOfPrior is yamlOf after the earlier edits of this run: the text of
+// the last edit of p when there is one.
+func yamlOfPrior(p string, prior *Edit) (*pyjson.Object, bool, *pyjson.Object, error) {
+	if prior == nil {
+		return yamlOf(p)
+	}
+	return yamlOfText(prior.Content)
+}
+
+func yamlOfText(text string) (*pyjson.Object, bool, *pyjson.Object, error) {
 	// read_text reads with universal newlines.
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	v, exc, why := pyyaml.Load(text)
@@ -519,7 +818,7 @@ func yamlText(o *pyjson.Object) (string, error) {
 }
 
 // PlanHermesConfig is _patch_hermes_config.
-func PlanHermesConfig(p string) (*Edit, error) {
+func PlanHermesConfig(p string, withMCP, withCapture bool, self string) (*Edit, error) {
 	cfg, existed, _, err := yamlOf(p)
 	if errors.Is(err, errYAML) {
 		return &Edit{Path: p, Warning: p + " is not valid YAML; skipping to avoid overwriting your Hermes config. " +
@@ -532,48 +831,72 @@ func PlanHermesConfig(p string) (*Edit, error) {
 		cfg = pyjson.NewObject()
 	}
 	changed := false
-	mv, has := cfg.Get("mcp_servers")
-	if !has {
-		mv = pyjson.NewObject()
-		cfg.Set("mcp_servers", mv)
-	}
-	mcp, ok := mv.(*pyjson.Object)
-	if !ok {
-		return nil, ErrUnsupported
-	}
-	if _, has := mcp.Get("opendaisugi"); !has {
-		mcp.Set("opendaisugi", mcpEntry(false))
-		changed = true
-	}
-	hooks, list, err := eventList(cfg, "pre_tool_call")
-	if err != nil {
-		return nil, err
-	}
-	const cmd = "daisugi hook record --format hermes"
-	have := false
-	for _, h := range list {
-		if ho, ok := h.(*pyjson.Object); ok && ho.Value("command") == cmd {
-			have = true
+	var notes []string
+	if withMCP {
+		mv, has := cfg.Get("mcp_servers")
+		if !has {
+			mv = pyjson.NewObject()
+			cfg.Set("mcp_servers", mv)
+		}
+		mcp, ok := mv.(*pyjson.Object)
+		if !ok {
+			return nil, ErrUnsupported
+		}
+		if old, has := mcp.Get("opendaisugi"); !has {
+			mcp.Set("opendaisugi", mcpEntry(false, self))
+			changed = true
+		} else if oo, isObj := old.(*pyjson.Object); isObj && config.IsEntryWord(oo.Value("command")) && oo.Value("command") != self {
+			if keepsPath(oo.Value("command"), self) {
+				notes = append(notes, leftMCPNote(p, oo.Value("command").(string), self))
+			} else {
+				oo.Set("command", self)
+				changed = true
+			}
 		}
 	}
-	if !have {
-		hooks.Set("pre_tool_call", append(list, pyjson.NewObject().Set("matcher", ".*").Set("command", cmd).
-			Set("timeout", pyjson.Int{Text: "10"})))
-		changed = true
+	if withCapture {
+		hooks, list, err := eventList(cfg, "pre_tool_call")
+		if err != nil {
+			return nil, err
+		}
+		cmd := recordCommand(self, "--format hermes")
+		have := false
+		known := false
+		for _, h := range list {
+			if ho, ok := h.(*pyjson.Object); ok {
+				if ho.Value("command") == cmd {
+					have = true
+				}
+				if config.IsRecordHook(ho.Value("command"), "") {
+					known = true
+				}
+			}
+		}
+		if !have {
+			if known {
+				c, n := rebindHookEntries(list, self, "Hermes")
+				changed = c || changed
+				notes = append(notes, n...)
+			} else {
+				hooks.Set("pre_tool_call", append(list, pyjson.NewObject().Set("matcher", ".*").Set("command", cmd).
+					Set("timeout", pyjson.Int{Text: "10"})))
+				changed = true
+			}
+		}
 	}
 	if !changed {
-		return nil, nil
+		return withNotes(nil, p, notes), nil
 	}
 	text, err := yamlText(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Edit{Path: p, Existed: existed, Content: text}, nil
+	return withNotes(&Edit{Path: p, Existed: existed, Content: text}, p, notes), nil
 }
 
 // PlanOpenClawPlugin is _install_openclaw_plugin.
 func PlanOpenClawPlugin(home string) *Edit {
-	return &Edit{Path: gateroot.Join(home, ".openclaw/extensions/opendaisugi"), Kind: "plugin", Listed: true}
+	return &Edit{Path: wardenroot.Join(home, ".openclaw/extensions/opendaisugi"), Kind: "plugin", Listed: true}
 }
 
 // missingDir is the error a write into a directory that is not there
@@ -590,7 +913,7 @@ func missingDir(p string) error {
 // the runtime, with the edits before it kept (Partial).
 func PlanInstall(rt Runtime, home, self, root string, o Opts) (*Change, error) {
 	ch := &Change{Runtime: rt}
-	j := func(rel string) string { return gateroot.Join(home, rel) }
+	j := func(rel string) string { return wardenroot.Join(home, rel) }
 	switch rt.Key {
 	case "codex":
 		ch.Mkdirs = []string{j(".codex")}
@@ -602,46 +925,74 @@ func PlanInstall(rt Runtime, home, self, root string, o Opts) (*Change, error) {
 	type step func() (*Edit, error)
 	var steps []step
 	add := func(s step) { steps = append(steps, s) }
-	add(func() (*Edit, error) { return PlanSkill(skillTarget(rt, home)), nil })
 	settings := j(".claude/settings.json")
+	if rt.Key == "claude" {
+		// Claude Code makes ~/.claude on its first run. Install never
+		// makes it: with none, the runtime fails before any write.
+		add(func() (*Edit, error) {
+			if !isDir(j(".claude")) {
+				return nil, failf("Claude Code has not run yet (%s is missing)", j(".claude"))
+			}
+			return nil, nil
+		})
+	}
+	if o.Has(LayerSkill) {
+		add(func() (*Edit, error) { return PlanSkill(skillTarget(rt, home)), nil })
+		if rt.Key == "claude" {
+			// An older install put Claude's skill in ~/.agents/skills. With
+			// no Codex there, that copy is an orphan: take it out.
+			add(func() (*Edit, error) {
+				if isDir(j(".codex")) {
+					return nil, nil
+				}
+				return PlanRemove(j(".agents/skills/" + SkillName)), nil
+			})
+		}
+	}
 	mode := "audit"
 	if o.Enforce {
 		mode = "enforce"
 	}
 	switch rt.Key {
 	case "claude":
-		add(func() (*Edit, error) {
-			return PlanMCP(j(".claude.json"), false, []string{"mcpServers"}, mcpEntry(true), "MCP registration",
-				priorOf(ch, j(".claude.json")))
-		})
-		add(func() (*Edit, error) {
-			e, err := PlanClaudeCapture(settings, priorOf(ch, settings))
-			if err == nil && e != nil && e.Warning == "" {
-				err = missingDir(settings)
-			}
-			return e, err
-		})
-		add(func() (*Edit, error) { return PlanInstructions(j(".claude/CLAUDE.md")) })
-		if o.Gate {
+		if o.Has(LayerMCP) {
 			add(func() (*Edit, error) {
-				if err := CheckGateRoot(root); err != nil {
+				return PlanMCP(j(".claude.json"), false, []string{"mcpServers"}, mcpEntry(true, self), "MCP registration",
+					priorOf(ch, j(".claude.json")))
+			})
+		}
+		if o.Has(LayerCapture) {
+			add(func() (*Edit, error) {
+				e, err := PlanClaudeCapture(settings, priorOf(ch, settings), self)
+				if err == nil && e != nil && e.Warning == "" {
+					err = missingDir(settings)
+				}
+				return e, err
+			})
+		}
+		if o.Has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanInstructions(j(".claude/CLAUDE.md")) })
+		}
+		if o.Has(LayerWarden) {
+			add(func() (*Edit, error) {
+				if err := CheckWardenRoot(root); err != nil {
 					return nil, err
 				}
 				entry := HookEntry(self, HookOptions{Mode: mode, Root: root, Ask: o.Ask})
-				e, err := PlanClaudeGateOn(settings, entry, priorOf(ch, settings))
+				e, err := PlanClaudeWardenOn(settings, entry, priorOf(ch, settings))
 				if err == nil && e != nil && e.Warning == "" {
 					err = missingDir(settings)
 				}
 				return e, err
 			})
 			if o.Report == "herdr" {
-				add(func() (*Edit, error) { return PlanReportHooks(settings, priorOf(ch, settings), false) })
+				add(func() (*Edit, error) { return PlanReportHooks(settings, priorOf(ch, settings), false, self) })
 			}
 			if o.Report == "herdr" || o.Report == "coppice" {
-				add(func() (*Edit, error) { return PlanReportHooks(settings, priorOf(ch, settings), true) })
+				add(func() (*Edit, error) { return PlanReportHooks(settings, priorOf(ch, settings), true, self) })
 			}
 		}
-		if o.Gateway {
+		if o.Router {
 			add(func() (*Edit, error) {
 				e, err := PlanClaudeBaseURL(settings, o.URL, priorOf(ch, settings))
 				if err == nil && e != nil && e.Warning == "" {
@@ -651,36 +1002,58 @@ func PlanInstall(rt Runtime, home, self, root string, o Opts) (*Change, error) {
 			})
 		}
 	case "codex":
-		add(func() (*Edit, error) { return PlanCodexMCP(j(".codex/config.toml")) })
-		add(func() (*Edit, error) { return PlanInstructions(j(".codex/AGENTS.md")) })
-		if o.Gate {
+		if o.Has(LayerMCP) {
+			add(func() (*Edit, error) { return PlanCodexMCP(j(".codex/config.toml"), self) })
+		}
+		if o.Has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanInstructions(j(".codex/AGENTS.md")) })
+		}
+		if o.Has(LayerWarden) {
 			add(func() (*Edit, error) {
-				if err := CheckGateRoot(root); err != nil {
+				if err := CheckWardenRoot(root); err != nil {
 					return nil, err
 				}
-				return PlanCodexGate(j(".codex/hooks.json"), HookEntry(self, HookOptions{Mode: mode, Root: root}))
+				return PlanCodexWarden(j(".codex/hooks.json"), HookEntry(self, HookOptions{Mode: mode, Root: root}))
 			})
 		}
-		if o.Gateway {
+		if o.Router {
 			add(func() (*Edit, error) {
 				return PlanCodexBaseURLOn(j(".codex/config.toml"), o.URL, priorOf(ch, j(".codex/config.toml")))
 			})
 		}
 	case "hermes":
-		add(func() (*Edit, error) { return PlanHermesConfig(j(".hermes/config.yaml")) })
+		if o.Has(LayerMCP) || o.Has(LayerCapture) {
+			add(func() (*Edit, error) {
+				return PlanHermesConfig(j(".hermes/config.yaml"), o.Has(LayerMCP), o.Has(LayerCapture), self)
+			})
+		}
+		if o.Has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanHermesSoul(j(".hermes/SOUL.md")) })
+		}
 	case "openclaw":
 		cfg := j(".openclaw/openclaw.json")
-		add(func() (*Edit, error) {
-			return PlanMCP(cfg, true, []string{"mcp", "servers"}, mcpEntry(false), "MCP registration", priorOf(ch, cfg))
-		})
-		add(func() (*Edit, error) { return PlanInstructions(j(".openclaw/workspace/AGENTS.md")) })
-		add(func() (*Edit, error) { return PlanOpenClawPlugin(home), nil })
-		if o.Gateway {
+		if o.Has(LayerMCP) {
+			add(func() (*Edit, error) {
+				return PlanMCP(cfg, true, []string{"mcp", "servers"}, mcpEntry(false, self), "MCP registration", priorOf(ch, cfg))
+			})
+		}
+		if o.Has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanInstructions(j(".openclaw/workspace/AGENTS.md")) })
+		}
+		if o.Has(LayerCapture) {
+			add(func() (*Edit, error) { return PlanOpenClawPlugin(home), nil })
+		}
+		if o.Router {
 			add(func() (*Edit, error) {
 				return PlanMCP(cfg, true, []string{"models", "providers"},
 					pyjson.NewObject().Set("baseUrl", o.URL).Set("api", "anthropic-messages"),
-					"gateway provider registration", priorOf(ch, cfg))
+					"router provider registration", priorOf(ch, cfg))
 			})
+		}
+	}
+	if o.hasPando() {
+		for _, ps := range pandoInstallSteps(rt, home, self, ch) {
+			steps = append(steps, step(ps))
 		}
 	}
 	for _, s := range steps {
@@ -747,7 +1120,7 @@ func sameSkill(target string) bool {
 }
 
 // applyLayerEdit performs the edits only this file plans.
-func applyLayerEdit(e *Edit) (string, error) {
+func applyLayerEdit(e *Edit, backed map[string]bool) (string, error) {
 	switch e.Kind {
 	case "skill":
 		if err := os.MkdirAll(filepath.Dir(e.Path), 0o777); err != nil {
@@ -780,7 +1153,7 @@ func applyLayerEdit(e *Edit) (string, error) {
 					return "", err
 				}
 			}
-			if _, err := gateroot.WriteFile(p, f.Text); err != nil {
+			if _, err := wardenroot.WriteFile(p, f.Text); err != nil {
 				return "", err
 			}
 		}
@@ -789,15 +1162,20 @@ func applyLayerEdit(e *Edit) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(e.Path), 0o777); err != nil {
 			return "", err
 		}
-		return gateroot.WriteFile(e.Path, e.Content)
+		return wardenroot.WriteFile(e.Path, e.Content)
 	case "remove":
 		_, err := clearPath(e.Path)
 		return "", err
+	case "pando-plugin", "pando-unit", "pando-unit-remove":
+		return "", applyPandoEdit(e, backed)
 	case "md-unpatch":
-		if err := Backup(e.Path); err != nil {
+		if e.Undo && emptyContent(e.Content) && isRegular(e.Path) {
+			return "", os.Remove(e.Path) // only daisugi's block was left: no backup
+		}
+		if err := backupOnce(e.Path, backed); err != nil {
 			return "", err
 		}
-		return gateroot.WriteFile(e.Path, e.Content)
+		return wardenroot.WriteFile(e.Path, e.Content)
 	}
 	return "", errors.New("unknown edit kind " + e.Kind)
 }
@@ -820,15 +1198,10 @@ func PlanUnpatchInstructions(p string) (*Edit, error) {
 	if !existed {
 		return nil, nil
 	}
-	start := strings.Index(text, mdMarker)
-	if start < 0 {
+	start, end, ok := managedSpan(text)
+	if !ok {
 		return nil, nil
 	}
-	second := strings.Index(text[start+len(mdMarker):], mdMarker)
-	if second < 0 {
-		return nil, nil
-	}
-	end := start + len(mdMarker) + second + len(mdMarker)
 	cleaned := strings.TrimRight(text[:start]+text[end:], "\n")
 	if cleaned != "" {
 		cleaned += "\n"
@@ -837,8 +1210,20 @@ func PlanUnpatchInstructions(p string) (*Edit, error) {
 }
 
 // PlanPopMCP is _pop_json_mcp.
-func PlanPopMCP(p, key string) (*Edit, error) {
-	v, st, err := readJSON(p)
+func PlanPopMCP(p, key string) (*Edit, error) { return planPopMCPNamed("opendaisugi", p, key, nil) }
+
+// planPopMCPNamed is PlanPopMCP for the server called name, on an earlier
+// edit of the same file when prior is set.
+func planPopMCPNamed(name, p, key string, prior *Edit) (*Edit, error) {
+	var v any
+	var st readState
+	var err error
+	if prior != nil && prior.Content != "" {
+		v, err = pyjson.Loads(prior.Content)
+		st = readOK
+	} else {
+		v, st, err = readJSON(p)
+	}
 	if err != nil {
 		if isFail(err) {
 			return nil, ErrUnsupported
@@ -860,10 +1245,10 @@ func PlanPopMCP(p, key string) (*Edit, error) {
 	if !ok {
 		return nil, ErrUnsupported
 	}
-	if _, has := m.Get("opendaisugi"); !has {
+	if _, has := m.Get(name); !has {
 		return nil, nil
 	}
-	m.Delete("opendaisugi")
+	m.Delete(name)
 	if m.Len() == 0 {
 		cfg.Delete(key)
 	}
@@ -876,10 +1261,10 @@ func PlanCodexMCPRemove(p string) (*Edit, error) {
 	if err != nil {
 		return nil, ErrUnsupported
 	}
-	if !existed || !strings.Contains(text, strings.TrimSpace(codexMCPBlock)) {
+	if !existed || !codexMCPRe.MatchString(text) {
 		return nil, nil
 	}
-	cleaned := strings.TrimRight(strings.ReplaceAll(text, codexMCPBlock, ""), "\n")
+	cleaned := strings.TrimRight(codexMCPRe.ReplaceAllString(text, ""), "\n")
 	if cleaned != "" {
 		cleaned += "\n"
 	}
@@ -887,7 +1272,7 @@ func PlanCodexMCPRemove(p string) (*Edit, error) {
 }
 
 // PlanHermesReverse is the config.yaml half of HermesRuntime.reverse.
-func PlanHermesReverse(p string) (*Edit, error) {
+func PlanHermesReverse(p string, withMCP, withCapture bool) (*Edit, error) {
 	cfg, existed, _, err := yamlOf(p)
 	if !existed || errors.Is(err, errYAML) {
 		return nil, nil
@@ -896,7 +1281,7 @@ func PlanHermesReverse(p string) (*Edit, error) {
 		return nil, ErrUnsupported
 	}
 	changed := false
-	if servers, ok := cfg.Value("mcp_servers").(*pyjson.Object); ok {
+	if servers, ok := cfg.Value("mcp_servers").(*pyjson.Object); ok && withMCP {
 		if _, has := servers.Get("opendaisugi"); has {
 			servers.Delete("opendaisugi")
 			if servers.Len() == 0 {
@@ -905,7 +1290,7 @@ func PlanHermesReverse(p string) (*Edit, error) {
 			changed = true
 		}
 	}
-	if hooks, ok := cfg.Value("hooks").(*pyjson.Object); ok {
+	if hooks, ok := cfg.Value("hooks").(*pyjson.Object); ok && withCapture {
 		if pre, ok := hooks.Value("pre_tool_call").([]any); ok {
 			var kept []any
 			for _, h := range pre {
@@ -938,8 +1323,8 @@ func PlanHermesReverse(p string) (*Edit, error) {
 }
 
 // PlanOpenClawUnconfig is the openclaw.json half of OpenClawRuntime.reverse:
-// the MCP server and the gateway provider taken out in one rewrite.
-func PlanOpenClawUnconfig(p string) (*Edit, error) {
+// the MCP server and the router provider taken out in one rewrite.
+func PlanOpenClawUnconfig(p string, withMCP, withBaseURL bool) (*Edit, error) {
 	text, existed, err := readText(p)
 	if err != nil {
 		return nil, ErrUnsupported
@@ -962,6 +1347,9 @@ func PlanOpenClawUnconfig(p string) (*Edit, error) {
 	}
 	changed := false
 	for _, keys := range [][2]string{{"mcp", "servers"}, {"models", "providers"}} {
+		if (keys[0] == "mcp" && !withMCP) || (keys[0] == "models" && !withBaseURL) {
+			continue
+		}
 		top, has := cfg.Get(keys[0])
 		if !has {
 			continue
@@ -998,16 +1386,21 @@ func PlanOpenClawUnconfig(p string) (*Edit, error) {
 
 // PlanReverseAll is Runtime.reverse: every managed change reversed, in
 // Python's order.
-func PlanReverseAll(rt Runtime, home string, gone map[string]bool) (*Change, error) {
-	j := func(rel string) string { return gateroot.Join(home, rel) }
+func PlanReverseAll(rt Runtime, home string, gone map[string]bool, only map[string]bool) (*Change, error) {
+	j := func(rel string) string { return wardenroot.Join(home, rel) }
 	ch := &Change{Runtime: rt}
+	// has is whether a layer is reversed: all of them, or the ones named.
+	has := func(layer string) bool { return only == nil || only[layer] }
 	switch rt.Key {
 	case "claude", "codex":
+		if !has(LayerWarden) {
+			break
+		}
 		hooksFile := j(".claude/settings.json")
 		if rt.Key == "codex" {
 			hooksFile = j(".codex/hooks.json")
 		}
-		if why := unknownGateHook(hooksFile); why != "" {
+		if why := unknownWardenHook(hooksFile); why != "" {
 			ch.Failed, ch.Why = true, why
 			return ch, nil
 		}
@@ -1028,46 +1421,99 @@ func PlanReverseAll(rt Runtime, home string, gone map[string]bool) (*Change, err
 	}
 	removeBoth := func(fallback string) {
 		add(func() (*Edit, error) { return remove(j(".agents/skills/" + SkillName)), nil })
-		add(func() (*Edit, error) { return remove(gateroot.Join(j(fallback), SkillName)), nil })
+		add(func() (*Edit, error) { return remove(wardenroot.Join(j(fallback), SkillName)), nil })
 	}
 	settings := j(".claude/settings.json")
 	switch rt.Key {
 	case "claude":
-		removeBoth(".claude/skills")
-		add(func() (*Edit, error) { return PlanPopMCP(j(".claude.json"), "mcpServers") })
-		add(func() (*Edit, error) {
-			return popHook(settings, isAnyRecordHook, []string{"PreToolUse"}, priorOf(ch, settings))
-		})
-		add(func() (*Edit, error) {
-			return popHook(settings, config.IsGateHook, []string{"PreToolUse"}, priorOf(ch, settings))
-		})
-		add(func() (*Edit, error) {
-			return popHook(settings, isAnyRecordHook, []string{"Stop", "Notification", "SubagentStart", "SubagentStop"},
-				priorOf(ch, settings))
-		})
-		add(func() (*Edit, error) { return PlanPopEnvKey(settings, "ANTHROPIC_BASE_URL", priorOf(ch, settings)) })
-		add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".claude/CLAUDE.md")) })
+		if has(LayerSkill) {
+			// ~/.agents/skills is Codex's when Codex is there; else a copy
+			// in it is an older Claude install's.
+			if isDir(j(".codex")) {
+				add(func() (*Edit, error) { return remove(j(".claude/skills/" + SkillName)), nil })
+			} else {
+				removeBoth(".claude/skills")
+			}
+		}
+		if has(LayerMCP) {
+			add(func() (*Edit, error) { return PlanPopMCP(j(".claude.json"), "mcpServers") })
+		}
+		if has(LayerCapture) {
+			add(func() (*Edit, error) {
+				return popHook(settings, isAnyRecordHook, []string{"PreToolUse"}, priorOf(ch, settings))
+			})
+		}
+		if has(LayerWarden) {
+			add(func() (*Edit, error) {
+				return popHook(settings, config.IsWardenHook, []string{"PreToolUse"}, priorOf(ch, settings))
+			})
+			add(func() (*Edit, error) {
+				return popHook(settings, isAnyRecordHook, []string{"Stop", "Notification", "SubagentStart", "SubagentStop"},
+					priorOf(ch, settings))
+			})
+		}
+		if has(LayerBaseURL) {
+			add(func() (*Edit, error) { return PlanPopEnvKey(settings, "ANTHROPIC_BASE_URL", priorOf(ch, settings)) })
+		}
+		if has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".claude/CLAUDE.md")) })
+		}
 	case "codex":
-		removeBoth(".codex/skills")
-		add(func() (*Edit, error) { return PlanCodexMCPRemove(j(".codex/config.toml")) })
-		add(func() (*Edit, error) {
-			return popHook(j(".codex/hooks.json"), config.IsGateHook, []string{"PreToolUse"}, nil)
-		})
-		add(func() (*Edit, error) {
-			return PlanCodexUnpatchOn(j(".codex/config.toml"), priorOf(ch, j(".codex/config.toml")))
-		})
-		add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".codex/AGENTS.md")) })
+		if has(LayerSkill) {
+			removeBoth(".codex/skills")
+		}
+		if has(LayerMCP) {
+			add(func() (*Edit, error) { return PlanCodexMCPRemove(j(".codex/config.toml")) })
+		}
+		if has(LayerWarden) {
+			add(func() (*Edit, error) {
+				return popHook(j(".codex/hooks.json"), config.IsWardenHook, []string{"PreToolUse"}, nil)
+			})
+		}
+		if has(LayerBaseURL) {
+			add(func() (*Edit, error) {
+				return PlanCodexUnpatchOn(j(".codex/config.toml"), priorOf(ch, j(".codex/config.toml")))
+			})
+		}
+		if has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".codex/AGENTS.md")) })
+		}
 	case "hermes":
-		add(func() (*Edit, error) { return remove(j(".hermes/skills/opendaisugi/" + SkillName)), nil })
-		add(func() (*Edit, error) { return PlanHermesReverse(j(".hermes/config.yaml")) })
+		if has(LayerSkill) {
+			add(func() (*Edit, error) { return remove(j(".hermes/skills/opendaisugi/" + SkillName)), nil })
+		}
+		if has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".hermes/SOUL.md")) })
+		}
+		if has(LayerMCP) || has(LayerCapture) {
+			add(func() (*Edit, error) {
+				return PlanHermesReverse(j(".hermes/config.yaml"), has(LayerMCP), has(LayerCapture))
+			})
+		}
 	case "openclaw":
-		add(func() (*Edit, error) { return remove(j(".openclaw/workspace/skills/" + SkillName)), nil })
-		add(func() (*Edit, error) { return PlanOpenClawUnconfig(j(".openclaw/openclaw.json")) })
-		add(func() (*Edit, error) { return remove(j(".openclaw/extensions/opendaisugi")), nil })
-		add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".openclaw/workspace/AGENTS.md")) })
+		if has(LayerSkill) {
+			add(func() (*Edit, error) { return remove(j(".openclaw/workspace/skills/" + SkillName)), nil })
+		}
+		if has(LayerMCP) || has(LayerBaseURL) {
+			add(func() (*Edit, error) {
+				return PlanOpenClawUnconfig(j(".openclaw/openclaw.json"), has(LayerMCP), has(LayerBaseURL))
+			})
+		}
+		if has(LayerCapture) {
+			add(func() (*Edit, error) { return remove(j(".openclaw/extensions/opendaisugi")), nil })
+		}
+		if has(LayerInstructions) {
+			add(func() (*Edit, error) { return PlanUnpatchInstructions(j(".openclaw/workspace/AGENTS.md")) })
+		}
+	}
+	if only == nil || only[LayerPando] {
+		steps = append(steps, pandoReverseSteps(rt, home, ch, gone)...)
 	}
 	for _, s := range steps {
 		e, err := s()
+		if e != nil {
+			e.Undo, e.Home = true, home
+		}
 		if isFail(err) {
 			// reverse() would raise, and uninstall would print the
 			// exception's text, which this binary cannot reproduce.

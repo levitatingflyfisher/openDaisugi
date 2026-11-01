@@ -8,23 +8,23 @@ import (
 )
 
 // Facts is what the floor header row shows from floor.facts: the agents
-// by daisugi mode, the gateway, and the tokens used today. The working
+// by daisugi mode, the router, and the tokens used today. The working
 // and needs-you counts come from the rows, so the header never disagrees
 // with the rail under it.
 type Facts struct {
 	Enforcing, Watching, Off int
 	Disarmed                 bool
 	// NotInstalled is true when the server says no harness settings in
-	// the home hold a daisugi gate hook.
+	// the home hold a daisugi warden hook.
 	NotInstalled bool
-	// HookRoot is the gate root the installed hook names when it is not
+	// HookRoot is the warden root the installed hook names when it is not
 	// the server's, or "": then m sets nothing (F11-R-15).
 	HookRoot string
-	// Gateway is the gateway's URL, or "" when none is set. Answers is
+	// Router is the router's URL, or "" when none is set. Answers is
 	// "yes", "no", or "" when the server did not check.
-	Gateway, Answers string
-	Tokens           float64
-	// Saved is the frontier tokens the gateway says it saved today, and
+	Router, Answers string
+	Tokens          float64
+	// Saved is the frontier tokens the router says it saved today, and
 	// HasSaved is true only when the server sent that figure. With no
 	// figure the header names no saving.
 	Saved    float64
@@ -35,17 +35,17 @@ type Facts struct {
 // narrower one has no room for it next to everything else.
 const factsMinCols = 100
 
-// gateHint is the line the floor shows while no harness has a daisugi
-// gate hook and no agent is guarded, the web page's words.
-const gateHint = "daisugi is off: no agent is guarded. Run: daisugi install --gate"
+// wardenHint is the line the floor shows while no harness has a daisugi
+// warden hook and no agent is guarded, the web page's words.
+const wardenHint = "daisugi is off: no agent is guarded. Run: daisugi install"
 
-// gateHintShown reports whether the facts call for gateHint.
-func gateHintShown(fa *Facts) bool {
+// wardenHintShown reports whether the facts call for wardenHint.
+func wardenHintShown(fa *Facts) bool {
 	return fa != nil && fa.NotInstalled && fa.Enforcing+fa.Watching == 0
 }
 
-// hintMinCols is the narrowest screen that can hold gateHint.
-var hintMinCols = textwidth.Width(gateHint)
+// hintMinCols is the narrowest screen that can hold wardenHint.
+var hintMinCols = textwidth.Width(wardenHint)
 
 // decodeFacts reads a floor.facts reply, or nil when it has no daisugi
 // object.
@@ -69,8 +69,8 @@ func decodeFacts(res map[string]any) *Facts {
 		f.NotInstalled = true
 	}
 	f.HookRoot = str(d, "hook_root")
-	if gw, ok := res["gateway"].(map[string]any); ok {
-		f.Gateway = str(gw, "url")
+	if gw, ok := res["router"].(map[string]any); ok {
+		f.Router = str(gw, "url")
 		if a, ok := gw["answers"].(bool); ok {
 			f.Answers = map[bool]string{true: "yes", false: "no"}[a]
 		}
@@ -104,11 +104,11 @@ func (f *floor) readFacts() {
 	if fa := decodeFacts(res); fa != nil {
 		f.m.Facts = fa
 	}
-	// The tracked foreman's window draws the chat. A foreman that left
+	// The tracked steward's window draws the chat. A steward that left
 	// takes its chat and its Screen choice with it.
-	fm, _ := res["foreman"].(map[string]any)
-	if id := str(fm, "pane"); id != f.m.ForemanID {
-		f.setForeman(id)
+	fm, _ := res["steward"].(map[string]any)
+	if id := str(fm, "pane"); id != f.m.StewardID {
+		f.setSteward(id)
 	}
 }
 
@@ -132,15 +132,15 @@ func factsLine(m *Model) string {
 	if fa.Disarmed {
 		daisugi += " · disarmed"
 	}
-	gateway := "no gateway"
+	router := "no router"
 	switch {
-	case fa.Gateway == "":
+	case fa.Router == "":
 	case fa.Answers == "yes":
-		gateway = "gateway answers"
+		router = "router answers"
 	case fa.Answers == "no":
-		gateway = "gateway silent"
+		router = "router silent"
 	default:
-		gateway = "gateway ?"
+		router = "router ?"
 	}
 	working := 0
 	for _, r := range m.Rows {
@@ -152,7 +152,7 @@ func factsLine(m *Model) string {
 	if m.NeedYou == 1 {
 		need = "1 needs you"
 	}
-	parts := []string{daisugi, gateway, fmt.Sprintf("%d working", working), need, "tokens today " + countText(fa.Tokens)}
+	parts := []string{daisugi, router, fmt.Sprintf("%d working", working), need, "tokens today " + countText(fa.Tokens)}
 	if fa.HasSaved {
 		parts = append(parts, "saved "+countText(fa.Saved))
 	}

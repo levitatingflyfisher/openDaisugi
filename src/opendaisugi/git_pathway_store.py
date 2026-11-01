@@ -120,7 +120,7 @@ class GitPathwayStore(PathwayStore):
         super().__init__(cache_db_path)
 
         # SECURITY: the trust anchor must NOT be the in-repo trusted-signers.json —
-        # `git pull` updates that file from the same remote whose bundles it gates,
+        # `git pull` updates that file from the same remote whose bundles it checks,
         # so an attacker who can push adds their own key + a malicious bundle and it
         # verifies (circular trust). Default to a LOCAL, git-untracked file next to
         # the cache; pass ``trusted_signers_path`` for an explicit out-of-band anchor.

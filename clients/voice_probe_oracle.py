@@ -469,7 +469,7 @@ def op_cleanup(q: dict[str, Any]) -> dict[str, Any]:
 
     config = Config(data_dir=root / "data", **q.get("config", {}))
     r = clean_transcript(q["text"], config=config, transport=Transport())
-    journal = root / "data" / "gateway" / "turns.jsonl"
+    journal = root / "data" / "router" / "turns.jsonl"
     lines = []
     if journal.is_file():
         for ln in journal.read_text(encoding="utf-8").splitlines():
@@ -521,7 +521,7 @@ def op_ptt(q: dict[str, Any]) -> dict[str, Any]:
             events.append({"transcribe": _b64(wav)})
             a = transcribes.pop(0)
             if "error" in a:
-                raise VoiceServerError(a["error"])
+                raise VoiceServerError(a["error"], busy=bool(a.get("busy")))
             return a["reply"]
 
         def deliver(self, pane: str, text: str, *, mode: str) -> dict:

@@ -5,7 +5,7 @@ import { askFor, heldAnswer, HELD_BY_HARNESS } from '../pane.js';
 import { render, paneRows } from '../roster.js';
 
 // A harness can hold an ask itself, such as OpenCode's permission prompt.
-// The gate has no file for it, so the page answers it through
+// The warden has no file for it, so the page answers it through
 // coppice-server with agent.allow or agent.deny over its own operator
 // connection. A shell the page starts is a pane, and a pane cannot allow.
 
@@ -40,7 +40,7 @@ test('a phone card for a harness-held ask offers Deny, Look and the name field, 
     status: () => {},
   };
   render(paneRows([heldPane('o1')], 10));
-  const card = element('roster').querySelector('[data-pane="o1"]');
+  const card = element('needs').querySelector('[data-pane="o1"]');
   const labels = card.querySelectorAll('button').map((b) => b.textContent);
   assert.ok(labels.includes('Deny') && labels.includes('Look'), labels.join(','));
   assert.ok(!labels.some((l) => l.includes('shell')), labels.join(','));

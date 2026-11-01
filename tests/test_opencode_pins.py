@@ -74,7 +74,7 @@ def test_pins_records_the_plugin_hook_keys():
 
 
 def test_pins_records_how_a_plugin_file_is_loaded():
-    """The gate plugin's one-export rule rests on this fact."""
+    """The warden plugin's one-export rule rests on this fact."""
     text = PINS.read_text(encoding="utf-8")
     assert "calls every distinct exported value as a plugin function" in text
     assert "{plugin,plugins}/*.{ts,js}" in text

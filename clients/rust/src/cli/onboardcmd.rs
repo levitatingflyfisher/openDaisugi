@@ -10,13 +10,13 @@ use rusqlite::{Connection, OpenFlags};
 
 use super::config;
 use super::gardencmd::now_seconds;
-use super::gatecmds::DECOMPOSE_OPT;
-use super::gateroot::{join, path_str};
+use super::wardencmds::DECOMPOSE_OPT;
+use super::wardenroot::{join, path_str};
 use super::journalparse::{now_iso, trace_id_ok, Item, SPLIT_DEFAULT_MODEL};
 use super::statuscmd::load_json;
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::{dumps, dumps_indent, Object, Value};
+use crate::warden::py::text::{repr, strip};
+use crate::warden::pyjson::{dumps, dumps_indent, Object, Value};
 use crate::pathways::pmodel::{self, Loc, Mode};
 use crate::pathways::PwErr;
 use crate::shell_decompose::ShellParser;
@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_split_prompt_version ON split_cache(prompt_versio
 ";
 
 fn sha256_hex(s: &str) -> String {
-    crate::gate::sha256::hexdigest(s.as_bytes())
+    crate::warden::sha256::hexdigest(s.as_bytes())
 }
 
 fn split_key(model: &str, content: &str) -> String {

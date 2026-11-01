@@ -9,9 +9,9 @@ import (
 )
 
 // ev attaches an Ask whenever state is blocked, regardless of source: master
-// spec 3.1 only requires an ask on a gate blocked event, but allows one on
+// spec 3.1 only requires an ask on a warden blocked event, but allows one on
 // any blocked event, and several tests below need a blocked event from a
-// non-gate source that still carries a real (expirable) ask.
+// non-warden source that still carries a real (expirable) ask.
 func ev(state, source string, ts float64) proto.PaneStateEvent {
 	e := proto.PaneStateEvent{
 		V: 1, TS: ts, SessionID: "s1", Harness: "claude-code", State: state, Source: source,
@@ -29,16 +29,16 @@ func TestFirstEventWins(t *testing.T) {
 	}
 }
 
-func TestManifestCannotOverrideGateWithinTheHoldWindow(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+func TestManifestCannotOverrideWardenWithinTheHoldWindow(t *testing.T) {
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcManifest, 101), 101)
-	if got.Source != proto.SrcGate || got.State != proto.StateWorking {
-		t.Fatalf("manifest overrode the gate at +1 s: got %s/%s", got.State, got.Source)
+	if got.Source != proto.SrcWarden || got.State != proto.StateWorking {
+		t.Fatalf("manifest overrode the warden at +1 s: got %s/%s", got.State, got.Source)
 	}
 }
 
-func TestManifestMayOverrideGateAfterTheHoldWindow(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+func TestManifestMayOverrideWardenAfterTheHoldWindow(t *testing.T) {
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcManifest, 103), 103)
 	if got.Source != proto.SrcManifest || got.State != proto.StateIdle {
 		t.Fatalf("manifest was still blocked at +3 s: got %s/%s", got.State, got.Source)
@@ -49,34 +49,34 @@ func TestManifestMayOverrideGateAfterTheHoldWindow(t *testing.T) {
 // timestamp the caller chose. A hook with a clock a year in the future must not
 // be able to hold a pane against every lower source for ever.
 func TestTheHoldWindowIgnoresASkewedEventTimestamp(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 9_999_999_999) // far future ts
+	cur := ev(proto.StateWorking, proto.SrcWarden, 9_999_999_999) // far future ts
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcManifest, 103), 103)
 	if got.Source != proto.SrcManifest {
 		t.Fatalf("a future event ts extended the hold: got %s/%s", got.State, got.Source)
 	}
 }
 
-// Amended master spec 3.1 (2026-09-09): a `gate` blocked hold releases only
-// to a `gate` event, the ask's deadline, or a terminal `done` - not to an
-// operator fact. The ask's answer arrives through the gate; an `operator`
+// Amended master spec 3.1 (2026-09-09): a `warden` blocked hold releases only
+// to a `warden` event, the ask's deadline, or a terminal `done` - not to an
+// operator fact. The ask's answer arrives through the warden; an `operator`
 // event is a fact about something else and must wait like everyone else.
-func TestGateBlockedHoldsUntilAGateEventClearsIt(t *testing.T) {
-	cur := ev(proto.StateBlocked, proto.SrcGate, 100)
-	// A working event from the process five seconds later must not clear a gate
-	// hold. Only the gate, the deadline, or a done clears it.
+func TestWardenBlockedHoldsUntilAWardenEventClearsIt(t *testing.T) {
+	cur := ev(proto.StateBlocked, proto.SrcWarden, 100)
+	// A working event from the process five seconds later must not clear a warden
+	// hold. Only the warden, the deadline, or a done clears it.
 	got := Merge(&cur, 100, ev(proto.StateWorking, proto.SrcProcess, 105), 105)
 	if got.State != proto.StateBlocked {
-		t.Fatalf("a process working event cleared a gate hold: got %s", got.State)
+		t.Fatalf("a process working event cleared a warden hold: got %s", got.State)
 	}
 	// Not even the operator, who outranks everything else, clears it: the
-	// ask's answer is a gate event, not an operator fact.
+	// ask's answer is a warden event, not an operator fact.
 	got = Merge(&cur, 100, ev(proto.StateWorking, proto.SrcOperator, 105), 105)
 	if got.State != proto.StateBlocked {
-		t.Fatalf("an operator working event cleared a gate hold: got %s", got.State)
+		t.Fatalf("an operator working event cleared a warden hold: got %s", got.State)
 	}
-	got = Merge(&cur, 100, ev(proto.StateWorking, proto.SrcGate, 105), 105)
+	got = Merge(&cur, 100, ev(proto.StateWorking, proto.SrcWarden, 105), 105)
 	if got.State != proto.StateWorking {
-		t.Fatalf("the gate could not clear its own hold: got %s", got.State)
+		t.Fatalf("the warden could not clear its own hold: got %s", got.State)
 	}
 }
 
@@ -84,33 +84,33 @@ func TestGateBlockedHoldsUntilAGateEventClearsIt(t *testing.T) {
 // Merge releases the hold and lets the next real event through as itself. It
 // does NOT synthesize a "working" event here - that is EffectiveState's job,
 // for a reader with nothing fresh to merge against (see
-// TestAnExpiredHeadlessBlockReadsAsWorking below). The gate always sends its
+// TestAnExpiredHeadlessBlockReadsAsWorking below). The warden always sends its
 // own working report the moment its wait resolves; this only stops the hold
 // from swallowing whatever arrives after the deadline.
-func TestGateBlockedHoldReleasesAtTheDeadlineAndTheNextEventApplies(t *testing.T) {
-	cur := ev(proto.StateBlocked, proto.SrcGate, 100) // deadline 190
+func TestWardenBlockedHoldReleasesAtTheDeadlineAndTheNextEventApplies(t *testing.T) {
+	cur := ev(proto.StateBlocked, proto.SrcWarden, 100) // deadline 190
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcManifest, 191), 191)
 	if got.State != proto.StateIdle || got.Source != proto.SrcManifest {
 		t.Fatalf("an expired ask still held back the next event: got %s/%s", got.State, got.Source)
 	}
 }
 
-func TestProcessDoneOutranksAHeldGateBlock(t *testing.T) {
+func TestProcessDoneOutranksAHeldWardenBlock(t *testing.T) {
 	// The process exited. There is nobody left to answer the ask.
-	cur := ev(proto.StateBlocked, proto.SrcGate, 100)
+	cur := ev(proto.StateBlocked, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateDone, proto.SrcProcess, 101), 101)
 	if got.State != proto.StateDone {
-		t.Fatalf("process exit did not end a gate hold: got %s", got.State)
+		t.Fatalf("process exit did not end a warden hold: got %s", got.State)
 	}
 }
 
-// A fail-open this test guards: a gate WORKING event, then a process exit
-// half a second later. The gate-hold branch does not apply because the current
+// A fail-open this test guards: a warden WORKING event, then a process exit
+// half a second later. The warden-hold branch does not apply because the current
 // state is working, so the plain rank comparison used to discard the exit and
 // the pane read "working" for ever. watchExit and pumpAdapter fire exactly once
 // and never retry, so the loss is permanent.
-func TestProcessExitEndsAGateWorkingHoldImmediately(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+func TestProcessExitEndsAWardenWorkingHoldImmediately(t *testing.T) {
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateDone, proto.SrcProcess, 100.5), 100.5)
 	if got.State != proto.StateDone || got.Source != proto.SrcProcess {
 		t.Fatalf("Merge = %s/%s, want done/process: a dead process must never read working",
@@ -118,8 +118,8 @@ func TestProcessExitEndsAGateWorkingHoldImmediately(t *testing.T) {
 	}
 }
 
-func TestHeadlessEndEndsAGateWorkingHoldImmediately(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+func TestHeadlessEndEndsAWardenWorkingHoldImmediately(t *testing.T) {
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateDone, proto.SrcHeadless, 100.1), 100.1)
 	if got.State != proto.StateDone {
 		t.Fatalf("Merge = %s, want done from the headless end-of-session event", got.State)
@@ -133,13 +133,13 @@ func TestDoneFromProcessOrHeadlessBeatsEveryHeldSource(t *testing.T) {
 		curState, curSource string
 		inSource            string
 	}{
-		{proto.StateWorking, proto.SrcGate, proto.SrcProcess},
-		{proto.StateWorking, proto.SrcGate, proto.SrcHeadless},
+		{proto.StateWorking, proto.SrcWarden, proto.SrcProcess},
+		{proto.StateWorking, proto.SrcWarden, proto.SrcHeadless},
 		{proto.StateWorking, proto.SrcOperator, proto.SrcProcess},
 		{proto.StateWorking, proto.SrcOperator, proto.SrcHeadless},
-		{proto.StateBlocked, proto.SrcGate, proto.SrcProcess},
-		{proto.StateBlocked, proto.SrcGate, proto.SrcHeadless},
-		{proto.StateIdle, proto.SrcGate, proto.SrcProcess},
+		{proto.StateBlocked, proto.SrcWarden, proto.SrcProcess},
+		{proto.StateBlocked, proto.SrcWarden, proto.SrcHeadless},
+		{proto.StateIdle, proto.SrcWarden, proto.SrcProcess},
 	}
 	for _, c := range cases {
 		cur := ev(c.curState, c.curSource, 100)
@@ -156,7 +156,7 @@ func TestDoneFromProcessOrHeadlessBeatsEveryHeldSource(t *testing.T) {
 // send becomes unknown from that same source. Never idle, and never a silent
 // drop, because the source did observe something.
 func TestADoneFromAnIneligibleSourceBecomesUnknownFromThatSource(t *testing.T) {
-	for _, src := range []string{proto.SrcOperator, proto.SrcGate} {
+	for _, src := range []string{proto.SrcOperator, proto.SrcWarden} {
 		got := Merge(nil, 0, ev(proto.StateDone, src, 100), 100)
 		if got.State != proto.StateUnknown {
 			t.Fatalf("done from %s = %s, want unknown", src, got.State)
@@ -171,7 +171,7 @@ func TestADoneFromAnIneligibleSourceBecomesUnknownFromThatSource(t *testing.T) {
 }
 
 func TestDoneFromOperatorOrManifestDoesNotWin(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	if got := Merge(&cur, 100, ev(proto.StateDone, proto.SrcOperator, 100.2), 100.2); got.State == proto.StateDone {
 		t.Fatal("an operator claimed done; only process and headless may produce it")
 	}
@@ -202,15 +202,15 @@ func TestDoneIsTerminal(t *testing.T) {
 
 // Mirrored from the Python suite:
 // the 2 s precedence window must hold back ONLY an incoming `manifest`
-// event. A real fact from `headless` arriving a heartbeat after a gate
+// event. A real fact from `headless` arriving a heartbeat after a warden
 // 'working' must apply at once - the old precedence comparison (any
 // lower-precedence incoming source held back) would have swallowed this
 // idle and kept showing a stale 'working' pane.
-func TestAHeadlessStopIsNotSwallowedByAFreshGateWorking(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+func TestAHeadlessStopIsNotSwallowedByAFreshWardenWorking(t *testing.T) {
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcHeadless, 101.2), 101.2)
 	if got.State != proto.StateIdle || got.Source != proto.SrcHeadless {
-		t.Fatalf("a headless idle was swallowed by the gate's still-fresh working: got %s/%s",
+		t.Fatalf("a headless idle was swallowed by the warden's still-fresh working: got %s/%s",
 			got.State, got.Source)
 	}
 }
@@ -219,26 +219,26 @@ func TestAHeadlessStopIsNotSwallowedByAFreshGateWorking(t *testing.T) {
 // source the 2 s window still holds back, since it carries no real signal of
 // its own.
 func TestAManifestIsStillHeldBackWithinTwoSeconds(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcManifest, 101.2), 101.2)
-	if got.State != proto.StateWorking || got.Source != proto.SrcGate {
-		t.Fatalf("a manifest event overrode a still-fresh gate working: got %s/%s",
+	if got.State != proto.StateWorking || got.Source != proto.SrcWarden {
+		t.Fatalf("a manifest event overrode a still-fresh warden working: got %s/%s",
 			got.State, got.Source)
 	}
 }
 
-// The gate-blocked hold is untouched by the manifest-only window fix: it
+// The warden-blocked hold is untouched by the manifest-only window fix: it
 // still holds against a lower-precedence fact until the ask's deadline
-// passes (or a gate event clears it), exactly as before.
-func TestGateBlockedStillHoldsAgainstAHeadlessIdle(t *testing.T) {
-	cur := ev(proto.StateBlocked, proto.SrcGate, 100) // deadline 190
+// passes (or a warden event clears it), exactly as before.
+func TestWardenBlockedStillHoldsAgainstAHeadlessIdle(t *testing.T) {
+	cur := ev(proto.StateBlocked, proto.SrcWarden, 100) // deadline 190
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcHeadless, 101.2), 101.2)
 	if got.State != proto.StateBlocked {
-		t.Fatalf("a headless idle cleared an unexpired gate hold: got %s", got.State)
+		t.Fatalf("a headless idle cleared an unexpired warden hold: got %s", got.State)
 	}
 }
 
-// EffectiveState's expiry is not restricted to source == gate: a
+// EffectiveState's expiry is not restricted to source == warden: a
 // headless-sourced 'blocked' with a passed ask deadline reads as
 // 'working' too, for a reader with nothing fresh to merge against.
 func TestAnExpiredHeadlessBlockReadsAsWorking(t *testing.T) {
@@ -256,10 +256,10 @@ func TestAnExpiredHeadlessBlockReadsAsWorking(t *testing.T) {
 }
 
 // The operator is a fact like any other non-manifest source: it applies at
-// once even inside the 2 s window, against a gate `working` (not `blocked` -
-// the gate hold is a separate rule tested above).
+// once even inside the 2 s window, against a warden `working` (not `blocked` -
+// the warden hold is a separate rule tested above).
 func TestAnOperatorFactAppliesAtOnce(t *testing.T) {
-	cur := ev(proto.StateWorking, proto.SrcGate, 100)
+	cur := ev(proto.StateWorking, proto.SrcWarden, 100)
 	got := Merge(&cur, 100, ev(proto.StateIdle, proto.SrcOperator, 100.3), 100.3)
 	if got.State != proto.StateIdle || got.Source != proto.SrcOperator {
 		t.Fatalf("an operator fact was held back: got %s/%s", got.State, got.Source)
@@ -268,10 +268,10 @@ func TestAnOperatorFactAppliesAtOnce(t *testing.T) {
 
 func TestStoreReportsWhetherTheStateChanged(t *testing.T) {
 	s := NewStore()
-	if _, changed := s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcGate, 100), 100); !changed {
+	if _, changed := s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcWarden, 100), 100); !changed {
 		t.Fatal("the first event did not report a change")
 	}
-	if _, changed := s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcGate, 100.2), 100.2); changed {
+	if _, changed := s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcWarden, 100.2), 100.2); changed {
 		t.Fatal("a repeat of the same state reported a change")
 	}
 	cur, ok := s.Current("w1:p1")
@@ -285,11 +285,11 @@ func TestStoreReportsWhetherTheStateChanged(t *testing.T) {
 }
 
 // A repeat that does not change the state must not refresh the hold either:
-// otherwise a chatty gate keeps the screen scanner away for ever.
+// otherwise a chatty warden keeps the screen scanner away for ever.
 func TestARepeatDoesNotRefreshTheHold(t *testing.T) {
 	s := NewStore()
-	s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcGate, 100), 100)
-	s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcGate, 100.2), 100.2)
+	s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcWarden, 100), 100)
+	s.Apply("w1:p1", ev(proto.StateWorking, proto.SrcWarden, 100.2), 100.2)
 	if recv, _ := s.Received("w1:p1"); recv != 100 {
 		t.Fatalf("Received = %v, want 100: a repeat of the same state is not news", recv)
 	}
@@ -302,7 +302,7 @@ func TestARepeatDoesNotRefreshTheHold(t *testing.T) {
 func TestFuzzTheMergedStateAlwaysCameFromAnEventThatCarriedIt(t *testing.T) {
 	states := []string{proto.StateIdle, proto.StateWorking, proto.StateBlocked,
 		proto.StateDone, proto.StateUnknown}
-	sources := []string{proto.SrcOperator, proto.SrcGate, proto.SrcHeadless,
+	sources := []string{proto.SrcOperator, proto.SrcWarden, proto.SrcHeadless,
 		proto.SrcProcess, proto.SrcManifest}
 	rng := rand.New(rand.NewSource(20260908))
 	// Merge returns exactly one of: the incoming event, the current one, or a
@@ -353,13 +353,13 @@ func TestFuzzTheMergedStateAlwaysCameFromAnEventThatCarriedIt(t *testing.T) {
 					break
 				}
 			}
-			// Invention 1: an expired gate ask becomes working with no ask.
+			// Invention 1: an expired warden ask becomes working with no ask.
 			expired := merged.State == proto.StateWorking &&
-				merged.Source == proto.SrcGate && merged.Ask == nil &&
+				merged.Source == proto.SrcWarden && merged.Ask == nil &&
 				merged.Detail == "ask deadline passed"
 			// Invention 2: a done from a source that may not produce one is
 			// downgraded to unknown, keeping the source. Only process and
-			// headless may say done (master spec 3.1), so a gate or operator
+			// headless may say done (master spec 3.1), so a warden or operator
 			// done arrives as unknown from that same source, and no event ever
 			// carried that pair.
 			downgraded := false
@@ -393,8 +393,8 @@ func TestFuzzTheMergedStateAlwaysCameFromAnEventThatCarriedIt(t *testing.T) {
 	}
 }
 
-// A blocked event with no ask is not a gate hold at all (the gate-hold branch
-// only fires for cur.Source == gate, and even then only ever with an ask -
+// A blocked event with no ask is not a warden hold at all (the warden-hold branch
+// only fires for cur.Source == warden, and even then only ever with an ask -
 // proto.Validate requires one). A blocked/headless event with Ask == nil is
 // just an ordinary current state: any non-manifest incoming source applies
 // to it at once, exactly as it would against any other non-blocked state.
@@ -413,7 +413,7 @@ func TestABlockedEventWithNoAskIsAFactLikeAnyOtherAgainstAHeadlessIdle(t *testin
 // The same nil-ask blocked/headless current state still holds against a
 // manifest event inside the 2 s window, via the ordinary precedence rule
 // (manifest is the one source the window still holds back), not via the
-// gate-hold rule.
+// warden-hold rule.
 func TestABlockedEventWithNoAskStillHoldsWithinTheWindowAgainstManifest(t *testing.T) {
 	cur := proto.PaneStateEvent{
 		V: 1, TS: 100, SessionID: "s1", Harness: "claude-code",
@@ -480,9 +480,9 @@ func TestStoreIsSafeForConcurrentApplyAndCurrent(t *testing.T) {
 // into the store.
 func TestApplyReturnsAnAskThatDoesNotAliasTheStore(t *testing.T) {
 	s := NewStore()
-	merged, _ := s.Apply("w1:p1", ev(proto.StateBlocked, proto.SrcGate, 100), 100)
+	merged, _ := s.Apply("w1:p1", ev(proto.StateBlocked, proto.SrcWarden, 100), 100)
 	if merged.Ask == nil {
-		t.Fatal("expected the merged blocked/gate event to carry an ask")
+		t.Fatal("expected the merged blocked/warden event to carry an ask")
 	}
 	merged.Ask.Deadline = 999_999
 
@@ -505,11 +505,11 @@ func TestApplyReturnsAnAskThatDoesNotAliasTheStore(t *testing.T) {
 // concurrent Apply for that pane.
 func TestCurrentDoesNotAliasTheStoreOrAnEarlierRead(t *testing.T) {
 	s := NewStore()
-	s.Apply("w1:p1", ev(proto.StateBlocked, proto.SrcGate, 100), 100)
+	s.Apply("w1:p1", ev(proto.StateBlocked, proto.SrcWarden, 100), 100)
 
 	first, ok := s.Current("w1:p1")
 	if !ok || first.Ask == nil {
-		t.Fatal("Current: expected a blocked/gate event with an ask")
+		t.Fatal("Current: expected a blocked/warden event with an ask")
 	}
 	first.Ask.Deadline = 999_999
 

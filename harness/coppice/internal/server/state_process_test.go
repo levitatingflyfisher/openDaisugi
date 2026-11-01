@@ -106,15 +106,15 @@ func TestOutputFlipsIdleToWorkingAndBack(t *testing.T) {
 	waitState(t, s, id, "idle", 15*time.Second)
 }
 
-// A process fact never outranks a gate hold: a blocked pane stays blocked
+// A process fact never outranks a warden hold: a blocked pane stays blocked
 // while output keeps arriving.
-func TestAGateBlockStaysBlockedWhileTheProcessSpeaks(t *testing.T) {
+func TestAWardenBlockStaysBlockedWhileTheProcessSpeaks(t *testing.T) {
 	s := newPaneServer(t)
 	id := createShellPane(t, s, "sh", "-c", "while true; do echo tick; sleep 1; done")
 	waitState(t, s, id, "working", 5*time.Second)
 	deadline := nowSeconds() + 60
 	got := roundTrip(t, s, `{"id":"1","cmd":"pane.report_state","pane":"`+id+`","event":{`+
-		`"state":"blocked","source":"gate","harness":"shell","session_id":"`+id+`",`+
+		`"state":"blocked","source":"warden","harness":"shell","session_id":"`+id+`",`+
 		`"ts":1,"v":1,"detail":"","ask":{"id":"a1","tool":"Bash","summary":"rm","deadline":`+
 		fmt.Sprintf("%f", deadline)+`}}}`)
 	if !got[0].OK {
@@ -122,8 +122,8 @@ func TestAGateBlockStaysBlockedWhileTheProcessSpeaks(t *testing.T) {
 	}
 	time.Sleep(2500 * time.Millisecond)
 	row := rowFor(t, listPanes(t, s), id)
-	if row["state"] != "blocked" || row["source"] != "gate" {
-		t.Fatalf("gate hold lost to the process source: %v", row)
+	if row["state"] != "blocked" || row["source"] != "warden" {
+		t.Fatalf("warden hold lost to the process source: %v", row)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestAReadAfterOutputSeesTheOutputAtOnce(t *testing.T) {
 	}
 }
 
-// quietThenRedraw leaves pane id with a standing gate idle, moves the
+// quietThenRedraw leaves pane id with a standing warden idle, moves the
 // clock 6 s past its last output, and then writes a few bytes of redraw.
 // The redraw is stamped by the real clock, so the skew goes back to zero
 // to make it a write "just now".
@@ -156,16 +156,16 @@ func quietThenRedraw(t *testing.T, s *Server, id string) *LivePane {
 	if !ok {
 		t.Fatalf("no live pane %s", id)
 	}
-	// A turn drew the screen, the gate said idle, and 6 s later the process
+	// A turn drew the screen, the warden said idle, and 6 s later the process
 	// source called the quiet screen idle too. That idle replaces the
-	// gate's in the merged state, so the pane must remember the gate's.
+	// warden's in the merged state, so the pane must remember the warden's.
 	if _, err := lp.Grid.Write([]byte("turn output")); err != nil {
 		t.Fatal(err)
 	}
 	s.processTick(id, lp)
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: id, Harness: "fakeh", Pane: &id,
-		State: proto.StateIdle, Source: proto.SrcGate,
+		State: proto.StateIdle, Source: proto.SrcWarden,
 	})
 	s.clockSkew.Store(int64(6 * time.Second))
 	s.processTick(id, lp)
@@ -182,10 +182,10 @@ func quietThenRedraw(t *testing.T, s *Server, id string) *LivePane {
 	return lp
 }
 
-// A gate idle stands against a short redraw of a quiet pane (CP-R-56): a
+// A warden idle stands against a short redraw of a quiet pane (CP-R-56): a
 // clock or a status line ticking on an idle harness is no work. Output
 // that goes on for a second more is work, and the process fact applies.
-func TestAShortRedrawDoesNotOutrankAStandingGateIdle(t *testing.T) {
+func TestAShortRedrawDoesNotOutrankAStandingWardenIdle(t *testing.T) {
 	s := newPaneServer(t)
 	id := createShellPane(t, s, "sh", "-c", "exec sleep 30")
 	lp := quietThenRedraw(t, s, id)
@@ -205,7 +205,7 @@ func TestAShortRedrawDoesNotOutrankAStandingGateIdle(t *testing.T) {
 // A burst starts at a write after a quiet gap, not at a look that saw the
 // gap (CP-R-56). On a loaded box no look may fall inside the 7 s between
 // two draws, so the old burst start would make the second draw a burst of
-// 7 s and let the process working outrank the standing gate idle. The Go
+// 7 s and let the process working outrank the standing warden idle. The Go
 // case is cases/facts/redraw.jsonl.
 func TestABurstAfterAGapIsNewEvenIfNoLookSawTheGap(t *testing.T) {
 	s := newPaneServer(t)
@@ -213,7 +213,7 @@ func TestABurstAfterAGapIsNewEvenIfNoLookSawTheGap(t *testing.T) {
 	lp, _ := s.Live(id)
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
-		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+		State: proto.StateIdle, Source: proto.SrcWarden, Detail: "Stop",
 	})
 	if _, err := lp.Grid.Write([]byte("turn")); err != nil {
 		t.Fatal(err)
@@ -224,8 +224,8 @@ func TestABurstAfterAGapIsNewEvenIfNoLookSawTheGap(t *testing.T) {
 	lp.Grid.StampWriteForTest(first.Add(7 * time.Second))
 	s.clockSkew.Store(int64(7500 * time.Millisecond))
 	s.processTick(id, lp)
-	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
-		t.Fatalf("after a draw 7 s after the last the pane is %s from %s, want idle from gate", st.State, st.Source)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "warden" {
+		t.Fatalf("after a draw 7 s after the last the pane is %s from %s, want idle from warden", st.State, st.Source)
 	}
 }
 
@@ -242,11 +242,11 @@ func TestTheFirstLookDoesNotReplaceAStandingHookIdle(t *testing.T) {
 	lp.procMu.Unlock()
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
-		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+		State: proto.StateIdle, Source: proto.SrcWarden, Detail: "Stop",
 	})
 	s.processTick(id, lp)
-	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
-		t.Fatalf("after the first look the pane is %s from %s, want idle from gate", st.State, st.Source)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "warden" {
+		t.Fatalf("after the first look the pane is %s from %s, want idle from warden", st.State, st.Source)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestAQuietIdleAfterAHeldDrawDoesNotReplaceAStandingHookIdle(t *testing.T) {
 	lp.procMu.Unlock()
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: 1, SessionID: id, Harness: "fakeh", Pane: &id,
-		State: proto.StateIdle, Source: proto.SrcGate, Detail: "Stop",
+		State: proto.StateIdle, Source: proto.SrcWarden, Detail: "Stop",
 	})
 	if _, err := lp.Grid.Write([]byte("turn")); err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestAQuietIdleAfterAHeldDrawDoesNotReplaceAStandingHookIdle(t *testing.T) {
 	s.processTick(id, lp) // the first look sees the draw and holds it
 	s.clockSkew.Store(int64(6 * time.Second))
 	s.processTick(id, lp) // quiet now: the idle must not replace the hook
-	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "gate" {
-		t.Fatalf("after a held draw and 6 s of quiet the pane is %s from %s, want idle from gate", st.State, st.Source)
+	if st, _ := s.effectiveState(id); st.State != "idle" || st.Source != "warden" {
+		t.Fatalf("after a held draw and 6 s of quiet the pane is %s from %s, want idle from warden", st.State, st.Source)
 	}
 }

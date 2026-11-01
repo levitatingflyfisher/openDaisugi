@@ -8,7 +8,7 @@ import (
 )
 
 func TestRenderFitsTheScreenAndEndsWithThePrompt(t *testing.T) {
-	m := &Model{Rows: []Row{{ID: "a", Label: "gate-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"}}, NeedYou: 1}
+	m := &Model{Rows: []Row{{ID: "a", Label: "gear-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"}}, NeedYou: 1}
 	lines := Render(m, 80, 12)
 	if len(lines) != 12 {
 		t.Fatalf("%d lines", len(lines))
@@ -28,7 +28,7 @@ func TestRenderFitsTheScreenAndEndsWithThePrompt(t *testing.T) {
 
 func TestEveryLineIsExactlyColsWide(t *testing.T) {
 	m := &Model{Rows: []Row{
-		{ID: "a", Label: "gate-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"},
+		{ID: "a", Label: "gear-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"},
 		{ID: "b", Label: "docs", Harness: "pi", State: "working", Line: "editing README"},
 		{ID: "c", Label: "tests", Harness: "codex", State: "done"},
 		{ID: "d", State: "idle"},
@@ -149,7 +149,7 @@ func TestHeadersKeepTheirPlaceWhenAStateChanges(t *testing.T) {
 		{ID: "w1:p2", State: "working", Worktree: "/src/b"},
 	}}
 	before := m.groups()
-	m.Event(map[string]any{"pane": "w1:p2", "state": "blocked", "source": "gate"})
+	m.Event(map[string]any{"pane": "w1:p2", "state": "blocked", "source": "warden"})
 	after := m.groups()
 	if before[0].Key != after[0].Key || after[0].Title != "a" {
 		t.Fatalf("groups moved: %v then %v", before, after)
@@ -180,7 +180,7 @@ func TestAHeaderFoldsAndRowsKeepTheirOrder(t *testing.T) {
 	if out := stripSGR(strings.Join(Render(m, 80, 10), "\n")); !strings.Contains(out, "w1:p10") {
 		t.Fatalf("Space did not open the group: %s", out)
 	}
-	m.Event(map[string]any{"pane": "w1:p10", "state": "blocked", "source": "gate"})
+	m.Event(map[string]any{"pane": "w1:p10", "state": "blocked", "source": "warden"})
 	if got := m.treeRows(); got[0].ID != "w1:p2" {
 		t.Fatalf("a state event moved the rows: %v", got)
 	}
@@ -289,9 +289,9 @@ func TestStripSGRRemovesOnlyTheCodes(t *testing.T) {
 
 func TestPeekRendersTheAskAndTheVerdictOnTheirOwnLines(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "a", Label: "x", State: "blocked"}}}
-	m.OpenPeek("line1\nline2", map[string]any{"tool": "git", "summary": "push --force", "gate": map[string]any{"verdict": "deny", "rule": 3}})
+	m.OpenPeek("line1\nline2", map[string]any{"tool": "git", "summary": "push --force", "warden": map[string]any{"verdict": "deny", "rule": 3}})
 	out := strings.Join(Render(m, 80, 20), "\n")
-	if !strings.Contains(out, "The gate says no") || !strings.Contains(out, "rule 3") {
+	if !strings.Contains(out, "The warden says no") || !strings.Contains(out, "rule 3") {
 		t.Fatalf("verdict missing: %s", out)
 	}
 	lines := Render(m, 80, 20)
@@ -303,7 +303,7 @@ func TestPeekRendersTheAskAndTheVerdictOnTheirOwnLines(t *testing.T) {
 			header = i
 		case strings.HasPrefix(plain, "asks: git: push --force"):
 			ask = i
-		case strings.HasPrefix(plain, "The gate says no, rule 3"):
+		case strings.HasPrefix(plain, "The warden says no, rule 3"):
 			verdict = i
 		}
 	}
@@ -317,19 +317,19 @@ func TestPeekRendersTheAskAndTheVerdictOnTheirOwnLines(t *testing.T) {
 
 func TestPeekWithAnAllowVerdict(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "a", State: "blocked"}}}
-	m.OpenPeek("", map[string]any{"summary": "ls", "gate": map[string]any{"verdict": "allow", "rule": 1.0}})
+	m.OpenPeek("", map[string]any{"summary": "ls", "warden": map[string]any{"verdict": "allow", "rule": 1.0}})
 	out := strings.Join(Render(m, 80, 20), "\n")
-	if !strings.Contains(out, "The gate says yes") {
+	if !strings.Contains(out, "The warden says yes") {
 		t.Fatalf("allow verdict missing: %s", out)
 	}
 }
 
-func TestPeekWithNoGateShowsNoVerdict(t *testing.T) {
+func TestPeekWithNoWardenShowsNoVerdict(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "a", State: "blocked"}}}
 	m.OpenPeek("text", map[string]any{"summary": "ls"})
 	out := strings.Join(Render(m, 80, 20), "\n")
-	if strings.Contains(out, "The gate says") {
-		t.Fatalf("a verdict with no gate data: %s", out)
+	if strings.Contains(out, "The warden says") {
+		t.Fatalf("a verdict with no warden data: %s", out)
 	}
 	if !strings.Contains(out, "asks: ls") {
 		t.Fatalf("ask missing: %s", out)
@@ -375,5 +375,19 @@ func TestAPaneLabelDrawsWithNoControlRunes(t *testing.T) {
 		if strings.Contains(stripSGR(l), "\x1b") || strings.Contains(l, "\x07") {
 			t.Fatalf("a control rune reached the screen: %q", l)
 		}
+	}
+}
+
+// Plan task 4: the floor keeps the server's unconfined line on screen.
+func TestRenderShowsTheUnconfinedLine(t *testing.T) {
+	m := &Model{Unconfined: "Files are not confined: the warden checks commands."}
+	found := false
+	for _, l := range Render(m, 80, 12) {
+		if strings.Contains(stripSGR(l), "Files are not confined") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no unconfined line")
 	}
 }

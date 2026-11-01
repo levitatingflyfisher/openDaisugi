@@ -378,11 +378,11 @@ func TestNaturalExitEmitsEndThenCloses(t *testing.T) {
 	}
 }
 
-func TestLivePiSpawnsAndReachesTheGateLog(t *testing.T) {
+func TestLivePiSpawnsAndReachesTheWardenLog(t *testing.T) {
 	if _, err := exec.LookPath("pi"); err != nil {
 		t.Skip("pi not on PATH; this test needs a real pi install")
 	}
-	t.Skip("needs a running resident gate plus a gate-log reader to assert against, " +
+	t.Skip("needs a running resident warden plus a warden-log reader to assert against, " +
 		"neither of which exists in this Go-only package. A named gap, not a silent one.")
 }
 

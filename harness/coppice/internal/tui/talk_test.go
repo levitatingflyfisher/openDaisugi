@@ -24,10 +24,10 @@ func readUntil(t *testing.T, socket, pane, want string) string {
 	}
 }
 
-func TestTalkGoesToTheForeman(t *testing.T) {
+func TestTalkGoesToTheSteward(t *testing.T) {
 	s := newTestServer(t)
-	foremanConfig(t)
-	res := rawCall(t, s.Socket(), "floor.foreman", map[string]any{"harness": "pi"})
+	stewardConfig(t)
+	res := rawCall(t, s.Socket(), "floor.steward", map[string]any{"harness": "pi"})
 	id, _ := res["pane"].(string)
 	var out strings.Builder
 	err := Run(Options{Socket: s.Socket(), In: scripted("\x14please tidy the docs folder today\r", "\x03"),
@@ -35,7 +35,7 @@ func TestTalkGoesToTheForeman(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stripSGR(lastFrame(out.String())), "Sent to foreman.") {
+	if !strings.Contains(stripSGR(lastFrame(out.String())), "Sent to steward.") {
 		t.Fatalf("talk did not say where the words went: %q", lastFrame(out.String()))
 	}
 	// The page goes first, once the screen is quiet, then the words.
@@ -47,34 +47,34 @@ func TestTalkGoesToTheForeman(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the words never reached the foreman: %q", text)
+			t.Fatalf("the words never reached the steward: %q", text)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// With no foreman running, the first sentence starts one: the default
-// harness, labelled foreman, in the foreman's own directory.
-func TestTalkWithNoForemanStartsOne(t *testing.T) {
+// With no steward running, the first sentence starts one: the default
+// harness, labelled steward, in the steward's own directory.
+func TestTalkWithNoStewardStartsOne(t *testing.T) {
 	s := newTestServer(t)
-	foremanConfig(t)
+	stewardConfig(t)
 	var out strings.Builder
 	err := Run(Options{Socket: s.Socket(), In: scripted("\x14please tidy the docs folder today\r", "\x03"),
 		Out: &out, Size: func() (int, int) { return 80, 24 }, Cwd: t.TempDir(), Default: "pi"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stripSGR(lastFrame(out.String())), "foreman starts and gets its page") {
+	if !strings.Contains(stripSGR(lastFrame(out.String())), "steward starts and gets its page") {
 		t.Fatalf("no answer: %q", lastFrame(out.String()))
 	}
 	res := rawCall(t, s.Socket(), "pane.list", nil)
 	rows, _ := res["panes"].([]any)
 	if len(rows) != 1 {
-		t.Fatalf("panes = %v, want one foreman", rows)
+		t.Fatalf("panes = %v, want one steward", rows)
 	}
 	row, _ := rows[0].(map[string]any)
-	if row["label"] != "foreman" || row["harness"] != "pi" || !strings.HasSuffix(str(row, "cwd"), "/foreman") {
-		t.Fatalf("row = %v, want the pi foreman in its own directory", row)
+	if row["label"] != "steward" || row["harness"] != "pi" || !strings.HasSuffix(str(row, "cwd"), "/steward") {
+		t.Fatalf("row = %v, want the pi steward in its own directory", row)
 	}
 }
 

@@ -9,8 +9,8 @@ use std::os::unix::process::CommandExt;
 use std::time::{Duration, Instant};
 
 use super::{ms, str_of, ExecResult};
-use crate::gate::py::text::{decode_utf8_replace, repr, repr_list};
-use crate::gate::pyjson::{py_repr, Object, Value};
+use crate::warden::py::text::{decode_utf8_replace, repr, repr_list};
+use crate::warden::pyjson::{py_repr, Object, Value};
 
 /// `executor.StepExecutor`.
 pub trait Executor {
@@ -384,7 +384,7 @@ impl Executor for FileWrite {
         if let Err(e) = mkdir_all(&parent) {
             return os_err(&e.1, &e.0, None);
         }
-        let rb = crate::gate::random_hex(8).unwrap_or_else(|_| "0000000000000000".into());
+        let rb = crate::warden::random_hex(8).unwrap_or_else(|_| "0000000000000000".into());
         let base = path.rsplit('/').next().unwrap_or(&path).to_string();
         let tmp = format!("{}/.daisugi-tmp-{rb}-{base}", parent.trim_end_matches('/'));
         let tmp = if parent == "/" { format!("/.daisugi-tmp-{rb}-{base}") } else { tmp };
@@ -502,7 +502,7 @@ enum GetFail {
 /// One GET: the status, the reason and at most `cap` + 1 bytes of body.
 fn http_get(url: &str, headers: &[(String, String)], timeout_s: u64, cap: usize) -> Result<(u16, String, Vec<u8>), GetFail> {
     use crate::netproxy::{self, Dial, Origin, Route};
-    let (tls, host, port, path) = crate::gateway::http::target(url).map_err(|e| GetFail::Other(e.to_string()))?;
+    let (tls, host, port, path) = crate::router::http::target(url).map_err(|e| GetFail::Other(e.to_string()))?;
     let origin = Origin { tls, host: host.clone(), port, explicit_port: true };
     let limit = Duration::from_secs(timeout_s.max(1));
     let dial = Dial { limit: Some((Instant::now(), limit)), connect_timeout: None, roots: None };
@@ -548,7 +548,7 @@ fn http_get(url: &str, headers: &[(String, String)], timeout_s: u64, cap: usize)
         }
     }
     if chunked {
-        rest = crate::gate::llm::dechunk(&rest).ok_or_else(|| GetFail::Other("the reply's chunks are broken".into()))?;
+        rest = crate::warden::llm::dechunk(&rest).ok_or_else(|| GetFail::Other("the reply's chunks are broken".into()))?;
     } else if let Some(n) = length {
         rest.truncate(n);
     }

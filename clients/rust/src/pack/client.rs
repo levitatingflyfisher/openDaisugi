@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::gate::pyjson::{dumps, Object, Value};
+use crate::warden::pyjson::{dumps, Object, Value};
 use crate::childline::{exit_reason, frame, parse_line};
 
 use super::{PROTOCOL, WORKER_FILE};
@@ -191,7 +191,7 @@ pub fn run_job(
         let text = String::from_utf8_lossy(raw);
         failed(format!(
             "pack {name}: the worker wrote a line that is not a reply: {}",
-            head_chars(crate::gate::py::text::strip(&text), 80)
+            head_chars(crate::warden::py::text::strip(&text), 80)
         ))
     };
 

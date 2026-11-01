@@ -16,8 +16,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use crate::garden::{format_f, intersect_permissions};
-use crate::gate::py::text::strip;
-use crate::gate::pyjson::{dumps, Object, Value};
+use crate::warden::py::text::strip;
+use crate::warden::pyjson::{dumps, Object, Value};
 use crate::llm::{Call, CallError, Client, Schema};
 use crate::pathways::find::{Embedder, Matcher, EMBEDDING_MODEL_VERSION};
 use crate::pathways::potion;

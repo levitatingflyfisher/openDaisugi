@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openDaisugi: runtime assurance for agents and robots</title>
+<meta name="description" content="Runtime assurance for agents and robots. The model decides, and Z3 proves it is allowed: every action is checked against your rules before it runs. Work that repeats compiles down to checked code, like a JIT compiler, with no model call.">
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.className+=" js"</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="brush" viewBox="0 0 600 10" preserveAspectRatio="none">
+    <path d="M2 5.4 C80 3.6 160 6.4 260 4.9 S430 4.2 520 5.6 S580 5.1 598 4.7" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity=".75" vector-effect="non-scaling-stroke"/>
+    <path d="M120 5.8 C220 6.8 330 5.2 440 6.1" fill="none" stroke="currentColor" stroke-width=".6" stroke-linecap="round" opacity=".4" vector-effect="non-scaling-stroke"/>
+  </symbol>
+</svg>
+<div class="vert" lang="ja" aria-hidden="true">台杉</div>
+
+<header class="top"><div class="col">
+  <div class="mark"><span class="seal" lang="ja" aria-hidden="true">台杉</span><span>openDaisugi</span></div>
+  <nav class="sc" aria-label="Page sections">
+    <a href="#check">Check</a><a href="#robots">Robots</a><a href="#repeats">Repeats</a><a href="#parts">Fit</a><a href="#questions">Questions</a><a href="#try">Install</a>
+  </nav>
+</div></header>
+
+<main>
+<div class="col hero">
+  <h1>Runtime assurance for agents and robots.</h1>
+  <p class="beat">The model decides. Z3 proves it is allowed.</p>
+  <p class="one">Every action is checked against your rules before it runs. Work that repeats compiles down to checked code, like a JIT compiler. No model call.</p>
+  <p class="two">It checks the actions an agent takes and leaves the code the agent writes to other tools.</p>
+  <p class="cta"><a class="btn" href="#try">Install</a><a class="more" href="#refused">See an action refused</a></p>
+  <dl class="meta">
+    <div><dt>What</dt><dd>Proof checks for agent and robot actions</dd></div>
+    <div><dt>Status</dt><dd>Pre-release, Linux</dd></div>
+    <div><dt>License</dt><dd>MIT</dd></div>
+    <div><dt>Code</dt><dd><a href="https://github.com/levitatingflyfisher/openDaisugi">github.com/levitatingflyfisher/openDaisugi</a></dd></div>
+  </dl>
+</div>
+
+<div class="map" role="navigation" aria-label="The page in six pictures">
+  <a class="tile" href="#check" data-zoom="fig-gate">
+    <svg class="thumb dg" viewBox="0 0 480 366" preserveAspectRatio="xMidYMid meet" role="img" aria-label="The check: an action is proposed, Z3 checks it, it runs or is refused."><use href="#dg-gate"/></svg>
+    <span class="t"><span class="tx">How the check works.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+  <a class="tile" href="#robots">
+    <svg class="thumb dg" viewBox="0 0 480 312" preserveAspectRatio="xMidYMid meet" role="img" aria-label="A robot stops short of a keep-out zone around a child. The refused plans are red and the accepted plan is green."><use href="#dg-delivery"/></svg>
+    <span class="t"><span class="tx">A robot&rsquo;s plan is checked the same way.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+  <a class="tile" href="#actions" data-zoom="fig-avd">
+    <svg class="thumb dg" viewBox="0 0 360 400" preserveAspectRatio="xMidYMin slice" role="img" aria-label="The model decides the plan and the envelope says what is allowed."><use href="#dg-avd"/></svg>
+    <span class="t"><span class="tx">It checks the actions an agent takes.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+  <a class="tile" href="#repeats" data-zoom="fig-anim">
+    <svg class="thumb dg" viewBox="0 30 360 320" preserveAspectRatio="xMidYMin slice" role="img" aria-label="Arrows for similar tasks point the same way and form a group."><use href="#dg-anim"/></svg>
+    <span class="t"><span class="tx">Repeated work moves down to code.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+  <a class="tile" href="#flow" data-zoom="fig-flow">
+    <svg class="thumb dg" viewBox="0 0 480 372" preserveAspectRatio="xMidYMid meet" role="img" aria-label="New work is planned by a model, repeated work comes from a store, and one check covers both."><use href="#dg-flow"/></svg>
+    <span class="t"><span class="tx">New work is planned by a model, and a repeat is reused.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+  <a class="tile" href="#parts" data-zoom="fig-stack">
+    <svg class="thumb dg" viewBox="0 0 640 498" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Six layers of an agent system, with the parts openDaisugi provides in green."><use href="#dg-stack"/></svg>
+    <span class="t"><span class="tx">It works with the agent you already run.</span> <span class="ar" aria-hidden="true">→</span></span></a>
+</div>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="check" class="col">
+  <p class="kicker sc">The check</p>
+  <h2>An allowed action runs, and a refused one is told its rule.</h2>
+  <figure id="fig-gate" class="dgfig">
+    <div class="dgbox"><svg id="dg-gate" class="dg gate" viewBox="0 0 480 366" role="img" aria-labelledby="cap-gate" aria-describedby="gate-d" xmlns="http://www.w3.org/2000/svg"><desc id="gate-d">An agent or a robot proposes an action. Z3 checks the action against the envelope, your written rules. If the action is inside the envelope, it runs. If it is outside, it is refused, and the refusal names the rule.</desc><defs><marker id="ga" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ah"/></marker><marker id="gc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahc"/></marker><marker id="gn" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahn"/></marker></defs><rect class="node" x="140" y="14" width="200" height="46" rx="6"/><text x="240" y="43" text-anchor="middle">an agent or a robot</text><path class="edge" d="M240 60 V112" marker-end="url(#ga)"/><text class="elab" x="252" y="92">proposes an action</text><rect class="node ok" x="70" y="112" width="340" height="100" rx="6"/><text x="240" y="143" text-anchor="middle"><tspan class="b">Z3, a solver, checks it</tspan></text><text x="240" y="166" text-anchor="middle">against your written rules</text><rect class="node" x="132" y="178" width="64" height="24" rx="4"/><text class="sub" x="164" y="195" text-anchor="middle">rule 1</text><rect class="node no" x="208" y="178" width="64" height="24" rx="4"/><text class="sub not" x="240" y="195" text-anchor="middle">rule 2</text><rect class="node" x="284" y="178" width="64" height="24" rx="4"/><text class="sub" x="316" y="195" text-anchor="middle">rule 3</text><path class="edge ok" d="M170 212 V282" marker-end="url(#gc)"/><text class="elab okt" x="158" y="252" text-anchor="end">allowed</text><path class="edge no" d="M330 212 V282" marker-end="url(#gn)"/><text class="elab not" x="342" y="252">not allowed</text><rect class="node ok" x="70" y="282" width="180" height="70" rx="6"/><text class="okt b" x="160" y="323" text-anchor="middle">it runs</text><rect class="node no" x="270" y="282" width="190" height="70" rx="6"/><text class="not b" x="365" y="312" text-anchor="middle">it is refused</text><text class="sub" x="365" y="334" text-anchor="middle">refused by rule 2</text></svg></div>
+    <figcaption id="cap-gate">Every action goes through the check before it runs.</figcaption>
+  </figure>
+  <p>The envelope is a short file of rules for one task. A model drafts it, you can read it and tighten it, and Z3, a solver, does the checking. After a refusal the agent gets the rule and proposes another action; a robot takes its next plan.</p>
+</section>
+
+<section id="refused" class="col">
+  <h2>A refusal names its rule.</h2>
+  <p class="label sc">The rule, in the envelope</p>
+  <pre><code>permissions:
+  file_read:
+    - ".../workspace/**"</code></pre>
+  <p class="label deny sc">The action, refused</p>
+  <pre><code>DENIED Read '.../infra/deploy_region.txt'
+  reason: permissions: Step 's0' file_read path
+  '.../infra/deploy_region.txt' not permitted
+  by file_read ['.../workspace/**']</code></pre>
+  <p>From a recorded run: an agent tried to read a file outside its workspace, and the read never happened. <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/examples/injection-denied/TRANSCRIPT.md">The full transcript</a>.</p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="robots" class="col">
+  <p class="kicker sc">Robots</p>
+  <h2>A robot&rsquo;s plan is checked the same way.</h2>
+  <figure id="fig-delivery" class="wide cycle" data-sim="assets/sim-delivery.webp" data-ms="8490">
+    <div class="stage"><svg id="dg-delivery" class="dg scene" viewBox="0 0 480 312" role="img" aria-label="Plan view. A robot on a sidewalk, a child ahead with a keep-out zone around it. 6 plans in red cross the zone or leave the sidewalk. The accepted plan, in green, stops short of the zone." xmlns="http://www.w3.org/2000/svg"><rect class="ground" x="0" y="120" width="480" height="72"/><rect class="thing" x="192" y="208.8" width="96" height="43.2" rx="4"/><rect class="zone" x="244.8" y="145.4" width="115.2" height="115.2"/><path class="plan no" d="M176.6 175.2 L456 175.2"/><path class="plan no" d="M176.6 167.5 L456 167.5"/><path class="plan no" d="M176.6 159.8 L266.4 159.8"/><path class="plan no" d="M176.6 152.2 L188.6 272.2 L388.8 272.2 L412.8 152.2 L456 152.2"/><path class="plan no" d="M176.6 144.5 L188.6 34.1 L388.8 34.1 L412.8 144.5 L456 144.5"/><path class="plan no" d="M176.6 136.8 L225.6 136.8"/><path class="plan ok faint" d="M176.6 156 L191 156"/><path class="plan ok" d="M176.6 156 L225.6 156"/><path class="plan ok" d="M225.6 177.6 L225.6 134.4"/><circle class="who" cx="302.4" cy="203" r="6"/><rect class="bot" x="162.2" y="145.2" width="28.8" height="21.6" rx="3"/><text class="sub not" x="9.6" y="31.2" text-anchor="start">6 plans refused</text><text class="sub okt" x="9.6" y="297.6" text-anchor="start">accepted: stop short</text><text class="sub not" x="302.4" y="109.2" text-anchor="middle">keep-out</text><text class="sub" x="314.4" y="224.4" text-anchor="start">child</text><text class="sub" x="12" y="164.4" text-anchor="start">sidewalk</text></svg><img class="sim" width="480" height="360" decoding="async" alt="A simulated delivery robot drives along a sidewalk. A child runs out after a ball. The plan to keep driving is refused. Six of eight new plans turn red and fade. The robot slows, stops short of the zone around the child, waits, and drives on when the child is clear."></div>
+    <figcaption><span class="what">When a child runs out, six plans are refused and the robot stops short.</span> <a class="simlink" href="assets/sim-delivery.webp">The simulation</a></figcaption>
+  </figure>
+  <figure id="fig-patrol" class="wide cycle" data-sim="assets/sim-patrol.webp" data-ms="8710">
+    <div class="stage"><svg id="dg-patrol" class="dg scene" viewBox="0 0 480 440.3" role="img" aria-label="Plan view. A fenced yard with a no-fly box over a house and a keep-out box around a person. 5 plans in red cross a box or leave the fence. The accepted plan, in green, goes round by the north." xmlns="http://www.w3.org/2000/svg"><rect class="ground" x="31.3" y="37.6" width="417.4" height="313"/><rect class="zone" x="177.4" y="121" width="146.1" height="146.1"/><rect class="thing" x="198.3" y="141.9" width="104.3" height="104.3"/><rect class="zone" x="307.8" y="261.9" width="73" height="73"/><path class="plan no" d="M73 308.9 L407 79.3"/><path class="plan no" d="M73 308.9 L187.8 288 L344.3 141.9 L407 79.3"/><path class="plan no" d="M73 308.9 L407 308.9 L407 79.3"/><path class="plan no" d="M73 308.9 L135.7 267.1 L354.8 115.8 L407 79.3"/><path class="plan no" d="M73 308.9 L114.8 392.3 L427.8 392.3 L427.8 79.3 L407 79.3"/><path class="plan ok faint" d="M73 308.9 L73 308.9"/><path class="plan ok" d="M73 308.9 L73 79.3 L407 79.3"/><circle class="who" cx="344.3" cy="298.4" r="5"/><circle class="bot" cx="73" cy="308.9" r="6"/><circle class="who" cx="407" cy="79.3" r="6"/><text class="sub not" x="250.4" y="110.6" text-anchor="middle">no-fly box</text><text class="sub" x="300.5" y="289" text-anchor="end">person</text><text class="sub" x="68.9" y="336" text-anchor="start">start</text><text class="sub" x="417.4" y="62.6" text-anchor="end">goal</text><text class="sub not" x="469.6" y="423.7" text-anchor="end">5 plans refused</text><text class="sub okt" x="10.4" y="23" text-anchor="start">accepted: round by the north</text></svg><img class="sim" width="480" height="360" decoding="async" alt="A simulated quadrotor crosses a property twice. Without the warden it flies straight through a red no-fly box over the house. With the warden that plan is refused, five of seven plans turn red and fade, and the quadrotor flies round by the north."></div>
+    <figcaption><span class="what">Five plans through the no-fly box over a house are refused, and the quadrotor goes round.</span> <a class="simlink" href="assets/sim-patrol.webp">The simulation</a></figcaption>
+  </figure>
+  <figure id="fig-many" class="wide cycle" data-sim="assets/sim-many.webp" data-ms="6840">
+    <div class="stage"><svg id="dg-many" class="dg scene" viewBox="0 0 480 417.4" role="img" aria-label="Plan view of the same yard. 600 random plans: 587 refused, drawn in red, and 13 accepted, in green. No green plan enters a box." xmlns="http://www.w3.org/2000/svg"><rect class="ground" x="31.3" y="31.3" width="417.4" height="313"/><path class="plan no faint" d="M73 302.6 L318.5 158.8 L224.3 117.2 L407 73"/><path class="plan no faint" d="M73 302.6 L488.1 177.7 L407 73"/><path class="plan no faint" d="M73 302.6 L-22.4 160.3 L407 73"/><path class="plan no faint" d="M73 302.6 L102.9 1.9 L160.2 191 L40 115.9 L407 73"/><path class="plan no faint" d="M73 302.6 L7.6 172 L419.6 57.8 L3 371.8 L407 73"/><path class="plan no faint" d="M73 302.6 L371.6 372.1 L160.2 393.6 L168.3 382.6 L407 73"/><path class="plan no faint" d="M73 302.6 L300.1 267.4 L360.1 329.3 L407 73"/><path class="plan no faint" d="M73 302.6 L204.1 249.2 L33.1 23.5 L407 73"/><path class="plan no faint" d="M73 302.6 L295.4 342.2 L295 54.7 L310.6 102.1 L407 73"/><path class="plan no faint" d="M73 302.6 L436.9 339.3 L115.3 82.7 L431.3 65.8 L407 73"/><path class="plan no faint" d="M73 302.6 L26.7 379.4 L431.4 76.3 L341.3 385.9 L407 73"/><path class="plan no faint" d="M73 302.6 L-12.9 36.4 L407 73"/><path class="plan no faint" d="M73 302.6 L122.7 339.3 L407 73"/><path class="plan no faint" d="M73 302.6 L387.7 10.1 L199.4 12.8 L159.8 321.6 L407 73"/><path class="plan no faint" d="M73 302.6 L123.4 12.7 L61.3 359.4 L407 73"/><path class="plan no faint" d="M73 302.6 L289.3 233 L22.4 163.4 L410.9 -14.9 L407 73"/><path class="plan no faint" d="M73 302.6 L362.7 318.6 L219.7 311.1 L407 73"/><path class="plan no faint" d="M73 302.6 L74.8 20.1 L-1.5 205.6 L407 73"/><path class="plan no faint" d="M73 302.6 L5 30.5 L363.3 161.1 L407 73"/><path class="plan no faint" d="M73 302.6 L370.5 201.3 L411.5 215.9 L407 73"/><path class="plan no faint" d="M73 302.6 L268.9 288.3 L407 73"/><path class="plan no faint" d="M73 302.6 L256.1 75.3 L132.2 284.8 L77.6 251.2 L407 73"/><path class="plan no faint" d="M73 302.6 L192.1 340.4 L146 19.9 L407 73"/><path class="plan no faint" d="M73 302.6 L47.7 106.2 L28 225.6 L407 73"/><path class="plan no faint" d="M73 302.6 L130.7 -3.1 L407 73"/><path class="plan no faint" d="M73 302.6 L221.6 400 L88.5 205.7 L407 73"/><path class="plan no faint" d="M73 302.6 L138.8 191.5 L10.2 329 L254.7 358.2 L407 73"/><path class="plan no faint" d="M73 302.6 L504.3 167.7 L37.5 187.4 L407 73"/><path class="plan no faint" d="M73 302.6 L-29.2 263.8 L343.7 398.2 L178.4 20.5 L407 73"/><path class="plan no faint" d="M73 302.6 L208.3 101.5 L407 73"/><path class="plan no faint" d="M73 302.6 L306.7 230.6 L434.9 22.7 L407 73"/><path class="plan no faint" d="M73 302.6 L148.8 168.8 L170.3 106.4 L95.6 181.7 L407 73"/><path class="plan no faint" d="M73 302.6 L312.4 402.4 L357.2 262.5 L407 73"/><path class="plan no faint" d="M73 302.6 L10.6 84.4 L100.5 218.1 L455.4 36.4 L407 73"/><path class="plan no faint" d="M73 302.6 L264.8 102.8 L365.9 131.8 L407 73"/><path class="plan no faint" d="M73 302.6 L503.5 330.1 L358.4 215.8 L190.7 369.6 L407 73"/><path class="plan no faint" d="M73 302.6 L47.1 396.6 L181.9 297.4 L-30.8 264 L407 73"/><path class="plan no faint" d="M73 302.6 L202.1 348.8 L250.6 388.6 L101.7 297.1 L407 73"/><path class="plan no faint" d="M73 302.6 L148.3 51.8 L268.1 84.4 L119 197.1 L407 73"/><path class="plan no faint" d="M73 302.6 L366.4 207.8 L140 308.5 L407 73"/><path class="plan no faint" d="M73 302.6 L466.9 328.3 L27.3 161.5 L489.1 400.7 L407 73"/><path class="plan no faint" d="M73 302.6 L315.1 214.5 L464 356.5 L407 73"/><path class="plan no faint" d="M73 302.6 L139.8 397.7 L455.9 291.8 L280.1 124 L407 73"/><path class="plan no faint" d="M73 302.6 L81.1 44.8 L160.5 5.7 L244.8 160.1 L407 73"/><path class="plan no faint" d="M73 302.6 L14.4 335.8 L407 73"/><path class="plan no faint" d="M73 302.6 L177.6 385.8 L302.4 149.9 L10.9 30.9 L407 73"/><path class="plan no faint" d="M73 302.6 L14.9 210.3 L149.1 361 L407 73"/><path class="plan no faint" d="M73 302.6 L66.3 7.4 L407 73"/><path class="plan no faint" d="M73 302.6 L364.4 242.7 L267.1 356.7 L213.8 18.6 L407 73"/><rect class="zone" x="177.4" y="114.8" width="146.1" height="146.1"/><rect class="thing" x="198.3" y="135.7" width="104.3" height="104.3"/><rect class="zone" x="307.8" y="255.7" width="73" height="73"/><path class="plan ok thin" d="M73 302.6 L169.5 39.7 L407 73"/><path class="plan ok thin" d="M73 302.6 L207.8 37.9 L407 73"/><path class="plan ok thin" d="M73 302.6 L131.5 56 L407 73"/><path class="plan ok thin" d="M73 302.6 L94.6 72.6 L407 73"/><path class="plan ok thin" d="M73 302.6 L203.6 56.5 L407 73"/><path class="plan ok thin" d="M73 302.6 L118.9 80.3 L407 73"/><path class="plan ok thin" d="M73 302.6 L140.8 115.3 L407 73"/><path class="plan ok thin" d="M73 302.6 L114.9 95.2 L407 73"/><path class="plan ok thin" d="M73 302.6 L191.3 325.9 L108.8 266.1 L95.1 113.5 L407 73"/><path class="plan ok thin" d="M73 302.6 L102.6 62.2 L407 73"/><path class="plan ok thin" d="M73 302.6 L188.1 84.6 L407 73"/><path class="plan ok thin" d="M73 302.6 L73.6 46.7 L407 73"/><path class="plan ok thin" d="M73 302.6 L126.4 337 L49.1 122.8 L407 73"/><text class="sub not" x="469.6" y="400.7" text-anchor="end">587 of 600 refused</text><text class="sub okt" x="10.4" y="400.7" text-anchor="start">13 accepted, 0 in a box</text></svg><img class="sim" width="480" height="360" decoding="async" alt="Six hundred random flight plans over a yard with a house. 587 turn red, refused. 13 stay green, accepted. A counter of breaches among the accepted plans stays at zero."></div>
+    <figcaption><span class="what">Six hundred random plans: 587 refused, 13 accepted, none of those in a box.</span> <a class="simlink" href="assets/sim-many.webp">The simulation</a></figcaption>
+  </figure>
+  <p class="scenenote">Simulation: a scripted planner drives, and the simulator gives the person&rsquo;s position. <a href="https://github.com/levitatingflyfisher/openDaisugi/tree/master/examples/gallery3d#readme">What is proved and what is judged</a>.</p>
+  <p>A planner offers several plans, and each one is checked before the robot moves. Refused plans are drawn in red and the accepted plan in green.</p>
+  <figure id="fig-loop" class="wide dgfig stackfig">
+    <div class="dgbox"><div class="dg-wide"><svg class="dg w" viewBox="0 0 640 426" role="img" aria-labelledby="cap-robot" aria-describedby="rlw" xmlns="http://www.w3.org/2000/svg"><desc id="rlw">A fast policy is in control. Sensors feed it and it decides what the machine does: sensors in, motor commands out. The policy may be a learned model, such as reinforcement learning, a vision-language-action model or a native-token model. In our scenes it is a scripted planner. daisugi is in the loop. A model writes the envelope ahead of time. The verifier checks each plan against the envelope before it runs. An accepted plan runs on the motors. A refused plan is dropped.</desc><defs><marker id="rwa" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ah"/></marker><marker id="rwc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahc"/></marker></defs><text class="cap" x="0" y="26" text-anchor="start">Drives the robot</text><rect class="node" x="0" y="74" width="160" height="62" rx="6"/><text x="80" y="101" text-anchor="middle"><tspan class="b">sensors</tspan></text><text class="sub" x="80" y="121" text-anchor="middle">camera, position</text><path class="edge" d="M160 105 L210 105" marker-end="url(#rwa)"/><rect class="node" x="210" y="44" width="250" height="122" rx="6"/><text x="335" y="71" text-anchor="middle"><tspan class="b">a fast policy</tspan></text><text class="sub" x="335" y="93" text-anchor="middle">sensors in, motor commands out</text><text class="sub" x="335" y="113" text-anchor="middle">it may be a learned model: RL,</text><text class="sub" x="335" y="133" text-anchor="middle">a VLA or a native-token model</text><text class="sub" x="335" y="153" text-anchor="middle">here: a scripted planner</text><rect class="node" x="510" y="74" width="130" height="62" rx="6"/><text x="575" y="101" text-anchor="middle"><tspan class="b">motors</tspan></text><text class="sub" x="575" y="121" text-anchor="middle">run accepted plans</text><path class="edge" d="M335 166 L335 270" marker-end="url(#rwa)"/><text class="elab" x="347" y="224" text-anchor="start">each plan</text><text class="cap" x="0" y="252" text-anchor="start">Checks each plan: openDaisugi</text><rect class="node" x="0" y="270" width="160" height="86" rx="6"/><text x="80" y="299" text-anchor="middle"><tspan class="b">the rules</tspan></text><text class="sub" x="80" y="321" text-anchor="middle">written by a model,</text><text class="sub" x="80" y="341" text-anchor="middle">ahead of time</text><path class="edge" d="M160 313 L210 313" marker-end="url(#rwa)"/><rect class="node ok" x="210" y="270" width="250" height="86" rx="6"/><text x="335" y="299" text-anchor="middle"><tspan class="b">the verifier</tspan></text><text class="sub" x="335" y="321" text-anchor="middle">checks each plan</text><text class="sub" x="335" y="341" text-anchor="middle">before it runs</text><path class="edge ok" d="M460 300 L575 300 L575 136" marker-end="url(#rwc)"/><text class="elab" x="517" y="291" text-anchor="middle">accepted</text><path class="edge" d="M335 356 L335 392" marker-end="url(#rwa)"/><text class="elab" x="335" y="414" text-anchor="middle">a refused plan is dropped</text></svg></div><div class="dg-narrow"><svg class="dg m" viewBox="0 0 340 448" role="img" aria-labelledby="cap-robot" aria-describedby="rln" xmlns="http://www.w3.org/2000/svg"><desc id="rln">A fast policy is in control. Sensors feed it and it decides what the machine does: sensors in, motor commands out. The policy may be a learned model, such as reinforcement learning, a vision-language-action model or a native-token model. In our scenes it is a scripted planner. daisugi is in the loop. A model writes the envelope ahead of time. The verifier checks each plan against the envelope before it runs. An accepted plan runs on the motors. A refused plan is dropped.</desc><defs><marker id="rna" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ah"/></marker><marker id="rnc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahc"/></marker></defs><text class="cap" x="0" y="16" text-anchor="start">Drives the robot</text><rect class="node" x="0" y="28" width="340" height="50" rx="6"/><text x="14" y="50" text-anchor="start"><tspan class="b">sensors</tspan></text><text class="sub" x="14" y="68" text-anchor="start">camera, position</text><path class="edge" d="M170 78 L170 106" marker-end="url(#rna)"/><rect class="node" x="0" y="106" width="340" height="88" rx="6"/><text x="14" y="128" text-anchor="start"><tspan class="b">a fast policy</tspan></text><text class="sub" x="14" y="146" text-anchor="start">sensors in, motor commands out</text><text class="sub" x="14" y="162" text-anchor="start">it may be a learned model: RL, a VLA</text><text class="sub" x="14" y="178" text-anchor="start">or a native-token model. Here: a scripted planner</text><path class="edge" d="M250 194 L250 254" marker-end="url(#rna)"/><text class="elab" x="260" y="229" text-anchor="start">each plan</text><text class="cap" x="0" y="242" text-anchor="start">Checks each plan: openDaisugi</text><rect class="node ok" x="0" y="254" width="340" height="70" rx="6"/><text x="170" y="277" text-anchor="middle"><tspan class="b">the verifier</tspan></text><text class="sub" x="170" y="296" text-anchor="middle">checks each plan before it runs</text><text class="sub" x="170" y="312" text-anchor="middle">a refused plan is dropped</text><path class="edge" d="M80 376 L80 324" marker-end="url(#rna)"/><text class="elab" x="90" y="354" text-anchor="start">checked against</text><path class="edge ok" d="M260 324 L260 376" marker-end="url(#rnc)"/><text class="elab" x="270" y="354" text-anchor="start">accepted</text><rect class="node" x="0" y="376" width="160" height="66" rx="6"/><text x="80" y="399" text-anchor="middle"><tspan class="b">the rules</tspan></text><text class="sub" x="80" y="417" text-anchor="middle">written by a model,</text><text class="sub" x="80" y="432" text-anchor="middle">ahead of time</text><rect class="node" x="180" y="376" width="160" height="66" rx="6"/><text x="260" y="399" text-anchor="middle"><tspan class="b">motors</tspan></text><text class="sub" x="260" y="417" text-anchor="middle">run accepted plans</text></svg></div></div>
+    <figcaption id="cap-robot">The planner drives while the check sits in the loop.</figcaption>
+  </figure>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="actions" class="col">
+  <p class="kicker sc">Formal methods you can use</p>
+  <h2>It checks the actions an agent takes.</h2>
+  <figure id="fig-avd" class="wide dgfig">
+    <div class="dgbox"><div class="dg-narrow"><svg id="dg-avd" class="dg m" viewBox="0 0 360 640" role="img" aria-labelledby="cap-avd" aria-describedby="vnd" xmlns="http://www.w3.org/2000/svg"><desc id="vnd">Your request goes to a language model, which turns a fuzzy intent into a concrete plan. That part is decided, and it stays a black box. The plan then meets a fork: can a calculation check it? If yes, the check is symbolic and Z3 proves it, a guarantee that costs almost nothing. If it needs eyes, such as a camera, the check is perceptual and a model judges it within bounds. The proven check is drawn in green. Both checks belong to the allowed side, the envelope.</desc><defs><marker id="vna" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ah"/></marker><marker id="vnc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahc"/></marker></defs><rect class="node" x="110" y="14" width="140" height="40" rx="6"/><text x="180" y="39.3" text-anchor="middle">your request</text><rect class="cluster" x="10" y="84" width="340" height="170" rx="10"/><text class="cap" x="26" y="110">The model decides</text><rect class="node" x="30" y="158" width="300" height="84" rx="6"/><text x="180" y="187.3" text-anchor="middle"><tspan class="b">LLM</tspan></text><text x="180" y="206.3" text-anchor="middle">turns a request into a plan</text><text class="sub" x="180" y="224.3" text-anchor="middle">a black box, as capable as it is</text><rect class="node" x="110" y="286" width="140" height="40" rx="6"/><text x="180" y="311.3" text-anchor="middle">a concrete plan</text><polygon class="node" points="180,346 202,368 180,390 158,368"/><text class="elab" x="148" y="364" text-anchor="end">can a calculation</text><text class="elab" x="148" y="382" text-anchor="end">check it?</text><rect class="cluster" x="10" y="424" width="340" height="202" rx="10"/><text class="cap" x="180" y="610" text-anchor="middle">The rules allow or refuse</text><rect class="node ok" x="20" y="500" width="152" height="84" rx="6"/><text x="96" y="529.3" text-anchor="middle"><tspan class="b">symbolic</tspan> check</text><text class="okt" x="96" y="548.3" text-anchor="middle">Z3 proves it ✓</text><text class="sub okt" x="96" y="566.3" text-anchor="middle">a guarantee, nearly free</text><rect class="node" x="188" y="500" width="152" height="84" rx="6"/><text x="264" y="529.3" text-anchor="middle"><tspan class="b">perceptual</tspan> check</text><text x="264" y="548.3" text-anchor="middle">a model judges it</text><text class="sub" x="264" y="566.3" text-anchor="middle">bounded, not proven</text><path class="edge" d="M180 54 V158" marker-end="url(#vna)"/><path class="edge" d="M180 242 V286" marker-end="url(#vna)"/><path class="edge" d="M180 326 V346" marker-end="url(#vna)"/><path class="edge ok" d="M180 390 C180 452, 96 438, 96 500" marker-end="url(#vnc)"/><path class="edge" d="M180 390 C180 452, 264 438, 264 500" marker-end="url(#vna)"/><text class="elab okt" x="164" y="410" text-anchor="end">yes</text><text class="elab" x="196" y="410" text-anchor="start">no, it needs eyes</text></svg></div></div>
+    <figcaption id="cap-avd">The model decides the plan, and the envelope says what is allowed.</figcaption>
+  </figure>
+  <p>Most formal tools prove that a program is correct. openDaisugi proves that each action stays inside the envelope, whatever model made the plan.</p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="repeats" class="col">
+  <p class="kicker sc">A JIT compiler for agent work</p>
+  <h2>Repeated work moves down to code.</h2>
+  <figure id="fig-anim" class="dgfig">
+    <div class="dgbox"><svg id="dg-anim" class="dg anim" viewBox="0 0 360 584" role="img" aria-labelledby="cap-anim" aria-describedby="anim-d" xmlns="http://www.w3.org/2000/svg"><desc id="anim-d">Six runs arrive one at a time. The task of each run becomes an arrow from one starting point. The three rename tasks point nearly the same way. Their cosine scores are 0.77 and 0.72, above the 0.25 threshold, so they form one group. The two email tasks point a second way and score 0.87 with each other. The test task points a third way. The three directions sit at right angles, a score of 0.00. The rename group has three runs and is distilled into a pathway. The email group has two runs and waits for a third. The test run waits. With reduced motion, the picture shows the finished state.</desc><path class="floor" d="M180,196 L301.2,266 L180,336 L58.8,266 Z"/><path class="grid" d="M240.6,231 L119.4,301 M119.4,231 L240.6,301"/><path class="ax" d="M180,196 L180,56 M180,196 L301.2,266 M180,196 L58.8,266"/><path class="ax" d="M180,184 L190.4,190 L190.4,202"/><path class="ax" d="M190.4,202 L180,208 L169.6,202"/><path class="ax" d="M169.6,202 L169.6,190 L180,184"/><path class="wedge ga f3" d="M180,196 L130.9,95.3 A112 112 0 0 1 172.2,84.3 Z"/><path class="wedge ga f7" d="M180,196 L172.2,84.3 A112 112 0 0 1 214.6,89.5 Z"/><path class="wedge gb f9" d="M180,196 L286.5,230.6 A112 112 0 0 1 263.2,270.9 Z"/><g class="vec ga g1"><line x1="180" y1="196" x2="127" y2="87.2"/><polygon points="123,79.2 130.6,85.5 123.4,89"/></g><g class="vec ga g2"><line x1="180" y1="196" x2="171.1" y2="69.3"/><polygon points="170.5,60.3 175.1,69 167.2,69.6"/></g><g class="vec gb g4"><line x1="180" y1="196" x2="293.2" y2="232.8"/><polygon points="301.7,235.6 291.9,236.6 294.4,229"/></g><g class="vec gc g5"><line x1="180" y1="196" x2="84.7" y2="260.3"/><polygon points="77.2,265.3 82.4,257 86.9,263.6"/></g><g class="vec ga g7"><line x1="180" y1="196" x2="214.3" y2="90.4"/><polygon points="217.1,81.9 218.1,91.7 210.5,89.2"/></g><g class="vec gb g9"><line x1="180" y1="196" x2="264" y2="271.6"/><polygon points="270.7,277.6 261.3,274.6 266.7,268.6"/></g><text class="sc ga f2" x="170.5" y="51.3" text-anchor="middle">0.77</text><text class="sc ga f7" x="225.1" y="82.9" text-anchor="start">0.72</text><text class="sc gb f9" x="277.7" y="289.6" text-anchor="start">0.87</text><text class="gl ga f1" x="113" y="71.2" text-anchor="end">rename photos</text><text class="gl ga b f8" x="113" y="87.2" text-anchor="end">now a pathway</text><text class="gl gb f4" x="352" y="213.6" text-anchor="end">summarize email</text><text class="gl gc f5" x="77.2" y="285.3" text-anchor="middle">fix the test</text><text class="lab f6" x="180" y="358" text-anchor="middle">The three groups sit at right angles: 0.00 between them.</text><path class="ax" d="M8 372 H352"/><text class="lab" x="8" y="390">the task of each run</text><text class="lab" x="352" y="390" text-anchor="end">score, joins at 0.25</text><g class="row ga f1"><circle cx="13" cy="408" r="3.5"/><text x="26" y="412">rename the photos by date</text><text class="r" x="352" y="412" text-anchor="end">starts a group</text></g><g class="row ga f2"><circle cx="13" cy="426" r="3.5"/><text x="26" y="430">rename photos in this folder by date taken</text><text class="r" x="352" y="430" text-anchor="end">0.77 joins</text></g><g class="row ga f7"><circle cx="13" cy="444" r="3.5"/><text x="26" y="448">rename these photos by their date</text><text class="r" x="352" y="448" text-anchor="end">0.72 joins</text></g><text class="st ga b f8" x="26" y="466">three runs: distilled into a pathway</text><g class="row gb f4"><circle cx="13" cy="488" r="3.5"/><text x="26" y="492">summarize this week's email</text><text class="r" x="352" y="492" text-anchor="end">0.00 new group</text></g><g class="row gb f9"><circle cx="13" cy="506" r="3.5"/><text x="26" y="510">summarize the email from this week</text><text class="r" x="352" y="510" text-anchor="end">0.87 joins</text></g><text class="st  f10" x="26" y="528">two runs: waits for a third</text><g class="row gc f5"><circle cx="13" cy="550" r="3.5"/><text x="26" y="554">fix the failing test</text><text class="r" x="352" y="554" text-anchor="end">0.00 new group</text></g><text class="st  f10" x="26" y="572">one run: waits</text></svg></div>
+    <figcaption id="cap-anim">Each arrow is the task of one run. Runs that point the same way form a group, and a group of three becomes a script.</figcaption>
+  </figure>
+  <p>The first time, a large model does the task. When the same task has come back three times, its steps become a checked script that runs with no model call.</p>
+</section>
+
+<section id="flow" class="col">
+  <h2>New work is planned by a model, and a repeat is reused.</h2>
+  <figure id="fig-flow" class="dgfig">
+    <div class="dgbox"><svg id="dg-flow" class="dg gate" viewBox="0 0 480 372" role="img" aria-label="New work is planned by a model, repeated work comes from a stored script, and one check covers both." aria-describedby="flow-d" xmlns="http://www.w3.org/2000/svg"><desc id="flow-d">Two lanes. New work goes to a model that plans it. Repeated work is served from a store of checked scripts, with no model call. Both lanes go through one check, Z3 against your rules, and then run. Finished runs feed the store.</desc><defs><marker id="fa" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ah"/></marker><marker id="fc" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto"><path d="M0 1 L10 5 L0 9z" class="ahc"/></marker></defs><text class="cap" x="120" y="22" text-anchor="middle">new work</text><text class="cap" x="330" y="22" text-anchor="middle">repeated work</text><path class="edge" d="M120 30 V64" marker-end="url(#fa)"/><path class="edge" d="M330 30 V64" marker-end="url(#fa)"/><rect class="node" x="30" y="64" width="180" height="62" rx="6"/><text x="120" y="101" text-anchor="middle">a model plans it</text><rect class="node" x="240" y="64" width="180" height="62" rx="6"/><text x="330" y="91" text-anchor="middle">a stored script</text><text class="sub" x="330" y="113" text-anchor="middle">no model call</text><path class="edge" d="M120 126 V176" marker-end="url(#fa)"/><path class="edge" d="M330 126 V176" marker-end="url(#fa)"/><rect class="node ok" x="30" y="176" width="390" height="62" rx="6"/><text x="225" y="203" text-anchor="middle"><tspan class="b">one check</tspan></text><text class="sub" x="225" y="225" text-anchor="middle">Z3, against your rules</text><path class="edge ok" d="M120 238 V288" marker-end="url(#fc)"/><path class="edge ok" d="M330 238 V288" marker-end="url(#fc)"/><rect class="node ok" x="30" y="288" width="390" height="50" rx="6"/><text class="okt b" x="225" y="319" text-anchor="middle">it runs</text><path class="edge dash" d="M420 313 H456 V95 H420" marker-end="url(#fa)"/><text class="elab" x="225" y="362" text-anchor="middle">finished runs become stored scripts</text></svg></div>
+  </figure>
+  <p>Both paths go through the same check against your envelope.</p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="parts" class="col">
+  <p class="kicker sc">Where it fits</p>
+  <h2>It works with the agent you already run.</h2>
+  <figure id="fig-stack" class="wide dgfig stackfig">
+    <div class="dgbox"><div class="dg-wide"><svg id="dg-stack" class="dg w" viewBox="0 0 640 498" role="img" aria-labelledby="cap-stack" aria-describedby="skw" xmlns="http://www.w3.org/2000/svg"><desc id="skw">Six layers between you and the model, each with one question. openDaisugi provides five of them, drawn in green: one screen for many agents, the check, checked scripts for repeated work, a record of every action, and a router. The agent itself, such as Claude Code, Codex, pi or OpenCode, is yours.</desc><text class="cap" x="320" y="18" text-anchor="middle">you</text><rect class="node ok" x="0" y="30" width="640" height="66" rx="6"/><text x="20" y="58" text-anchor="start"><tspan class="b">Many agents</tspan></text><text class="sub" x="20" y="80" text-anchor="start">How do I follow them all?</text><text class="okt" x="620" y="58" text-anchor="end">one screen</text><text class="sub" x="620" y="80" text-anchor="end">terminal, browser or phone</text><rect class="node" x="0" y="104" width="640" height="66" rx="6"/><text x="20" y="132" text-anchor="start"><tspan class="b">The agent</tspan></text><text class="sub" x="20" y="154" text-anchor="start">Who runs the agent loop?</text><text x="620" y="132" text-anchor="end">your agent</text><text class="sub" x="620" y="154" text-anchor="end">Claude Code, Codex, pi, OpenCode</text><rect class="node ok" x="0" y="178" width="640" height="66" rx="6"/><text x="20" y="206" text-anchor="start"><tspan class="b">Safety</tspan></text><text class="sub" x="20" y="228" text-anchor="start">May it do this?</text><text class="okt" x="620" y="206" text-anchor="end">the check</text><text class="sub" x="620" y="228" text-anchor="end">Z3 proves each action, a sandbox limits the rest</text><rect class="node ok" x="0" y="252" width="640" height="66" rx="6"/><text x="20" y="280" text-anchor="start"><tspan class="b">Repeats</tspan></text><text class="sub" x="20" y="302" text-anchor="start">Has it done this before?</text><text class="okt" x="620" y="280" text-anchor="end">checked scripts</text><text class="sub" x="620" y="302" text-anchor="end">replayed with no model call</text><rect class="node ok" x="0" y="326" width="640" height="66" rx="6"/><text x="20" y="354" text-anchor="start"><tspan class="b">Memory</tspan></text><text class="sub" x="20" y="376" text-anchor="start">What did it do?</text><text class="okt" x="620" y="354" text-anchor="end">a record of every action</text><text class="sub" x="620" y="376" text-anchor="end">search it and replay it</text><rect class="node ok" x="0" y="400" width="640" height="66" rx="6"/><text x="20" y="428" text-anchor="start"><tspan class="b">Model</tspan></text><text class="sub" x="20" y="450" text-anchor="start">Which model takes this turn?</text><text class="okt" x="620" y="428" text-anchor="end">router</text><text class="sub" x="620" y="450" text-anchor="end">the model itself is yours</text><text class="cap okt" x="320" y="488" text-anchor="middle">green: openDaisugi provides it</text></svg></div><div class="dg-narrow"><svg class="dg m" viewBox="0 0 340 604" role="img" aria-labelledby="cap-stack" aria-describedby="skn" xmlns="http://www.w3.org/2000/svg"><desc id="skn">Six layers between you and the model, each with one question. openDaisugi provides five of them, drawn in green: one screen for many agents, the check, checked scripts for repeated work, a record of every action, and a router. The agent itself, such as Claude Code, Codex, pi or OpenCode, is yours.</desc><text class="cap" x="170" y="16" text-anchor="middle">you</text><rect class="node ok" x="0" y="28" width="340" height="84" rx="6"/><text x="14" y="53" text-anchor="start"><tspan class="b">Many agents</tspan></text><text class="okt" x="326" y="53" text-anchor="end">one screen</text><text class="sub" x="14" y="76" text-anchor="start">How do I follow them all?</text><text class="sub" x="14" y="96" text-anchor="start">terminal, browser or phone</text><rect class="node" x="0" y="120" width="340" height="84" rx="6"/><text x="14" y="145" text-anchor="start"><tspan class="b">The agent</tspan></text><text x="326" y="145" text-anchor="end">your agent</text><text class="sub" x="14" y="168" text-anchor="start">Who runs the agent loop?</text><text class="sub" x="14" y="188" text-anchor="start">Claude Code, Codex, pi, OpenCode</text><rect class="node ok" x="0" y="212" width="340" height="84" rx="6"/><text x="14" y="237" text-anchor="start"><tspan class="b">Safety</tspan></text><text class="okt" x="326" y="237" text-anchor="end">the check</text><text class="sub" x="14" y="260" text-anchor="start">May it do this?</text><text class="sub" x="14" y="280" text-anchor="start">Z3 proves each action, a sandbox limits the rest</text><rect class="node ok" x="0" y="304" width="340" height="84" rx="6"/><text x="14" y="329" text-anchor="start"><tspan class="b">Repeats</tspan></text><text class="okt" x="326" y="329" text-anchor="end">checked scripts</text><text class="sub" x="14" y="352" text-anchor="start">Has it done this before?</text><text class="sub" x="14" y="372" text-anchor="start">replayed with no model call</text><rect class="node ok" x="0" y="396" width="340" height="84" rx="6"/><text x="14" y="421" text-anchor="start"><tspan class="b">Memory</tspan></text><text class="okt" x="326" y="421" text-anchor="end">a record of every action</text><text class="sub" x="14" y="444" text-anchor="start">What did it do?</text><text class="sub" x="14" y="464" text-anchor="start">search it and replay it</text><rect class="node ok" x="0" y="488" width="340" height="84" rx="6"/><text x="14" y="513" text-anchor="start"><tspan class="b">Model</tspan></text><text class="okt" x="326" y="513" text-anchor="end">router</text><text class="sub" x="14" y="536" text-anchor="start">Which model takes this turn?</text><text class="sub" x="14" y="556" text-anchor="start">the model itself is yours</text><text class="cap okt" x="170" y="596" text-anchor="middle">green: openDaisugi provides it</text></svg></div></div>
+    <figcaption id="cap-stack">Five of the six layers come with openDaisugi, and the agent is yours.</figcaption>
+  </figure>
+  <p>It connects to Claude Code, Codex, pi and OpenCode, and it comes with one screen for all your agents, in the terminal, a browser or your phone. <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/explanation/landscape.md">Each part, and other good choices for it</a>.</p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="today" class="col">
+  <p class="kicker sc">Status</p>
+  <h2>What it does today.</h2>
+  <ul class="plain">
+    <li>Checks every tool call of an agent against an envelope, and records each call and verdict.</li>
+    <li>Proves that an agent started by another agent can only have tighter rules than its parent.</li>
+    <li>Turns repeated tasks into signed scripts that run with no model call.</li>
+    <li>Checks robot motion plans in simulation.</li>
+  </ul>
+  <p><a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/VISION.md#honest-scorecard-2026-09-26">Roadmap</a></p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="questions" class="col">
+  <p class="kicker sc">Questions</p>
+  <h2>Questions people ask.</h2>
+
+  <h3>My agent already has a sandbox and permission prompts. Why add this?</h3>
+  <p>A sandbox limits where code runs, and a prompt asks you each time. This checks each action against rules written for the one task, with a solver, the same way for every agent.</p>
+
+  <h3>Isn&rsquo;t this just file access control?</h3>
+  <p>No. The rules also cover shell commands, network hosts, token budgets and which agent may start which. In simulation they cover robot limits such as workspace bounds and speed.</p>
+
+  <h3>Who writes the envelope?</h3>
+  <p>A model drafts it from the task, or you write it. Z3 only checks, so a wrong draft can refuse too much or allow too much, and you can read it to see which.</p>
+
+  <h3>What does the proof not cover?</h3>
+  <p>It covers actions, not what the model understood, and it trusts what the sensors report. <a href="whitepaper.html">The whitepaper</a> says exactly what is proved.</p>
+
+  <h3>Why the name?</h3>
+  <p><i lang="ja">Daisugi</i> (<span lang="ja">台杉</span>) is a Japanese forestry technique: straight new timber grows from the trunk of an existing tree.</p>
+</section>
+
+<div class="col"><span class="rule" aria-hidden="true"><svg><use href="#brush"/></svg></span></div>
+
+<section id="try" class="col install">
+  <p class="kicker sc">Install</p>
+  <h2>Install openDaisugi on Linux.</h2>
+  <p class="lead">Six steps on Linux. The first build compiles Z3, which happens once.</p>
+
+  <p class="needs">You need git, a C toolchain, Go, curl and Python. The script asks before it writes to any agent&rsquo;s settings, and the checker starts by watching: it logs what it would refuse and blocks nothing. <a href="start-here.html">What it touches, and how to make it block</a>.</p>
+
+  <ol class="steps">
+    <li>
+      <p class="st">Install the packages for your system.</p>
+      <p class="label sc">Omarchy and Arch</p>
+      <div class="cmdwrap"><pre data-copy><code>sudo pacman -S --needed git base-devel pkgconf go curl python</code></pre></div>
+      <p class="label sc">Fedora</p>
+      <div class="cmdwrap"><pre data-copy><code>sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config golang curl python3 binutils</code></pre></div>
+      <p class="label sc">Debian 13 and Ubuntu 24.04 or later</p>
+      <div class="cmdwrap"><pre data-copy><code>sudo apt install git build-essential pkg-config golang-go curl python3 binutils xz-utils</code></pre></div>
+      <p class="next">Older Debian and Ubuntu ship a Go below 1.21. Install a newer Go from go.dev/dl first.</p>
+    </li>
+    <li>
+      <p class="st">Get the code.</p>
+      <div class="cmdwrap"><pre data-copy><code>git clone https://github.com/levitatingflyfisher/openDaisugi.git
+cd openDaisugi</code></pre></div>
+    </li>
+    <li>
+      <p class="st">Build and install.</p>
+      <div class="cmdwrap"><pre data-copy><code>scripts/install.sh</code></pre></div>
+      <p class="next">Make sure <code>~/.local/bin</code> is on your PATH.</p>
+    </li>
+    <li>
+      <p class="st">Connect the checker, called the warden, to your agent.</p>
+      <div class="cmdwrap"><pre data-copy><code>daisugi install</code></pre></div>
+      <p class="next">It lists its writes for each agent it finds and asks first.</p>
+    </li>
+    <li>
+      <p class="st">In your project directory, write a starter envelope.</p>
+      <div class="cmdwrap"><pre data-copy><code>daisugi warden init</code></pre></div>
+    </li>
+    <li>
+      <p class="st">After a session, see what it would refuse.</p>
+      <div class="cmdwrap"><pre data-copy><code>daisugi warden report</code></pre></div>
+    </li>
+  </ol>
+
+  <h3>Undo it</h3>
+  <div class="cmdwrap"><pre data-copy><code>daisugi install --uninstall
+rm ~/.local/bin/coppice ~/.local/bin/sprig ~/.local/bin/daisugi</code></pre></div>
+
+  <p class="did">Next: the <a href="start-here.html">start here guide</a> and the <a href="https://github.com/levitatingflyfisher/openDaisugi/blob/master/docs/recipes/README.md">recipes</a>.</p>
+</section>
+</main>
+
+<footer><div class="col">MIT license. This page loads only its own files. Read the <a href="whitepaper.html">whitepaper</a>, the <a href="yellow-paper.html">yellow paper</a> or <a href="start-here.html">start here</a>.</div></footer>
+
+<script>
+(function(){
+  try{
+    // copy buttons
+    document.querySelectorAll('pre[data-copy]').forEach(function(pre){
+      var b=document.createElement('button');
+      b.type='button';b.className='copy';b.textContent='Copy';
+      b.setAttribute('aria-label','Copy command');
+      b.addEventListener('click',function(){
+        var t=pre.innerText.replace(/\n$/,'');
+        function done(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1600)}
+        function fallback(){
+          var r=document.createRange();r.selectNodeContents(pre);
+          var s=window.getSelection();s.removeAllRanges();s.addRange(r);
+          try{document.execCommand('copy');done()}catch(e){}
+        }
+        if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,fallback)}else{fallback()}
+      });
+      pre.parentNode.appendChild(b);
+    });
+
+    // footnotes: tap or click opens the note, Escape or a click elsewhere closes it
+    var fns=[].slice.call(document.querySelectorAll('.fn'));
+    fns.forEach(function(f){var b=f.querySelector('.fnb');if(!b)return;
+      b.setAttribute('aria-expanded','false');
+      b.addEventListener('click',function(e){e.stopPropagation();var on=!f.classList.contains('open');
+        fns.forEach(function(o){o.classList.remove('open');var ob=o.querySelector('.fnb');if(ob)ob.setAttribute('aria-expanded','false')});
+        if(on){f.classList.add('open');b.setAttribute('aria-expanded','true')}});
+    });
+    document.addEventListener('click',function(e){if(!e.target.closest||!e.target.closest('.fn'))fns.forEach(function(o){o.classList.remove('open')})});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'){fns.forEach(function(o){o.classList.remove('open');var ob=o.querySelector('.fnb');if(ob){ob.setAttribute('aria-expanded','false');if(o.contains(document.activeElement))ob.blur()}})}});
+
+    // moving pictures play once and hold their last picture. A Replay button starts one again.
+    var still=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(!still){
+      var replay=function(fig,run){
+        var b=document.createElement('button');b.type='button';b.className='replay';b.textContent='Replay';
+        b.addEventListener('click',run);fig.appendChild(b);
+      };
+      // the arrows drawing shows its final picture by default. The animation is added on top,
+      // once, when the drawing comes on screen.
+      [].forEach.call(document.querySelectorAll('svg.anim'),function(svg){
+        var fig=svg.closest('figure');if(!fig)return;
+        var run=function(){svg.classList.remove('go');void svg.getBoundingClientRect();svg.classList.add('go')};
+        replay(fig,run);
+        if(window.IntersectionObserver){
+          var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){io.disconnect();run()}})},{threshold:.5});
+          io.observe(svg);
+        }
+      });
+    }
+
+    // the robot pictures cycle by themselves while on screen: the line drawing, held three
+    // seconds, then the simulation once, then the drawing again. The simulation loads late.
+    [].forEach.call(document.querySelectorAll('figure.cycle'),function(fig){
+      var img=fig.querySelector('img.sim'),src=fig.getAttribute('data-sim'),ms=+fig.getAttribute('data-ms')||8000;
+      var timer=null,on=false,paused=false,blob=null,url='',asked=false;
+      var btn=document.createElement('button');btn.type='button';btn.className='replay cyc';
+      var label=function(){btn.textContent=still?'Play the simulation':(paused?'Play':'Pause')};
+      var stop=function(){clearTimeout(timer);timer=null;fig.classList.remove('playing')};
+      var show=function(then){
+        // a new address for each pass, so the picture starts from its first frame
+        if(blob){if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(blob);img.src=url}else{img.removeAttribute('src');img.src=src}
+        fig.classList.add('playing');
+        timer=setTimeout(function(){fig.classList.remove('playing');if(then)then()},ms+500);
+      };
+      var play=function(then){
+        if(blob||asked&&!window.fetch){show(then);return}
+        asked=true;
+        var go=function(){if(on&&(still||!paused))show(then)};
+        if(window.fetch){fetch(src).then(function(r){return r.blob()}).then(function(b){blob=b;go()},function(){var pre=new Image();pre.onload=go;pre.src=src})}
+        else{var pre=new Image();pre.onload=go;pre.src=src}
+      };
+      var cycle=function(){clearTimeout(timer);timer=setTimeout(function(){play(cycle)},3000)};
+      btn.addEventListener('click',function(){
+        if(still){stop();on=true;play(null);return}
+        paused=!paused;label();if(paused)stop();else if(on)cycle();
+      });
+      label();fig.querySelector('figcaption').appendChild(btn);
+      if(window.IntersectionObserver){
+        new IntersectionObserver(function(es){es.forEach(function(e){
+          on=e.isIntersecting;if(!on)stop();else if(!still&&!paused)cycle();
+        })},{threshold:.4}).observe(fig);
+      }
+    });
+
+    // a tile opens its full picture. Without script, the tile is a plain link to the section.
+    if(window.HTMLDialogElement){
+      var dlg=document.createElement('dialog');dlg.className='zoom';
+      dlg.innerHTML='<form method="dialog"><button class="zclose" aria-label="Close">Close</button></form><div class="zbody"></div><p class="zgo"><a href="#">Read this part</a></p>';
+      document.body.appendChild(dlg);
+      var body=dlg.querySelector('.zbody'),go=dlg.querySelector('.zgo a');var zn=0;
+      go.addEventListener('click',function(){dlg.close()});
+      dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close()});
+      dlg.addEventListener('close',function(){body.innerHTML=''});
+      [].forEach.call(document.querySelectorAll('[data-zoom]'),function(t){
+        t.addEventListener('click',function(e){
+          var fig=document.getElementById(t.getAttribute('data-zoom'));if(!fig)return;
+          e.preventDefault();
+          var c=fig.cloneNode(true);c.removeAttribute('id');c.removeAttribute('hidden');zn++;
+          [].forEach.call(c.querySelectorAll('img'),function(im){im.setAttribute('src',im.getAttribute('src').split('?')[0]+'?open='+zn);im.removeAttribute('loading')});
+          [].forEach.call(c.querySelectorAll('.replay'),function(b){b.remove()});
+          body.innerHTML='';body.appendChild(c);
+          var h=t.getAttribute('href');go.parentNode.hidden=h.charAt(0)!=='#';go.setAttribute('href',h);
+          dlg.showModal();
+        });
+      });
+    }
+  }catch(e){}
+})();
+</script>
+</body>
+</html>

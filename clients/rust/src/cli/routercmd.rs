@@ -1,690 +1,349 @@
-//! `daisugi router status|stop`, `gateway-report`, and the Switchyard child
-//! a gateway starts.
+//! `daisugi router serve`: the token-saving router on loopback, until SIGINT or
+//! SIGTERM.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::net::TcpListener;
+use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
-use num_bigint::BigInt;
+use super::config::{self, ConfigErr};
+use super::wardenroot::path_str;
+use super::{exit, parse_args, Env, Opt, Res};
+use crate::warden::paths::strerror;
+use crate::warden::py::text::repr;
+use crate::router::pipeline::{External, Router, Settings, MODE_EXTERNAL, MODE_KNN, MODE_MODEL, MODE_OFF, MODE_RULES};
+use crate::router::model;
+use crate::router::server::{handle, Life, Reloader, Server, Shared};
 
-use super::config::{self, Config, ConfigErr};
-use super::gateroot::path_str;
-use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::distill::load_embedder;
-use crate::distill::repeats::{rank_reuse, Turn};
-use crate::gate::py::text::{self, repr};
-use crate::gate::pyjson::{self, py_repr, Object, Value};
-use crate::gateway::meter::{Price, Prices};
-use crate::gateway::pipeline::External;
-use crate::gateway::report::{
-    build_report, commas, external_records, format_f, format_share_table, load_journal, pad_repr, percent, share_table,
-    Candidate, JRecord, JournalErr,
-};
-use crate::pathways::find::select_matcher;
-use crate::switchyard::{self as sy, Auth, Handle, RouteErr};
+pub const ROUTERS: &[&str] = &["rules", "switchyard", "knn", "model", "off"];
+const UPSTREAM_KINDS: &[&str] = &["anthropic", "ollama", "openai-compatible", "anthropic-compatible"];
 
-/// The child a gateway started, and its state file.
-pub struct SwitchyardChild {
-    pub h: Handle,
-    pub state: String,
-}
-
-impl SwitchyardChild {
-    pub fn stop(&self) -> String {
-        self.h.stop_own(&self.state)
+/// `model_host._KIND_TO_BACKEND`.
+fn kind_to_backend(k: &str) -> &'static str {
+    match k {
+        "ollama" => "ollama",
+        "openai" => "openai-compatible",
+        _ => "anthropic-compatible",
     }
 }
 
-pub fn sy_config(cfg: &Config) -> sy::Config {
-    sy::Config {
-        route_id: cfg.switchyard_route_id.clone(),
-        capable_model: cfg.switchyard_capable_model.clone(),
-        efficient_model: cfg.switchyard_efficient_model.clone(),
-        api_key_env: cfg.switchyard_api_key_env.clone(),
-        llm_base_url: cfg.llm_base_url.clone(),
-        llm_host_kind: cfg.llm_host_kind.clone(),
+const ROUTER_OPTS: &[Opt] = &[
+    Opt::val(&["--host"], "TEXT", "Bind address."),
+    Opt::val(&["--port"], "INTEGER", "Bind port."),
+    Opt::val(&["--upstream"], "TEXT", "Where saved turns go."),
+    Opt::val(&["--cheap-model"], "TEXT", "Model an easy turn is routed onto."),
+    Opt::val(&["--data-dir"], "PATH", "Daisugi data directory (holds the turn journal)."),
+    Opt::pair(
+        &["--capture-answers"],
+        "--no-capture-answers",
+        "Persist each turn's raw response text to <data-dir>/router/answers.jsonl (opt-in).",
+    ),
+    Opt::val(&["--local-model"], "TEXT", "A qualified local model id (ADR-0015)."),
+    Opt::val(&["--openai-upstream"], "TEXT", "Upstream for OpenAI-wire requests."),
+    Opt::val(
+        &["--openai-cheap-model"],
+        "TEXT",
+        "Model an easy OpenAI-wire turn is routed onto; empty disables routing on that wire.",
+    ),
+    Opt::val(&["--upstream-kind"], "TEXT", "The wire --upstream speaks: anthropic, ollama, openai-compatible, anthropic-compatible."),
+    Opt::val(&["--routing-mode"], "TEXT", "Who picks the model: rules, switchyard, knn, model or off."),
+    Opt::val(&["--switchyard-config"], "PATH", "Your own Switchyard TOML file."),
+    Opt::val(&["--switchyard-port"], "INTEGER", "The loopback port of the managed switchyard-server."),
+];
+
+/// The write end of the signal pipe; the handler writes the signal's
+/// number there.
+static SIG_PIPE: AtomicI32 = AtomicI32::new(-1);
+
+extern "C" fn on_signal(sig: libc::c_int) {
+    let fd = SIG_PIPE.load(Ordering::SeqCst);
+    if fd >= 0 {
+        let b = sig as u8;
+        unsafe {
+            libc::write(fd, &b as *const u8 as *const libc::c_void, 1);
+        }
     }
 }
 
-const ROUTER_HELP: &str = "Usage: daisugi router [OPTIONS] COMMAND [ARGS]...
-
-  The gateway's model chooser: NVIDIA NeMo Switchyard as a managed child,
-  or the built-in rules router.
-
-Commands:
-  label   Record whether a session's task succeeded: the outcome a graft trial counts.
-  status  Show the router choice, the Switchyard binary, each running child, and recent turns.
-  stop    Stop every switchyard-server that a gateway started and left running.
-";
-
-/// `str()` of a decoded JSON value.
-fn py_str_of(v: &Value) -> String {
-    match v {
-        Value::Str(s) => s.clone(),
-        other => py_repr(other).unwrap_or_default(),
+/// SIGINT, SIGTERM and SIGHUP written to a pipe; returns its read end.
+fn catch_signals() -> std::io::Result<i32> {
+    let mut fds = [0i32; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    SIG_PIPE.store(fds[1], Ordering::SeqCst);
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = on_signal as extern "C" fn(libc::c_int) as usize;
+            sa.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut sa.sa_mask);
+            if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(fds[0])
 }
 
 impl Env {
-    /// `load_config(path)` as a command that has not caught its errors
-    /// meets it: an invalid file ends the run with pydantic's error.
-    pub(super) fn load_cfg(&mut self, cmd: &str, path: &str) -> Result<Config, Stop> {
-        match config::load(path) {
-            Ok(c) => Ok(c),
-            Err(ConfigErr::Yaml(line)) => {
-                self.errf(&format!("daisugi {cmd}: {line}\n"));
-                Err(Stop::Exit(1))
-            }
-            Err(ConfigErr::Invalid) => {
-                self.errf(&format!("daisugi {cmd}: pydantic_core._pydantic_core.ValidationError: {path} does not validate\n"));
-                Err(Stop::Exit(1))
-            }
-            Err(e) => Err(self.refuse(cmd, &format!("{path} is not one this binary reads: {e}")).unwrap_err()),
-        }
-    }
-
-    /// `_fail`: what, why and fix on stderr, then the exit code.
-    pub(super) fn fail3(&mut self, what: &str, why: &str, fix: &str, code: i32) -> Stop {
-        self.errf(&format!("{what}\n{why}\n{fix}\n"));
-        Stop::Exit(code)
-    }
-
-    /// `_start_switchyard_for_gateway`: a healthy child and the target pair
-    /// to meter by, or the run ends.
-    pub(super) fn start_switchyard_for_gateway(
-        &mut self,
-        data_dir: &str,
-        own: Option<&str>,
-        port: i64,
-    ) -> Result<(External, String, SwitchyardChild), Stop> {
-        let path = self.env.get("PATH").cloned().unwrap_or_default();
-        let binary = sy::look_path(sy::BINARY_NAME, &path);
-        if let Some(problem) = sy::prerequisite_problem(binary.as_deref()) {
-            self.errf(&format!("{problem}\n"));
-            return Err(Stop::Exit(3));
-        }
-        let cfg = self.load_cfg("gateway", &format!("{data_dir}/config.yaml"))?;
-        let mut prices = Prices::new();
-        let files = sy::child_files(data_dir, port);
-        let (dir, name) = files.config.rsplit_once('/').map(|(a, b)| (a.to_string(), b.to_string())).unwrap_or_default();
-        let config_path;
-        let mut auth: Option<Auth> = None;
-        if let Some(own) = own {
-            let own = path_str(own);
-            let text = match std::fs::read(&own) {
-                Ok(raw) => match crate::gate::pymodel::decode_utf8_strict(&raw) {
-                    Ok(t) => t,
-                    Err(msg) => {
-                        return Err(self.fail3(
-                            &format!("cannot read {own}: {msg}"),
-                            "the gateway copies your Switchyard config before it starts the child.",
-                            "check the path you gave to --switchyard-config.",
-                            1,
-                        ));
-                    }
-                },
-                Err(e) => {
-                    return Err(self.fail3(
-                        &format!("cannot read {own}: {}", sy::py_os_error(&e, &own)),
-                        "the gateway copies your Switchyard config before it starts the child.",
-                        "check the path you gave to --switchyard-config.",
-                        1,
-                    ))
-                }
-            };
-            // read_text reads with universal newlines.
-            let text = text.replace("\r\n", "\n").replace('\r', "\n");
-            config_path = sy::write_config(&dir, &text, &name).map_err(|e| self.fail("gateway", &e.to_string()).unwrap_err())?;
-        } else {
-            let Some(targets) = sy::targets_from_config(&sy_config(&cfg)) else {
-                return Err(self.fail3(
-                    "no efficient model is set for Switchyard.",
-                    "the stage router needs a cheaper tier to choose.",
-                    "run: daisugi install --gateway --router switchyard --efficient-model <id>",
-                    1,
-                ));
-            };
-            let env = self.env.clone();
-            let text = match sy::render(&targets, &cfg.switchyard_route_id, &|n: &str| env.get(n).is_some_and(|v| !v.is_empty()))
-            {
-                Ok(t) => t,
-                Err(why) => {
-                    return Err(self.fail3(
-                        &format!("cannot write the Switchyard config: {why}"),
-                        "the values in config.yaml do not make a valid route.",
-                        "fix switchyard_* in config.yaml, or run daisugi install again.",
-                        1,
-                    ))
-                }
-            };
-            config_path = sy::write_config(&dir, &text, &name).map_err(|e| self.fail("gateway", &e.to_string()).unwrap_err())?;
-            auth = Some(sy::auth_modes(&targets));
-            if targets.efficient_local {
-                prices.insert(targets.efficient_id.clone(), Price::default());
-            }
-        }
-        let (capable, efficient) = match sy::route_targets(&config_path, &cfg.switchyard_route_id) {
-            Ok(p) => p,
-            Err(RouteErr::ValueError(m)) => {
-                self.errf(&format!("Traceback (most recent call last): ...\nValueError: {m}\n"));
-                return Err(super::exit(1).unwrap_err());
-            }
-            Err(RouteErr::Meter(m)) => {
-                return Err(self.fail3(
-                    &format!("cannot meter this Switchyard config: {m}"),
-                    "the gateway books each turn by the two tiers of the route it sends.",
-                    "name a stage_router route with id switchyard_route_id, or pass a --switchyard-config that has one.",
-                    1,
-                ))
-            }
-        };
-        if auth.is_none() {
-            auth = sy::auth_from_toml(&config_path, &cfg.switchyard_route_id);
-        }
-        let state = sy::state_path(data_dir, port);
-        let (h, msg) = sy::start(&sy::StartOptions {
-            config_path: config_path.clone(),
-            binary: binary.unwrap_or_default(),
-            routing_log: files.routing_log,
-            log_path: files.log,
-            state_path: state.clone(),
-            route_id: cfg.switchyard_route_id.clone(),
-            port,
-            auth: auth.clone(),
-            wait: std::time::Duration::from_secs(10),
-            kill_grace: std::time::Duration::from_secs(2),
-        });
-        self.out(&format!("  switchyard: {msg}\n"));
-        let Some(h) = h else { return Err(Stop::Exit(3)) };
-        self.out(&format!("  switchyard config: {config_path}\n"));
-        self.out(&format!("  capable tier: {capable}   efficient tier: {efficient}\n"));
-        if let Some(a) = &auth {
-            self.out(&format!("  capable auth: {}\n", a.capable));
-            self.out(&format!("  efficient auth: {}\n", a.efficient));
-        }
-        let ext = External { route_id: cfg.switchyard_route_id.clone(), capable_target: capable, efficient_target: efficient, prices };
-        let base = h.base_url();
-        Ok((ext, base, SwitchyardChild { h, state }))
-    }
-
-    pub(super) fn router(&mut self, args: &[String]) -> Res {
-        if args.is_empty() {
-            // typer's no_args_is_help: the help, then exit 2.
-            self.out(ROUTER_HELP);
-            return exit(2);
-        }
-        if args[0] == "--help" {
-            self.out(ROUTER_HELP);
-            return Ok(());
-        }
-        match args[0].as_str() {
-            "label" => self.router_label(&args[1..]),
-            "status" => self.router_status(&args[1..]),
-            "stop" => self.router_stop(&args[1..]),
-            other => {
-                self.errf(&format!(
-                    "Usage: daisugi router [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi router --help' for help.\n\nError: No such command '{other}'.\n"
-                ));
-                exit(2)
-            }
-        }
-    }
-
-    fn load_journal_for(&mut self, cmd: &str, data_dir: &str) -> Result<Vec<JRecord>, Stop> {
-        match load_journal(&format!("{data_dir}/gateway/turns.jsonl")) {
-            Ok(r) => Ok(r),
-            Err(e) => Err(self.journal_err(cmd, e)),
-        }
-    }
-
-    fn journal_err(&mut self, cmd: &str, e: JournalErr) -> Stop {
-        match e {
-            JournalErr::Unread(why) => self.refuse(cmd, &why).unwrap_err(),
-            JournalErr::Io(e) => self.fail(cmd, &e.to_string()).unwrap_err(),
-        }
-    }
-
-    fn router_status(&mut self, args: &[String]) -> Res {
-        const CMD: &str = "router status";
-        let opts = [Opt::val(&["--data-dir"], "PATH", "Daisugi data directory."), Opt::flag(&["--json"], "Machine-readable JSON output.")];
-        let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
+    pub(super) fn router_serve(&mut self, args: &[String]) -> Res {
+        const CMD: &str = "router serve";
+        let p = parse_args(args, ROUTER_OPTS, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
-            return self.cmd_help(CMD, "", "Show the router choice, the Switchyard binary, each running child, and recent turns.", &opts);
+            return self.cmd_help(CMD, "", "Run the token-saving router: a local proxy any harness points at via base_url.", ROUTER_OPTS);
         }
+        let port = self.click_int(CMD, &p, "--port", 8787)?;
+        let sy_port = self.click_int(CMD, &p, "--switchyard-port", 4000)?;
+        // The upstream calls go through a proxy as httpx picks one. A proxy
+        // setting this binary cannot read the same way is refused before
+        // anything starts; one httpx cannot build a client from fails each
+        // turn, as it does in the oracle.
+        if let Some(crate::netproxy::Refusal::Unported(why)) = crate::netproxy::process_httpx().refusal() {
+            return self.not_yet(&format!("daisugi router serve with this proxy setting ({why})"));
+        }
+        let host = p.str("--host", "127.0.0.1");
+        let mut upstream = p.str("--upstream", "https://api.anthropic.com");
+        let cheap = p.str("--cheap-model", "claude-haiku-4-5");
         let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
-        let cfg = self.load_cfg(CMD, &format!("{data_dir}/config.yaml"))?;
-        let path = self.env.get("PATH").cloned().unwrap_or_default();
-        let binary = sy::look_path(sy::BINARY_NAME, &path);
-        let version = sy::version(binary.as_deref());
-        struct Child {
-            obj: Object,
-            running: bool,
-            auth: Option<Object>,
-            host: String,
-            path: String,
-        }
-        let mut children = vec![];
-        let mut unreadable = vec![];
-        for sf in sy::list_states(&data_dir) {
-            let Some(st) = sf.state else {
-                unreadable.push(sf.path);
-                continue;
-            };
-            let running = sy::child_is_running(st.pid);
-            let healthy = running && sy::probe_health(&st.host, st.port);
-            let auth = match st.obj.value("auth") {
-                Value::Obj(a) => Some(a.clone()),
-                _ => None,
-            };
-            let mut route_id = st.obj.value("route_id").clone();
-            if !route_id.truthy() {
-                route_id = Value::Str(cfg.switchyard_route_id.clone());
-            }
-            let mut o = Object::new();
-            o.set("pid", st.obj.value("pid").clone());
-            o.set("host", st.host.as_str());
-            o.set("port", st.obj.value("port").clone());
-            o.set("running", running);
-            o.set("healthy", healthy);
-            o.set("config_path", st.obj.value("config_path").clone());
-            o.set("route_id", route_id);
-            o.set("auth", auth.clone().map(Value::Obj).unwrap_or(Value::Null));
-            o.set("state_file", sf.path.as_str());
-            children.push(Child { obj: o, running, auth, host: st.host.clone(), path: sf.path });
-        }
-        let next = sy::targets_from_config(&sy_config(&cfg)).map(|t| sy::auth_modes(&t));
-        let records = self.load_journal_for(CMD, &data_dir)?;
-        let mut recent = match external_records(&records) {
-            Ok(r) => r,
-            Err(e) => return Err(self.journal_err(CMD, e)),
-        };
-        if recent.len() > 10 {
-            recent = recent.split_off(recent.len() - 10);
-        }
-        let share = match share_table(&records) {
-            Ok(s) => s,
-            Err(e) => return Err(self.journal_err(CMD, e)),
-        };
-        let weeks = super::routermeasure::weekly(&data_dir);
-        let (dstate, dlines) = match super::routermeasure::delegate_state(&data_dir, &self.env) {
-            Ok(x) => x,
-            Err(why) => return self.refuse(CMD, &why),
-        };
-        let trial = match super::routermeasure::trial_state(&data_dir) {
-            Ok(t) => t,
-            Err(why) => return self.refuse(CMD, &why),
-        };
-        let knn_state = if cfg.gateway_router == "knn" || cfg.gateway_router == "model" {
-            match super::routeknn::knn_summary(&format!("{data_dir}/gateway/routing.db")) {
-                Ok(s) => Some(s),
-                Err(why) => return self.fail(CMD, &why),
-            }
-        } else {
-            None
-        };
-        if p.flag("--json") {
-            let mut o = Object::new();
-            if let Some(k) = &knn_state {
-                o.set("knn", Value::Obj(k.object()));
-            }
-            o.set("router", cfg.gateway_router.as_str());
-            o.set("binary", binary.clone().map(Value::Str).unwrap_or(Value::Null));
-            o.set("version", version.clone().map(Value::Str).unwrap_or(Value::Null));
-            o.set("children", Value::List(children.iter().map(|c| Value::Obj(c.obj.clone())).collect()));
-            o.set("unreadable_state_files", Value::List(unreadable.iter().map(|u| Value::Str(u.clone())).collect()));
-            o.set(
-                "next_start_auth",
-                match &next {
-                    Some(a) => {
-                        let mut x = Object::new();
-                        x.set("capable", a.capable.as_str());
-                        x.set("efficient", a.efficient.as_str());
-                        Value::Obj(x)
-                    }
-                    None => Value::Null,
-                },
-            );
-            let rows: Vec<Value> = share
-                .iter()
-                .map(|r| {
-                    let mut x = Object::new();
-                    x.set("model", r.model.as_str());
-                    x.set("turns", r.turns as i64);
-                    x.set("share", r.share);
-                    x.set("input_tokens", Value::Int(r.input.to_string()));
-                    x.set("output_tokens", Value::Int(r.output.to_string()));
-                    x.set("frontier_tokens_saved", Value::Int(r.saved.to_string()));
-                    Value::Obj(x)
-                })
-                .collect();
-            o.set("targets", Value::List(rows));
-            let rt: Vec<Value> = recent
-                .iter()
-                .map(|r| {
-                    let mut x = Object::new();
-                    x.set("task", r.task.as_str());
-                    x.set("model", r.model.clone());
-                    x.set("downgraded", r.downgraded);
-                    Value::Obj(x)
-                })
-                .collect();
-            o.set("recent_turns", Value::List(rt));
-            o.set("weeks", Value::List(weeks.iter().map(|w| Value::Obj(w.object())).collect()));
-            o.set("escalation_built", false);
-            o.set("delegate", Value::Obj(dstate));
-            o.set("trial", trial.as_ref().map(|(t, _)| Value::Obj(t.clone())).unwrap_or(Value::Null));
-            self.out(&format!("{}\n", pyjson::dumps(&Value::Obj(o), true)));
-            return Ok(());
-        }
-        self.out(&format!("configured router: {}\n", cfg.gateway_router));
-        match &binary {
-            Some(b) => self.out(&format!("  binary:  {b}\n")),
-            None => self.out(&format!("  binary:  not found. Install it with: {}\n", sy::INSTALL_CMD)),
-        }
-        if let Some(v) = &version {
-            self.out(&format!("  version: {v}\n"));
-        }
-        let live = children.iter().any(|c| c.running);
-        if live {
-            self.out("running router: switchyard\n");
-        }
-        for c in children.iter().filter(|c| !c.running) {
-            self.out(&format!(
-                "  stale state file: {}. Pid {} is not a running switchyard-server. Clear it with: daisugi router stop\n",
-                c.path,
-                py_str_of(c.obj.value("pid"))
+        let capture = p.flag("--capture-answers");
+        let local_flag = p.str("--local-model", "");
+        let openai_up = p.str("--openai-upstream", "https://api.openai.com");
+        let openai_cheap = p.str("--openai-cheap-model", "gpt-5-mini");
+        let cfg_path = format!("{data_dir}/config.yaml");
+        let router = if p.has("--routing-mode") { p.str("--routing-mode", "") } else { self.load_cfg(CMD, &cfg_path)?.routing_mode };
+        if !ROUTERS.contains(&router.as_str()) {
+            self.errf(&format!(
+                "unknown --routing-mode {}.\nthe router knows five choosers.\nchoose one of: {}\n",
+                repr(&router),
+                ROUTERS.join(", ")
             ));
-        }
-        for c in children.iter().filter(|c| c.running) {
-            let status = if c.obj.value("healthy") == &Value::Bool(true) { "healthy" } else { "not answering" };
-            self.out(&format!(
-                "  child:   pid {} on {}:{}, {status}, route {}\n",
-                py_str_of(c.obj.value("pid")),
-                c.host,
-                py_str_of(c.obj.value("port")),
-                py_str_of(c.obj.value("route_id"))
-            ));
-            self.out(&format!("    config: {}\n", py_str_of(c.obj.value("config_path"))));
-            match &c.auth {
-                Some(a) if !a.is_empty() => {
-                    let Some(capable) = a.get("capable") else {
-                        self.errf("Traceback (most recent call last): ...\nKeyError: 'capable'\n");
-                        return exit(1);
-                    };
-                    self.out(&format!("    capable auth:   {}\n", py_str_of(capable)));
-                    let Some(efficient) = a.get("efficient") else {
-                        self.errf("Traceback (most recent call last): ...\nKeyError: 'efficient'\n");
-                        return exit(1);
-                    };
-                    self.out(&format!("    efficient auth: {}\n", py_str_of(efficient)));
-                }
-                _ => self.out("    auth: not recorded at start\n"),
-            }
-        }
-        if !live {
-            self.out("  child:   not running. Start it with: daisugi gateway --router switchyard\n");
-            if let Some(n) = &next {
-                self.out(&format!("  capable auth at next start:   {}\n", n.capable));
-                self.out(&format!("  efficient auth at next start: {}\n", n.efficient));
-            }
-        }
-        for u in &unreadable {
-            self.out(&format!("  unreadable state file: {u}. Remove it by hand, or run daisugi router stop.\n"));
-        }
-        if !share.is_empty() {
-            self.out("  targets:\n");
-            for ln in format_share_table(&share) {
-                self.out(&format!("  {ln}\n"));
-            }
-        }
-        self.out(&format!("  recent turns, last {}:\n", recent.len()));
-        for r in &recent {
-            let joined = text::split(&r.task).join(" ");
-            let label: String = joined.chars().take(60).collect();
-            let saved = if r.downgraded { "saving" } else { "no saving" };
-            self.out(&format!("    {}  {}  {saved}\n", pad_repr(&label, 62), r.model.as_str().unwrap_or_default()));
-        }
-        if let Some(k) = &knn_state {
-            self.out(&format!(
-                "knn outcomes: {} booked (good {}, bad {}, unknown {}) in {}\n",
-                k.booked, k.good, k.bad, k.unknown, k.path
-            ));
-            self.out(&format!("  recent knn turns, last {}:\n", k.recent.len()));
-            for t in &k.recent {
-                self.out(&format!("    {}  {}  {}\n", t.turn_id, t.model, t.outcome));
-            }
-            self.out("  set an outcome by hand with: daisugi route feedback <turn-id> good|bad\n");
-        }
-        self.out("by week (UTC), newest first; escalation is not built yet:\n");
-        if weeks.is_empty() {
-            self.out("  no turns and no delegations recorded\n");
-        }
-        for w in &weeks {
-            self.out(&format!("  {}\n", w.line()));
-        }
-        for ln in &dlines {
-            self.out(&format!("{ln}\n"));
-        }
-        if let Some((_, lines)) = &trial {
-            for ln in lines {
-                self.out(&format!("{ln}\n"));
-            }
-        }
-        Ok(())
-    }
-
-    /// `daisugi router label`: the operator's outcome for a session.
-    fn router_label(&mut self, args: &[String]) -> Res {
-        const CMD: &str = "router label";
-        let opts = [
-            Opt::val(&["--note"], "TEXT", "Why, in a few words."),
-            Opt::val(&["--data-dir"], "PATH", "Daisugi data directory."),
-            Opt::flag(&["--json"], "Print the row as JSON."),
-        ];
-        let p = match parse_args(args, &opts, 2) {
-            Ok(p) => p,
-            Err(m) => return self.usage_args(CMD, "SESSION OUTCOME", &m),
-        };
-        if p.help {
-            return self.cmd_help(
-                CMD,
-                "SESSION OUTCOME",
-                "Record whether a session's task succeeded: the outcome a graft trial counts.",
-                &opts,
-            );
-        }
-        if p.args.len() < 2 {
-            let missing = if p.args.is_empty() { "session" } else { "outcome" };
-            return self.usage_args(CMD, "SESSION OUTCOME", &format!("Missing argument '{missing}'."));
-        }
-        let (session, outcome) = (p.args[0].clone(), p.args[1].clone());
-        if outcome != "pass" && outcome != "fail" {
-            self.errf("Error: OUTCOME must be pass or fail.\n");
-            return exit(2);
-        }
-        if !super::routermeasure::session_ok(&session) {
-            self.errf(
-                "Error: SESSION must be a session id as the gate names it: 1 to 128 of A-Z a-z 0-9 . _ -, with no dot at either end.\n",
-            );
-            return exit(2);
-        }
-        let note = if p.has("--note") {
-            let n = p.str("--note", "");
-            if text::len(&n) > super::routermeasure::MAX_NOTE_CHARS {
-                self.errf(&format!(
-                    "Error: --note must be at most {} characters.\n",
-                    super::routermeasure::MAX_NOTE_CHARS
-                ));
-                return exit(2);
-            }
-            Value::Str(n)
-        } else {
-            Value::Null
-        };
-        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
-        let row = Object::new()
-            .with("at", crate::delegate::now_iso())
-            .with("session", session.as_str())
-            .with("outcome", outcome.as_str())
-            .with("note", note);
-        let line = pyjson::dumps(&Value::Obj(row), true);
-        let path = super::routermeasure::labels_path(&data_dir);
-        if !append_label(&data_dir, &path, &format!("{line}\n")) {
-            self.errf(&format!("Error: the label could not be written to {path}.\n"));
             return exit(1);
         }
-        if p.flag("--json") {
-            self.out(&format!("{line}\n"));
-            return Ok(());
+        let mut shown_local = local_flag.clone();
+        if shown_local.is_empty() {
+            if let Some(l) = self.load_cfg(CMD, &cfg_path)?.router_local_model {
+                shown_local = l;
+            }
         }
-        self.out(&format!("labeled {session}: {outcome}\n"));
-        Ok(())
-    }
-
-    fn router_stop(&mut self, args: &[String]) -> Res {
-        const CMD: &str = "router stop";
-        let opts = [Opt::val(&["--data-dir"], "PATH", "Daisugi data directory.")];
-        let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
-        if p.help {
-            return self.cmd_help(CMD, "", "Stop every switchyard-server that a gateway started and left running.", &opts);
+        let mut kind = p.str("--upstream-kind", "");
+        if p.has("--upstream-kind") && !UPSTREAM_KINDS.contains(&kind.as_str()) {
+            self.errf(&format!(
+                "unknown --upstream-kind {}.\nthe router only knows the wires it can shim count_tokens for.\nchoose one of: {}\n",
+                repr(&kind),
+                UPSTREAM_KINDS.join(", ")
+            ));
+            return exit(1);
         }
-        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
-        let states = sy::list_states(&data_dir);
-        if states.is_empty() {
-            self.out("no switchyard-server state file; nothing to stop\n");
-            return Ok(());
+        if !p.has("--upstream-kind") {
+            // The recorded kind counts only when --upstream names that host.
+            let home_cfg = self.load_cfg(CMD, &super::wardenroot::join(&self.data_home(), "config.yaml"))?;
+            kind = "anthropic".into();
+            if let (Some(base), Some(k)) = (&home_cfg.llm_base_url, &home_cfg.llm_host_kind) {
+                if !base.is_empty() && !k.is_empty() && upstream.trim_end_matches('/') == base.trim_end_matches('/') {
+                    kind = kind_to_backend(k).into();
+                }
+            }
         }
-        for sf in states {
-            let msg = sy::stop(&sf.path);
-            self.out(&format!("{msg}\n"));
-        }
-        Ok(())
-    }
-
-    pub(super) fn gateway_report(&mut self, args: &[String]) -> Res {
-        const CMD: &str = "gateway-report";
-        let opts = [Opt::val(&["--data-dir"], "PATH", "Daisugi data directory (reads <data-dir>/gateway/turns.jsonl).")];
-        let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
-        if p.help {
-            return self.cmd_help(CMD, "", "Calibrate the gateway on a real recorded day: realized routing + potential reuse.", &opts);
-        }
-        let data_dir = path_str(&p.str("--data-dir", &self.data_home()));
-        let records = self.load_journal_for(CMD, &data_dir)?;
-        if records.is_empty() {
-            self.out("no turns recorded yet \u{2014} run `daisugi gateway` to start journaling.\n");
-            return Ok(());
-        }
-        let share = match share_table(&records) {
-            Ok(s) => s,
-            Err(e) => return Err(self.journal_err(CMD, e)),
+        let mode = match router.as_str() {
+            "switchyard" => MODE_EXTERNAL,
+            "knn" => MODE_KNN,
+            "model" => MODE_MODEL,
+            "off" => MODE_OFF,
+            _ => MODE_RULES,
         };
-        if !share.is_empty() {
-            self.out("Switchyard targets, measured. Each turn is booked by the target it names:\n");
-            for ln in format_share_table(&share) {
-                self.out(&format!("{ln}\n"));
-            }
-            self.out("\n");
+        let mut ext: Option<External> = None;
+        let mut child = None;
+        if router == "switchyard" {
+            let own = if p.has("--switchyard-config") { Some(p.str("--switchyard-config", "")) } else { None };
+            let (e, base, c) = self.start_switchyard_for_router(&data_dir, own.as_deref(), sy_port as i64)?;
+            ext = Some(e);
+            upstream = base;
+            child = Some(c);
+            kind = "anthropic".into();
         }
-        let mut cands = vec![];
-        if records.iter().any(|r| !r.signature.is_empty()) {
-            let mut turns = vec![];
-            for r in &records {
-                let t: BigInt = &r.input + &r.cache_read + &r.cache_creation + &r.output;
-                let Some(tokens) = crate::gateway::report::to_i128(&t) else {
-                    return self.refuse(CMD, "a gateway turn's token count is past the range this binary adds up");
+        let port_n = port;
+        self.out(&format!("opendaisugi router  \u{2192}  {upstream}\n"));
+        self.out(&format!("  routing mode: {router}\n"));
+        if !shown_local.is_empty() && router == "rules" {
+            self.out(&format!("  local rung: easy turns go to {shown_local}\n"));
+        }
+        if router == "knn" {
+            self.out(&format!("  knn outcomes: {data_dir}/router/routing.db\n"));
+        }
+        let cfg_now = self.load_cfg(CMD, &cfg_path)?;
+        if router == "model" {
+            let rm = cfg_now.routing_model.clone().unwrap_or_else(|| "not set".into());
+            self.out(&format!("  routing model: {rm}\n"));
+            self.out(&format!("  outcomes: {data_dir}/router/routing.db\n"));
+        }
+        if !model::off(cfg_now.router_grader.as_deref()).is_empty() {
+            self.out(&format!("  grader: {}\n", cfg_now.router_grader.clone().unwrap_or_default()));
+        }
+        self.out(&format!("  listening on http://{host}:{port_n}  (journal: {data_dir}/router/turns.jsonl)\n"));
+        self.out(&format!(
+            "  config reload: on change to {data_dir}/config.yaml, on SIGHUP, or POST http://{host}:{port_n}/_reload from this machine\n"
+        ));
+        self.out(&format!("  point your harness at it:  ANTHROPIC_BASE_URL=http://{host}:{port_n}\n"));
+        if !openai_cheap.is_empty() {
+            self.out(&format!("  OpenAI wire: \u{2026}/chat/completions \u{2192} {openai_up} (easy turns \u{2192} {openai_cheap})\n"));
+        }
+        if capture {
+            self.out(&format!("  capturing answers to:      {data_dir}/router/answers.jsonl\n"));
+        }
+        // From here on, lines are written as they happen.
+        self.flush();
+        let journal = format!("{data_dir}/router/turns.jsonl");
+        let answers = if capture { format!("{data_dir}/router/answers.jsonl") } else { String::new() };
+        let knn = if router == "knn" || router == "model" { Some(self.knn_router(&data_dir)) } else { None };
+        let build = {
+            let (journal, answers, knn) = (journal.clone(), answers.clone(), knn.clone());
+            move |local: &str, cheap: &str, mode: &str, ext: Option<External>, routing_model: &str, grader: &str| -> Result<Router, String> {
+                Router::new(Settings {
+                    cheap_model: cheap.into(),
+                    local_model: local.into(),
+                    routing_mode: mode.into(),
+                    external: ext,
+                    knn: if mode == MODE_KNN || mode == MODE_MODEL { knn.clone() } else { None },
+                    routing_model: if mode == MODE_MODEL { routing_model.into() } else { String::new() },
+                    grader_model: if mode == MODE_KNN || mode == MODE_MODEL { grader.into() } else { String::new() },
+                    journal_path: journal.clone(),
+                    answers_path: answers.clone(),
+                    capture_answers: capture,
+                    max_answers: 0,
+                })
+            }
+        };
+        let rebuild = {
+            let (cfg_path, local_flag, cheap, ext, build) = (cfg_path.clone(), local_flag.clone(), cheap.clone(), ext.clone(), build.clone());
+            move || -> Option<Router> {
+                let cfg = match config::load(&cfg_path) {
+                    Ok(c) => c,
+                    Err(ConfigErr::Unsupported) => {
+                        eprintln!("daisugi router serve: {cfg_path} is not one this binary reads; keeping the running router.");
+                        return None;
+                    }
+                    Err(_) => return None,
                 };
-                turns.push(Turn { signature: r.signature.clone(), task: r.task.clone(), tokens, dollars: r.actual });
+                let local = if local_flag.is_empty() { cfg.router_local_model.unwrap_or_default() } else { local_flag.clone() };
+                build(&local, &cheap, mode, ext.clone(), &model::off(cfg.routing_model.as_deref()), &model::off(cfg.router_grader.as_deref())).ok()
             }
-            let cfg = match config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
-                Ok(c) => c,
-                Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
-            };
-            let notes = Rc::new(RefCell::new(String::new()));
-            let pe = self.potion_env(&notes);
-            let m = match select_matcher(&cfg.matcher_model, &pe) {
-                Ok(Some(m)) => m,
-                Ok(None) => {
-                    self.errf(&format!("matcher_model={} is not a built embedder.\n", repr(&cfg.matcher_model)));
-                    return exit(1);
-                }
-                Err(nc) => return self.refuse(CMD, &nc.0),
-            };
-            let emb = load_embedder(&m, &pe);
-            self.drain_notes(&notes);
-            let emb = match emb {
-                Ok(e) => e,
-                Err(why) => {
-                    self.errf(&format!("{why}\n"));
-                    return exit(2);
-                }
-            };
-            for c in rank_reuse(&turns, &emb, m.threshold(), &mut |_| false) {
-                cands.push(Candidate { count: c.count, tokens: BigInt::from(c.tokens), dollars: c.dollars });
+        };
+        let reloader = Arc::new(Reloader::new(cfg_path.clone(), Box::new(rebuild), Duration::from_secs(2)));
+        let anthropic: Shared = match reloader.current() {
+            Some(g) => g,
+            None => match build(&local_flag, &cheap, mode, ext.clone(), &model::off(cfg_now.routing_model.as_deref()), &model::off(cfg_now.router_grader.as_deref())) {
+                Ok(g) => Arc::new(std::sync::Mutex::new(g)),
+                Err(why) => return self.fail(CMD, &why),
+            },
+        };
+        let openai = if openai_cheap.is_empty() {
+            None
+        } else {
+            match build(&local_flag, &openai_cheap, MODE_RULES, None, "", "") {
+                Ok(g) => Some(Arc::new(std::sync::Mutex::new(g))),
+                Err(why) => return self.fail(CMD, &why),
             }
-            self.drain_notes(&notes);
+        };
+        let srv = Arc::new(Server {
+            anthropic,
+            reloader: Some(reloader.clone()),
+            openai,
+            upstream_base: upstream,
+            openai_base: openai_up,
+            upstream_kind: kind,
+        });
+        let code = serve(srv, &reloader, &host, port_n);
+        if let Some(c) = &child {
+            // The oracle's exit cleanup. After SIGTERM it runs too, from the
+            // oracle's SIGTERM handler, once the server has drained.
+            let msg = c.stop();
+            self.out(&format!("  switchyard: {msg}\n"));
         }
-        let r = build_report(&records, &cands);
-        let s = &r.summary;
-        let f2 = |x: f64| format_f(x, 2);
-        let mut b = String::new();
-        b.push_str("Routing (realized) \u{2014} measured from turns already run:\n");
-        b.push_str(&format!("  turns:                 {}\n", s.turns));
-        b.push_str(&format!("  downgraded turns:      {}\n", s.downgraded));
-        b.push_str(&format!("  frontier tokens saved: {}\n", commas(&s.frontier_saved)));
-        b.push_str(&format!("  dollars saved:         ${}\n", f2(s.dollars_saved)));
-        b.push_str(&format!("  blended multiplier:    {}x\n", f2(s.blended)));
-        b.push_str(&format!("  local-rung turns:      {}\n", s.local_turns));
-        b.push('\n');
-        b.push_str("Prompt cache (measured) \u{2014} the provider's own usage split:\n");
-        b.push_str(&format!("  cache read tokens:     {}\n", commas(&s.cache_read)));
-        b.push_str(&format!("  cache write tokens:    {}\n", commas(&s.cache_creation)));
-        b.push_str(&format!("  cache hit rate:        {} of all input\n", percent(s.cache_hit_rate)));
-        b.push('\n');
-        b.push_str("Reuse opportunity (ceiling) \u{2014} NOT measured, assumes perfect fresh reuse:\n");
-        b.push_str(&format!("  repeat clusters:       {}\n", r.repeat_clusters));
-        b.push_str(&format!("  recoverable tokens:    {}\n", commas(&r.recoverable_tokens)));
-        b.push_str(&format!("  recoverable dollars:   ${}\n", f2(r.recoverable_dollars)));
-        b.push('\n');
-        b.push_str("Combined (ceiling) \u{2014} realized routing plus the reuse ceiling above:\n");
-        b.push_str(&format!("  frontier tokens saved: {}\n", commas(&r.combined_saved)));
-        b.push_str(&format!("  blended multiplier:    {}x\n", f2(r.combined_multiplier)));
-        b.push('\n');
-        b.push_str(
-            "note: the Reuse and Combined figures are a CEILING, assuming every repeat-after-the-first is served from a \
-             perfect, fresh cache \u{2014} only Routing above is measured.\n",
-        );
-        self.out(&b);
+        if code == -libc::SIGTERM {
+            // The oracle's server re-raises SIGTERM once it has drained, and
+            // its handler ends the process by that signal after the cleanup.
+            self.flush();
+            unsafe {
+                libc::signal(libc::SIGTERM, libc::SIG_DFL);
+                libc::raise(libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+        if code != 0 {
+            return exit(code);
+        }
         Ok(())
     }
 }
 
-/// `router_report.write_label`'s file work: false when it cannot be written.
-fn append_label(data_dir: &str, path: &str, line: &str) -> bool {
-    use std::io::Write;
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let to_path = |p: &str| -> Option<std::path::PathBuf> {
-        let b = text::fsencode(p).ok()?;
-        if b.contains(&0) {
-            return None;
+/// Binds, serves until SIGINT or SIGTERM, drains, and returns the exit
+/// code: 0 after SIGINT, -SIGTERM after SIGTERM, 3 when the port will not
+/// bind.
+fn serve(app: Arc<Server>, reloader: &Arc<Reloader>, host: &str, port: i128) -> i32 {
+    let sig = match catch_signals() {
+        Ok(fd) => fd,
+        Err(e) => {
+            eprintln!("ERROR:    {e}");
+            return 3;
         }
-        Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&b)))
     };
-    let (Some(dir), Some(file)) = (to_path(&format!("{data_dir}/router")), to_path(path)) else {
-        return false;
+    let bind_err = |n: i32| {
+        eprintln!(
+            "ERROR:    [Errno {n}] error while attempting to bind on address ({}, {port}): {}",
+            repr(host),
+            strerror(n).to_lowercase()
+        );
+        3
     };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return false;
-    }
-    let new = !file.exists();
-    let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o666).open(&file) else {
-        return false;
+    let Ok(port16) = u16::try_from(port) else { return bind_err(libc::EINVAL) };
+    let listener = match TcpListener::bind((host, port16)) {
+        Ok(l) => l,
+        Err(e) => return bind_err(e.raw_os_error().unwrap_or(libc::EADDRNOTAVAIL)),
     };
-    if f.write_all(line.as_bytes()).is_err() {
-        return false;
+    let life = Arc::new(Life::default());
+    let lfd = listener.as_raw_fd();
+    let code = loop {
+        let mut fds = [libc::pollfd { fd: lfd, events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: sig, events: libc::POLLIN, revents: 0 }];
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        if n < 0 {
+            continue;
+        }
+        if fds[1].revents != 0 {
+            let mut b = [0u8; 16];
+            let k = unsafe { libc::read(sig, b.as_mut_ptr() as *mut libc::c_void, b.len()) };
+            let mut stop = None;
+            for &s in &b[..k.max(0) as usize] {
+                match s as i32 {
+                    libc::SIGHUP => {
+                        reloader.reload();
+                    }
+                    libc::SIGINT => stop = stop.or(Some(0)),
+                    libc::SIGTERM => stop = stop.or(Some(-libc::SIGTERM)),
+                    _ => {}
+                }
+            }
+            if let Some(c) = stop {
+                break c;
+            }
+        }
+        if fds[0].revents != 0 {
+            if let Ok((s, _)) = listener.accept() {
+                let (app, life) = (app.clone(), life.clone());
+                life.open.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    handle(&app, s, &life);
+                    life.open.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        }
+    };
+    // Drain: no new connections; idle ones close, busy ones finish.
+    life.draining.store(true, Ordering::SeqCst);
+    drop(listener);
+    while life.open.load(Ordering::SeqCst) > 0 {
+        std::thread::sleep(Duration::from_millis(20));
     }
-    drop(f);
-    if new && std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).is_err() {
-        return false;
-    }
-    true
+    code
 }

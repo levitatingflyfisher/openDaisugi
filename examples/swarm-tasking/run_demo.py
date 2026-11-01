@@ -6,10 +6,10 @@ differentiator for drone-swarm delegation:
   1. A coordinator partitions its operational volume into disjoint sectors.
   2. Each drone is delegated a sector — proved CONTAINED in the coordinator
      (subsumption) and proved NON-OVERLAPPING with siblings (deconfliction).
-  3. Per-drone flight plans are gated: in-sector waypoints ACCEPT, out-of-sector
+  3. Per-drone flight plans are checked: in-sector waypoints ACCEPT, out-of-sector
      REJECT.
   4. Swarm-of-swarms: nested delegation + top-level deconfliction.
-  5. Comms-loss reassignment is gated on a fresh proof before it's allowed.
+  5. Comms-loss reassignment is checked on a fresh proof before it's allowed.
 
 We LEAD WITH THE REJECTIONS — the value is what the verifier refuses.
 
@@ -37,7 +37,7 @@ def _coordinator(bounds, *, velocity=3.0):
     # The end_effector_in_workspace invariant is the enforcement switch: it makes
     # verify() reject any CartesianMoveStep whose target leaves workspace_bounds.
     # Drones inherit it (partition_and_assign copies the coordinator), so each
-    # drone's plan is gated against its own tightened sector.
+    # drone's plan is checked against its own tightened sector.
     return Envelope(
         generated_by="swarm-coordinator",
         task="survey the field",
@@ -145,7 +145,7 @@ def main():
     )
 
     print("\n" + RULE)
-    print("5. COMMS-LOSS REASSIGNMENT — gated on a fresh proof")
+    print("5. COMMS-LOSS REASSIGNMENT — checked on a fresh proof")
     print(RULE)
     # drone_mid drops. Try to give its sector to drone_west by enlarging west.
     survivors = {k: v for k, v in assignments.items() if k != "drone_mid"}

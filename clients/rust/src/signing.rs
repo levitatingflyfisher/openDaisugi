@@ -9,7 +9,7 @@
 
 use ring::signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519};
 
-use crate::gate::pyjson::{
+use crate::warden::pyjson::{
     canonical_json_ascii, dumps_indent, loads_py, py_type_name, Object, Value,
 };
 use crate::lerr::{LErr, PyError, LR};

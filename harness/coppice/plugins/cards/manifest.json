@@ -1,0 +1,7 @@
+{
+  "id": "cards",
+  "kind": "view",
+  "title": "Cards",
+  "about": "Review cards: what an agent kept, why, and what switching would cost. Keep, switch or drop each one.",
+  "page": "index.html"
+}

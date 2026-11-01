@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""A pane foreman named claude, so the floor mounts the foreman's tools in
+"""A pane steward named claude, so the floor mounts the steward's tools in
 it (--mcp-config). It never calls a model.
 
 It writes its argv to $FAKE_PANE_DIR/argv.json (the binary of coppice as
-BIN). Then, as a process of the pane foreman's own tree, it calls status and
+BIN). Then, as a process of the pane steward's own tree, it calls status and
 zoom through the relay the MCP config names and writes the answers to
 $FAKE_PANE_DIR/tools.json; with $FAKE_PANE_SPAWN set it also spawns a
 worker on the project proj with the brief "ran". Then it turns on bracketed paste, says it is
-ready, and echoes what it reads, as the cases' fake foreman does.
+ready, and echoes what it reads, as the cases' fake steward does.
 """
 
 import json
@@ -22,10 +22,10 @@ args = sys.argv[1:]
 with open(os.path.join(d, "argv.json"), "w", encoding="utf-8") as f:
     json.dump(args, f, indent=1)
 answers = {}
-# The floor names this pane its foreman once the pane has started.
+# The floor names this pane its steward once the pane has started.
 time.sleep(1)
 if "--mcp-config" in args:
-    mcp = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["foreman"]
+    mcp = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]["steward"]
     lines = [
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "status", "arguments": {}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "zoom", "arguments": {"id": 0, "n": 1}}},

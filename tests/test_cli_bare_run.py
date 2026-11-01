@@ -22,10 +22,13 @@ _VISIBLE_TOP_LEVEL = {
     "orchestrate",
     "install",
     "config",
-    "gate",
+    "warden",
+    "router",
     "pathways",
     "journal",
+    "pando",
     "help",
+    "recipe",
 }
 
 
@@ -56,7 +59,7 @@ def test_help_all_lists_every_command():
         "orchestrate",
         "install",
         "config",
-        "gate",
+        "warden",
         "pathways",
         "journal",
         "onboard",
@@ -73,7 +76,7 @@ def test_help_all_lists_every_command():
         "mcp",
         "tiers",
         "gardener",
-        "gateway",
+        "router",
         "models",
         "pack",
         "bench",
@@ -87,8 +90,10 @@ def test_help_all_survives_quiet():
     assert "start" in res.output
 
 
-def test_top_level_visible_commands_are_exactly_ten():
-    """SF-5 (spec §8.2): exactly the ten named commands are visible; everything
+def test_top_level_visible_commands_are_the_thirteen_named():
+    """SF-5 (spec §8.2) named ten commands; the router group and recipe joined them when the
+    router became a named part (ADR-0026), and pando when the owner's conversation memory
+    moved into daisugi (ADR-0023). Exactly these are visible; everything
     else (onboard, run, verify, tend, setup, and every operational group) is hidden."""
     from typer.main import get_command
 

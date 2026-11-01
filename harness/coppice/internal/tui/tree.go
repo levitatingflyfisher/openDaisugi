@@ -17,8 +17,8 @@ type TaskRow struct {
 	Cwd      string
 	Worktree string
 	Model    string
-	// Foreman is the id of the pane that hears the task's asks first.
-	Foreman  string
+	// Steward is the id of the pane that hears the task's asks first.
+	Steward  string
 	State    string
 	Panes    []string
 	Ahead    int
@@ -44,7 +44,7 @@ func DecodeTasks(list []map[string]any) []TaskRow {
 			Cwd:      str(t, "cwd"),
 			Worktree: str(t, "worktree"),
 			Model:    str(t, "model"),
-			Foreman:  str(t, "foreman"),
+			Steward:  str(t, "steward"),
 			State:    str(t, "state"),
 		}
 		if raw, ok := t["panes"].([]any); ok {

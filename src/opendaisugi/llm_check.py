@@ -2,7 +2,7 @@
 
 Isolated so tests can monkeypatch the network call without touching the
 main predicate evaluator. Used by LLMCheck primitives in the predicate
-algebra. Stakes-gated: the evaluator rejects LLMCheck expressions in
+algebra. Stakes-checked: the evaluator rejects LLMCheck expressions in
 physical-stakes envelopes before this module is ever called.
 
 v0.12.0: routes through ``OPENDAISUGI_LLM_BACKEND=claude-code`` when set,

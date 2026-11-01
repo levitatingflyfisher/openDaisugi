@@ -42,7 +42,7 @@ func TestREADMEDocumentsEveryTopLevelCommand(t *testing.T) {
 		"coppice pane run", "coppice pane read", "coppice pane close",
 		"coppice pane resize", "coppice pane wait-output", "coppice pane explain",
 		"coppice pane fork", "coppice pane forget", "coppice pane resume",
-		"coppice floor note", "coppice skill foreman",
+		"coppice floor note", "coppice skill steward",
 		"coppice agent allow", "coppice agent deny",
 		"coppice agent list", "coppice agent get", "coppice agent prompt",
 		"coppice agent wait", "coppice agent read", "coppice attach",

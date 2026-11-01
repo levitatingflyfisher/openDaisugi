@@ -1,5 +1,5 @@
-//! The tokens the gateway says it saved today, for the floor header. The
-//! figure is the gateway's own, read from its turn journal and summed over
+//! The tokens the router says it saved today, for the floor header. The
+//! figure is the router's own, read from its turn journal and summed over
 //! the turns that name a pane of this floor; the floor never estimates one.
 
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ pub struct SavedCache {
 }
 
 /// Unix seconds of an RFC 3339 time, or None when the text is not one.
-/// This is the form the gateway writes: 2026-10-14T09:30:00.123456+00:00.
+/// This is the form the router writes: 2026-10-14T09:30:00.123456+00:00.
 fn parse_rfc3339(s: &str) -> Option<f64> {
     let b = s.as_bytes();
     if b.len() < 20 || !s.is_ascii() {
@@ -94,7 +94,7 @@ pub(crate) fn parse_rfc3339_secs(s: &str) -> Option<i64> {
 /// SAVED_TAIL_CAP bytes of path whose created_at falls on the local day of
 /// now. A line that is not a record, or names no pane, is skipped. A
 /// record that names a floor counts only when it is this one: pane ids
-/// start at w1:p1 on every floor, and floors share a gateway journal.
+/// start at w1:p1 on every floor, and floors share a router journal.
 fn read_saved_today(
     path: &PathBuf,
     now: f64,
@@ -151,16 +151,16 @@ fn read_saved_today(
 }
 
 impl Server {
-    /// The frontier tokens the gateway says it saved on today's turns,
-    /// local time, that name a pane of this floor. None when the gateway
+    /// The frontier tokens the router says it saved on today's turns,
+    /// local time, that name a pane of this floor. None when the router
     /// has no such figure: no journal, one that cannot be read, or no turn
     /// today that names a pane here. A turn that names no pane counts for
     /// no pane.
     pub(crate) fn saved_today(&self, now: f64) -> Option<i64> {
         let path = self
-            .gate_root()
+            .warden_root()
             .parent()?
-            .join("gateway")
+            .join("router")
             .join("turns.jsonl");
         let md = std::fs::metadata(&path).ok()?;
         if !md.is_file() {
@@ -217,7 +217,7 @@ mod tests {
     type Turn = (i64, i64, &'static str);
 
     fn turns(dir: &std::path::Path, rows: &[Turn]) {
-        let g = dir.join("gateway");
+        let g = dir.join("router");
         std::fs::create_dir_all(&g).unwrap();
         let mut text = String::new();
         for (at, saved, pane) in rows {
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn no_gateway_figure_for_a_pane_here_means_no_number_and_its_turns_today_sum() {
+    fn no_router_figure_for_a_pane_here_means_no_number_and_its_turns_today_sum() {
         let dir = crate::testhome::guard(std::env::temp_dir().join(format!("coppice-rs-saved-{}", std::process::id())));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -244,7 +244,7 @@ mod tests {
             data_dir: dir.join("data"),
             start_dir: dir.clone(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         let ws = s.tree.create_workspace("w", "/");
         let tab = s.tree.create_tab(&ws.id, "t").unwrap();
@@ -282,7 +282,7 @@ mod tests {
     }
 
     /// A record that names a floor counts only on that floor: pane ids
-    /// start at w1:p1 on every floor, and floors share a gateway journal.
+    /// start at w1:p1 on every floor, and floors share a router journal.
     #[test]
     fn a_record_of_another_floor_counts_for_no_pane() {
         let dir =
@@ -294,7 +294,7 @@ mod tests {
             data_dir: dir.join("data"),
             start_dir: dir.clone(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         let ws = s.tree.create_workspace("w", "/");
         let tab = s.tree.create_tab(&ws.id, "t").unwrap();
@@ -304,7 +304,7 @@ mod tests {
             .unwrap();
         let now = Server::now_seconds();
         let at = stamp(now as i64);
-        let g = dir.join("gateway");
+        let g = dir.join("router");
         std::fs::create_dir_all(&g).unwrap();
         let line = |saved: i64, floor: &str| {
             let f = if floor.is_empty() {
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn the_gateway_time_form_parses() {
+    fn the_router_time_form_parses() {
         assert_eq!(parse_rfc3339("1970-01-02T00:00:00+00:00"), Some(86400.0));
         assert_eq!(parse_rfc3339("1970-01-01T01:00:00+01:00"), Some(0.0));
         assert_eq!(parse_rfc3339("1970-01-01T00:00:01.5Z"), Some(1.5));

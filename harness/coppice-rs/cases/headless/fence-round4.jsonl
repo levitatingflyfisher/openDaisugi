@@ -1,0 +1,32 @@
+# Round 4. The fence prefix a pane gets, seen through a stand-in for
+# `daisugi fence` that records its flags. A pane in the home folder is
+# refused in one line that names what to do. A Hermes pane passes
+# --harness hermes. The workspace watch reads a harness's config, not its
+# state: a fenced run that writes under .claude/projects holds nothing, one
+# that writes .claude/settings.json holds the workspace.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/adapters/fake-fence.sh
+#!env FAKE_FENCE_LOG={WORK}/fence-argv
+{"id":"r1","cmd":"pane.create","cwd":"{HOME}","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","fence":"on"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}
+{"id":"w0","write":"{WORK}/h/.stay","text":""}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"r2","cmd":"pane.create","cwd":"{WORK}/h","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"hermes","fence":"on"}
+{"id":"$id","ok":true,"result":{"pane":"$h"}}
+{"id":"s1","sleep":600}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"r3","file":"{WORK}/fence-argv"}
+{"id":"$id","ok":true,"result":{"text":"harness hermes\nsocket {SOCK}\n","mode":"0o644"}}
+{"id":"w1","write":"{WORK}/state/.act","text":"mkdir -p .claude/projects/x && echo y > .claude/projects/x/y.txt && echo z > .claude/todos.json\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"w2","write":"{WORK}/conf/.act","text":"mkdir -p .claude && echo '{}' > .claude/settings.json\n"}
+{"id":"$id","ok":true,"result":{"written":true}}
+{"id":"r4","cmd":"pane.create","cwd":"{WORK}/state","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","fence":"on"}
+{"id":"$id","ok":true,"result":{"pane":"$s"}}
+{"id":"r5","cmd":"pane.create","cwd":"{WORK}/conf","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","fence":"on"}
+{"id":"$id","ok":true,"result":{"pane":"$c"}}
+{"id":"s2","sleep":1500}
+{"id":"$id","ok":true,"result":"*"}
+{"id":"r6","cmd":"pane.create","cwd":"{WORK}/state","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","fence":"on"}
+{"id":"$id","ok":true,"result":{"pane":"$s2"}}
+{"id":"r7","cmd":"pane.create","cwd":"{WORK}/conf","cmd_argv":["/bin/sh","-c","exec sleep 600"],"kind":"pty","harness":"claude","fence":"on"}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"*"}}

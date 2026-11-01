@@ -1,5 +1,5 @@
 pkgbase = opendaisugi-bin
-	pkgdesc = Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents
+	pkgdesc = Agent floor (coppice), loop (sprig) and tool-call warden (daisugi) for AI coding agents
 	pkgver = 0.43.0
 	pkgrel = 1
 	url = https://github.com/levitatingflyfisher/openDaisugi

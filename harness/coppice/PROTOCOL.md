@@ -26,7 +26,7 @@ protocol. `server.status` reports the same version number under `protocol`.
 
 A connection is the operator, a pane or a plugin. A pane may propose. A
 plugin holds only the verbs its manifest names. Only the operator may
-allow an ask. A foreman pane may deny an ask it holds, and no other.
+allow an ask. A steward pane may deny an ask it holds, and no other.
 
 - On Linux the server reads the peer pid from the socket and places it.
   The peer is a pane when a process on its parent chain, itself included,
@@ -71,32 +71,38 @@ allow an ask. A foreman pane may deny an ask it holds, and no other.
   own, and about every pane when the server cannot name its pane.
 - One exception: `agent.deny` from a pane connection passes when the
   server names the pane, the connection is no plugin, the kernel placed
-  it, and that pane is the foreman that holds that exact ask of that exact
+  it, and that pane is the steward that holds that exact ask of that exact
   pane now. See Holds. `agent.allow` from a pane is always refused.
 - A pane, a plugin, or a peer the server cannot place gets `unauthorized`
-  with `only the operator names a foreman.` for `task.set_foreman`, and
-  with `only the operator talks to the floor's foreman.` for `floor.talk`.
+  with `only the operator names a steward.` for `task.set_steward`, and
+  with `only the operator talks to the floor's steward.` for `floor.talk`.
   It gets `only the operator reads the machines.` for `floor.machines`.
   It gets `only the operator sets an agent's daisugi mode.` for
   `agent.set_mode`. It gets `only the operator sets an agent's model.` for
   `agent.set_model` and for an `agent.prompt` that carries `model`, and
-  `only the operator sets an agent's router.` for `agent.set_router` and
-  for a `pane.resume` that carries `router`. It gets `only the operator
+  `only the operator sets an agent's route.` for `agent.set_route` and
+  for a `pane.resume` that carries `route`. It gets `only the operator
   moves an agent's conversation.` for `agent.move`.
-  It gets `only the operator names a foreman.` for `floor.foreman`, and
-  `only the operator names a pane foreman.` for a pane label `foreman`,
-  and for a `pane.resume` of a record labelled `foreman`.
-  See The floor's foreman.
+  It gets `only the operator names a steward.` for `floor.steward`, and
+  `only the operator names a pane steward.` for a pane label `steward`,
+  and for a `pane.resume` of a record labelled `steward`.
+  See The floor's steward.
+- A pane, a plugin, or a peer the server cannot place gets `unauthorized`
+  with `only the operator makes a root task.` for a `task.create` that
+  gives an `envelope` or a `project` when no task above the new one carries an envelope (no `parent`, or a plain one). A pane whose task is
+  pinned to an envelope gets `a pane starts panes only under its own task.`
+  for a `pane.create` or `pane.split` into any other task. See Envelopes on
+  tasks.
 - A pane, a plugin, or a peer the server cannot place gets `unauthorized`
   with `a pane may rename only itself. The operator renames any pane.`
   for a `pane.rename` of any pane but its own. People find their agents
   by label, so one agent may not relabel another.
 - A pane, or a peer the server cannot place, gets the pane refusal for
-  `task.move`, since a move can put a task under a foreman the operator did
+  `task.move`, since a move can put a task under a steward the operator did
   not choose.
 - The chat and the transcripts hold the owner's whole working life. A
   pane, a plugin, or a peer the server cannot place gets `unauthorized`
-  with `only the operator talks to the floor's foreman.` for `floor.chat`.
+  with `only the operator talks to the floor's steward.` for `floor.chat`.
   It gets `a pane may read only its own messages. The operator reads any
   pane's.` for `pane.messages`, except a pane's own connection reading its
   own pane: a connection whose role is pane with that pane's id, which is
@@ -111,8 +117,8 @@ allow an ask. A foreman pane may deny an ask it holds, and no other.
   process does not count, told by its start time (field 22 of
   `/proc/<pid>/stat`, kept when the pane spawned). A process that leaves
   its pane's session and tree (`setsid -f`, `systemd-run`, a daemon) is
-  seen as the operator and could read the chat. The gate's rule denies
-  the chat verbs on the wire from a gated agent, as it denies
+  seen as the operator and could read the chat. The warden's rule denies
+  the chat verbs on the wire from a checked agent, as it denies
   `agent.allow`, as typed and with JSON string escapes decoded, with the
   reason `the chat and an agent's messages are the operator's to read.`;
   a command built at run time passes it. A cgroup per pane
@@ -136,7 +142,7 @@ allow an ask. A foreman pane may deny an ask it holds, and no other.
   in its session. A process that a daemon starts for the pane is outside
   both, and the server sees the operator. One shell word does it:
   `setsid -f`, `systemd-run --user`, `ssh localhost`, a tmux or screen
-  server, or `at`. The gate's rule is the second door. It sees only the
+  server, or `at`. The warden's rule is the second door. It sees only the
   literal words of a tool call, so a command built at run time passes it.
 
 ### Names
@@ -176,10 +182,10 @@ right. It does not change the role, and it does not change who may allow.
 - The `hello` reply carries `name` when the connection has one.
 - `agent.allow` and `agent.deny` write the connection's name into the
   answer file as `by`, and how the server knows it as `whoFrom`: `token`,
-  `socket`, or `pane` for a foreman. A pane name is as weak as a socket
+  `socket`, or `pane` for a steward. A pane name is as weak as a socket
   name when the pane was named in a `hello`: an operator process can say
   `role` `pane` with any pane id. Such a claim only takes rights away. A
-  pane the server could not name by id writes `pane` alone. The gate journals `allowed_by` or
+  pane the server could not name by id writes `pane` alone. The warden journals `allowed_by` or
   `denied_by` with `who_from`. A connection with no name writes `local`
   from `none`, so the journal never holds an empty name. The phone's
   `/api/ask/answer` writes the name its token carries, from `token`.
@@ -233,6 +239,38 @@ how to write one.
   verbs. It never widens a connection, and a pane may not send it. A
   process an operator starts by hand, outside the server, is an operator
   connection until it sends this hello.
+
+### Cards and the delegation tree (web routes)
+
+These ride on HTTP, not on the socket. The web server runs `daisugi` as a
+child process and never reads or writes the rankings or the tree ledger. It
+takes the binary from `COPPICE_DAISUGI_BIN` and the data directory from
+`COPPICE_DAISUGI_DATA_DIR`. Each child runs with a 10 s timeout and its
+output is cut at 1 MiB.
+
+- `GET /api/cards?sort=reversibility|impact|date|project` is the JSON of
+  `daisugi rank queue --json --sort S` plus `source` and `data_dir`. A
+  failed child is `502 {"error": "daisugi rank queue failed: <first line>"}`.
+- `GET /api/cards/{id}/diff` reads each attempt's worktree from
+  `daisugi rank show --choice ID --json` and answers `{diffs, notes}`. It
+  reads a worktree only when it lies under `<data dir>/tree/branches` or
+  under the worktree of a task; any other attempt gets the note
+  `no diff: the alternative is outside the floor's worktrees`. The text is
+  cut at 512 KiB.
+- `POST /api/cards/answer {choice_id, outcome: keep|drop|switch, pick}`:
+  `keep` and `drop` run `rank record drop ID`, `switch` runs
+  `rank record pick ID PICK`. After a recorded answer the server runs
+  `daisugi tree prune-branches` and adds its output as `pruned`. Only the
+  operator may answer. A pane, a peer the server cannot place, and a
+  lock-screen deny token get `403` (a pane gets the pane refusal). An
+  unknown card is `404` with the command's text.
+- `GET /api/tree` is the JSON of `daisugi tree status --json` plus `source`.
+- `POST /api/tree/answer {ask_id, decision: allow|deny, reason}` runs
+  `daisugi tree answer ASK DECISION`, under the same operator-only rule. An
+  allowed child is marked not proved and must still fit its branch's root.
+- A view cannot call these routes. It posts `answer` or `tree-answer` to the
+  floor page, which accepts the post only for an id in the last list it
+  sent to that view (see `plugins/README.md`).
 
 ## Framing
 
@@ -380,7 +418,7 @@ pane that is still on record as ended, unless the row says otherwise.
 |---|---|---|---|
 | `pane.create` | `cwd`, required unless `task` supplies it or the one-click case below fills it in; `kind` is `pty` or `headless`, default `pty`; `cmd_argv` list, required for `pty` unless `harness` names a `[harness.<name>]` table in the config file, in which case the server builds argv from that table's `command` and `args` and then the request's optional `args` list; `harness` name, required for `headless`; `near` a pane id, used only to fill in `cwd` below; `workspace` and `tab` ids, default the current ones; `cols` default 120; `rows` default 40; `env` object of strings; `label`, see below; `task` id of the task the pane works for; `fence` is `on` or `off`, the pane's own setting for `daisugi fence` (see The fence below), and anything else is `bad_request`. With `task`, `cwd` may be absent: a task with a worktree runs the pane there, and a different `cwd` is `bad_request`; a task without one lends its own `cwd` when the request has none. **A label the request left out**, whenever `harness` and `cwd` both end up known - explicit or defaulted, `pty` or `headless` - becomes `<harness>-<the cwd's base name>`, or `-2`, `-3` and on when a live pane already has that exact label; an ended pane's label never forces the count up. This is not only the one-click case: `coppice new`, `coppice open`/`coppice claude`, and the TUI's own Enter-with-no-selection all send an explicit `harness` and `cwd` and no `label`, and all get this same naming. **One click, a new agent**: a `pty` request with neither `cwd` nor `cmd_argv` fills both in on top of that. `cwd` becomes, in order, `near`'s own cwd; the directories a pane most recently started in, newest first, the whole list walked for the first that still exists on disk - a directory just used wins here even when it is also pinned, and a missing newest entry falls through to the next recent one, never straight to a pinned project; the pinned projects, in file order, the first that still exists; or this server's own start directory. A `harness` this same request also left out becomes `coppice.toml`'s `default` line | `pane` id, `workspace` id, `tab` id, `cwd` the directory the pane started in, `label` its label, and for the one-click case `why`: `near`, `recent`, `pinned` or `start`, the step that chose `cwd`. A client says where and why on its status line | `no_such_workspace`, `no_such_tab`, `spawn_failed`, `server_closed`. An unknown harness is `bad_request`. An unknown task is `bad_request`: `no task <id>. Run: coppice task list`. An unknown `near` is `no_such_pane`. A `pty` pane with `harness` and no `cmd_argv` whose name has no table in the config file is `bad_request`: `no harness named "<name>" in <path>`. The one-click case with no `default` line in the config file is `bad_request`: `no default harness in <path>` |
 | `pane.split` | same as `pane.create` | same as `pane.create` | same as `pane.create` |
-| `pane.list` | `scope` task id, optional; `ended` bool, default false | `path` list of labels from the root, `floor`, down to the scope; `panes` list of rows. With no `ended`, only live records list. With `ended: true`, only ended records list, newest first (by `ended_at`, then by id), each carrying `ended_at` (unix seconds) and `exit_code` (`null` when unknown) - see Ended panes. With `scope`, only the panes of that task and its descendants are listed, live or ended, whichever `ended` asked for. Each row has `id`, `label`, `cwd`, `cmd` list, `kind`, `harness`, `workspace`, `tab`, `closed`, `cols`, `rows` (the size a live pane runs at now, see Fit), `state`, `source`, `detail`; optional `quiet_for` seconds, `ts`, `session_id`, `ask`, `held` while a foreman holds the ask, see Holds, `parent_pane`, `task`, `children` list of the pane's subagents, each with `id`, `label`, `state` and `ts`, oldest first. A done subagent leaves the list 60 seconds after it stopped, and an ended pane has none. `looking` lists the names of the people attached to the pane now, sorted, see `presence`; `stack`, `gate` and `tokens`, see Agent facts; `fenced` true on a live fenced pane and `workspace_changed`, see The fence | `bad_request` when `scope` names no task: `no task <id>. Run: coppice task list` |
+| `pane.list` | `scope` task id, optional; `ended` bool, default false | `path` list of labels from the root, `floor`, down to the scope; `panes` list of rows. With no `ended`, only live records list. With `ended: true`, only ended records list, newest first (by `ended_at`, then by id), each carrying `ended_at` (unix seconds) and `exit_code` (`null` when unknown) - see Ended panes. With `scope`, only the panes of that task and its descendants are listed, live or ended, whichever `ended` asked for. Each row has `id`, `label`, `cwd`, `cmd` list, `kind`, `harness`, `workspace`, `tab`, `closed`, `cols`, `rows` (the size a live pane runs at now, see Fit), `state`, `source`, `detail`; optional `quiet_for` seconds, `ts`, `session_id`, `ask`, `held` while a steward holds the ask, see Holds, `parent_pane`, `task`, `children` list of the pane's subagents, each with `id`, `label`, `state` and `ts`, oldest first. A done subagent leaves the list 60 seconds after it stopped, and an ended pane has none. `looking` lists the names of the people attached to the pane now, sorted, see `presence`; `stack`, `warden` and `tokens`, see Agent facts; `fenced` true on a live fenced pane and `workspace_changed`, see The fence | `bad_request` when `scope` names no task: `no task <id>. Run: coppice task list` |
 | `session.list` | same as `pane.list` | same as `pane.list` | |
 | `pane.send_text` | `pane`; `text` required, `""` sends a bare Enter; `enter` default true | `sent` byte count. A prompt that waits, see Ready prompts: `sent` 0, `queued` its place from 1, `note` `queued until <label> is ready` | `internal`. `bad_request` for a prompt to a pane that waits on a question, and past the queue cap, see Ready prompts |
 | `pane.trust` | `pane`; `trust` default true | `pane` id, `trusted` bool | Answers Claude Code's folder trust screen. `trust` true moves the cursor to `Yes, I trust this folder` and presses Enter, each key its own write. `trust` false presses Esc, which ends Claude. `bad_request` `<label> does not ask to trust a folder now.` when the pane's screen shows no trust screen. Only the operator runs it: a pane or a plugin gets `unauthorized` `only the operator trusts a folder.` The server never writes Claude's own config to trust a folder |
@@ -396,7 +434,7 @@ pane that is still on record as ended, unless the row says otherwise.
 | `pane.rename` | `pane`; `label`, required and non-empty once cleaned | `pane` id, `label` (cleaned) | `bad_request` when `label` is missing, empty, or nothing but whitespace and control characters. `no_such_pane` for an unknown `pane`. `unauthorized` when a pane renames a pane that is not its own. Works on a live pane and on an ended record alike |
 | `pane.explain` | `pane` | `pane`, `harness`, `detection_text`, `osc_title`, `osc_progress`, `detection_warnings`; optional `effective_state`, `effective_source`, `received_age_s`, `tick`, `note`, `agent`, `source_file`, `matched`, `rule_id`, `priority`, `region`, `manifest_state`, `skip_state_update`, `evaluated` | `internal`. The coppice binary registers this verb |
 | `pane.forget` | `pane` id of one ended record, or `ended: true` for every ended record, not both | with `pane`: `pane` id, `forgot` true. With `ended: true`: `forgot` count | `bad_request` when neither `pane` nor `ended: true` is given, when both are, or when `pane` names a live pane: `pane <id> is still live. Close it first`. `no_such_pane` for an unknown `pane` |
-| `pane.resume` | `pane` id of one ended record; `cols` and `rows`, optional, the new pane's size, default the ended record's own; `router`, optional, `direct` or `gateway`, sets the base URL in the new pane's env (see `agent.set_router`) | `pane` id of the new live pane, `workspace`, `tab`, `resumed` bool, and `router` when one was given | `bad_request` when `cols` or `rows` is given and not positive, when `router` is not `direct` or `gateway` or no base URL is built for the record's harness, when `pane` names a live pane, or when a `pane.resume` for the same id is already in flight: `pane <id> is already resuming.`. `no_such_pane` for an unknown `pane`, including one another concurrent `pane.resume` for the same id just finished replacing. `spawn_failed`, `server_closed`. See Ended panes for the resume rule |
+| `pane.resume` | `pane` id of one ended record; `cols` and `rows`, optional, the new pane's size, default the ended record's own; `route`, optional, `direct` or `router`, sets the base URL in the new pane's env (see `agent.set_route`) | `pane` id of the new live pane, `workspace`, `tab`, `resumed` bool, and `route` when one was given | `bad_request` when `cols` or `rows` is given and not positive, when `route` is not `direct` or `router` or no base URL is built for the record's harness, when `pane` names a live pane, or when a `pane.resume` for the same id is already in flight: `pane <id> is already resuming.`. `no_such_pane` for an unknown `pane`, including one another concurrent `pane.resume` for the same id just finished replacing. `spawn_failed`, `server_closed`. See Ended panes for the resume rule |
 
 Every pane label is cleaned on the server before it is stored, by
 `pane.create`, `pane.split`, `pane.fork`, `pane.rename` and `pane.resume`
@@ -407,7 +445,7 @@ or poses as another label. A pane, a plugin or a peer the server cannot
 place gets `unauthorized` with `another live pane has that label. Only
 the operator gives two panes one name.` for a `pane.create`,
 `pane.split` or `pane.rename` to the exact label of another live pane,
-and the foreman refusal for any final label that reads as `foreman`,
+and the steward refusal for any final label that reads as `steward`,
 whether the request named it or the server made it. A `harness` name in
 `pane.create` must be at most 32 letters, digits, `.`, `_` or `-`,
 starting with a letter or digit, or the request is `bad_request`. A task label from `task.create` is cleaned the
@@ -419,8 +457,8 @@ A pane's harness can start under `daisugi fence`: a Landlock ruleset the
 kernel enforces on the harness and every process it starts. It reads and
 writes the workspace (the pane's `cwd`), the parts of the harness's own
 directory the harness writes, and a private temp dir; it reads the system and
-the harness's config, connects only to this server's socket and the gate's,
-and reaches nothing else under HOME. The gate's state is never writable. The
+the harness's config, connects only to this server's socket and the warden's,
+and reaches nothing else under HOME. The warden's state is never writable. The
 network is not limited.
 
 Whether a pane is fenced: the pane's own `fence` (`on` or `off`) first, then
@@ -430,8 +468,8 @@ word, a boolean, a number) is a config error: the server does not start,
 and it prints `cannot read <path>: fence must be "on", "off" or "auto", not
 <value>.` A file that does not parse while it sets fence is refused the
 same way, with the parse error's first line (FN-R-37).
-Under `auto`, a pane is fenced while the gate is on: a gate root it may use (the
-one beside the data dir, or the gate of a data dir openDaisugi may pick under
+Under `auto`, a pane is fenced while the warden is on: a warden root it may use (the
+one beside the data dir, or the warden of a data dir openDaisugi may pick under
 the user's home) holds `envelopes/` and no `DISARMED` marker. Only a missing
 `envelopes/` reads as off; one that cannot be read reads as on. A pane with no
 harness name, or the `shell` harness, is the operator's own and is fenced only
@@ -451,14 +489,14 @@ custom `cmd_argv` included. Such a caller may use `pane.send_keys`,
 pane the server drops `HOME`, `TMPDIR`, the XDG variables, `OPENDAISUGI_HOME`
 and every `DAISUGI_FENCE*` from the request's `env`, so its own values stand.
 
-The wrapper is `daisugi fence [--harness NAME] --workspace CWD --gate-root
+The wrapper is `daisugi fence [--harness NAME] --workspace CWD --warden-root
 ROOT --tmpdir <data dir>/fence-tmp/<pane>-<16 hex> --coppice-socket SOCK
 [--workdir DIR] --`, with `daisugi` from `COPPICE_DAISUGI_BIN` or PATH. The
 pane id's `:` and `/` read `_` in the temp dir's name, and each start gets a
 fresh random suffix, so no run finds an earlier run's files; the server
 removes it when the pane ends. A sprig pane's `--session-dir` is a `--workdir`, checked like the
 workspace. A fenced `claude` pane also gets `--settings` with a JSON
-document: the gate hook (`DAISUGI_GATE_HOOK=opendaisugi.gate '<daisugi>' gate
+document: the warden hook (`DAISUGI_WARDEN_HOOK=opendaisugi.warden '<daisugi>' warden
 check --root '<root>' --format claude --verify-timeout 10 --ask --ask-timeout
 90 || exit 2`, matcher `*`, timeout 105, `onFailure` `block`),
 `disableAllHooks` false and a `ConfigChange` hook `exit 2`; after the program
@@ -497,16 +535,16 @@ workspace. A pane that runs there goes on. `pane.ack_changed` with
 pane or a plugin gets `unauthorized` `only the operator acks a changed
 workspace.`
 
-The foreman's sprig and claude turns and the compactor run under the same
-fence when the gate is on or `fence` is `"on"`: the workspace is the turn's
+The steward's sprig and claude turns and the compactor run under the same
+fence when the warden is on or `fence` is `"on"`: the workspace is the turn's
 directory, the work dir is `--allow`ed read and write, and a key pipe is
 `--keep-fd 3`. A worker's `daisugi tree run` runs bare, since it writes the
-worker's gate root (`<work>/gate`); its sprig starts under the fence instead.
+worker's warden root (`<work>/warden`); its sprig starts under the fence instead.
 The server passes the prefix in `DAISUGI_SPRIG_FENCE`, a JSON list: `daisugi
-fence --workspace <worker dir> --coppice-socket SOCK --gate-root <work>/gate`.
+fence --workspace <worker dir> --coppice-socket SOCK --warden-root <work>/warden`.
 The tree run adds `--allow <work>/sprig-sessions:rw`, a `--keep-fd` for each
-key pipe and `--`. So the gate root is no write grant of the worker's, the
-fence starts its resident gate, and sprig keeps its sessions in
+key pipe and `--`. So the warden root is no write grant of the worker's, the
+fence starts its resident warden, and sprig keeps its sessions in
 `<work>/sprig-sessions`; the worker's record carries `"fenced": true` and its
 `session_file` is there. A spawn tool under the fence fails the node. The
 server also puts `--sprig-fence` before the closing `-` of the tree run, so a
@@ -700,7 +738,7 @@ does it for the TUI.
 
 ### Speech out
 
-The foreman can answer aloud. `[voice] speak_url` in `coppice.toml` names a
+The steward can answer aloud. `[voice] speak_url` in `coppice.toml` names a
 speech server with an OpenAI-style `POST /v1/audio/speech`; `speak_model` and
 `speak_voice` are sent to it (defaults `kokoro` and `af_heart`, what
 Kokoro-FastAPI expects), and `speak_profile` names an operator agent profile
@@ -754,46 +792,67 @@ state among its panes and its children, in the order `blocked`, `working`,
 
 | verb | params | result | errors |
 |---|---|---|---|
-| `task.create` | `label` required; `parent` task id; `cwd`; `worktree` bool, default false; `model` | `task` id, `worktree` path or `""` | `bad_request` when `label` is missing, when `parent` names no task, when `worktree` is true and `cwd` is missing, when the repo is on no branch, when `cwd` is not inside a git repo: `worktree needs a git repo. <cwd> is not inside one.`, or when `label` is not a name git can use: `task names use lowercase letters, digits, and dashes`. With `worktree` true the server runs `git worktree add -b <label> <repo>-worktrees/<label>` beside the repo that holds `cwd`, on a branch whose upstream is the branch the repo was on. A failed add stores nothing |
-| `task.list` | `scope` task id, optional | `path` list of labels from the root, `floor`, down to the scope; `tasks` list of rows. With `scope`, only that task and its descendants are listed. Each row has `id`, `label`, `parent`, `cwd`, `worktree`, `model`, `foreman` pane id or `""`, `state`, `panes` list of pane ids; `ahead` commit count when the task has a worktree and git can count | `bad_request` when `scope` names no task |
+| `task.create` | `label` required; `parent` task id; `cwd`; `worktree` bool, default false; `model`; `envelope` a JSON object (a whole daisugi envelope); `project` a name, read as `<config dir>/envelopes/<project>.json` (its `envelope` key) | `task` id, `worktree` path or `""` | `bad_request` when `label` is missing, when `parent` names no task, when `worktree` is true and `cwd` is missing, when the repo is on no branch, when `cwd` is not inside a git repo: `worktree needs a git repo. <cwd> is not inside one.`, or when `label` is not a name git can use: `task names use lowercase letters, digits, and dashes`, or when `envelope` is not an object, when both `envelope` and `project` are given, or when the envelope does not fit inside the nearest envelope above it (`the envelope does not fit inside its parent's: <daisugi's reasons>`; the server asks `daisugi tree check`). `unauthorized` from a pane, a plugin or a peer the server cannot place that gives `envelope` or `project` when no task above the new one carries an envelope (no `parent`, or only plain tasks above): `only the operator makes a root task.` With `worktree` true the server runs `git worktree add -b <label> <repo>-worktrees/<label>` beside the repo that holds `cwd`, on a branch whose upstream is the branch the repo was on. A failed add stores nothing |
+| `task.list` | `scope` task id, optional | `path` list of labels from the root, `floor`, down to the scope; `tasks` list of rows. With `scope`, only that task and its descendants are listed. Each row has `id`, `label`, `parent`, `cwd`, `worktree`, `model`, `steward` pane id or `""`, `state`, `panes` list of pane ids; `ahead` commit count when the task has a worktree and git can count; `envelope` true when the task has its own envelope; `session` when a pane has started in it (see below) | `bad_request` when `scope` names no task |
 | `task.close` | `task` required; `keep_worktree` bool, default false | `task` id, `closed` true, `panes` list of the pane ids it closed | `bad_request` when `task` names no task. With `keep_worktree` false every worktree in the task and its descendants is checked first; one with uncommitted changes refuses the whole call before anything closes: `task <id> has uncommitted changes in <path>. Commit them, or pass keep_worktree: true.` Then the panes close, then the worktrees are removed, then the records go. A removal git refuses after the panes closed is `internal`, names the path, and ends with the same sentence; the records stay, and a second call with `keep_worktree` true finishes the close. Branches are never deleted. With `keep_worktree` true the worktrees stay on disk |
 | `task.move` | `task` required; `parent` task id, `""` or absent detaches | `task` id, `parent` | `bad_request` when either id names no task, or when `parent` is the task itself or one of its descendants |
-| `task.set_foreman` | `task` required; `pane` id, `""` or absent clears | `task` id, `foreman` pane id or `""` | `unauthorized` from any connection but the operator. `bad_request` when `task` names no task or `pane` is closed. `no_such_pane` when `pane` names no pane |
+| `task.set_steward` | `task` required; `pane` id, `""` or absent clears | `task` id, `steward` pane id or `""` | `unauthorized` from any connection but the operator. `bad_request` when `task` names no task or `pane` is closed. `no_such_pane` when `pane` names no pane |
+
+#### Envelopes on tasks
+
+A task that has an envelope pins its panes (design-delegation-tree.md,
+option 3). The server asks daisugi to prove and to register; it decides
+nothing.
+
+- The first pane that starts in the task mints a session, `t<id>-<16 hex>`,
+  and registers the envelope under it: `daisugi tree root` when no task
+  above has an envelope, else `daisugi tree spawn --parent <that task's
+  session>`, which proves the edge again. The session is kept on the task,
+  so every pane of the task shares one budget. A task with no envelope of
+  its own takes the nearest one above it.
+- The pane's warden hook carries `--session <session>`, so it reads that
+  envelope and never `default`. Only a fenced `claude` pane has a hook the
+  server writes, so any other pane in such a task does not start:
+  `task <id> has an envelope, and only a fenced claude pane can be pinned
+  to one.` A failure to register refuses the start with daisugi's line.
+- A pane connection whose task is pinned may `pane.create` or `pane.split`
+  only into its own task or a task below it. Any other task, or none, is
+  `unauthorized`: `a pane starts panes only under its own task.`
 
 #### Holds
 
-A task's `foreman` is a pane that hears the asks of the task's panes, and
+A task's `steward` is a pane that hears the asks of the task's panes, and
 of every descendant task's panes, before the operator does. The nearest
-foreman up the chain of tasks wins.
+steward up the chain of tasks wins.
 
 - When a pane's merged state becomes `blocked` with an ask, the server
-  looks for the nearest foreman. It holds the ask only when the ask's tier
-  is `undoable`, and the foreman pane is open, is not blocked, and is not
+  looks for the nearest steward. It holds the ask only when the ask's tier
+  is `undoable`, and the steward pane is open, is not blocked, and is not
   the asking pane. Otherwise the ask goes to the operator at once.
-- The server writes a `note` from the asking pane, with `to` the foreman,
+- The server writes a `note` from the asking pane, with `to` the steward,
   that names the pane, the ask id, the summary, and the deny command. It
   writes the note for a permanent ask too, with no hold.
 - Each hold has a short id the server makes, `h1`, `h2` and so on, carried
   as `held.hold`. `agent.deny` and `agent.allow` accept it in `ask` for the
   pane that holds it, in place of the ask id.
-- While the foreman is idle, the server types one line into it for each
+- While the steward is idle, the server types one line into it for each
   hold: the hold id, the pane id, the seconds left, `coppice agent get
   <pane>` and `coppice agent deny <pane> <hold>`. It names the ask id too,
   only when the id is 1 to 64 letters, digits, `_` or `-`. It reads the
-  foreman's state again just before the send. The server types only into
-  a foreman whose idle ends a turn: an idle from `gate` or `headless`. An
+  steward's state again just before the send. The server types only into
+  a steward whose idle ends a turn: an idle from `warden` or `headless`. An
   idle from `process` only says the screen went quiet, and one from
   `manifest` only says the prompt box shows, which it also does with a
-  half-typed line in it. A foreman with no turn-ending source gets the note
-  and never typed bytes. A foreman that is working or blocked gets no
+  half-typed line in it. A steward with no turn-ending source gets the note
+  and never typed bytes. A steward that is working or blocked gets no
   bytes. Input with `pane.send_text`, `pane.send_keys`, `pane.run` or
-  `agent.prompt` marks the foreman, and a marked foreman gets no bytes.
+  `agent.prompt` marks the steward, and a marked steward gets no bytes.
   The mark clears only when the last input ended with Enter, a carriage
   return or a line feed, and a turn ended after it: a `working` state
-  followed by a `gate` or `headless` idle. Input that does not end with
+  followed by a `warden` or `headless` idle. Input that does not end with
   Enter sets the mark again and keeps it, whatever turns end, since it
   still sits in the input line. The server never clears that text. The server's own line
-  counts as input too, so a foreman gets at most one line per turn, and a
+  counts as input too, so a steward gets at most one line per turn, and a
   second hold waits for the next turn to end. The
   line never carries the ask's summary, which the asking pane wrote. The
   write runs apart from the event that started it, and a hold counts as
@@ -802,19 +861,19 @@ foreman up the chain of tasks wins.
 - A hold lasts 120 seconds, and ends 30 seconds before the ask's own
   deadline when that comes first. A deadline 30 seconds away or less gives
   no hold. While it lasts, the `state` event and the `pane.list` row carry
-  `held`: `hold` the hold id, `by` the foreman pane, `foreman_label`, `task` the task that
-  named the foreman, `task_label`, `ask`, `since` and `until`. The plan
+  `held`: `hold` the hold id, `by` the steward pane, `steward_label`, `task` the task that
+  named the steward, `task_label`, `ask`, `since` and `until`. The plan
   named this mark `held_by`. It is `held.by`, so the facts about one hold
   travel together.
-- The hold ends when the foreman or the operator answers the ask, when the
+- The hold ends when the steward or the operator answers the ask, when the
   pane's state is no longer that ask, when the pane closes, when the
-  foreman closes, when the foreman blocks on an ask of its own, when
-  `task.set_foreman` or `task.move` changes the pane's nearest foreman, or
+  steward closes, when the steward blocks on an ask of its own, when
+  `task.set_steward` or `task.move` changes the pane's nearest steward, or
   at `until`. When the ask still waits after the hold ends, the server
-  sends the pane's `state` event again with no `held`, and the foreman gets
+  sends the pane's `state` event again with no `held`, and the steward gets
   a note. A floor moves the ask to its needs-you list then.
 - An ask that went to the operator is never held again.
-- A foreman pane that closes is cleared from every task that names it.
+- A steward pane that closes is cleared from every task that names it.
 
 ### Attach and events
 
@@ -856,131 +915,131 @@ keeps the first old size. A `view_only` attach never fits.
 | `hello` | `role` is `operator`, `pane` or `plugin`, default `operator`; `pane` id; `plugin` id, needed with role `plugin`; `peer_pids` list of pids a web server serves on this connection; `peer_unknown` true when a web server could not find its local client; `name`, a name for the connection; `name_from`, `token` or `socket` | `role`, the role the connection has now; `allow`, whether it may run `agent.allow` and `agent.deny`; optional `pane`; optional `name`; for a plugin, `plugin` and `needs` | `bad_request` for any other role, for role `plugin` with no `plugin` or with an id that is not enabled, for a hello that names another plugin than the one the connection is, for `peer_pids` that is not a list of numbers, for a name that breaks the name rule, for a name that changes the connection's name, or for any other `name_from`. `unauthorized` for role `plugin` from a pane. See Roles and Names |
 | `floor.note` | `text` required. `pane` id, used only on an operator connection | `text` as recorded: control runes and bytes that are not UTF-8 dropped, cut at 200 runes | `bad_request` for empty text. On a pane connection the note names that pane and its text leads with the pane's label and ` › ` |
 | `floor.notes` | none | `notes` list of the last 200 notes, oldest first, each the `note` event object, with `to` when the note has an addressee | |
-| `floor.foreman` | `harness` name, optional, default the `default` harness | `pane` the new foreman's id; `label`; `started` true. The foreman gets its page as with `floor.talk`. See The floor's foreman | `bad_request` while the foreman runs: `the foreman <label> (<id>) runs already. Close it first, or talk to it.`, and for no default harness as with `floor.talk`. `unauthorized` from any connection but the operator |
-| `floor.talk` | `text` required, one sentence for the floor's foreman; `act` optional, a client id for the sentence: 1 to 64 letters, digits, `.`, `:`, `-` or `_` (a UUID from a sender) | `pane` the foreman's id; `label`; `started` true when this talk started the foreman; `queued` how many sentences wait, this one included; optional `note`, one line, when the old foreman had ended or the foreman waits on a question. In chat mode, a repeat of a known `act` logs nothing and queues no turn: the reply has `message` (`log/N`, the last message that carries the `act`), `queued` (the turn's place, 0 when it has started), `label` and `already` true. The reply comes at once, before the words are typed. See The floor's foreman | `bad_request` for empty text, for a bad `act` (also one that is not a string), for a known `act` sent with other words than it first carried (`act <id> was used for other words. Send a new id for a new sentence.`), for a full queue, and when no foreman runs and `coppice.toml` names no `default` harness: `no default harness in <path>, so no foreman can start. Run coppice open HARNESS once to set one.` `unauthorized` from any connection but the operator. A refusal from `pane.create` when the foreman cannot start |
-| `floor.chat` | `since`, optional, the `id` of the last message the client has; `limit`, optional, default 100; below 1 counts as 100 and above 500 as 500 | `messages` list, oldest first, each with `id`, `at`, `role`, `text`, optional `tool` and `pane`, and on each `owner` line `read` bool; `source` `transcript`; `more` bool. See The chat. In chat mode (`[foreman] mode = "chat"`): `past`, optional bool, shows imported `past` lines (default off); `id` is `log/<i>`; `role` can also be `work` or `past`; a tool use has `tool` set to its name and no result; `source` is `log` | `unauthorized` from any connection but the operator, and for a named web token. A chat file or a foreman's transcript that cannot be read is left out with one note, and `more` is true. `internal` only when a damaged file cannot be moved aside |
-| `floor.facts` | none | `daisugi` object: `mode`, `armed`, and `enforcing`, `watching` and `off`, the number of live harness panes in each mode, and `installed`, true when the Claude Code or Codex settings in the home hold a daisugi gate hook, and optional `hook_root`, the gate root such a hook names with `--root` when it is not this server's gate root (then the gate reads its mode markers elsewhere and `agent.set_mode` does nothing; a hook with no `--root` is not checked); `working` and `needing_you`, the number of live panes whose state is `working` and `blocked`, where a blocked pane whose ask a foreman holds counts as working, as every floor counts it from `pane.list`; `tokens_today`, a `tokens` object; optional `gateway` object with `url` and optional `answers` bool; optional `foreman` object with `pane` and `label`, the floor's tracked foreman while it runs; optional `foreman_turn` object with `ran_on`, the name of the turn account the chat foreman's last turn ran on (`Claude` for Claude Code), once a turn has run (after a restart, from the saved state read when the chat opens), see the chat foreman's failover; optional `phone_cert_days`, the whole days, rounded down, left on the phone server's tailscale certificate (the one a running `coppice web serve --tls tailscale` names in `web/serving.json`, else, when web.json is enabled under `--tls tailscale`, its `cert_file` or the default pair; nothing for a phone server that neither runs nor is saved), present only under 7 days and negative once it has run out. See Agent facts | |
+| `floor.steward` | `harness` name, optional, default the `default` harness | `pane` the new steward's id; `label`; `started` true. The steward gets its page as with `floor.talk`. See The floor's steward | `bad_request` while the steward runs: `the steward <label> (<id>) runs already. Close it first, or talk to it.`, and for no default harness as with `floor.talk`. `unauthorized` from any connection but the operator |
+| `floor.talk` | `text` required, one sentence for the floor's steward; `act` optional, a client id for the sentence: 1 to 64 letters, digits, `.`, `:`, `-` or `_` (a UUID from a sender) | `pane` the steward's id; `label`; `started` true when this talk started the steward; `queued` how many sentences wait, this one included; optional `note`, one line, when the old steward had ended or the steward waits on a question. In chat mode, a repeat of a known `act` logs nothing and queues no turn: the reply has `message` (`log/N`, the last message that carries the `act`), `queued` (the turn's place, 0 when it has started), `label` and `already` true. The reply comes at once, before the words are typed. See The floor's steward | `bad_request` for empty text, for a bad `act` (also one that is not a string), for a known `act` sent with other words than it first carried (`act <id> was used for other words. Send a new id for a new sentence.`), for a full queue, and when no steward runs and `coppice.toml` names no `default` harness: `no default harness in <path>, so no steward can start. Run coppice open HARNESS once to set one.` `unauthorized` from any connection but the operator. A refusal from `pane.create` when the steward cannot start |
+| `floor.chat` | `since`, optional, the `id` of the last message the client has; `limit`, optional, default 100; below 1 counts as 100 and above 500 as 500 | `messages` list, oldest first, each with `id`, `at`, `role`, `text`, optional `tool` and `pane`, and on each `owner` line `read` bool; `source` `transcript`; `more` bool. See The chat. In chat mode (`[steward] mode = "chat"`): `past`, optional bool, shows imported `past` lines (default off); `id` is `log/<i>`; `role` can also be `work` or `past`; a tool use has `tool` set to its name and no result; `source` is `log` | `unauthorized` from any connection but the operator, and for a named web token. A chat file or a steward's transcript that cannot be read is left out with one note, and `more` is true. `internal` only when a damaged file cannot be moved aside |
+| `floor.facts` | none | `daisugi` object: `mode`, `armed`, and `enforcing`, `watching` and `off`, the number of live harness panes in each mode, and `installed`, true when the Claude Code or Codex settings in the home hold a daisugi warden hook, and optional `hook_root`, the warden root such a hook names with `--root` when it is not this server's warden root (then the warden reads its mode markers elsewhere and `agent.set_mode` does nothing; a hook with no `--root` is not checked); `working` and `needing_you`, the number of live panes whose state is `working` and `blocked`, where a blocked pane whose ask a steward holds counts as working, as every floor counts it from `pane.list`; `tokens_today`, a `tokens` object; optional `router` object with `url` and optional `answers` bool; optional `steward` object with `pane` and `label`, the floor's tracked steward while it runs; optional `steward_turn` object with `ran_on`, the name of the turn account the chat steward's last turn ran on (`Claude` for Claude Code), once a turn has run (after a restart, from the saved state read when the chat opens), see the chat steward's failover; optional `phone_cert_days`, the whole days, rounded down, left on the phone server's tailscale certificate (the one a running `coppice web serve --tls tailscale` names in `web/serving.json`, else, when web.json is enabled under `--tls tailscale`, its `cert_file` or the default pair; nothing for a phone server that neither runs nor is saved), present only under 7 days and negative once it has run out. See Agent facts | |
 | `floor.machines` | none | `tailscale`, `ok`, `absent` (no `tailscale` on `PATH`) or `off` (it does not answer within 3 s, or its state is not `Running`); `machines` list, empty unless `ok`, this box first and then the peers by name, each with `name` (the MagicDNS short name), `online`, `os`, `self`, optional `last_seen` (as tailscale prints it, absent when tailscale has none), `profiles` list of `{name, address, answers, answers_ms, key_set}` and optional `voice` and `speak` `{address, answers, answers_ms}`; `line`, one plain sentence with the fix, when `tailscale` is not `ok`; `profiles_line` when the operator's agent profiles could not be read. See The machines view | `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator reads the machines.` |
-| `floor.journal` | `pane`, optional, keeps one agent's verdicts; `since`, optional, a unix time in seconds, keeps verdicts made after it (a value that is not a number is `bad_request`); `limit`, optional, below 1 or above 500 counts as 500 | `entries` list of the last verdicts a gate or an agent's loop report told the server, newest first, 100 per agent and 500 in all (the oldest go first), each `{at, pane, decision, tool, clause}` with `mode` when the report named one. `at` is unix seconds on the server clock. The list stays across a restart. A pane gets only its own entries; a plugin and a peer the server cannot place get none, even if their hello names a pane; an operator or a view gets all | `bad_request` for a `since` that is not a number |
+| `floor.journal` | `pane`, optional, keeps one agent's verdicts; `since`, optional, a unix time in seconds, keeps verdicts made after it (a value that is not a number is `bad_request`); `limit`, optional, below 1 or above 500 counts as 500 | `entries` list of the last verdicts a warden or an agent's loop report told the server, newest first, 100 per agent and 500 in all (the oldest go first), each `{at, pane, decision, tool, clause}` with `mode` when the report named one. `at` is unix seconds on the server clock. The list stays across a restart. A pane gets only its own entries; a plugin and a peer the server cannot place get none, even if their hello names a pane; an operator or a view gets all | `bad_request` for a `since` that is not a number |
 
-#### The floor's foreman
+#### The floor's steward
 
-The floor's foreman is the pane the server started as the foreman. The
-server tracks it by its pane id, which it keeps in `foreman.json` in the
-data dir, so the id outlives a restart. The label `foreman` is only for
-people to read: the server never finds the foreman by its label. A pane,
+The floor's steward is the pane the server started as the steward. The
+server tracks it by its pane id, which it keeps in `steward.json` in the
+data dir, so the id outlives a restart. The label `steward` is only for
+people to read: the server never finds the steward by its label. A pane,
 a plugin or a peer the server cannot place gets `unauthorized` with `only
-the operator names a pane foreman.` for `pane.create`, `pane.split`,
-`pane.fork` and `pane.rename` with the label `foreman`, in any case and
+the operator names a pane steward.` for `pane.create`, `pane.split`,
+`pane.fork` and `pane.rename` with the label `steward`, in any case and
 with spaces around it, and for `pane.resume` of a record labelled
-`foreman`, since a resume keeps the label.
+`steward`, since a resume keeps the label.
 
-When the operator resumes the tracked foreman's ended record with
-`pane.resume`, the new pane becomes the tracked foreman, so the next
-`floor.talk` goes to it and no second foreman starts. A resumed session
+When the operator resumes the tracked steward's ended record with
+`pane.resume`, the new pane becomes the tracked steward, so the next
+`floor.talk` goes to it and no second steward starts. A resumed session
 already had its page. A pane that starts fresh gets the page again. A
-record labelled `foreman` that is not the tracked foreman, because a talk
-started a new one first, resumes labelled `foreman-old`, so two panes
-never read as the foreman.
+record labelled `steward` that is not the tracked steward, because a talk
+started a new one first, resumes labelled `steward-old`, so two panes
+never read as the steward.
 
-- With no live foreman, `floor.talk` starts one: `pane.create` with the
-  `default` harness, `kind` `pty`, the label `foreman`, and `cwd` the
-  foreman's own directory, made if missing: `$XDG_STATE_HOME/coppice/foreman`,
-  else `~/.local/state/coppice/foreman`. The daisugi gate refuses every
+- With no live steward, `floor.talk` starts one: `pane.create` with the
+  `default` harness, `kind` `pty`, the label `steward`, and `cwd` the
+  steward's own directory, made if missing: `$XDG_STATE_HOME/coppice/steward`,
+  else `~/.local/state/coppice/steward`. The daisugi warden refuses every
   call made from inside the coppice config and data directories, so the
-  foreman's directory is never inside them. It is scratch, not a project.
+  steward's directory is never inside them. It is scratch, not a project.
   It never joins the recent directories, and a one-click `pane.create`
-  `near` the foreman does not start there. No config key names the
-  foreman: `floor.facts` names the tracked one while it runs.
-- `floor.foreman` starts the foreman the same way with a harness the
-  request names, and refuses while the foreman runs.
-- A foreman the server starts gets its page before any words. The server
+  `near` the steward does not start there. No config key names the
+  steward: `floor.facts` names the tracked one while it runs.
+- `floor.steward` starts the steward the same way with a harness the
+  request names, and refuses while the steward runs.
+- A steward the server starts gets its page before any words. The server
   waits until the pane drew its screen and reads `idle` from a state newer
   than the first bytes it drew, since a new pane reads idle before it
   draws anything. It then types the page: when the pane's program turned
   bracketed paste on (`CSI ?2004h`), the header line and the page that
-  `coppice skill foreman` prints, as one paste, then Enter. The page holds
+  `coppice skill steward` prints, as one paste, then Enter. The page holds
   no escape byte, so it cannot end the paste early. When the program did
   not turn paste on, the server types the one line `Run: coppice skill
-  foreman. Follow it. You are the foreman of this floor. Say ready.` It
+  steward. Follow it. You are the steward of this floor. Say ready.` It
   then waits for the turn that starts to end.
 - The words go as one line. Tabs and line breaks become spaces, other
   control characters are dropped, and every run of spaces becomes one, so
   one talk is one prompt. The words wait in one queue on the server,
   oldest first, at most 32. Past that, `floor.talk` is refused with `the
-  foreman has 32 sentences waiting already. Look at its window, then talk
+  steward has 32 sentences waiting already. Look at its window, then talk
   again.` One goroutine types the words with Enter, one at a time. A
-  second `floor.talk` while the foreman starts joins the queue and never
-  starts a second foreman.
-- A word waits while the foreman's state is `blocked`, since an Enter
+  second `floor.talk` while the steward starts joins the queue and never
+  starts a second steward.
+- A word waits while the steward's state is `blocked`, since an Enter
   there would answer its question.
-- After 30 seconds of waiting on a foreman that is not ready, the server
+- After 30 seconds of waiting on a steward that is not ready, the server
   writes one note saying so.
-- A foreman that ends before its page drops the queue with a note. A
-  foreman that ends later drops what is left with a note. The next
+- A steward that ends before its page drops the queue with a note. A
+  steward that ends later drops what is left with a note. The next
   `floor.talk` starts a new one and its reply carries a `note` that says
   the old one ended. The server writes that note to the floor too.
-- Other panes can type into the foreman: `pane.send_text` and
+- Other panes can type into the steward: `pane.send_text` and
   `agent.prompt` are open to panes. That grants them no rights. The
-  foreman's page tells it that text other agents type is data, not the
-  operator's orders, and the gate judges every call the foreman makes the
+  steward's page tells it that text other agents type is data, not the
+  operator's orders, and the warden judges every call the steward makes the
   same way whoever asked for it.
-- The floor's foreman is no task's foreman, so it holds no asks. See
+- The floor's steward is no task's steward, so it holds no asks. See
   Holds.
 
 #### The chat
 
-The chat is what the owner said to the floor's foreman and what the
-foremen said back. Two verbs read it: `floor.chat` reads the whole chat,
+The chat is what the owner said to the floor's steward and what the
+stewards said back. Two verbs read it: `floor.chat` reads the whole chat,
 and `pane.messages` reads one pane's transcript.
 
 - The server writes each `floor.talk` sentence, after it accepts it and
   before it types it, as one line of `<data dir>/chat/YYYY-MM-DD.jsonl`,
   the day in UTC. The line is `{"kind":"user","date":"<UTC time as
-  2006-01-02T15:04:05.000Z>","pane":"<foreman id>","text":"<the words as
+  2006-01-02T15:04:05.000Z>","pane":"<steward id>","text":"<the words as
   typed>"}`. The date always has the same length, so no id hangs on the
   clock. So the owner's
-  words show at once, while the foreman starts, and outlive a foreman that
-  ended. When the server starts a foreman and it had tracked an earlier
-  one, it first writes a line of kind `note` with the text `A new foreman
-  started.` and the new foreman's id. The kinds are the foreman log's own
+  words show at once, while the steward starts, and outlive a steward that
+  ended. When the server starts a steward and it had tracked an earlier
+  one, it first writes a line of kind `note` with the text `A new steward
+  started.` and the new steward's id. The kinds are the steward log's own
   (`user`, `note`), so a later reader of that log maps the same way. The
   directory is mode 0700 and each file 0600. A write that fails leaves the
   talk as it is, and the server writes one note that names the file.
-- Each write sends a `messages` event for the foreman's pane with `chat`
+- Each write sends a `messages` event for the steward's pane with `chat`
   true.
 - `floor.chat` reads the newest chat files, at most 4 MiB in all, and the
-  transcripts of the tracked foreman, even when no line names it yet (as
-  for one that `floor.foreman` or the terminal floor started), and of each
-  foreman the lines name, newest four foremen at most, the tracked one
+  transcripts of the tracked steward, even when no line names it yet (as
+  for one that `floor.steward` or the terminal floor started), and of each
+  steward the lines name, newest four stewards at most, the tracked one
   first:
-  a sprig foreman's session tree, else the newest four transcripts the
-  foreman's own process claimed (see Agent facts). The claims are kept in
+  a sprig steward's session tree, else the newest four transcripts the
+  steward's own process claimed (see Agent facts). The claims are kept in
   the data dir, so after a restart the chat still holds the replies of a
-  foreman that ended. A chat file or a transcript that cannot be read is
+  steward that ended. A chat file or a transcript that cannot be read is
   left out, `more` is true, and the server writes one note that names it,
   once per server, however often the chat is read. From the chat files it takes
   `user` lines as role `owner` and `note` lines as role `note`. From a
   transcript it takes only role `agent` messages: the owner's lines there
-  are the same words, and the first one is the foreman's page. It merges
+  are the same words, and the first one is the steward's page. It merges
   them by `at`. At the same `at`, chat lines come before transcript
   messages, and each source keeps its own order. A chat line's `id` is
   `chat/<day>/<byte offset of its line>`. A transcript message's `id` is
-  `<pane>/<n>/<its pane.messages id>`, where `n` numbers the foreman's
+  `<pane>/<n>/<its pane.messages id>`, where `n` numbers the steward's
   claimed transcripts, oldest 0. Each message carries `pane`, the
-  foreman's id.
-- Each `owner` line carries `read`. It is true when that foreman's
+  steward's id.
+- Each `owner` line carries `read`. It is true when that steward's
   transcripts record the same words as an owner message (each run of white
   space read as one space) whose `at` is at or after the line's `at`: the
-  foreman's turn for that sentence has started. The chat lines of each
-  foreman are matched oldest first, and each recorded message reads one
+  steward's turn for that sentence has started. The chat lines of each
+  steward are matched oldest first, and each recorded message reads one
   line at most, in order. So a sentence typed while an earlier turn runs,
   which the harness has not taken yet, stays `false`, and an older message
-  with the same words never reads a new line. A line whose foreman's
+  with the same words never reads a new line. A line whose steward's
   transcript is not read is `false`. Other panes can type into the
-  foreman, so an agent that types the owner's exact words while the
+  steward, so an agent that types the owner's exact words while the
   owner's line waits can make that line read early; it cannot read the
-  chat to learn them. A line that never reached the foreman can take the
+  chat to learn them. A line that never reached the steward can take the
   mark of a later line with the same words.
 - A chat file with a complete line that is not a JSON object is damaged.
   The server moves it to `<name>.broken-<UTC time as 20060102T150405Z>`,
@@ -1000,11 +1059,11 @@ and `pane.messages` reads one pane's transcript.
   newest `limit`. `more` is true when messages older than the first one
   kept were left out: by `limit`, or, with no `since` found, because the
   read did not reach the start of a file.
-- The desk draws the chat as the foreman's window, from `floor.chat` and
-  the pane `floor.facts` names under `foreman`. Both floors, the web page
+- The desk draws the chat as the steward's window, from `floor.chat` and
+  the pane `floor.facts` names under `steward`. Both floors, the web page
   and the terminal, read the newest messages, show the owner's lines as
-  `you` and the replies as `foreman`, and send the line typed in that
-  window with `floor.talk`, never as keys to the foreman's pane. A reply
+  `you` and the replies as `steward`, and send the line typed in that
+  window with `floor.talk`, never as keys to the steward's pane. A reply
   is a message with role `agent` and no `tool`. The floor counts the
   newest reply's `id` as seen once a window has drawn it. No verb or field
   is new for this.
@@ -1013,17 +1072,17 @@ and `pane.messages` reads one pane's transcript.
 
 | verb | params | result | errors |
 |---|---|---|---|
-| `agent.allow` | `pane`; `ask` id of the gate's ask; `reason`; `confirm`, the pane name, needed for a permanent ask; `scope` `once` or `task`, default `once` | `pane`, `ask`, `decision` `allow` | `unauthorized` on a pane connection. `bad_request` when the pane never reported that ask in a blocked state, or its deadline has passed, or when no ask is pending under that id, or for an allow with any other `scope`. Then the permanent rule: `unauthorized` with `this cannot be undone. Type the pane name to allow: <name>` when the ask is permanent and `confirm` is not the pane name, and `unauthorized` for `scope` `task` on a permanent ask. The pane name is its label, or its id when it has no label. The ask is undoable only when both the tier the pane reported and the tier in the gate's ask file say `undoable`. A missing tier on either side is permanent. `scope` `task` rides in the answer file, and the gate records it as a proposed envelope edit that nothing applies. Any live ask of the pane may be answered, not only the one its state shows now. The server keeps its record of asks in memory only. After a server restart, an ask raised before it can be answered here only once the pane reports that ask again. `internal` when the answer cannot be written. The answer is the same file the phone writes in the gate directory. The phone's answer route holds the same rule: for an allow it reads the tier and the pane name from `agent.list`, and an ask no pane shows is gone |
-| `agent.deny` | `pane`; `ask`; `reason` | `pane`, `ask`, `decision` `deny` | the role refusal and the checks that the ask exists, the same as `agent.allow`. A deny never needs `confirm`, and it ignores `scope`. The foreman that holds the ask may deny it from its pane; the reason is then `denied by the foreman <label>` |
-| `pane.report_state` | `pane`; `event` is one PaneStateEvent object, see Events. The event may also carry the gate report fields `transcript_path`, `verdict` and `mode`, see Agent facts | `pane`, `source`, `state`, `detail`; optional `ask`, `note`; optional `transcript`, the refusal of a `transcript_path` the server does not take (see Agent facts) | A `source` of `operator` from a connection not attached to the pane becomes `gate`, and `note` says so. `bad_request` for a gate report field of the wrong type, a `transcript_path` that is not absolute, a `mode` other than `enforcing` or `watching`, or a `verdict` whose `decision` is not `allow`, `deny` or `ask` |
+| `agent.allow` | `pane`; `ask` id of the warden's ask; `reason`; `confirm`, the pane name, needed for a permanent ask; `scope` `once` or `task`, default `once` | `pane`, `ask`, `decision` `allow` | `unauthorized` on a pane connection. `bad_request` when the pane never reported that ask in a blocked state, or its deadline has passed, or when no ask is pending under that id, or for an allow with any other `scope`. Then the permanent rule: `unauthorized` with `this cannot be undone. Type the pane name to allow: <name>` when the ask is permanent and `confirm` is not the pane name, and `unauthorized` for `scope` `task` on a permanent ask. The pane name is its label, or its id when it has no label. The ask is undoable only when both the tier the pane reported and the tier in the warden's ask file say `undoable`. A missing tier on either side is permanent. `scope` `task` rides in the answer file, and the warden records it as a proposed envelope edit that nothing applies. Any live ask of the pane may be answered, not only the one its state shows now. The server keeps its record of asks in memory only. After a server restart, an ask raised before it can be answered here only once the pane reports that ask again. `internal` when the answer cannot be written. The answer is the same file the phone writes in the warden directory. The phone's answer route holds the same rule: for an allow it reads the tier and the pane name from `agent.list`, and an ask no pane shows is gone |
+| `agent.deny` | `pane`; `ask`; `reason` | `pane`, `ask`, `decision` `deny` | the role refusal and the checks that the ask exists, the same as `agent.allow`. A deny never needs `confirm`, and it ignores `scope`. The steward that holds the ask may deny it from its pane; the reason is then `denied by the steward <label>` |
+| `pane.report_state` | `pane`; `event` is one PaneStateEvent object, see Events. The event may also carry the warden report fields `transcript_path`, `verdict` and `mode`, see Agent facts | `pane`, `source`, `state`, `detail`; optional `ask`, `note`; optional `transcript`, the refusal of a `transcript_path` the server does not take (see Agent facts) | A `source` of `operator` from a connection not attached to the pane becomes `warden`, and `note` says so. `bad_request` for a warden report field of the wrong type, a `transcript_path` that is not absolute, a `mode` other than `enforcing` or `watching`, or a `verdict` whose `decision` is not `allow`, `deny` or `ask` |
 | `pane.report_child` | `pane`; `child` id of a subagent inside the pane's harness; `state` is `working` or `done`; `label`, cleaned and cut the same way as a note | `pane`, `child`, `state` | `bad_request` when `child` is missing or `state` is anything else. A subagent is read only: no verb acts on it. A report sends a `child` event. A pane connection may send it, and it makes no note |
 | `agent.list` | none | `agents` list of rows. Each row has `pane`, `label`, `cwd`, `kind`, `harness`, `closed`, `state`, `source`, `detail`; optional `ts`, `session_id`, `ask`, `harness_session_id`, `parent_pane` | |
 | `agent.get` | `pane` | one `agent.list` row | `no_such_pane` |
 | `agent.prompt` | `pane`; `text` required; `model`, optional, a plain model name for a headless sprig pane: this turn and the ones after it run on it; `wait` default false; `until` state name, default `idle`; `timeout_ms` default 120000 | without `wait`: `pane`, `sent`. A prompt that waits, see Ready prompts, adds `queued` and `note` and has `sent` 0. With `wait`: `pane`, `state`, `source`, optional `ask`. A prompt that waits is sent first, within `timeout_ms`, and then the wait for `until` starts | `adapter_error`, `timeout`. `bad_request` for a prompt to a pty pane that waits on a question, and past the queue cap, see Ready prompts |
 | `agent.wait` | `pane`; `until` default `idle`; `timeout_ms` default 120000 | `pane`, `state`, `source`, optional `ask` | `timeout` |
-| `agent.set_mode` | `pane`; `mode` is `enforcing` or `watching` | `pane`, `mode` | Sets one agent's daisugi mode from its next tool call. `watching` writes the marker `<gate root>/agents/<floor>/<pane>.mode` (the text `watching` and a newline; file 0600, directories 0700, written to a new file and renamed into place). `<floor>` is the first 16 hex digits of the SHA-256 of the server's socket path, the `COPPICE_SOCK` its panes get: pane ids start at `w1:p1` on every floor, and floors whose data dirs share a parent share a gate root, so each floor keeps its own directory. `enforcing` removes it. coppice makes, writes and sweeps markers only in real directories: a symlink or a file where `agents/` or the floor's directory belongs gets `internal` `could not set the daisugi mode of <label>: <path> is not a directory: it is a symlink or a file. Move it aside`, and a start leaves such a directory alone and says so in a note. The gate reads the marker for the calling pane of the calling floor only (`COPPICE_PANE` and `COPPICE_SOCK`, or a resident request's `coppice_pane` and `coppice_sock`), and it can only lower an `enforce` hook to `audit`: it never turns the gate off and never changes an envelope. The marker goes when the agent ends or its record goes, and a server start removes every marker in its own floor's directory, so each agent of an earlier run starts enforcing; another floor's directory is left alone. `bad_request` `mode must be enforcing or watching. Turning the gate off stays a command: daisugi gate disarm` for any other mode, `off` included; `bad_request` `<label> runs no harness, so no gate checks it.`; `no_such_pane`; `pane_closed` for an ended agent; `not_attached` on a connection attached to the pane view only, before any other check; `internal` when the marker cannot be written. `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator sets an agent's daisugi mode.` |
+| `agent.set_mode` | `pane`; `mode` is `enforcing` or `watching` | `pane`, `mode` | Sets one agent's daisugi mode from its next tool call. `watching` writes the marker `<warden root>/agents/<floor>/<pane>.mode` (the text `watching` and a newline; file 0600, directories 0700, written to a new file and renamed into place). `<floor>` is the first 16 hex digits of the SHA-256 of the server's socket path, the `COPPICE_SOCK` its panes get: pane ids start at `w1:p1` on every floor, and floors whose data dirs share a parent share a warden root, so each floor keeps its own directory. `enforcing` removes it. coppice makes, writes and sweeps markers only in real directories: a symlink or a file where `agents/` or the floor's directory belongs gets `internal` `could not set the daisugi mode of <label>: <path> is not a directory: it is a symlink or a file. Move it aside`, and a start leaves such a directory alone and says so in a note. The warden reads the marker for the calling pane of the calling floor only (`COPPICE_PANE` and `COPPICE_SOCK`, or a resident request's `coppice_pane` and `coppice_sock`), and it can only lower an `enforce` hook to `audit`: it never turns the warden off and never changes an envelope. The marker goes when the agent ends or its record goes, and a server start removes every marker in its own floor's directory, so each agent of an earlier run starts enforcing; another floor's directory is left alone. `bad_request` `mode must be enforcing or watching. Turning the warden off stays a command: daisugi warden disarm` for any other mode, `off` included; `bad_request` `<label> runs no harness, so no warden checks it.`; `no_such_pane`; `pane_closed` for an ended agent; `not_attached` on a connection attached to the pane view only, before any other check; `internal` when the marker cannot be written. `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator sets an agent's daisugi mode.` |
 | `agent.set_model` | `pane`; `model`, a plain name: letters, digits and `. _ : / - [ ]`, 1 to 64 characters, starting with a letter or digit | `pane`, `model`, `when`, and for a queued swap `queued` and `note` | Swaps one agent's model, and says when. On a `claude` pty pane it sends `/model NAME` through the ready queue (see Ready prompts): `when` is `now` when the pane was ready, or `queued` with the queue place and the note, and the line goes only at an idle prompt. A pane with no verdict from the screen reader (no manifest, or no manifest tick yet) waits in the queue too: the line is never typed until the ready queue reads an idle prompt. On a headless `sprig` pane the turns after the call run with `--model NAME`, after the pane's own args, until the agent ends or the pane is resumed: `when` is `next turn`. The record keeps the name (`model` in the pane record), so a resume or a restart of that pane runs its turns on it again. Any other harness gets `bad_request` `Swapping the model of <label> is not built for <harness> yet.` `bad_request` `model must be a plain name: letters, digits and . _ : / - [ ], up to 64 characters.` for any other name; `no_such_pane`; `pane_closed`; `not_attached` on a connection attached to the pane view only, before any other check. `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator sets an agent's model.` |
-| `agent.set_router` | `pane`; `router` is `direct` or `gateway` | `pane` (the new pane's id), `workspace`, `tab`, `resumed`, `router` | Stops the agent, keeps its record as ended, and resumes its conversation in a new pane whose env sets the base URL: `ANTHROPIC_BASE_URL` for a `claude` pane. `direct` sets the vendor's own address (`https://api.anthropic.com`), never a missing key, since a pane's process also inherits the server's env. `gateway` sets the gateway's address from `coppice.toml`. What routes behind the gateway, `gateway` or `switchyard`, is the gateway's own setting, so a pane picks `gateway` and `stack.router` then names that setting. The new pane has a new id and no watching marker: it starts enforcing. `bad_request` `<label> has no conversation to resume yet, so a restart would lose it. Wait for its first reply, then swap.` when the record has no harness session id, or a pty harness has no `resume_args`; the agent is not stopped. `bad_request` `router must be direct or gateway.`; `bad_request` `no gateway is set. Add gateway = "http://127.0.0.1:8787" to coppice.toml.`; `bad_request` `the gateway at <url> does not answer. Start it, then swap.` for `gateway` when a loopback gateway accepts no connection, before the agent stops; `bad_request` `Swapping the router of <label> is not built for <harness> yet.`; `no_such_pane`; `pane_closed`; `not_attached` as for `agent.set_model`; `spawn_failed` when the new pane cannot start: the swap then tries one plain `pane.resume` with the old env. If that works, the reply says `The router of <label> did not change: <why> The agent runs again on its old router, as pane <id>.`; if it fails too, `<label> was stopped and its router did not change. It is in the ended list. To start it again, run: coppice pane resume <id>.` and the ended record stays; `internal` when the old process does not stop in 10 s. `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator sets an agent's router.` |
+| `agent.set_route` | `pane`; `route` is `direct` or `router` | `pane` (the new pane's id), `workspace`, `tab`, `resumed`, `route` | Stops the agent, keeps its record as ended, and resumes its conversation in a new pane whose env sets the base URL: `ANTHROPIC_BASE_URL` for a `claude` pane. `direct` sets the vendor's own address (`https://api.anthropic.com`), never a missing key, since a pane's process also inherits the server's env. `router` sets the router's address from `coppice.toml`. What routes behind the router, `router` or `switchyard`, is the router's own setting, so a pane picks `router` and `stack.route` then names that setting. The new pane has a new id and no watching marker: it starts enforcing. `bad_request` `<label> has no conversation to resume yet, so a restart would lose it. Wait for its first reply, then swap.` when the record has no harness session id, or a pty harness has no `resume_args`; the agent is not stopped. `bad_request` `route must be direct or router.`; `bad_request` `no router is set. Add router = "http://127.0.0.1:8787" to coppice.toml.`; `bad_request` `the router at <url> does not answer. Start it, then swap.` for `router` when a loopback router accepts no connection, before the agent stops; `bad_request` `Swapping the route of <label> is not built for <harness> yet.`; `no_such_pane`; `pane_closed`; `not_attached` as for `agent.set_model`; `spawn_failed` when the new pane cannot start: the swap then tries one plain `pane.resume` with the old env. If that works, the reply says `The route of <label> did not change: <why> The agent runs again on its old route, as pane <id>.`; if it fails too, `<label> was stopped and its route did not change. It is in the ended list. To start it again, run: coppice pane resume <id>.` and the ended record stays; `internal` when the old process does not stop in 10 s. `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator sets an agent's route.` |
 | `agent.move` | `pane`; `harness`, a harness name as in `coppice.toml` other than the pane's own; `preview`, optional bool | with `preview`: `from` (the pane's harness), `harness`, `tokens`, `messages`, `trimmed`, and `conversation` when the transcript counted usage. Without: the same, and `pane` (the new agent), `workspace`, `tab`, `when` (`now`, `queued` or `typed`: `typed` is a terminal agent with no screen rule, whose brief went in at once), and for a queued brief `queued` and `note` | Moves the conversation to another loop. It reads the pane's transcript the way `pane.messages` does and builds a brief from its tail: a preface, then the newest owner and agent texts that fit 12000 runes and 40 messages, oldest first. A row with a tool name is left out whole, so the brief carries no tool output and no tool input. `tokens` is the brief's size, about four bytes to a token. `conversation` is the transcript's own count of the conversation, input read fresh plus cache writes, each once; `trimmed` is true when older messages were left out. With `preview` nothing starts, so a client shows the cost first. Without it, a new agent of `harness` starts in the same directory, workspace and tab (a terminal agent when `coppice.toml` has `[harness.NAME]`, else a headless one when an adapter is built), and the brief goes to it as a prompt; a terminal agent takes it through the ready queue, as `agent.prompt` does. The old agent stays and is not touched. If the brief cannot go, the new agent is removed and the reply is an error. `bad_request` `<label> already runs on <harness>.`; `<label> (<id>) has no transcript to move. Its hook reported none.`; `<label> has no conversation to move yet. Wait for its first reply.`; `no harness named "<name>" in <path>. ...`; `Swapping the loop of <label> is not built for a pane with no harness yet.`; a bad harness name; `no_such_pane`; `pane_closed` for an ended pane; `not_attached` as for `agent.set_model`; `server_closed`; `spawn_failed`; `unauthorized` from a pane, a plugin, or a peer the server cannot place: `only the operator moves an agent's conversation.`; `unauthorized` from a named web token, preview included: `the chat is for the owner's own sign-in.` |
 | `agent.read` | `pane`; `region` is `visible`, `recent` or `detection`, default `recent`. `source` is accepted as an older name for `region` | one `agent.list` row plus `text` and `region` | `pane_closed` when the screen is freed |
 | `pane.messages` | `pane`; `since` and `limit` as for `floor.chat` | `messages` list, oldest first, each with `id`, `at`, `role` (`owner` or `agent`), `text`, optional `tool`; `source` `transcript`; `more` bool. See Agent facts | `no_such_pane`. `bad_request` with `<label> (<id>) has no transcript to read. Its hook reported none.` when the server reads no file for the pane. `unauthorized` as in Roles. `internal` when the file cannot be read |
@@ -1033,7 +1092,7 @@ and `pane.messages` reads one pane's transcript.
 What the floor knows about each agent beyond its state. A field the server
 does not know is absent, never guessed.
 
-A gate hook adds three optional fields to the event it sends with
+A warden hook adds three optional fields to the event it sends with
 `pane.report_state`. The server keeps them apart from the PaneStateEvent:
 no `state` event and no row carries them as sent.
 
@@ -1059,7 +1118,7 @@ no `state` event and no row carries them as sent.
   report (the state, the ask, the verdict, the session id) still counts,
   and the reply's `transcript` names the refusal, when:
   - another pane claimed that real path first, live or ended, the ended
-    foreman included, before or after a restart: `another pane named that
+    steward included, before or after a restart: `another pane named that
     transcript first. A pane reads only its own.`;
   - its first record, the first `user` or `assistant` entry in its first
     64 KiB, has no `timestamp` or no `cwd`: `that transcript's first record
@@ -1090,7 +1149,7 @@ no `state` event and no row carries them as sent.
 - `verdict`: `{decision, tool, clause}`. `decision` is `allow`, `deny` or
   `ask`. `tool` and `clause` are strings, cut at 200 runes. In watching
   mode `decision` is what the harness was told, and `clause` names what an
-  enforcing gate would have denied. `model` in a row is cut the same way.
+  enforcing warden would have denied. `model` in a row is cut the same way.
 - `mode`: `enforcing` or `watching`. daisugi's config value `audit` is
   `watching`, and `enforce` is `enforcing`. (A session tree line written
   before audit mode was renamed says `shadow`; it is also `watching`.)
@@ -1147,36 +1206,36 @@ A `pane.list` row carries:
     newest assistant entry in the reported transcript, not `<synthetic>`.
     sprig: `model` of the newest assistant entry in its session tree, the
     file `<--session-dir>/<harness session id>.jsonl` its adapter tails.
-  - `router`: `gateway`, `switchyard` or `direct`. The server compares the
+  - `route`: `router`, `switchyard` or `direct`. The server compares the
     pane's `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`, its own env over the
-    server's, with the gateway address by scheme, host and port, every
-    loopback name the same host. The gateway address is `gateway` in
-    `coppice.toml`, or `http://127.0.0.1:8787`, where `daisugi gateway`
-    listens by default, when the key is absent. `gateway = ""` means there
-    is no gateway. Then a base URL at `https://api.anthropic.com` or
-    `https://api.openai.com` is `direct`, and any other leaves `router`
+    server's, with the router address by scheme, host and port, every
+    loopback name the same host. The router address is `router` in
+    `coppice.toml`, or `http://127.0.0.1:8787`, where `daisugi router serve`
+    listens by default, when the key is absent. `router = ""` means there
+    is no router. Then a base URL at `https://api.anthropic.com` or
+    `https://api.openai.com` is `direct`, and any other leaves `route`
     absent. A pane pointed at the
-    gateway is `switchyard` when `gateway_router: switchyard` is in
-    daisugi's `config.yaml` beside the gate root, else `gateway`. The
-    gateway reads that key only when it starts, and its `--router` flag
+    router is `switchyard` when `routing_mode: switchyard` is in
+    daisugi's `config.yaml` beside the warden root, else `router`. The
+    router reads that key only when it starts, and its `--routing-mode` flag
     overrides it. Absent when neither variable is set.
   - `daisugi`: `{mode, armed}` on a live pane with a harness. `mode` is
-    the mode its gate hook last reported, or for a sprig pane the mode of
+    the mode its warden hook last reported, or for a sprig pane the mode of
     the newest verdict in its session tree, else `off`. `armed` is false
-    while the disarm marker `DISARMED` is in the gate root. `marker`
+    while the disarm marker `DISARMED` is in the warden root. `marker`
     `watching` is there while the agent's mode marker says watching (see
-    `agent.set_mode`); `mode` says what the gate last reported, so it can
+    `agent.set_mode`); `mode` says what the warden last reported, so it can
     say `enforcing` until the agent's next tool call. `marker` is `refused`
-    when the gate would refuse a path on the way to the marker: the gate
+    when the warden would refuse a path on the way to the marker: the warden
     root as a symlink, or a root, `agents/` or floor directory that another
     user owns or group or others can write, or a marker that is a link or
-    shared. The gate then lowers nothing and, for the root or a directory,
-    denies every call. `markerNote` is the gate's one line with the fix
+    shared. The warden then lowers nothing and, for the root or a directory,
+    denies every call. `markerNote` is the warden's one line with the fix
     (`<path>: <reason> (fix: chmod 700 '<path>')`). The server checks these
-    paths with the same rules as the gate (GR-R-1), by fd from the root down,
-    so `watching` is never shown for a marker the gate would not read.
-- `gate`: `{decision, tool, clause, at}`, the last verdict. `at` is the
-  unix second the server took a gate hook's report, or for a sprig pane
+    paths with the same rules as the warden (GR-R-1), by fd from the root down,
+    so `watching` is never shown for a marker the warden would not read.
+- `warden`: `{decision, tool, clause, at}`, the last verdict. `at` is the
+  unix second the server took a warden hook's report, or for a sprig pane
   the `ts` of the verdict entry in its session tree, never later than now.
   The newer one wins.
 - `tokens`: `{fresh, cache_read, cache_write, out}` summed over every
@@ -1202,26 +1261,26 @@ guarded mode among the live harness panes, `off` below `watching` below
 `enforcing`, and `off` when there is none, so the header never claims more
 than every agent has. `tokens_today` sums the whole `tokens` of each pane
 the server had a report or a token change from today, local time. A pane
-that `pane.forget` removed no longer counts. `gateway.answers` is whether a
-TCP connection to the gateway address opens within 300 ms. The server
-dials only a loopback address and sends no request, since the gateway
+that `pane.forget` removed no longer counts. `router.answers` is whether a
+TCP connection to the router address opens within 300 ms. The server
+dials only a loopback address and sends no request, since the router
 passes almost every request on to the model provider. It remembers the
 answer for 5 seconds. `answers` is absent for an address that is not
 loopback.
 
-`floor.facts` carries `saved_today`, `{tokens}`, only when the gateway has
+`floor.facts` carries `saved_today`, `{tokens}`, only when the router has
 a figure for this floor: the sum of `frontier_tokens_saved` over the turns
-of today, local time, that name a pane of this floor, in the gateway's turn
-journal (`gateway/turns.jsonl` in the daisugi data dir, beside the gate
-root). A turn names its pane in a `pane` field. A gateway that writes no
+of today, local time, that name a pane of this floor, in the router's turn
+journal (`router/turns.jsonl` in the daisugi data dir, beside the warden
+root). A turn names its pane in a `pane` field. A router that writes no
 `pane` field gives no figure, because the floor will not guess which pane a
-saving belongs to. The gateway writes `pane` and `floor` when a pane's base
+saving belongs to. The router writes `pane` and `floor` when a pane's base
 URL carries the prefix `/pane/<floor>/<pane>`; coppice puts it there when it
 starts a pane whose own env sets `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` to
-the gateway, and only when the gateway says it takes the prefix (`GET /_caps` on
-a loopback gateway answers `{"pane_prefix": true}`; coppice asks once for each
-gateway address, with a 500 ms limit, keeps a yes, and asks again after 5 s
-on a no; an older gateway has no such route, so its panes keep the plain URL),
+the router, and only when the router says it takes the prefix (`GET /_caps` on
+a loopback router answers `{"pane_prefix": true}`; coppice asks once for each
+router address, with a 500 ms limit, keeps a yes, and asks again after 5 s
+on a no; an older router has no such route, so its panes keep the plain URL),
 ahead of any path the URL has, with `<floor>` the floor key of
 `agent.set_mode` and `<pane>` the pane's id at that start. The record in the
 pane's tree keeps the plain URL, so a resume stamps its new id. A base URL a
@@ -1257,7 +1316,7 @@ name, wire, base URL, model and `key_set`. The command reads whether a key
 variable is set and nothing else about it, so no key and no variable name
 enters the reply. `key_set` is false only when the profile names a key
 variable that is not set; a profile that needs no key reads as set. The
-server runs it in the foreman's neutral `compactor` directory, never the
+server runs it in the steward's neutral `compactor` directory, never the
 bundle command. A profile with no base URL is not on any machine. `address` is the host and port as the profile writes them
 (the port is 80 or 443 for a URL with none). `answers` is whether a TCP
 connection opens within 1 s, and `answers_ms` is how long it took, `null`
@@ -1316,14 +1375,14 @@ is what `pane.report_state` accepts under `event`.
 ```
 {"event":"state","v":1,"ts":1757300000.5,"session_id":"w1:p1",
  "harness_session_id":null,"harness":"claude-code","pane":"w1:p1",
- "state":"blocked","source":"gate",
+ "state":"blocked","source":"warden",
  "ask":{"id":"toolu_1","tool":"Bash","summary":"rm -rf build/","deadline":1757300090,
         "tier":"permanent"},
  "detail":"verdict=deny clause=shell.deny[2]"}
 ```
 
 - `state` is one of `idle`, `working`, `blocked`, `done`, `unknown`.
-- `source` is one of `operator`, `gate`, `headless`, `process`, `manifest`.
+- `source` is one of `operator`, `warden`, `headless`, `process`, `manifest`.
   The server keeps the highest source on top, in that order.
 - `done` comes only from `process` or `headless`.
 - A live `pty` pane's `process` fact is `working`, detail `output in the
@@ -1334,25 +1393,25 @@ is what `pane.report_state` accepts under `event`.
   state, so such a read sees the fact as of its own moment: never `no
   output yet` after output that is on the screen. A read can so send the
   pane's `state` event a moment before the next look would have.
-- A short redraw is no work while the gate last said idle (CP-R-56). A pane
-  whose last gate fact was `idle` keeps its `idle` when output starts after
+- A short redraw is no work while the warden last said idle (CP-R-56). A pane
+  whose last warden fact was `idle` keeps its `idle` when output starts after
   a quiet spell, until the burst has gone on for 1 s after the first write a
   look saw. A clock or a status line that redraws a few bytes does not make
-  the pane `working`. A gate `working` or `blocked`, and a pane that never
-  had a gate fact, are not held.
+  the pane `working`. A warden `working` or `blocked`, and a pane that never
+  had a warden fact, are not held.
 - The talk queue takes a standing hook idle (CP-R-57), and only the talk
-  queue. When a hook idle (source `gate` or `headless`, as Stop reports it)
+  queue. When a hook idle (source `warden` or `headless`, as Stop reports it)
   is at least 3 s old with no hook fact and no submitted input since, and the
   merged state is `working` from the process source only, the queue counts
   the pane as `idle` and sends its page or words. State events and reads do
   not change.
-- `ask` is present only on `blocked`. A `gate` blocked event must carry it.
+- `ask` is present only on `blocked`. A `warden` blocked event must carry it.
 - `ask.tier` is `undoable` or `permanent`. An ask with no tier, or a tier
   the server does not know, reads as `permanent`, and the server sends it
   that way. A tier that is not a string makes the event invalid.
 - `detail` is at most 200 characters.
 - `harness_session_id` and `pane` may be `null`.
-- `held` is present only while a foreman holds the ask. See Holds. Only
+- `held` is present only while a steward holds the ask. See Holds. Only
   the server sets it. `pane.report_state` never reads it.
 - `who` is present only on an `operator` event. It is the name of the
   connection that sent the report. Only the server sets it. The server
@@ -1377,7 +1436,7 @@ looks.
 One line the floor prints in dim: a verb a pane ran, or a `floor.note`.
 `pane` names the pane it came from and is absent for an operator note.
 `to`, when present, names the pane the note is for, apart from its author:
-a hold note comes from the asking pane and is for its foreman.
+a hold note comes from the asking pane and is for its steward.
 
 ```
 {"event":"note","text":"floor › pane.create  docs  pi","pane":"w1:p1","ts":1757300000.5}
@@ -1401,7 +1460,7 @@ a chat line, and when it sees a transcript file the server reads change
 in size or time, or a pane get or change its file. It looks at each such
 file every half second, from the first `events.subscribe` that names
 `messages` until the server stops. `chat` is true when the pane is the
-floor's tracked foreman.
+floor's tracked steward.
 
 ```
 {"event":"messages","pane":"w1:p1","chat":true,"ts":1757300000.5}
@@ -1460,34 +1519,46 @@ them itself.
 server. A client in another language replays the same files with the same
 rules. A `#skip` line in a corpus file is a listed gap, never a pass.
 
-## The foreman's tools in pane mode
+## The steward's tools in pane mode
 
-When `floor.talk` or `floor.foreman` starts a pane foreman, or a resumed
-foreman is followed, the server opens the standing socket
+When `floor.talk` or `floor.steward` starts a pane steward, or a resumed
+steward is followed, the server opens the standing socket
 `<log dir>/tools.sock` (mode 0600, once, until the server closes). If the
 harness command is `claude` or `opencode`, it also starts the pane with the
-`foreman` MCP server mounted (`--mcp-config`, or `OPENCODE_CONFIG_CONTENT`). The socket speaks the same one-line protocol as
-the socket of a chat turn and serves the same four verbs. The peer must
-descend from the pane foreman's process; any other peer gets a `refused`
+`steward` MCP server mounted (`--mcp-config`, or `OPENCODE_CONFIG_CONTENT`). The socket speaks the same one-line protocol as
+the socket of a chat turn and serves the same five verbs. The peer must
+descend from the pane steward's process; any other peer gets a `refused`
 error. `zoom` also takes `offset` and `size` (bytes, whole numbers, at most
 32 KiB a page; refused with a `label`). A reply that is not the whole text ends with a line
 `[bytes A-B of N. More: offset B]` or `[bytes A-B of N. End.]`, and a cut
 never splits a UTF-8 rune. A node that is not in the chat answers with an
 error that ends with `The root nodes are <id+n>, ...` (or `The chat is
 empty.`). With no chat open, `zoom` with `id` and `n` and `date` answer one plain
-line that the foreman keeps its own memory, and no call is logged. A worker's
+line that the steward keeps its own memory, and no call is logged. A worker's
 report is typed into the pane when it is idle, and shown as a `note` in the
-chat files. A `pi` foreman gets a note that says to mount `coppice foreman tools
+chat files. A `pi` steward gets a note that says to mount `coppice steward tools
 --standing` by hand. Worker reports wait in a queue of their own (16, the
 oldest dropped with a note) and do not count against the 32 of `floor.talk`.
 
-## The foreman in chat mode
+`spawn` also takes `attempts` (2 to 8) and `why` (`failed_verify`,
+`failed_tests`, `low_confidence` or `operator`; required with `attempts`, and
+refused without it). The server puts both in the `tree run` request and adds
+a `--check NAME=COMMAND` flag for each entry of the `checks` object in the
+project's envelope file, sorted by name. The model cannot set a check (W3K-11).
+Branches run on a plain profile; a profile that names a pool refuses
+`attempts`. The report adds one line, `N branches ran; card <choice id>
+opened: <headline>`, or `N branches ran; no card opened.` `status` ends with
+`open cards: N` when `daisugi rank queue` can be read in the steward's work
+dir. The steward never answers a card: it is a pane, and the answer route
+refuses a pane.
 
-With `[foreman] mode = "chat"` the foreman is one chat that never ends, not
+## The steward in chat mode
+
+With `[steward] mode = "chat"` the steward is one chat that never ends, not
 a pane. `floor.talk` logs the owner's words as a `user` message, queues a
 turn and answers at once with `{mode: "chat", message: "log/<i>", queued,
 label}`; the reply to the owner comes through `floor.chat` and the
-`messages` event. `floor.foreman` is refused: there is no pane to start. At
+`messages` event. `floor.steward` is refused: there is no pane to start. At
 most 32 turns wait; past that `floor.talk` answers `bad_request`. A log that
 cannot be opened is an `internal` error with a plain reason in each
 `floor.talk` and `floor.chat`.
@@ -1506,12 +1577,12 @@ copy; if that fails, the whole history moves
 aside as for a bad `main/` line. Each open that repaired anything adds one
 `note` to the chat that names the copies. A bad line in `main/` still moves the
 whole dir to `<dir>.broken-<UTC time>` and starts a new chat. The reads
-(`coppice foreman log|view|zoom|date`) never repair or write: they skip a
+(`coppice steward log|view|zoom|date`) never repair or write: they skip a
 bad tree line, build the view in memory, and say so on stderr.
 
 Each turn the server listens on `<log dir>/turns/t-<n>.sock`, a socket in
 the turn dir of this data dir (mode 0700; the turn's cwd and its system
-prompt file are there too), that serves only the foreman's four tools to
+prompt file are there too), that serves only the steward's five tools to
 the turn's own process tree. It is
 not a second public socket: one JSON line in (`{"tool", "args"}`), one out
 (`{"ok", "result" | "error"}`), then close. The server checks SO_PEERCRED,
@@ -1521,11 +1592,11 @@ started, and removes the socket when the turn ends.
 ### Importing old chats (FM-R-71 to FM-R-85)
 
 Old Claude Code chats (`~/.claude/projects/*/*.jsonl`) and Codex chats
-(`~/.codex/sessions/**/rollout-*.jsonl`) can join the foreman's memory, but only
+(`~/.codex/sessions/**/rollout-*.jsonl`) can join the steward's memory, but only
 when the owner chooses. Nothing is read into the chat before that.
 
 `floor.import` is operator only (a pane or a plugin gets "only the operator
-imports old chats into the foreman."), and needs chat mode. Its optional
+imports old chats into the steward."), and needs chat mode. Its optional
 `action` is `status` (the default), `progress` (the state, `done` and `total`
 only: it starts no scan), `accept`, `decline`, `pause` or `resume`;
 `accept` also takes `from` (`claude`, `codex` or `all`), `since` (`YYYY-MM-DD`)
@@ -1545,7 +1616,7 @@ loop imports one message at a time, as kind `past`, dated when it was said,
 only when no live node is pending and no turn runs or waits. A live message is
 therefore compacted before any import node that was queued earlier, no model call
 starts for an import node while a turn runs, and
-`coppice foreman import --pause` takes hold at the next message. Each message
+`coppice steward import --pause` takes hold at the next message. Each message
 carries an act id (`imp:claude:<uuid>`, or `imp:<source>:<session>:<line>`), so
 a crash, a restart or a second import never logs one twice. Thinking is never
 imported; tool calls and their results only with `tools`. The floor's chat

@@ -1,5 +1,5 @@
 //! `daisugi tend` and `daisugi distill-repeats`: the distiller and the
-//! gateway worklist, with the flags, output, exit codes and files of the
+//! router worklist, with the flags, output, exit codes and files of the
 //! Python CLI. Every refusal comes before the first write.
 
 use std::cell::RefCell;
@@ -9,7 +9,7 @@ use super::gardencmd::now_seconds;
 use super::{exit, parse_args, Env, Opt, Res, Stop};
 use crate::distill::repeats::{load_turns, rank_reuse};
 use crate::distill::{load_embedder, prepare, Distiller, Options, Report, Sink, TendErr};
-use crate::gate::py::text::repr;
+use crate::warden::py::text::repr;
 use crate::llm::Client;
 use crate::pathways::find::{select_matcher, Matcher, EMBEDDING_MODEL_VERSION};
 use crate::pathways::potion;
@@ -137,7 +137,7 @@ impl Env {
         notes: &Rc<RefCell<String>>,
     ) -> Result<TendState, CheckStop> {
         const CMD: &str = "tend";
-        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
+        let cfg = match super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return Err(self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")).unwrap_err().into()),
         };
@@ -276,25 +276,25 @@ impl Env {
     pub(super) fn distill_repeats(&mut self, args: &[String]) -> Res {
         const CMD: &str = "distill-repeats";
         let opts = [
-            Opt::val(&["--data-dir"], "PATH", "Daisugi data directory (reads <data-dir>/gateway/turns.jsonl)."),
+            Opt::val(&["--data-dir"], "PATH", "Daisugi data directory (reads <data-dir>/router/turns.jsonl)."),
             Opt::val(&["--top"], "INTEGER", "Maximum number of rows to print."),
         ];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
-            return self.cmd_help(CMD, "", "Rank repeated gateway asks into a reuse worklist.", &opts);
+            return self.cmd_help(CMD, "", "Rank repeated router asks into a reuse worklist.", &opts);
         }
         let top = self.click_int(CMD, &p, "--top", 20)?;
         let data_dir = p.str("--data-dir", &self.data_home());
         // Skipped lines are logged on the opendaisugi logger, which prints
         // nothing by default.
-        let turns = load_turns(&format!("{data_dir}/gateway/turns.jsonl")).map_err(|e| self.pw_err(CMD, e))?;
+        let turns = load_turns(&format!("{data_dir}/router/turns.jsonl")).map_err(|e| self.pw_err(CMD, e))?;
         if turns.is_empty() {
-            self.out("no turns recorded yet \u{2014} run `daisugi gateway` to start journaling.\n");
+            self.out("no turns recorded yet \u{2014} run `daisugi router serve` to start journaling.\n");
             return Ok(());
         }
         let mut cands = vec![];
         if turns.iter().any(|t| !t.signature.is_empty()) {
-            let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
+            let cfg = match super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml")) {
                 Ok(c) => c,
                 Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
             };
@@ -344,7 +344,7 @@ impl Env {
                 let pyw = self.env.get("PYTHONWARNINGS").cloned().unwrap_or_default();
                 match super::pywarn::user_warning_shown(&pyw, &warning) {
                     None => {
-                        return self.refuse(CMD, &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::gate::py::text::repr(&pyw)))
+                        return self.refuse(CMD, &format!("the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way", crate::warden::py::text::repr(&pyw)))
                     }
                     Some(true) => self.errf(&format!("UserWarning: {warning}\n")),
                     Some(false) => {}

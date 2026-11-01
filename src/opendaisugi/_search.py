@@ -336,7 +336,7 @@ def _embedder_device() -> str:
 
     This is deliberately NOT a blanket force to CPU. Sentence-transformers with no
     device grabs any visible GPU; on a card whose compute capability is not in the
-    installed torch build (e.g. a Pascal ``sm_61`` GTX 10-series against a build for
+    installed torch build (e.g. an older ``sm_61`` card against a build for
     ``sm_75+``), that later crashes with ``CUDA error: no kernel image is available``.
     We use the GPU where it genuinely works and fall back to CPU only where it cannot,
     so machines with a supported GPU keep the acceleration.

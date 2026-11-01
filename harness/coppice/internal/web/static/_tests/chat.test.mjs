@@ -1,18 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, element } from './browser-stub.mjs';
-import { cleanTalk, chipParts, chatRows, chatTime, lastReply, DESK_LINE, CHAT_REFUSED, mountChat, CHAT_EMPTY, CHAT_NAMED, READING_WHO, makeAct, actFor, actDone } from '../chat.js';
+import { cleanTalk, chipParts, chatRows, chatTime, lastReply, DESK_LINE, CHAT_REFUSED, mountChat, SHRUNK_WAIT, CHAT_EMPTY, CHAT_NAMED, READING_WHO, makeAct, actFor, actDone } from '../chat.js';
 
-// The chat with the foreman on the phone's home. The page reads floor.chat
+// The chat with the steward on the phone's home. The page reads floor.chat
 // again on each messages event for the chat. A sentence the owner sends
 // shows at once, as sent once floor.talk answers, and as read once the
-// server marks its line read: the foreman's transcript recorded it. No chat
+// server marks its line read: the steward's transcript recorded it. No chat
 // text is stored on the phone.
 
 const settle = () => new Promise((r) => setImmediate(r));
 
 const PANES = [
-  { id: 'w1:p1', label: 'foreman', cwd: '/f', state: 'idle' },
+  { id: 'w1:p1', label: 'steward', cwd: '/f', state: 'idle' },
   { id: 'w1:p2', label: 'glean-import', cwd: '/g', state: 'blocked' },
   { id: 'w1:p3', label: 'glean', cwd: '/g', state: 'working' },
   { id: 'w1:p4', label: 'old', cwd: '/o', state: 'done', closed: true },
@@ -22,7 +22,7 @@ const owner = (id, text, pane = 'w1:p1', at = 10, read = false) => ({ id, at, ro
 const agent = (id, text, pane = 'w1:p1', at = 20, tool) => ({ id, at, role: 'agent', text, pane, ...(tool ? { tool } : {}) });
 
 test('cleanTalk reads a sentence the way the server writes it to the chat', () => {
-  assert.equal(cleanTalk('hello\tforeman\u0007'), 'hello foreman');
+  assert.equal(cleanTalk('hello\tsteward\u0007'), 'hello steward');
   assert.equal(cleanTalk('  two\n\nlines  '), 'two lines');
   assert.equal(cleanTalk(''), '');
 });
@@ -43,7 +43,7 @@ test('a live agent named in a reply is a chip, the longest name first and whole 
 
 test('an owner line is read only when the server says so, else sent', () => {
   const rows = chatRows([owner('c1', 'one', 'w1:p1', 10, true), agent('a1', 'ok'), owner('c2', 'two', 'w1:p1', 30)], []);
-  assert.deepEqual(rows.map((r) => [r.key, r.who, r.mark]), [['c1', 'you', 'read'], ['a1', 'foreman', ''], ['c2', 'you', 'sent']]);
+  assert.deepEqual(rows.map((r) => [r.key, r.who, r.mark]), [['c1', 'you', 'read'], ['a1', 'steward', ''], ['c2', 'you', 'sent']]);
   // A reply after the line is not a read mark: a sentence queued behind a
   // long turn has replies after it from the turn before.
   const queued = chatRows([owner('c1', 'one'), agent('a1', 'still on the last one')], []);
@@ -52,7 +52,7 @@ test('an owner line is read only when the server says so, else sent', () => {
   const bare = chatRows([{ id: 'c9', at: 1, role: 'owner', text: 'x', pane: 'w1:p1' }], []);
   assert.equal(bare[0].mark, 'sent');
   // A note line has no speaker and no mark.
-  const note = chatRows([{ id: 'n', at: 5, role: 'note', text: 'A new foreman started.', pane: 'w1:p1' }], []);
+  const note = chatRows([{ id: 'n', at: 5, role: 'note', text: 'A new steward started.', pane: 'w1:p1' }], []);
   assert.deepEqual([note[0].who, note[0].mark, note[0].role], ['', '', 'note']);
 });
 
@@ -200,7 +200,7 @@ test('a messages event for the chat reads it again, once for a burst; other even
   assert.equal(calls.length, 1);
 });
 
-test('a sent line shows sending, then sent, then read when the server says the foreman took it', async () => {
+test('a sent line shows sending, then sent, then read when the server says the steward took it', async () => {
   const { c, set } = mount({ chat: { messages: [], more: false } });
   await c.read();
   const line = c.sent('check the tests');
@@ -298,13 +298,13 @@ test('lastReply is the newest reply in words: no tool line, no owner line', () =
   assert.equal(lastReply(undefined), '');
   assert.equal(lastReply([owner('c1', 'hi'), agent('c2', 'Done.'), agent('c3', 'Bash ls', 'w1:p1', 30, 'Bash'), owner('c4', 'more')]), 'c2');
   assert.equal(lastReply([owner('c1', 'hi')]), '');
-  assert.match(DESK_LINE, /foreman/);
+  assert.match(DESK_LINE, /steward/);
 });
 
 test('a refusal from the server shows its words in the chat, never the empty line', async () => {
   reset();
   const list = element('refused-list');
-  const rpc = async () => { const e = new Error('only the operator talks to the floor\'s foreman.'); e.code = 'unauthorized'; throw e; };
+  const rpc = async () => { const e = new Error('only the operator talks to the floor\'s steward.'); e.code = 'unauthorized'; throw e; };
   const chat = mountChat({ list, rpc, panes: () => [], open() {}, me: () => '' });
   await chat.read();
   assert.match(list.textContent, new RegExp(CHAT_REFUSED.slice(0, 20)));
@@ -345,4 +345,309 @@ test('an owner line shows when it reached a running turn, or waits for its own',
     { id: 'l2', role: 'owner', text: 'two', read: false, delivery: 'queued' },
   ], []);
   assert.deepEqual(rows.map((r) => r.mark), ['delivered mid-turn', 'queued']);
+});
+
+test('paint(true) pins the newest line, so a list shown again after a hide lands at the bottom', async () => {
+  const { c } = mount({ chat: { messages: [owner('c1', 'one'), agent('a1', 'two')], more: false } });
+  await c.read();
+  const last = element('chat-list').children[1];
+  const seen = [];
+  last.scrollIntoView = (o) => seen.push(o);
+  c.paint();
+  c.paint(true);
+  assert.ok(seen.length >= 1 && seen[seen.length - 1].block === 'end', 'the newest line was not scrolled into view');
+});
+
+// fakeSpeech is the page's speech with a state the test drives.
+function fakeSpeech() {
+  const s = { on_: false, tag: '', spoken: [], stops: 0, fns: new Set() };
+  const emit = () => { for (const f of s.fns) f(s.on_); };
+  s.speaking = () => s.on_;
+  s.current = () => (s.on_ ? s.tag : '');
+  s.speak = (t, tag) => { s.spoken.push(t); s.on_ = true; s.tag = tag === undefined ? '' : tag; emit(); };
+  s.stop = () => { s.stops += 1; s.on_ = false; s.tag = ''; emit(); };
+  s.on = (f) => { s.fns.add(f); return () => s.fns.delete(f); };
+  s.end = () => { s.on_ = false; emit(); };
+  return s;
+}
+
+async function listenList(sp, tag = 'chat', id = 'chat-list', fresh = true) {
+  if (fresh) reset();
+  const c = mountChat({
+    list: element(id), tag,
+    rpc: async () => ({ messages: [agent('a1', 'first reply'), agent('a2', 'second reply')] }),
+    panes: () => [], open: () => {}, me: () => '', on: () => true,
+    speech: () => sp,
+  });
+  await c.read();
+  const btn = (i) => element(id).children[i].querySelector('.listen');
+  return { c, btn };
+}
+
+test('Listen becomes Stop while the reply is read, and a tap on Stop stops the speech', async () => {
+  const sp = fakeSpeech();
+  const { btn } = await listenList(sp);
+  assert.equal(btn(0).textContent, 'Listen');
+  btn(0).dispatchEvent({ type: 'click' });
+  assert.deepEqual(sp.spoken, ['first reply']);
+  assert.equal(btn(0).textContent, 'Stop');
+  assert.equal(btn(1).textContent, 'Listen', 'another reply says Stop too');
+  btn(0).dispatchEvent({ type: 'click' });
+  assert.equal(sp.stops, 1);
+  assert.equal(btn(0).textContent, 'Listen');
+  assert.deepEqual(sp.spoken, ['first reply'], 'Stop started the speech again');
+});
+
+test('the button says Listen again when the speech ends by itself', async () => {
+  const sp = fakeSpeech();
+  const { btn } = await listenList(sp);
+  btn(1).dispatchEvent({ type: 'click' });
+  assert.equal(btn(1).textContent, 'Stop');
+  sp.end();
+  assert.equal(btn(1).textContent, 'Listen');
+});
+
+test('a second Listen starts that reply and the first button goes back to Listen', async () => {
+  const sp = fakeSpeech();
+  const { btn } = await listenList(sp);
+  btn(0).dispatchEvent({ type: 'click' });
+  btn(1).dispatchEvent({ type: 'click' });
+  assert.deepEqual(sp.spoken, ['first reply', 'second reply']);
+  assert.equal(btn(0).textContent, 'Listen');
+  assert.equal(btn(1).textContent, 'Stop');
+});
+
+test('stopListening and reset stop the speech this list started, and no other', async () => {
+  const sp = fakeSpeech();
+  const { c, btn } = await listenList(sp);
+  c.stopListening();
+  assert.equal(sp.stops, 0, 'it stopped speech it did not start');
+  btn(0).dispatchEvent({ type: 'click' });
+  c.stopListening();
+  assert.equal(sp.stops, 1);
+  assert.equal(btn(0).textContent, 'Listen');
+  btn(0).dispatchEvent({ type: 'click' });
+  c.reset();
+  assert.equal(sp.stops, 2, 'a reset for another agent left the speech running');
+});
+
+test('a reply whose speech ended says Listen when other speech starts', async () => {
+  const sp = fakeSpeech();
+  const { btn } = await listenList(sp);
+  btn(0).dispatchEvent({ type: 'click' });
+  assert.equal(btn(0).textContent, 'Stop');
+  sp.end();
+  sp.speak('read aloud text, nobody\'s reply');
+  assert.equal(btn(0).textContent, 'Listen', 'an old reply showed Stop for speech it did not start');
+  btn(0).dispatchEvent({ type: 'click' });
+  assert.deepEqual(sp.spoken.slice(-1), ['first reply'], 'the tap stopped other speech and did not start the reply');
+});
+
+test('stopListening leaves speech that another list started', async () => {
+  const sp = fakeSpeech();
+  const home = await listenList(sp, 'chat');
+  sp.speak('a reading reply', 'reading:a1');
+  home.c.stopListening();
+  assert.equal(sp.stops, 0, 'the home chat stopped the reading view\'s speech');
+  assert.equal(sp.speaking(), true);
+  sp.stop();
+  home.btn(0).dispatchEvent({ type: 'click' });
+  home.c.stopListening();
+  assert.equal(sp.stops, 2);
+});
+
+test('the home chat and the reading list never both say Stop for the same speech', async () => {
+  const sp = fakeSpeech();
+  const home = await listenList(sp, 'chat');
+  const homeBtn = home.btn;
+  const reading = await listenList(sp, 'reading', 'reading-list', false);
+  homeBtn(0).dispatchEvent({ type: 'click' });
+  assert.equal(homeBtn(0).textContent, 'Stop');
+  assert.equal(reading.btn(0).textContent, 'Listen');
+  reading.btn(0).dispatchEvent({ type: 'click' });
+  assert.equal(reading.btn(0).textContent, 'Stop');
+  assert.equal(homeBtn(0).textContent, 'Listen');
+});
+
+// A reading list the way the phone draws it: a scroller with a height the
+// test sets, and an rpc the test answers.
+function readingMount(answer, extra = {}) {
+  reset();
+  const sc = element('reading');
+  sc.scrollTop = 0; sc.scrollHeight = 1000; sc.clientHeight = 500;
+  const calls = { n: 0 };
+  const c = mountChat({
+    list: element('reading-list'), scroller: () => sc,
+    rpc: async () => { calls.n += 1; return typeof answer === 'function' ? answer(calls.n) : answer; },
+    panes: () => [], open: () => {}, cmd: 'pane.messages', who: READING_WHO, marks: false, chips: false, ...extra,
+  });
+  return { c, sc, list: element('reading-list'), calls };
+}
+const rows = (n, last) => Array.from({ length: n }, (_, i) => agent('m' + i, i === n - 1 && last ? last : 'row ' + i));
+
+test('a growing last row changes that row only, and the rows above are not touched', async () => {
+  let text = 'a';
+  const { c, list } = readingMount(() => ({ messages: rows(6, text) }));
+  let wiped = 0;
+  const orig = list.replaceChildren.bind(list);
+  list.replaceChildren = (...n) => { wiped += 1; orig(...n); };
+  await c.read();
+  const before = [...list.children];
+  text = 'ab';
+  await c.read();
+  text = 'abc';
+  await c.read();
+  assert.equal(wiped, 0, 'the list was emptied and filled again');
+  assert.equal(list.children.length, 6);
+  for (let i = 0; i < 5; i++) assert.equal(list.children[i], before[i], 'row ' + i + ' was drawn again');
+  assert.notEqual(list.children[5], before[5]);
+  assert.match(list.children[5].textContent, /abc/);
+});
+
+test('a window that slides drops the old row and keeps the others', async () => {
+  let from = 0;
+  const { c, list } = readingMount(() => ({ messages: Array.from({ length: 6 }, (_, i) => agent('m' + (i + from), 'row ' + (i + from))) }));
+  await c.read();
+  const second = list.children[1];
+  from = 1;
+  await c.read();
+  assert.equal(list.children.length, 6);
+  assert.equal(list.children[0], second, 'the kept rows were drawn again');
+});
+
+test('a read far shorter than the list is held back once, and taken the second time', async () => {
+  let n = 8;
+  const { c, list, calls } = readingMount(() => ({ messages: rows(n) }), { wait: async () => {} });
+  await c.read();
+  assert.equal(list.children.length, 8);
+  n = 1;
+  await c.read();
+  assert.equal(calls.n, 3, 'the short read was not asked again');
+  assert.equal(list.children.length, 1, 'a short read that held twice was not taken');
+  n = 0;
+  await c.read();
+  assert.match(list.children[0].textContent, /No messages/, 'an empty list was held back');
+});
+
+test('a read that began before a reset is dropped', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { c, list } = readingMount(async () => { await gate; return { messages: rows(3, 'stale') }; });
+  const p = c.read();
+  c.reset();
+  c.seed([agent('n1', 'fresh')]);
+  release();
+  await p;
+  assert.equal(list.children.length >= 1 && /stale/.test(list.textContent), false, 'the stale answer was drawn');
+  assert.match(list.textContent, /fresh/);
+});
+
+test('a reader at the end stays at the end when the height changes, and a reader who scrolled up does not', async () => {
+  const { c, sc } = readingMount({ messages: rows(6) });
+  await c.read();
+  assert.equal(sc.scrollTop, 1000, 'the first paint did not go to the end');
+  sc.scrollHeight = 1300;
+  global.window.dispatchEvent({ type: 'resize' });
+  assert.equal(sc.scrollTop, 1300, 'a resize left a pinned reader behind');
+  sc.scrollTop = 100;
+  sc.dispatchEvent({ type: 'scroll' });
+  sc.scrollHeight = 1500;
+  global.window.dispatchEvent({ type: 'resize' });
+  assert.equal(sc.scrollTop, 100, 'a resize moved a reader who scrolled up');
+});
+
+test('a paint scrolls the reading list itself and not the page', async () => {
+  const { c, list, sc } = readingMount({ messages: rows(3) });
+  await c.read();
+  const last = list.children[2];
+  let page = 0;
+  last.scrollIntoView = () => { page += 1; };
+  sc.scrollHeight = 1200;
+  await c.read();
+  assert.equal(page, 0, 'scrollIntoView moves the page');
+  assert.equal(sc.scrollTop, 1200);
+});
+
+test('the held-back second ask waits SHRUNK_WAIT first', async () => {
+  let n = 8;
+  const order = [];
+  const { c } = readingMount(() => { order.push('ask'); return { messages: rows(n) }; }, { wait: async (ms) => { order.push('wait ' + ms); } });
+  await c.read();
+  n = 1;
+  await c.read();
+  assert.deepEqual(order, ['ask', 'ask', 'wait ' + SHRUNK_WAIT, 'ask']);
+});
+
+test('a held-back read whose retry fails forgets the hold, so the next short read is held again', async () => {
+  let mode = 'full';
+  const { c, calls } = readingMount(() => {
+    if (mode === 'throw') throw new Error('down');
+    return { messages: rows(mode === 'full' ? 8 : 1) };
+  }, { wait: async () => { if (mode === 'short') mode = 'throw'; } });
+  await c.read();
+  mode = 'short';
+  await c.read(); // held; the retry throws
+  assert.equal(calls.n, 3);
+  mode = 'short';
+  const before = calls.n;
+  await c.read(); // must be held again, not taken
+  assert.equal(calls.n - before, 2, 'the hold from the failed retry stayed set');
+});
+
+// Rows 100 high (200 when their text says TALL) in a scroller, with their
+// rects computed from scrollTop, so an anchor can be measured.
+function laidOut(list, sc) {
+  sc.getBoundingClientRect = () => ({ top: 0, bottom: sc.clientHeight });
+  const kids = [...list.children];
+  const tops = [];
+  let y = 0;
+  for (const el of kids) { tops.push(y); y += /TALL/.test(el.textContent) ? 200 : 100; }
+  kids.forEach((el, i) => {
+    const h = /TALL/.test(el.textContent) ? 200 : 100;
+    el.getBoundingClientRect = () => ({ top: tops[i] - sc.scrollTop, bottom: tops[i] + h - sc.scrollTop });
+  });
+}
+
+test('a reader who scrolled up is anchored on a row that stays, not one that changes', async () => {
+  let third = 'row 3';
+  const { c, sc, list } = readingMount(() => ({ messages: rows(6).map((m, i) => (i === 3 ? { ...m, text: third } : m)) }));
+  await c.read();
+  sc.scrollHeight = 700; sc.clientHeight = 200;
+  sc.scrollTop = 350; // rows 3 (changing) and 4 are in view; row 3 is half out
+  sc.dispatchEvent({ type: 'scroll' });
+  laidOut(list, sc);
+  const kept = list.children[4];
+  for (const el of list.children) el.parentNode = list; // the stub keeps no parent
+  const before = kept.getBoundingClientRect().top;
+  third = 'row 3 TALL';
+  const insert = list.insertBefore.bind(list);
+  list.insertBefore = (el, at) => { insert(el, at); el.parentNode = list; laidOut(list, sc); };
+  const remove = list.removeChild.bind(list);
+  list.removeChild = (el) => { remove(el); laidOut(list, sc); };
+  await c.read();
+  assert.equal(list.children[4], kept);
+  assert.equal(kept.getBoundingClientRect().top, before, 'the kept row moved under the reader');
+});
+
+test('a box that changes height keeps a pinned reader at the end, and a reader who scrolled up in place', async () => {
+  const seen = [];
+  const keep = global.ResizeObserver;
+  global.ResizeObserver = class { constructor(fn) { this.fn = fn; seen.push(this); } observe(el) { this.el = el; } disconnect() {} };
+  try {
+    const { c, sc } = readingMount({ messages: rows(6) });
+    await c.read();
+    assert.equal(seen.length, 1, 'no ResizeObserver watches the chat box');
+    assert.equal(seen[0].el, sc);
+    // The agents area above grows: the box gets shorter and the end moves.
+    sc.clientHeight = 300; sc.scrollHeight = 1000;
+    seen[0].fn([]);
+    assert.equal(sc.scrollTop, 1000, 'a pinned reader was left behind');
+    sc.scrollTop = 100;
+    sc.dispatchEvent({ type: 'scroll' });
+    sc.clientHeight = 200;
+    seen[0].fn([]);
+    assert.equal(sc.scrollTop, 100, 'a reader who scrolled up was moved');
+  } finally {
+    if (keep === undefined) delete global.ResizeObserver; else global.ResizeObserver = keep;
+  }
 });

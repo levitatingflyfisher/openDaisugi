@@ -40,7 +40,7 @@ def test_round_trip_preserves_every_field():
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1000.0,
         harness_session_id="h1",
         pane="w1:p1",
@@ -72,10 +72,10 @@ def test_process_can_say_done():
 
 
 def test_only_process_and_headless_may_say_done():
-    """Master §3.1: 'done comes only from process or headless'. A gate- or
+    """Master §3.1: 'done comes only from process or headless'. A warden- or
     operator-sourced done would show a live agent as finished — not just
     manifest is barred, every other source is too."""
-    for bad_source in ("gate", "operator", "manifest"):
+    for bad_source in ("warden", "operator", "manifest"):
         with pytest.raises(ValueError, match="done"):
             PaneStateEvent.from_json(json.dumps(_row(source=bad_source, state="done")))
     for good_source in ("process", "headless"):
@@ -91,7 +91,7 @@ def test_detail_over_200_chars_is_rejected():
 def test_ask_only_valid_when_blocked():
     row = _row(
         state="working",
-        source="gate",
+        source="warden",
         ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1090.0},
     )
     with pytest.raises(ValueError, match="blocked"):
@@ -99,7 +99,7 @@ def test_ask_only_valid_when_blocked():
 
 
 def test_ask_is_required_when_present_but_incomplete():
-    row = _row(state="blocked", source="gate", ask={"id": "t1", "tool": "Bash"})
+    row = _row(state="blocked", source="warden", ask={"id": "t1", "tool": "Bash"})
     with pytest.raises(ValueError, match="ask missing"):
         PaneStateEvent.from_json(json.dumps(row))
 
@@ -111,7 +111,7 @@ def test_from_json_coerces_a_whole_number_ask_deadline_to_a_float():
     whatever second the deadline happened to land on."""
     row = _row(
         state="blocked",
-        source="gate",
+        source="warden",
         ask={"id": "t1", "tool": "Bash", "summary": "rm -rf", "deadline": 100},
     )
     ev = PaneStateEvent.from_json(json.dumps(row))
@@ -126,17 +126,17 @@ def test_missing_required_field_is_rejected():
         PaneStateEvent.from_json(json.dumps(row))
 
 
-def test_gate_blocked_holds_until_deadline():
-    """A gate 'blocked' hold survives a lower-precedence event; once the
-    ask's deadline passes, the hold releases and the NEXT event (gate or
+def test_warden_blocked_holds_until_deadline():
+    """A warden 'blocked' hold survives a lower-precedence event; once the
+    ask's deadline passes, the hold releases and the NEXT event (warden or
     otherwise) gets through — merge() does not itself synthesize
-    'working'. The gate sends that event itself the moment _maybe_ask's
-    wait resolves (gate.py, task 3)."""
+    'working'. The warden sends that event itself the moment _maybe_ask's
+    wait resolves (warden.py, task 3)."""
     current = PaneStateEvent(
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1000.0,
         ask=Ask(id="t1", tool="Bash", summary="rm -rf build/", deadline=1010.0),
     )
@@ -145,10 +145,10 @@ def test_gate_blocked_holds_until_deadline():
     )
     assert merge(current, manifest_idle, now=1005.0) is current
     assert merge(current, manifest_idle, now=1011.0) is manifest_idle
-    gate_working = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=1005.0
+    warden_working = PaneStateEvent(
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=1005.0
     )
-    assert merge(current, gate_working, now=1005.0) is gate_working
+    assert merge(current, warden_working, now=1005.0) is warden_working
 
 
 def test_source_precedence_within_two_seconds():
@@ -173,7 +173,7 @@ def test_source_precedence_expires_after_two_seconds():
 
 def test_the_hold_window_uses_current_ts_not_a_receive_clock():
     """Same inputs as Go's TestTheHoldWindowIgnoresASkewedEventTimestamp:
-    current is working/gate with ts nine billion seconds in the future,
+    current is working/warden with ts nine billion seconds in the future,
     incoming is idle/manifest at ts=103, now=103. Go measures the window
     on its own receive clock, so a future-dated ts cannot extend a hold
     there, and its outcome is idle/manifest. This function measures the
@@ -182,7 +182,7 @@ def test_the_hold_window_uses_current_ts_not_a_receive_clock():
     other precedence test sets current.ts to a value a receive clock would
     also hold, so the two clocks agree on every other row in this file."""
     current = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=9_999_999_999.0
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=9_999_999_999.0
     )
     incoming = PaneStateEvent(
         session_id="s1", harness="claude-code", state="idle", source="manifest", ts=103.0
@@ -190,15 +190,15 @@ def test_the_hold_window_uses_current_ts_not_a_receive_clock():
     assert merge(current, incoming, now=103.0) is current
 
 
-def test_a_headless_stop_is_not_swallowed_by_a_fresh_gate_working():
+def test_a_headless_stop_is_not_swallowed_by_a_fresh_warden_working():
     """Whole-branch review, Important 2 (ruled): the 2 s precedence window
     must hold back ONLY an incoming `manifest` event. A real fact from
-    `headless` arriving a heartbeat after a gate 'working' must apply at
+    `headless` arriving a heartbeat after a warden 'working' must apply at
     once — the old precedence comparison (any lower-precedence incoming
     source held back) would have swallowed this idle and kept showing a
     stale 'working' pane."""
     current = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=100.0
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=100.0
     )
     incoming = PaneStateEvent(
         session_id="s1", harness="claude-code", state="idle", source="headless", ts=101.2
@@ -211,7 +211,7 @@ def test_a_manifest_is_still_held_back_within_two_seconds():
     one source the 2 s window still holds back, since it carries no real
     signal of its own."""
     current = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=100.0
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=100.0
     )
     incoming = PaneStateEvent(
         session_id="s1", harness="claude-code", state="idle", source="manifest", ts=101.2
@@ -219,15 +219,15 @@ def test_a_manifest_is_still_held_back_within_two_seconds():
     assert merge(current, incoming, now=101.2) is current
 
 
-def test_gate_blocked_still_holds_against_a_headless_idle():
-    """The gate-blocked hold is untouched by the Important 2 fix: it still
+def test_warden_blocked_still_holds_against_a_headless_idle():
+    """The warden-blocked hold is untouched by the Important 2 fix: it still
     holds against a lower-precedence fact until the ask's deadline passes
-    (or a gate event clears it), exactly as before."""
+    (or a warden event clears it), exactly as before."""
     current = PaneStateEvent(
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=100.0,
         ask=Ask(id="t1", tool="Bash", summary="rm -rf build/", deadline=200.0),
     )
@@ -238,7 +238,7 @@ def test_gate_blocked_still_holds_against_a_headless_idle():
 
 
 def test_an_expired_headless_block_reads_as_working():
-    """effective_state's expiry is no longer restricted to source == 'gate'
+    """effective_state's expiry is no longer restricted to source == 'warden'
     (Important 2, ruled): a headless-sourced 'blocked' with a passed ask
     deadline reads as 'working' too."""
     blocked = PaneStateEvent(
@@ -261,10 +261,10 @@ def test_no_current_event_always_takes_the_incoming_one():
     assert merge(None, incoming, now=1000.0) is incoming
 
 
-def test_expired_gate_block_reads_as_working_with_no_fresh_event():
+def test_expired_warden_block_reads_as_working_with_no_fresh_event():
     """merge()'s expiry only RELEASES a hold when a fresh event arrives —
-    two paths never send one at all (the gate's is_disarmed early return
-    emits no report; a gate-process crash between post_ask and its own
+    two paths never send one at all (the warden's is_disarmed early return
+    emits no report; a warden-process crash between post_ask and its own
     resolving 'working' report leaves nothing to arrive). effective_state
     is the read-time counterpart: a cached blocked event past its
     deadline reads as working even with nothing fresh to merge against."""
@@ -272,7 +272,7 @@ def test_expired_gate_block_reads_as_working_with_no_fresh_event():
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1000.0,
         ask=Ask(id="t1", tool="Bash", summary="rm -rf build/", deadline=1010.0),
     )
@@ -287,13 +287,13 @@ def test_expired_gate_block_reads_as_working_with_no_fresh_event():
     assert effective_state(idle, now=99999.0) is idle
 
 
-def test_process_exit_ends_a_gate_working_hold_immediately():
+def test_process_exit_ends_a_warden_working_hold_immediately():
     """Fix round 1, Finding 1 (Critical): a terminal 'done' must win at
     once, before the 2 s source-precedence window. Nothing ever re-sends
     'done', so a precedence loss here would show a finished pane as
     'working' forever."""
     current = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=1000.0
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=1000.0
     )
     incoming = PaneStateEvent(
         session_id="s1", harness="claude-code", state="done", source="process", ts=1000.5
@@ -301,15 +301,15 @@ def test_process_exit_ends_a_gate_working_hold_immediately():
     assert merge(current, incoming, now=1000.5) is incoming
 
 
-def test_headless_end_ends_a_gate_blocked_hold_immediately():
+def test_headless_end_ends_a_warden_blocked_hold_immediately():
     """Fix round 1, Finding 1 (Critical): a terminal 'done' wins even
-    against an unexpired gate 'blocked' hold, before merge()'s
+    against an unexpired warden 'blocked' hold, before merge()'s
     hold-versus-expiry logic runs at all."""
     current = PaneStateEvent(
         session_id="s1",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1000.0,
         ask=Ask(id="t1", tool="Bash", summary="rm -rf build/", deadline=99999.0),
     )
@@ -319,14 +319,14 @@ def test_headless_end_ends_a_gate_blocked_hold_immediately():
     assert merge(current, incoming, now=1000.5) is incoming
 
 
-def test_gate_blocked_without_an_ask_is_rejected():
-    """Fix round 1, Finding 3 (Important): a gate 'blocked' event with no
+def test_warden_blocked_without_an_ask_is_rejected():
+    """Fix round 1, Finding 3 (Important): a warden 'blocked' event with no
     ask is an unrecoverable hold — merge() and effective_state() only
-    release a gate hold via the ask's deadline, so a gate 'blocked' with
-    ask=None never expires. A gate 'blocked' must carry an ask."""
+    release a warden hold via the ask's deadline, so a warden 'blocked' with
+    ask=None never expires. A warden 'blocked' must carry an ask."""
     with pytest.raises(ValueError, match="ask"):
         PaneStateEvent(
-            session_id="s1", harness="claude-code", state="blocked", source="gate", ts=1000.0
+            session_id="s1", harness="claude-code", state="blocked", source="warden", ts=1000.0
         )
 
 
@@ -337,7 +337,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1090.0},
             ),
             False,
@@ -345,7 +345,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (_row(state="napping"), True),
         (_row(source="ouija"), True),
         (_row(source="manifest", state="done"), True),
-        (_row(source="gate", state="done"), True),
+        (_row(source="warden", state="done"), True),
         (_row(source="operator", state="done"), True),
         (_row(source="process", state="done"), False),
         (_row(source="headless", state="done"), False),
@@ -353,7 +353,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="working",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1090.0},
             ),
             True,
@@ -365,7 +365,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         # dataclass already did.
         (_row(ts="abc"), True),
         (_row(ts=None), True),
-        (_row(state="blocked", source="gate", ask=5), True),
+        (_row(state="blocked", source="warden", ask=5), True),
         (_row_missing("harness"), True),
         (_row(session_id=5), True),
         # A present, non-string pane or harness_session_id must be rejected
@@ -376,9 +376,9 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (_row(harness_session_id=5), True),
         (_row(pane=None), False),
         (_row(harness_session_id=None), False),
-        # Fix round 1, Finding 3 (Important): a gate 'blocked' event with
+        # Fix round 1, Finding 3 (Important): a warden 'blocked' event with
         # no ask is an unrecoverable hold.
-        (_row(state="blocked", source="gate"), True),
+        (_row(state="blocked", source="warden"), True),
         # Whole-branch review, Important 1: the layer validator used to
         # check only that the four ask keys were present, while
         # PaneStateEvent.from_json coerced them with str()/float() — so a
@@ -387,7 +387,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": "soon"},
             ),
             True,
@@ -395,7 +395,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": None},
             ),
             True,
@@ -403,7 +403,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": 5, "tool": "Bash", "summary": "ls", "deadline": 1090.0},
             ),
             True,
@@ -414,7 +414,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1.0, "tier": 5},
             ),
             True,
@@ -422,7 +422,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1.0, "tier": "x"},
             ),
             False,
@@ -430,7 +430,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
         (
             _row(
                 state="blocked",
-                source="gate",
+                source="warden",
                 ask={"id": "t1", "tool": "Bash", "summary": "ls", "deadline": 1.0, "tier": None},
             ),
             False,
@@ -439,7 +439,7 @@ def test_gate_blocked_without_an_ask_is_rejected():
 )
 def test_layer_validator_and_dataclass_agree_on_every_rule(row, should_raise):
     """Two implementations of §3.1 exist by construction (layer purity:
-    gate_server.py, a layer module, cannot import opendaisugi.floor). This
+    warden_server.py, a layer module, cannot import opendaisugi.floor). This
     pins them to the same accept/reject verdict so they can't silently
     drift apart."""
     from opendaisugi._state_report import _validate_hook_report_row
@@ -464,7 +464,7 @@ def test_states_and_sources_are_exported_from_the_floor_package():
     from opendaisugi.floor import SOURCES, STATES
 
     assert STATES == ("idle", "working", "blocked", "done", "unknown")
-    assert SOURCES == ("operator", "gate", "headless", "process", "manifest")
+    assert SOURCES == ("operator", "warden", "headless", "process", "manifest")
     assert PKG_ERROR_CODES == ERROR_CODES
 
 
@@ -555,22 +555,22 @@ def test_from_json_still_accepts_a_null_or_absent_harness_session_id():
 # fixtures fails here as loudly as it fails
 # harness/coppice/internal/proto/fixtures_test.go.
 _FIXTURE_EXPECTATIONS = {
-    "gate-blocked.json": PaneStateEvent(
+    "warden-blocked.json": PaneStateEvent(
         session_id="d41c",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1757300000.123,
         harness_session_id="11111111-2222-3333-4444-555555555555",
         pane="w1:p3",
         ask=Ask(id="toolu_01", tool="Bash", summary="rm -rf build/", deadline=1757300090.0),
         detail="verdict=deny clause=shell.deny[2]",
     ),
-    "gate-blocked-undoable.json": PaneStateEvent(
+    "warden-blocked-undoable.json": PaneStateEvent(
         session_id="d41c",
         harness="claude-code",
         state="blocked",
-        source="gate",
+        source="warden",
         ts=1757300000.123,
         harness_session_id="11111111-2222-3333-4444-555555555555",
         pane="w1:p3",
@@ -698,7 +698,7 @@ def test_a_screen_blocked_outranks_a_process_idle():
 
 
 def _blocked_with(ask: dict) -> str:
-    return json.dumps(_row(state="blocked", source="gate", ask=ask))
+    return json.dumps(_row(state="blocked", source="warden", ask=ask))
 
 
 def test_an_ask_with_no_tier_reads_as_permanent():
@@ -743,7 +743,7 @@ def test_an_event_with_no_who_leaves_the_key_out():
 def test_who_is_only_valid_on_an_operator_event():
     with pytest.raises(ValueError, match="who is only valid"):
         PaneStateEvent(
-            session_id="s1", harness="claude", state="idle", source="gate", ts=1.0, who="alice"
+            session_id="s1", harness="claude", state="idle", source="warden", ts=1.0, who="alice"
         )
     row = {**_row(), "who": 7}
     with pytest.raises(ValueError, match="who must be a string"):

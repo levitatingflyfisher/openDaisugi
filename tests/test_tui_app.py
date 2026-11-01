@@ -1,7 +1,7 @@
 """The instrument opens on the live work; wiring is a command (or Tab) away.
 
 B1: every query goes through ``app.screen.query_one(...)``. A pushed screen is
-opaque to ``App.query``, and the gate-mode indicator must be visible on EVERY
+opaque to ``App.query``, and the warden-mode indicator must be visible on EVERY
 screen. This is a safety requirement, not chrome.
 """
 
@@ -27,7 +27,7 @@ def test_app_opens_on_the_sessions_screen(tmp_path):
             await pilot.pause()
             assert app.screen.name == "sessions"
             assert app.screen.query("#roster"), "roster table did not render"
-            assert "gate:" in str(app.screen.query_one("#hdr", Static).render())
+            assert "warden:" in str(app.screen.query_one("#hdr", Static).render())
 
     _run(scenario)
 
@@ -83,7 +83,7 @@ def test_bare_colon_floor_names_the_coppice_binary(tmp_path):
     _run(scenario)
 
 
-def test_gate_mode_indicator_is_on_every_screen(tmp_path):
+def test_warden_mode_indicator_is_on_every_screen(tmp_path):
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
@@ -92,8 +92,8 @@ def test_gate_mode_indicator_is_on_every_screen(tmp_path):
                 app.switch_screen(name)
                 await pilot.pause()
                 assert app.screen.name == name
-                assert "gate:" in str(app.screen.query_one("#hdr", Static).render()), (
-                    f"the gate-mode indicator is missing on {name}"
+                assert "warden:" in str(app.screen.query_one("#hdr", Static).render()), (
+                    f"the warden-mode indicator is missing on {name}"
                 )
 
     _run(scenario)

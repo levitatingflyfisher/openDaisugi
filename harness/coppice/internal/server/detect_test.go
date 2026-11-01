@@ -64,9 +64,9 @@ func TestManifestTickSetsStateForAPaneWithNoBetterSource(t *testing.T) {
 	t.Fatal("the manifest tick never produced a state within 5 s")
 }
 
-// The gate outranks the screen. What this test can actually prove is
+// The warden outranks the screen. What this test can actually prove is
 // narrower than it looks: state.Merge's own rule 6 (and, for THIS fixture,
-// rule 4 - see below) would hold the merged state at gate/blocked on its
+// rule 4 - see below) would hold the merged state at warden/blocked on its
 // own, whether or not scanOnce ever read the screen at all. A merged state
 // that never changed is consistent with "scanOnce skipped it" AND with
 // "scanOnce read it every 500 ms and lost every time" - Merge produces the
@@ -75,13 +75,13 @@ func TestManifestTickSetsStateForAPaneWithNoBetterSource(t *testing.T) {
 // zero proves scanOnce's own up-front skip fired and the screen was never
 // read, not merely that whatever it said was discarded downstream.
 //
-// gateBlockedLine's ask carries deadline 9999999999.0 (the year 2286), so
+// wardenBlockedLine's ask carries deadline 9999999999.0 (the year 2286), so
 // for the whole life of this test the operative rule is tickSkipReason's
-// gate-ask-hold branch (Merge rule 4), not the two-second
-// GateQuiet window (Merge rule 6) - either way scanOnce must skip, which is
+// warden-ask-hold branch (Merge rule 4), not the two-second
+// WardenQuiet window (Merge rule 6) - either way scanOnce must skip, which is
 // what the fixture's timestamp comment below already establishes.
-func TestAPaneWithAFreshGateSourceIsNotScanned(t *testing.T) {
-	// gateBlockedLine carries ts 1757300000.0, about a year in the past. This
+func TestAPaneWithAFreshWardenSourceIsNotScanned(t *testing.T) {
+	// wardenBlockedLine carries ts 1757300000.0, about a year in the past. This
 	// test must pass because the STORE recorded the arrival just now, not
 	// because the event claimed a recent timestamp.
 	s, set := newDetectServer(t)
@@ -90,14 +90,14 @@ func TestAPaneWithAFreshGateSourceIsNotScanned(t *testing.T) {
 		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c",`+
 			`"printf '────────────────────\\n❯ \\n────────────────────\\n'; sleep 5"],`+
 			`"kind":"pty","harness":"claude","cols":40,"rows":10}`,
-		gateBlockedLine("w1:p1"))
+		wardenBlockedLine("w1:p1"))
 	s.StartManifestTick(set)
 	defer s.StopManifestTick()
 
 	time.Sleep(1200 * time.Millisecond)
 	ev, ok := s.States().Current("w1:p1")
-	if !ok || ev.Source != proto.SrcGate || ev.State != proto.StateBlocked {
-		t.Fatalf("state = %+v, want the gate's blocked to still stand", ev)
+	if !ok || ev.Source != proto.SrcWarden || ev.State != proto.StateBlocked {
+		t.Fatalf("state = %+v, want the warden's blocked to still stand", ev)
 	}
 	if scanned, skipped := s.tickCounts(); scanned != 0 || skipped == 0 {
 		t.Fatalf("tick counts = scanned=%d skipped=%d, want scanOnce to have skipped "+
@@ -106,37 +106,37 @@ func TestAPaneWithAFreshGateSourceIsNotScanned(t *testing.T) {
 	}
 }
 
-// The other half of the same rule, and the one a "never scan a gate pane again"
-// shortcut would break: a harness that stops calling the gate must recover, not
-// freeze on its last gate state for the rest of the session.
+// The other half of the same rule, and the one a "never scan a warden pane again"
+// shortcut would break: a harness that stops calling the warden must recover, not
+// freeze on its last warden state for the rest of the session.
 //
 // Like its sibling above, the eventual state transition alone is not proof
 // that scanOnce paused during the first two seconds: state.Merge's rule 6 is
-// coextensive with scanOnce's own up-front skip here (both gate on the
-// identical receive-clock GateQuiet window), so Merge would produce the same
+// coextensive with scanOnce's own up-front skip here (both warden on the
+// identical receive-clock WardenQuiet window), so Merge would produce the same
 // eventual transition to manifest even if scanOnce read the screen and lost
 // every time until the window elapsed. The mid-wait tickCounts() check is
 // what actually proves an early tick was skipped, not merely outraced.
-func TestAPaneWhoseGateHasGoneQuietIsScannedAgain(t *testing.T) {
+func TestAPaneWhoseWardenHasGoneQuietIsScannedAgain(t *testing.T) {
 	s, set := newDetectServer(t)
 	cwd := t.TempDir()
 	roundTrip(t, s,
 		`{"id":"1","cmd":"pane.create","cwd":"`+cwd+`","cmd_argv":["sh","-c",`+
 			`"printf '────────────────────\n❯ \n────────────────────\n'; sleep 10"],`+
 			`"kind":"pty","harness":"claude","cols":40,"rows":10}`)
-	// A gate WORKING report, not blocked: a gate hold on blocked is a
-	// separate rule (tickSkipReason's gate-ask-hold branch) and
-	// stands until the gate clears it, unbounded by GateQuiet - this test is
+	// A warden WORKING report, not blocked: a warden hold on blocked is a
+	// separate rule (tickSkipReason's warden-ask-hold branch) and
+	// stands until the warden clears it, unbounded by WardenQuiet - this test is
 	// about the ordinary window instead.
 	id := "w1:p1"
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: id, Harness: "claude", Pane: &id,
-		State: proto.StateWorking, Source: proto.SrcGate, Detail: "verdict=allow",
+		State: proto.StateWorking, Source: proto.SrcWarden, Detail: "verdict=allow",
 	})
 	s.StartManifestTick(set)
 	defer s.StopManifestTick()
 
-	// Inside GateQuiet: at least one tick (500 ms) has run by 900 ms, and
+	// Inside WardenQuiet: at least one tick (500 ms) has run by 900 ms, and
 	// scanOnce must have skipped this pane's screen without reading it.
 	time.Sleep(900 * time.Millisecond)
 	if scanned, skipped := s.tickCounts(); scanned != 0 || skipped == 0 {
@@ -152,7 +152,7 @@ func TestAPaneWhoseGateHasGoneQuietIsScannedAgain(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatal("the screen never spoke again after the gate went quiet for more than 2 s")
+	t.Fatal("the screen never spoke again after the warden went quiet for more than 2 s")
 }
 
 func TestAPaneWithNoHarnessIsNotScanned(t *testing.T) {
@@ -169,7 +169,7 @@ func TestAPaneWithNoHarnessIsNotScanned(t *testing.T) {
 }
 
 // tickSkipReason must mirror scanOnce's own
-// rec.Kind != KindPTY filter, not just the source/gate holds it already
+// rec.Kind != KindPTY filter, not just the source/warden holds it already
 // knew about - a headless pane's state comes from its adapter's events
 // (source headless), never from reading its grid against a manifest.
 //
@@ -285,8 +285,8 @@ func TestExplainForAPaneWithNoManifestSaysSoPlainly(t *testing.T) {
 	}
 }
 
-// The command this exists for: a gate hold masking a screen that has moved
-// on. state.EffectiveState of the current event says blocked (the gate's
+// The command this exists for: a warden hold masking a screen that has moved
+// on. state.EffectiveState of the current event says blocked (the warden's
 // ask has not expired, so nothing releases it) while the manifest, reading
 // the very same screen scanOnce would, calls the same pane idle - the two
 // verdicts are MEANT to disagree here, and pane.explain must show both side
@@ -309,7 +309,7 @@ func TestExplainShowsTheEffectiveStateAndTheManifestVerdictSideBySide(t *testing
 	id := "w1:p1"
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: id, Harness: "claude", Pane: &id,
-		State: proto.StateBlocked, Source: proto.SrcGate,
+		State: proto.StateBlocked, Source: proto.SrcWarden,
 		Ask: &proto.Ask{ID: "toolu_1", Tool: "Bash", Summary: "rm -rf build/",
 			Deadline: nowSeconds() + 300},
 		Detail: "verdict=deny",
@@ -321,17 +321,17 @@ func TestExplainShowsTheEffectiveStateAndTheManifestVerdictSideBySide(t *testing
 	}
 	m := result(t, got2[0])
 	if m["effective_state"] != proto.StateBlocked {
-		t.Fatalf("effective_state = %v, want blocked (the gate's ask has not expired)", m["effective_state"])
+		t.Fatalf("effective_state = %v, want blocked (the warden's ask has not expired)", m["effective_state"])
 	}
-	if m["effective_source"] != proto.SrcGate {
-		t.Fatalf("effective_source = %v, want gate", m["effective_source"])
+	if m["effective_source"] != proto.SrcWarden {
+		t.Fatalf("effective_source = %v, want warden", m["effective_source"])
 	}
 	if m["manifest_state"] != proto.StateIdle {
 		t.Fatalf("manifest_state = %v, want idle (the screen alone is a prompt box)", m["manifest_state"])
 	}
 	tick, _ := m["tick"].(string)
-	if !strings.HasPrefix(tick, "skipped: gate blocked") {
-		t.Fatalf("tick = %q, want it to start with %q", tick, "skipped: gate blocked")
+	if !strings.HasPrefix(tick, "skipped: warden blocked") {
+		t.Fatalf("tick = %q, want it to start with %q", tick, "skipped: warden blocked")
 	}
 	if _, ok := m["received_age_s"]; !ok {
 		t.Fatalf("explain does not show received_age_s: %v", m)

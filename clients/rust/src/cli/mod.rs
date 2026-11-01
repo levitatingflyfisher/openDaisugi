@@ -1,17 +1,18 @@
-//! The `daisugi` command: the gate commands and the gate half of
+//! The `daisugi` command: the warden commands and the warden half of
 //! `install`, with the flags, files and output of the Python CLI
 //! (`opendaisugi.cli`). A command or flag it does not carry says so in one
 //! line and exits 2, changing nothing. The Go client's `cli` package is
 //! the reference.
 //!
-//! The CLI never runs Python. `daisugi gate check`, the hook entry an
-//! installed hook runs, answers every call through the gate, decided in a
-//! child process of this binary (`gate::hook`); a call the gate cannot
+//! The CLI never runs Python. `daisugi warden check`, the hook entry an
+//! installed hook runs, answers every call through the warden, decided in a
+//! child process of this binary (`warden::hook`); a call the warden cannot
 //! decide is denied with a reason.
 
 pub mod config;
 mod configcmd;
 mod dashboardcmd;
+mod fencenotice;
 pub mod envelope;
 mod agentprofilescmd;
 mod autotendcmd;
@@ -20,25 +21,32 @@ mod batchcmd;
 mod gardencmd;
 mod hookcapcmd;
 mod hookcmd;
+pub(crate) use hookcmd::trigger_after_mirror;
 mod generatecmd;
-mod gatecmds;
-mod gatewaycmd;
+mod wardencmds;
+mod mcpschemas;
+mod routercmd;
 mod helpall_gen;
 mod helpcmd;
 mod graftcmd;
 mod pywarn;
+mod pandocmd;
 mod rankcmd;
 mod treecmd;
 mod voicecmd;
-pub mod gateroot;
+pub mod wardenroot;
 pub mod install;
 mod installcmd;
+pub(crate) mod components;
+mod recipecmd;
+mod recipes;
+mod moveold;
 pub mod port;
 mod layers;
 mod loraexport;
 mod modelspin;
-mod installgw;
 mod installrouter;
+mod installrouting;
 pub mod journal;
 mod journalcmd;
 mod journalparse;
@@ -56,9 +64,9 @@ mod registrycmd;
 mod replaycmd;
 mod releasecmd;
 mod routecmd;
-mod routercmd;
+mod routingcmd;
 mod routeknn;
-mod routermeasure;
+mod routingmeasure;
 mod runcmd;
 mod servecmd;
 mod setupcmd;
@@ -418,11 +426,11 @@ fn matched(a: &[char], alo: usize, ahi: usize, b: &[char], blo: usize, bhi: usiz
     bk + matched(a, alo, bi, b, blo, bj) + matched(a, bi + bk, ahi, b, bj + bk, bhi)
 }
 
-const START_HERE: &str = "daisugi: a gate that proves each agent action stays inside an envelope, and a garden
+const START_HERE: &str = "daisugi: a warden that proves each agent action stays inside an envelope, and a garden
 of reusable pathways distilled from the work.
 
 Start here
-  daisugi start                          gate this directory (audit mode) and watch it
+  daisugi start                          warden this directory (audit mode) and watch it
   daisugi start --enforce                the same, but out-of-envelope calls are denied
   daisugi orchestrate \"list three risks\" run a prompt end to end under a verified plan
   daisugi status                         is this machine ready; what is installed
@@ -438,16 +446,16 @@ More
 const NOT_IN_BINARY: &[&str] = &[
     "bench",
     "conformance", "coppice",
-    "gate audit",
+    "warden audit",
 ];
 
 const ROOT_HELP: &str = "Usage: daisugi [OPTIONS] COMMAND [ARGS]...
 
   Runtime assurance for agent actions. This is the daisugi Rust binary:
-  the everyday commands, the gate commands, the gate and gateway halves of
-  install, the pathway store, the journal, the garden, the gateway, the
+  the everyday commands, the warden commands, the warden and router halves of
+  install, the pathway store, the journal, the garden, the router, the
   registry, batch proofs and release signing.
-  gate check answers every call natively.
+  warden check answers every call natively.
 
 Options:
   --version        Show the opendaisugi version and exit.
@@ -458,7 +466,7 @@ Options:
   --help           Show this message and exit.
 
 Start here:
-  start            Gate this directory (audit by default) and open the live view.
+  start            Warden this directory (audit by default) and open the live view.
   status           Show day-one readiness: are token savings live and are actions verified?
   config           Show every setting as daisugi will use it, and where each one came from.
   dashboard        The live floor: the module map with gauges read from the stores.
@@ -468,19 +476,19 @@ View:
   modules          Show the module wiring: what is active, available, or an open slot.
   metrics          Prometheus metrics: the exposition text, or a /metrics endpoint.
 
-Gate:
-  gate check       Answer one tool-call hook: the verdict for the payload on stdin.
-  gate init        Register a reviewable starter envelope for this session.
-  gate register    Register the envelope the gate checks this session's calls against.
-  gate arm         Remove the disarm marker; the gate resumes evaluating calls.
-  gate disarm      Kill switch: the gate allows everything until re-armed.
-  gate status      Show armed/disarmed state, the verdict mode, and the envelopes.
-  gate report      Summarize the audit log: what an enforcing gate would have denied.
-  gate settings    Print the Claude Code hooks-settings JSON that wires in the gate.
-  gate proposals   List recorded envelope-edit proposals.
-  gate replay      Replay a captured session through the gate offline (nothing executes).
-  gate serve       Run the resident gate in the foreground (Ctrl-C to stop).
-  install          Wire the gate into agent harnesses (--gate, --harness).
+Warden:
+  warden check       Answer one tool-call hook: the verdict for the payload on stdin.
+  warden init        Register a reviewable starter envelope for this session.
+  warden register    Register the envelope the warden checks this session's calls against.
+  warden arm         Remove the disarm marker; the warden resumes evaluating calls.
+  warden disarm      Kill switch: the warden allows everything until re-armed.
+  warden status      Show armed/disarmed state, the verdict mode, and the envelopes.
+  warden report      Summarize the audit log: what an enforcing warden would have denied.
+  warden settings    Print the Claude Code hooks-settings JSON that wires in the warden.
+  warden proposals   List recorded envelope-edit proposals.
+  warden replay      Replay a captured session through the warden offline (nothing executes).
+  warden serve       Run the resident warden in the foreground (Ctrl-C to stop).
+  install          Wire the warden into agent harnesses (--enforce, --harness).
 
 Pathways:
   pathways list    List all compiled pathways.
@@ -499,13 +507,13 @@ Garden:
   gardener status  Report store size, activation stats, failure ratios.
   tend             Distil successful journal traces into pathways.
   hook auto-tend   Turn captured sessions into traces, then tend.
-  distill-repeats  Rank repeated gateway asks into a reuse worklist.
+  distill-repeats  Rank repeated router asks into a reuse worklist.
 
-Gateway:
-  gateway          Run the token-saving gateway: a local proxy any harness points at.
-  gateway-report   Calibrate the gateway on a recorded day: routing and reuse.
-  router status    Show the router choice, the Switchyard binary and each child.
-  router stop      Stop every switchyard-server a gateway left running.
+Router:
+  router          Run the token-saving router: a local proxy any harness points at.
+  router report   Calibrate the router on a recorded day: routing and reuse.
+  router status    Show the routing mode, the Switchyard binary and each child.
+  router stop      Stop every switchyard-server a router left running.
   route            Recommend the cheapest viable model or tier for a task.
 
 Envelopes:
@@ -552,27 +560,29 @@ Journal:
 Not yet in this binary (use the Python CLI, opendaisugi.cli):
 ";
 
-const GATE_HELP: &str = "Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...
+const WARDEN_HELP: &str = "Usage: daisugi warden [OPTIONS] COMMAND [ARGS]...
 
-  Call-time tool gate (ADR-0007): verify each live tool call against a
+  Call-time tool warden (ADR-0007): verify each live tool call against a
   registered envelope. Audit by default; --mode enforce denies.
 
 Commands:
   check      Answer one hook payload on stdin with the host's verdict.
   init       Generate and register a reviewable starter envelope.
-  register   Register the envelope the gate checks calls against.
-  disarm     Kill switch: the gate allows everything until re-armed.
-  arm        Remove the disarm marker; the gate resumes evaluating calls.
+  register   Register the envelope the warden checks calls against.
+  disarm     Kill switch: the warden allows everything until re-armed.
+  arm        Remove the disarm marker; the warden resumes evaluating calls.
   status     Show armed state, the verdict mode, and the envelopes.
   report     Summarize the audit log.
-  settings   Print the Claude Code hooks-settings JSON for the gate.
+  settings   Print the Claude Code hooks-settings JSON for the warden.
   proposals  List recorded envelope-edit proposals.
-  serve      Run the resident gate in the foreground (Ctrl-C to stop).
+  serve      Run the resident warden in the foreground (Ctrl-C to stop).
+  schemas    The MCP tool schemas on file, which warden register checks
+             mcp_rules against.
 
 Not yet in this binary: replay, audit.
 ";
 
-const CHECK_HELP: &str = "Usage: daisugi gate check --mode audit|enforce [OPTIONS] < payload.json
+const CHECK_HELP: &str = "Usage: daisugi warden check --mode audit|enforce [OPTIONS] < payload.json
 
   Read one hook payload from stdin and emit the host's verdict contract.
   On the Claude Code path a deny is exit code 2 with the reason on stderr.
@@ -580,7 +590,7 @@ const CHECK_HELP: &str = "Usage: daisugi gate check --mode audit|enforce [OPTION
 
 Options:
   --mode audit|enforce      audit observes and logs; enforce denies.
-  --root PATH               Gate state directory (default: the data directory's gate).
+  --root PATH               Warden state directory (default: the data directory's warden).
   --format NAME             Host contract: claude | pi | opencode | hermes | openclaw.
   --verify-timeout SECONDS  Inner verifier budget; running out of it denies.
   --captures-root PATH      Also mirror each call into this captures directory.
@@ -591,7 +601,7 @@ Options:
 pub fn main() -> ! {
     use std::os::unix::ffi::OsStrExt;
     let raw: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    // The hook entry comes first: the gate reads its own argv and
+    // The hook entry comes first: the warden reads its own argv and
     // environment, and a refusal here would be exit 2, a deny, even in
     // audit.
     let root_flags = ["--plain", "-q", "--quiet", "-v", "--verbose", "--no-color"];
@@ -599,14 +609,14 @@ pub fn main() -> ! {
     while i < raw.len() && root_flags.iter().any(|f| raw[i].as_bytes() == f.as_bytes()) {
         i += 1;
     }
-    if raw.len() >= i + 2 && raw[i].as_bytes() == b"gate" && raw[i + 1].as_bytes() == b"check" {
+    if raw.len() >= i + 2 && raw[i].as_bytes() == b"warden" && raw[i + 1].as_bytes() == b"check" {
         let rest: Vec<std::ffi::OsString> = raw[i + 2..].to_vec();
         if rest.iter().any(|a| a.as_bytes() == b"--help") {
             let _ = std::io::stdout().write_all(CHECK_HELP.as_bytes());
             let _ = std::io::stdout().flush();
             std::process::exit(0);
         }
-        crate::gate::hook::main(rest, &["gate", "check"]);
+        crate::warden::hook::main(rest, &["warden", "check"]);
     }
     let mut args = vec![];
     for a in &raw[1..] {
@@ -641,7 +651,7 @@ impl Env {
     /// `Path.home()`: $HOME as pathlib prints it.
     fn home_dir(&self) -> Result<String, String> {
         match self.env.get("HOME") {
-            Some(h) if h.starts_with('/') => Ok(gateroot::path_str(h)),
+            Some(h) if h.starts_with('/') => Ok(wardenroot::path_str(h)),
             _ => Err("HOME is unset or not an absolute path".into()),
         }
     }
@@ -686,25 +696,25 @@ impl Env {
         self.home = home;
         // Every verify this command runs asks a model for an llm_check, as
         // the oracle's evaluator does.
-        crate::gate::llm::set_command_check(crate::gate::llm::CommandCheck {
+        crate::warden::llm::set_command_check(crate::warden::llm::CommandCheck {
             env: self.env.clone(),
             home: self.home.clone(),
         });
         match args[0].as_str() {
-            "gate" => return self.gate(&args[1..]),
+            "warden" => return self.warden(&args[1..]),
             "help" => return self.help_cmd(&args[1..]),
             "viz" => return self.viz_cmd(&args[1..]),
             "install" => return self.install(&args[1..]),
+            "recipe" => return self.recipe_cmd(&args[1..]),
             "pathways" => return self.pathways(&args[1..]),
             "gardener" => return self.gardener(&args[1..]),
             "tend" => return self.tend(&args[1..]),
             "hook" => return self.hook(&args[1..]),
             "distill-repeats" => return self.distill_repeats(&args[1..]),
-            "gateway" => return self.gateway_cmd(&args[1..]),
-            "gateway-report" => return self.gateway_report(&args[1..]),
             "router" => return self.router(&args[1..]),
             "graft" => return self.graft(&args[1..]),
             "rank" => return self.rank_cmd(&args[1..]),
+            "pando" => return self.pando_cmd(&args[1..]),
             "tree" => return self.tree_cmd(&args[1..]),
             "agent-profiles" => return self.agent_profiles_cmd(&args[1..]),
             "route" => return self.route(&args[1..]),
@@ -733,6 +743,12 @@ impl Env {
             "voice" => return self.voice_cmd(&args[1..]),
             "backup" => return self.backup_cmd(&args[1..]),
             "restore" => return self.restore_cmd(&args[1..]),
+            // A hook written before the rename still calls this. Fail
+            // closed (exit 2 blocks the call) and say why.
+            "gate" => { // names-ok: the old verb
+                self.errf("daisugi gate is now daisugi warden; run daisugi install to update the hook\n"); // names-ok
+                return exit(2);
+            }
             _ => {}
         }
         if NOT_IN_BINARY.contains(&args[0].as_str()) {
@@ -762,30 +778,31 @@ impl Env {
         Ok(())
     }
 
-    fn gate(&mut self, args: &[String]) -> Res {
+    fn warden(&mut self, args: &[String]) -> Res {
         if args.is_empty() || args[0] == "--help" {
-            self.out(GATE_HELP);
+            self.out(WARDEN_HELP);
             return Ok(());
         }
         let (sub, rest) = (args[0].as_str(), &args[1..]);
         match sub {
-            // `gate check` after a root option or another spelling reaches
+            // `warden check` after a root option or another spelling reaches
             // here only when main did not route it; it never does.
-            "check" => self.not_yet("daisugi gate check in this position"),
-            "init" => self.gate_init(rest),
-            "register" => self.gate_register(rest),
-            "disarm" => self.gate_disarm(rest),
-            "arm" => self.gate_arm(rest),
-            "status" => self.gate_status(rest),
-            "report" => self.gate_report(rest),
-            "settings" => self.gate_settings(rest),
-            "proposals" => self.gate_proposals(rest),
-            "serve" => self.gate_serve(rest),
-            "replay" => self.gate_replay(rest),
-            "audit" => self.not_yet(&format!("daisugi gate {sub}")),
+            "check" => self.not_yet("daisugi warden check in this position"),
+            "init" => self.warden_init(rest),
+            "register" => self.warden_register(rest),
+            "disarm" => self.warden_disarm(rest),
+            "arm" => self.warden_arm(rest),
+            "status" => self.warden_status(rest),
+            "report" => self.warden_report(rest),
+            "settings" => self.warden_settings(rest),
+            "proposals" => self.warden_proposals(rest),
+            "serve" => self.warden_serve(rest),
+            "schemas" => self.warden_schemas(rest),
+            "replay" => self.warden_replay(rest),
+            "audit" => self.not_yet(&format!("daisugi warden {sub}")),
             _ => {
                 self.errf(&format!(
-                    "Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi gate --help' for help.\n\nError: No such command '{sub}'.\n"
+                    "Usage: daisugi warden [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi warden --help' for help.\n\nError: No such command '{sub}'.\n"
                 ));
                 exit(2)
             }

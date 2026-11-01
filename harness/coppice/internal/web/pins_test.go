@@ -151,8 +151,8 @@ func webFactMismatches(section string, src webPinsSources) []string {
 		"PINS does not record that ts and session_id appear once a current event exists")
 	report(strings.Contains(section, "`exit_code` once the process exited"),
 		"PINS does not record that exit_code appears once the process exited")
-	report(strings.Contains(section, "`ask` once the gate holds one"),
-		"PINS does not record that ask appears once the gate holds one")
+	report(strings.Contains(section, "`ask` once the warden holds one"),
+		"PINS does not record that ask appears once the warden holds one")
 	report(strings.Contains(section, "**flat**"), "PINS does not mark the pane.list row as flat")
 	report(strings.Contains(section, "not a nested `PaneStateEvent`"),
 		"PINS does not say pane.list's state is a string, not a nested PaneStateEvent")

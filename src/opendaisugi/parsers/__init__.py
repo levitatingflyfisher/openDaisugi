@@ -58,9 +58,13 @@ def get_parser(format_name: str = "claude-code", **kwargs) -> ConversationParser
 def _register_builtin_parsers() -> None:
     from opendaisugi.parsers.claude_code import ClaudeCodeParser
     from opendaisugi.parsers.codex import CodexParser
+    from opendaisugi.parsers.opencode import OpenCodeParser
+    from opendaisugi.parsers.pi import PiParser
 
     register_parser("claude-code", ClaudeCodeParser)
     register_parser("codex", CodexParser)
+    register_parser("pi", PiParser)
+    register_parser("opencode", OpenCodeParser)
 
 
 _register_builtin_parsers()

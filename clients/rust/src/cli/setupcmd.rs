@@ -4,12 +4,14 @@
 //! it differs from Python.
 
 use super::config;
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::statuscmd::{py_fixed, py_round1, ram_gb};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::envgen::tier1::{classify, Tier1, CONFIG_FILE, OUTCOME_ERROR, OUTCOME_VALID, QUALIFY_TIMEOUT};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{dumps_indent, float_repr, round, Object, Value};
+use crate::envgen::tier1::{
+    classify, Tier1, CONFIG_FILE, OLLAMA_NO_THINK_EFFORT, OUTCOME_ERROR, OUTCOME_TRUNCATED, OUTCOME_VALID, QUALIFY_TIMEOUT,
+};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{dumps_indent, float_repr, round, Object, Value};
 
 /// `cli._MATCHERS`: the matcher_model values `tiers setup` sets.
 const MATCHERS: [&str; 4] = ["lexical", "potion", "all-MiniLM-L6-v2", "int8"];
@@ -206,6 +208,12 @@ struct ProbeOutcome {
     reason: String,
 }
 
+/// True when some probe failed and every failed probe was cut at the token
+/// limit (`QualificationResult.all_failures_truncated`).
+fn all_failures_truncated(outcomes: &[ProbeOutcome], valid: i64, attempts: i64) -> bool {
+    valid < attempts && outcomes.iter().filter(|o| o.outcome != OUTCOME_VALID).all(|o| o.outcome == OUTCOME_TRUNCATED)
+}
+
 struct Qualification {
     attempts: i64,
     valid: i64,
@@ -327,7 +335,10 @@ impl Env {
             Opt::val(
                 &["--kind"],
                 "TEXT",
-                "auto | ollama | openai | anthropic. The wire --remote speaks.",
+                "auto | ollama | openai | anthropic. The wire the host speaks. \
+                 With --remote, auto probes in order and stops at the first that answers. \
+                 With --endpoint, auto asks the server once whether it is Ollama; ollama and openai skip the question. \
+                 An Ollama host gets reasoning_effort none, so a thinking model answers without thinking.",
             ),
             Opt::val(
                 &["--context"],
@@ -376,7 +387,7 @@ impl Env {
         if !endpoint.is_empty() && !remote.is_empty() {
             return Err(self.fail3(
                 "--endpoint and --remote are mutually exclusive.",
-                "--endpoint qualifies a local /v1 server against the envelope-generation gate. --remote probes \
+                "--endpoint qualifies a local /v1 server against the envelope-generation warden. --remote probes \
                  and records a model host for your harness to point at.",
                 "run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].",
                 1,
@@ -402,10 +413,21 @@ impl Env {
             );
             return exit(2);
         }
+        if !endpoint.is_empty() {
+            let k = p.str("--kind", "auto");
+            if !matches!(k.as_str(), "auto" | "ollama" | "openai") {
+                self.errf(&format!(
+                    "--kind {} does not apply to --endpoint: an endpoint speaks the OpenAI wire. Use --kind auto, ollama or openai.\n",
+                    repr(&k)
+                ));
+                return exit(2);
+            }
+        }
         let h = self.detect_hardware();
         let rec = recommend(&h);
         let mut qual: Option<Qualification> = None;
         let mut wired = false;
+        let mut host_kind = String::new();
         if !endpoint.is_empty() {
             let mut c = self.llm_client();
             // An endpoint is an HTTP server. The claude-code backend ignores
@@ -419,8 +441,17 @@ impl Env {
                 return exit(2);
             }
             c.pin("api");
+            host_kind = p.str("--kind", "auto");
+            if host_kind == "auto" {
+                let root = endpoint.trim_end_matches('/');
+                let root = root.strip_suffix("/v1").unwrap_or(root);
+                host_kind = self.endpoint_kind(root).to_string();
+            }
             let mut t = Tier1::new(&model, Some(endpoint.clone()), None, "");
             t.timeout = QUALIFY_TIMEOUT;
+            if host_kind == "ollama" {
+                t.reasoning_effort = OLLAMA_NO_THINK_EFFORT.to_string();
+            }
             if let Err(why) = c.check(&t.model) {
                 return self.refuse(CMD, &why);
             }
@@ -432,6 +463,9 @@ impl Env {
                 "qualifying {model} at {endpoint}: {total} probes, up to {} s each",
                 QUALIFY_TIMEOUT.as_secs()
             ));
+            if host_kind == "ollama" {
+                self.note("  host: ollama, thinking off (reasoning_effort none); pass --kind openai to send the request as is");
+            }
             let mut done = 0;
             for _ in 0..n {
                 for task in PROBE_TASKS {
@@ -476,6 +510,7 @@ impl Env {
                             Object::new()
                                 .with("model", model.as_str())
                                 .with("base_url", endpoint.as_str())
+                                .with("host_kind", host_kind.as_str())
                         ),
                         2,
                         true
@@ -489,6 +524,7 @@ impl Env {
             qual = Some(q);
         }
         let budget = h.budget();
+        let runtime = if host_kind == "ollama" { "ollama" } else { "llamafile" };
         if p.flag("--json") {
             let q = match &qual {
                 Some(q) => {
@@ -511,6 +547,7 @@ impl Env {
                         .with("passed", q.passed)
                         .with("threshold", threshold)
                         .with("wired", wired)
+                        .with("host_kind", host_kind.as_str())
                         .with("outcomes", Value::List(outs));
                     if let Some(n) = q.context {
                         qo = qo.with("context_window", n);
@@ -543,7 +580,7 @@ impl Env {
                         .with("size_class", rec.size)
                         .with("params_b_max", rec.params)
                         .with("quant", "Q4_K_M")
-                        .with("runtime", "llamafile")
+                        .with("runtime", runtime)
                         .with("est_download_gb", rec.download)
                         .with("candidate_families", Value::List(fams))
                         .with("provisional", true)
@@ -573,8 +610,9 @@ impl Env {
         let mut b = format!("{line}\n");
         b.push_str(&format!("Model budget: ~{}GB\n\n", float_repr(budget)));
         b.push_str(&format!(
-            "Recommended: a {}-class instruct model at Q4_K_M via llamafile (~{}GB).\n",
+            "Recommended: a {}-class instruct model at Q4_K_M via {} (~{}GB).\n",
             rec.size,
+            runtime,
             float_repr(rec.download)
         ));
         b.push_str(&format!(
@@ -607,6 +645,10 @@ impl Env {
         if let Some(n) = q.context {
             b.push_str(&format!("  Context window: {n} tokens (what the server serves).\n"));
         }
+        if !host_kind.is_empty() {
+            let thinking = if host_kind == "ollama" { " (thinking off: reasoning_effort none)" } else { "" };
+            b.push_str(&format!("  Host kind: {host_kind}{thinking}\n"));
+        }
         if !q.passed {
             if let Some(o) = q.outcomes.iter().find(|o| o.outcome != OUTCOME_VALID) {
                 b.push_str(&format!("  → First failure ({}): {}\n", o.outcome, o.reason));
@@ -621,6 +663,11 @@ impl Env {
             b.push_str(
                 "  → ALL attempts errored — this is a wiring problem, not model capacity. Check the server is \
                  reachable at --endpoint and serving /v1, and that --model matches the name it serves.\n",
+            );
+        } else if all_failures_truncated(&q.outcomes, q.valid, q.attempts) {
+            b.push_str(
+                "  → Every failed probe was truncated: the model stops at the token limit before the envelope is \
+                 complete. Turn thinking off at the server, or raise its output limit, then re-run.\n",
             );
         } else {
             b.push_str("  → Not promoted. Try a larger model, a higher quant, or lower --threshold deliberately.\n");
@@ -678,9 +725,24 @@ mod tests {
     }
 
     #[test]
+    fn all_failures_truncated_follows_the_oracle() {
+        let o = |kinds: &[&'static str]| -> Vec<ProbeOutcome> {
+            kinds.iter().map(|k| ProbeOutcome { task: "t", outcome: k, reason: String::new() }).collect()
+        };
+        let t = o(&["truncated", "truncated"]);
+        assert!(all_failures_truncated(&t, 0, 2));
+        let t = o(&["valid", "truncated"]);
+        assert!(all_failures_truncated(&t, 1, 2));
+        let t = o(&["truncated", "declined"]);
+        assert!(!all_failures_truncated(&t, 0, 2));
+        let t = o(&["valid", "valid"]);
+        assert!(!all_failures_truncated(&t, 2, 2));
+    }
+
+    #[test]
     fn g_format_is_pythons() {
         for (f, want) in [
-            (15.6, "15.6"),
+            (12.5, "12.5"),
             (8.0, "8"),
             (1234567.0, "1.23457e+06"),
             (0.0001, "0.0001"),

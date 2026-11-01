@@ -135,9 +135,9 @@ pub fn status_text(code: u16) -> &'static str {
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         501 => "Not Implemented",
-        502 => "Bad Gateway",
+        502 => "Bad Router",
         503 => "Service Unavailable",
-        504 => "Gateway Timeout",
+        504 => "Router Timeout",
         _ => "",
     }
 }
@@ -309,8 +309,28 @@ fn parse_target(target: &str) -> Option<(String, String, String)> {
     Some((path, escaped, q))
 }
 
-/// The most of a request body that is read: a voice clip's limit and one.
+/// The most of a request body that is read on an ordinary route: 8 MiB and
+/// one byte, so a body over the limit is told from one at it.
 pub const MAX_BODY: usize = (8 << 20) + 1;
+
+/// The most of a body that is read on the voice upload route: a voice clip's
+/// limit and one. No other route takes it.
+pub const MAX_VOICE_BODY: usize = (64 << 20) + 1;
+
+/// The most of a body the open CA hand-off port reads. It serves one file and
+/// takes no body at all.
+pub const MAX_CA_BODY: usize = 64 << 10;
+
+/// The body limit of req: the voice upload route reads a clip, every other
+/// route reads at most MAX_BODY. It is chosen before one byte of the body is
+/// read.
+pub fn body_limit(req: &Request) -> usize {
+    if req.method == "POST" && req.path == "/api/voice/transcribe" {
+        MAX_VOICE_BODY
+    } else {
+        MAX_BODY
+    }
+}
 
 /// What reading a request found.
 pub enum Got {
@@ -450,10 +470,15 @@ pub fn wants_continue(req: &Request) -> bool {
             || req.header("Content-Length").parse::<u64>().unwrap_or(0) > 0)
 }
 
-/// Reads the body of req from r: at most MAX_BODY bytes are kept, and the
-/// rest is read and dropped, so the next request starts in the right
-/// place.
+/// Reads the body of req from r: at most the route's limit is kept, and the
+/// rest is read and dropped, so the next request starts in the right place.
 pub fn read_body<R: BufRead>(r: &mut R, req: &mut Request) -> io::Result<()> {
+    read_body_max(r, req, body_limit(req))
+}
+
+/// `read_body` with a limit the caller sets. The buffer grows as data
+/// arrives; a size a client claims is never allocated up front.
+pub fn read_body_max<R: BufRead>(r: &mut R, req: &mut Request, max: usize) -> io::Result<()> {
     let mut line = String::new();
     if req
         .header("Transfer-Encoding")
@@ -467,7 +492,7 @@ pub fn read_body<R: BufRead>(r: &mut R, req: &mut Request) -> io::Result<()> {
             }
             let size_text = line.trim_end_matches(['\r', '\n']);
             let size_text = size_text.split(';').next().unwrap_or("").trim();
-            let size = usize::from_str_radix(size_text, 16)
+            let size = u64::from_str_radix(size_text, 16)
                 .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
             if size == 0 {
                 loop {
@@ -480,13 +505,13 @@ pub fn read_body<R: BufRead>(r: &mut R, req: &mut Request) -> io::Result<()> {
                 }
                 break;
             }
-            let mut chunk = vec![0u8; size];
-            r.read_exact(&mut chunk)?;
-            let room = MAX_BODY.saturating_sub(body.len());
-            if room < chunk.len() {
+            let room = max.saturating_sub(body.len());
+            let keep = (size.min(room as u64)) as usize;
+            read_into(r, &mut body, keep)?;
+            if size > keep as u64 {
                 req.body_too_big = true;
+                drain(r, size - keep as u64)?;
             }
-            body.extend_from_slice(&chunk[..chunk.len().min(room)]);
             line.clear();
             read_line(r, &mut line)?;
         }
@@ -494,20 +519,35 @@ pub fn read_body<R: BufRead>(r: &mut R, req: &mut Request) -> io::Result<()> {
         return Ok(());
     }
     let n: u64 = req.header("Content-Length").parse().unwrap_or(0);
-    let keep = (n as usize).min(MAX_BODY);
-    let mut body = vec![0u8; keep];
-    r.read_exact(&mut body)?;
-    let mut left = n - keep as u64;
-    if left > 0 {
+    let keep = n.min(max as u64) as usize;
+    let mut body = Vec::new();
+    read_into(r, &mut body, keep)?;
+    if n > keep as u64 {
         req.body_too_big = true;
-        let mut sink = [0u8; 8192];
-        while left > 0 {
-            let k = (left as usize).min(sink.len());
-            r.read_exact(&mut sink[..k])?;
-            left -= k as u64;
-        }
+        drain(r, n - keep as u64)?;
     }
     req.body = body;
+    Ok(())
+}
+
+/// Appends exactly `n` bytes from r to out, growing out as bytes arrive.
+fn read_into<R: BufRead>(r: &mut R, out: &mut Vec<u8>, n: usize) -> io::Result<()> {
+    let before = out.len();
+    r.by_ref().take(n as u64).read_to_end(out)?;
+    if out.len() - before < n {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
+    Ok(())
+}
+
+/// Reads and drops `left` bytes.
+fn drain<R: BufRead>(r: &mut R, mut left: u64) -> io::Result<()> {
+    let mut sink = [0u8; 8192];
+    while left > 0 {
+        let k = (left as usize).min(sink.len());
+        r.read_exact(&mut sink[..k])?;
+        left -= k as u64;
+    }
     Ok(())
 }
 
@@ -1003,6 +1043,56 @@ pub fn parse_http_time(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn post(path: &str, headers: &[(&str, &str)]) -> Request {
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        Request {
+            method: "POST".into(),
+            path: path.into(),
+            escaped_path: path.into(),
+            raw_query: String::new(),
+            proto_minor: 1,
+            headers: headers.iter().map(|(k, v)| (canonical_key(k), v.to_string())).collect(),
+            body: Vec::new(),
+            body_too_big: false,
+            remote: addr,
+            local: addr,
+            host: "x".into(),
+        }
+    }
+
+    #[test]
+    fn only_the_voice_upload_route_takes_a_clip_sized_body() {
+        let n = 9 << 20;
+        let mut other = post("/api/anything", &[("Content-Length", &n.to_string())]);
+        read_body(&mut std::io::Cursor::new(vec![0u8; n]), &mut other).unwrap();
+        assert!(other.body_too_big, "a 9 MiB body on an ordinary route is too big");
+        assert_eq!(other.body.len(), MAX_BODY);
+        let mut voice = post("/api/voice/transcribe", &[("Content-Length", &n.to_string())]);
+        read_body(&mut std::io::Cursor::new(vec![0u8; n]), &mut voice).unwrap();
+        assert!(!voice.body_too_big);
+        assert_eq!(voice.body.len(), n);
+    }
+
+    #[test]
+    fn the_buffer_follows_the_bytes_that_arrive_not_the_claim() {
+        // A claim of 60 MiB with 10 bytes behind it must fail without a 60 MiB buffer.
+        let mut req = post("/api/voice/transcribe", &[("Content-Length", "62914560")]);
+        let err = read_body(&mut std::io::Cursor::new(vec![0u8; 10]), &mut req).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        // A chunk header of FFFFFFFFFF with nothing behind it fails the same way.
+        let mut req = post("/api/voice/transcribe", &[("Transfer-Encoding", "chunked")]);
+        let err = read_body(&mut std::io::Cursor::new(b"FFFFFFFFFF\r\nabc".to_vec()), &mut req).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn the_open_ca_port_reads_almost_nothing() {
+        let mut req = post("/ca.crt", &[("Content-Length", "1000000")]);
+        read_body_max(&mut std::io::Cursor::new(vec![0u8; 1000000]), &mut req, MAX_CA_BODY).unwrap();
+        assert!(req.body_too_big);
+        assert_eq!(req.body.len(), MAX_CA_BODY);
+    }
 
     #[test]
     fn ranges_parse_as_go_parses_them() {

@@ -1,4 +1,4 @@
-"""Local Tier-1 qualification gate + persisted config wiring.
+"""Local Tier-1 qualification check + persisted config wiring.
 
 A hardware recommendation is only a hypothesis. Before a local model is wired as
 Tier-1, ``qualify_local_model`` runs a battery of representative tasks through
@@ -48,17 +48,23 @@ class QualificationResult:
     pass_rate: float
     passed: bool
     threshold: float
-    # (task, valid|declined|error|timeout), and one short reason per outcome
+    # (task, valid|declined|truncated|error|timeout), and one short reason per outcome
     # (empty for valid), in the same order.
     outcomes: list[tuple[str, str]] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
 
     def first_failure(self) -> "tuple[str, str] | None":
         """The first outcome that is not valid, as ``(outcome, reason)``."""
-        for (_, kind), why in zip(self.outcomes, self.reasons):
+        for (_, kind), why in zip(self.outcomes, self.reasons, strict=False):
             if kind != "valid":
                 return kind, why
         return None
+
+    def all_failures_truncated(self) -> bool:
+        """True when some probe failed and every failed probe was cut at the token limit."""
+        if self.valid >= self.attempts:
+            return False
+        return all(kind == "truncated" for _, kind in self.outcomes if kind != "valid")
 
 
 # The deadline of one qualification probe, re-ask included. A local model that
@@ -108,7 +114,7 @@ async def qualify_local_model(
                 if progress is not None:
                     progress(len(outcomes), total, "error", reasons[-1])
                 continue
-            if isinstance(env, Envelope):
+            if isinstance(env, Envelope) and kind != "declined":
                 valid += 1
                 outcomes.append((task, "valid"))
                 reasons.append("")
@@ -134,11 +140,15 @@ def tier1_config_path(data_dir: "str | Path") -> Path:
     return Path(data_dir) / _TIER1_CONFIG
 
 
-def write_tier1_config(data_dir: "str | Path", *, model: str, base_url: str | None) -> Path:
+def write_tier1_config(
+    data_dir: "str | Path", *, model: str, base_url: str | None, host_kind: str
+) -> Path:
     """Persist the qualified local model so the CLI wires it as Tier-1."""
     path = tier1_config_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"model": model, "base_url": base_url}, indent=2) + "\n")
+    path.write_text(
+        json.dumps({"model": model, "base_url": base_url, "host_kind": host_kind}, indent=2) + "\n"
+    )
     return path
 
 
@@ -155,6 +165,10 @@ def load_configured_tier1(data_dir: "str | Path") -> "Tier1Provider | None":
     model = cfg.get("model")
     if not model:
         return None
-    from opendaisugi.tier1 import HTTPTier1Provider
+    from opendaisugi.tier1 import OLLAMA_NO_THINK_EFFORT, HTTPTier1Provider
 
-    return HTTPTier1Provider(model=model, base_url=cfg.get("base_url"))
+    return HTTPTier1Provider(
+        model=model,
+        base_url=cfg.get("base_url"),
+        reasoning_effort=OLLAMA_NO_THINK_EFFORT if cfg.get("host_kind") == "ollama" else None,
+    )

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>coppice cards</title>
+<link rel="stylesheet" href="cards.css">
+<script type="module" src="cards.js"></script>
+</head>
+<body>
+<p id="cards-bar">
+  <label>Sort <select id="cards-sort">
+    <option value="reversibility">Easiest to undo</option>
+    <option value="impact">Widest change</option>
+    <option value="date">Newest</option>
+    <option value="project">Project</option>
+  </select></label>
+  <label><input id="cards-code" type="checkbox"> See the code</label>
+  <span id="cards-status" role="status"></span>
+</p>
+<ul id="cards-list"></ul>
+</body>
+</html>

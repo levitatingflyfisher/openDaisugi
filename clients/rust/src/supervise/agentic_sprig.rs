@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-use crate::gate::py::text::{decode_utf8_replace, head, strip};
+use crate::warden::py::text::{decode_utf8_replace, head, strip};
 
 /// The host tools sprig has a tool for, and its name for each. Any other
 /// requested tool is left out of sprig's wall.
@@ -22,9 +22,9 @@ pub fn sprig_tool(host: &str) -> Option<&'static str> {
     })
 }
 
-/// The failed step when a word of sprig's gate command would hold
-/// whitespace: sprig splits `--gate-cmd` at whitespace.
-pub const SPRIG_SPACE_TEXT: &str = "the sprig gate command has a word with a space in it, and sprig \
+/// The failed step when a word of sprig's warden command would hold
+/// whitespace: sprig splits `--warden-cmd` at whitespace.
+pub const SPRIG_SPACE_TEXT: &str = "the sprig warden command has a word with a space in it, and sprig \
 splits that command at spaces. Use a TMPDIR path and a daisugi path with no spaces.";
 
 /// `_sprig_exit_text`: the exit code (or the signal) and the last line
@@ -122,6 +122,7 @@ pub fn run_group(
         .current_dir(dir)
         .env_clear()
         .envs(env)
+        .env(pando::live::SKIP_VAR, "1") // a worker is not the owner's chat
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

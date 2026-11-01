@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
 use super::str_of;
-use crate::gate::py::text::{lower, repr, split, strip};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{lower, repr, split, strip};
+use crate::warden::pyjson::{Object, Value};
 
 /// `approval.ApprovalDecision`.
 #[derive(Debug, Clone)]
@@ -69,7 +69,7 @@ impl Approver for DefaultApproval {
                 return Err(format!(
                     "ValueError: DAISUGI_APPROVE={} is not a valid value; expected one of {}",
                     repr(&value),
-                    crate::gate::py::text::repr_list(&sorted)
+                    crate::warden::py::text::repr_list(&sorted)
                 ));
             }
             match value.as_str() {

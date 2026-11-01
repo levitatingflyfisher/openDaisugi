@@ -43,7 +43,7 @@ class PathwayBundle(BaseModel):
     )
     publisher: str = Field(
         description="Human-readable publisher id (e.g. 'alice@laptop', "
-        "'build-server-2'). Cosmetic — trust gates "
+        "'build-server-2'). Cosmetic — trust checks "
         "on the ed25519 signing key, not this string."
     )
     published_at: float
@@ -97,9 +97,9 @@ def pathway_to_bundle(
 
     Pass ``private_key_b64`` + ``public_key_b64`` (the v0.15 ed25519
     keypair shape — see ``opendaisugi.signing.generate_keypair``) to
-    produce a signed bundle. Trust-gating consumers will accept it iff
+    produce a signed bundle. Trust-checking consumers will accept it iff
     ``public_key_b64`` appears in their ``TrustedSignerRegistry``.
-    Omit both for an unsigned bundle (refused by trust-gating consumers).
+    Omit both for an unsigned bundle (refused by trust-checking consumers).
     """
     import time as _time
 

@@ -231,6 +231,17 @@ func (re *Regexp) Search(s string) bool {
 	return ok
 }
 
+// FullMatch is re.fullmatch(pattern, s) is not None: a match that starts at
+// the first character and ends at the last.
+func (re *Regexp) FullMatch(s string) bool {
+	rs := pystr.Runes(s)
+	m := &matcher{re: re, s: rs, marks: make([]int, 2*re.groups)}
+	for i := range m.marks {
+		m.marks[i] = -1
+	}
+	return m.seq(re.root.Data, 0, 0, re.flags, func(p int) bool { return p == len(rs) })
+}
+
 // SearchAt finds the leftmost match starting at or after pos. With
 // mustAdvance, an empty match at pos itself is refused (sre's rule for the
 // match after an empty one in finditer and sub).

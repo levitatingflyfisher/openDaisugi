@@ -6,8 +6,8 @@
 //! client's `internal/strata` is the reference.
 
 use crate::envgen::inherit::verify_inheritance;
-use crate::gate::py::text::{lower, repr};
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::{lower, repr};
+use crate::warden::pyjson::{Object, Value};
 use crate::lerr::{LErr, PyError, LR};
 use crate::pathways::pathway::dump_json;
 use crate::pathways::pmodel::{validate_json, validate_model, Id, Mode};
@@ -245,7 +245,7 @@ pub fn promote(
             env,
             &format!(
                 "only a 'constraint' stratum may touch authority; got kind '{kind}' — facts, hypotheses and goals \
-                 inform reasoning, never gate actions"
+                 inform reasoning, never warden actions"
             ),
         ));
     }
@@ -436,7 +436,7 @@ mod tests {
     fn only_a_constraint_that_tightens_is_promoted() {
         let env = match validate_model(
             Id::Envelope,
-            &crate::gate::pyjson::loads(r#"{"generated_by": "t", "task": "t", "permissions": {"file_write": ["/a/**", "/b/**"]}}"#).unwrap(),
+            &crate::warden::pyjson::loads(r#"{"generated_by": "t", "task": "t", "permissions": {"file_write": ["/a/**", "/b/**"]}}"#).unwrap(),
             Mode::Python,
         )
         .unwrap()

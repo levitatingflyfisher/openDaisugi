@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,6 +88,30 @@ type Transcript struct {
 	Text      string
 	DurationS float64
 	RTF       float64
+	// Parts is the text of each window of a long clip, in order. A window
+	// the engine could not read is GapMarker. Nil for a clip of one window.
+	Parts []string
+	// Gaps is how many windows the engine could not read.
+	Gaps int
+}
+
+// GapMarker stands in the text for a window the engine could not read, so
+// the owner sees where words are missing.
+const GapMarker = "[gap in the recording]"
+
+// WhisperCppBatchArgs is WhisperCppArgs for many windows in one run: the
+// model loads once, and each window's text is written beside its file as
+// <file>.txt.
+func WhisperCppBatchArgs(binary, model string, wavPaths []string, language *string) []string {
+	lang := WhisperCppAutoLanguage
+	if language != nil && *language != "" {
+		lang = *language
+	}
+	args := []string{binary, "-m", model}
+	for _, p := range wavPaths {
+		args = append(args, "-f", p)
+	}
+	return append(args, "-l", lang, "-nt", "-np", "-otxt")
 }
 
 // Engine is an external speech engine: whisper-cli (whisper.cpp), run
@@ -308,4 +333,57 @@ func (e *Engine) Transcribe(wav []byte, language *string) (*Transcript, error) {
 		rtf = elapsed / duration
 	}
 	return &Transcript{Text: text, DurationS: duration, RTF: rtf}, nil
+}
+
+// transcribeBatch runs whisper.cpp once over all windows, so the model loads
+// once. It answers each window's text and whether the window was read. A
+// window with no .txt file was not read. The error is set when the run
+// failed; windows that finished before the failure keep their text.
+func (e *Engine) transcribeBatch(pieces [][]byte, language *string) ([]string, []bool, error) {
+	dir, err := os.MkdirTemp("", "daisugi-voice-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer os.RemoveAll(dir)
+	paths := make([]string, len(pieces))
+	for i, p := range pieces {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("w%04d.wav", i))
+		if err := os.WriteFile(paths[i], p, 0o600); err != nil {
+			return nil, nil, err
+		}
+	}
+	limit := time.Duration(WhisperCppTimeoutS * float64(len(pieces)) * float64(time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	args := WhisperCppBatchArgs(e.binary, e.model, paths, language)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	runErr := cmd.Run()
+	var failure error
+	if ctx.Err() != nil {
+		failure = fmt.Errorf("%s timed out", e.binaryName())
+	} else if runErr != nil {
+		ee, ok := runErr.(*exec.ExitError)
+		if !ok {
+			failure = runErr
+		} else {
+			lines := pystr.Splitlines(pystr.Strip(pystr.DecodeReplace(errb.Bytes())))
+			last := ""
+			if len(lines) > 0 {
+				last = pystr.Slice(pystr.Strip(lines[len(lines)-1]), 0, 200)
+			}
+			failure = fmt.Errorf("%s exited %d: %s", e.binaryName(), ee.ExitCode(), last)
+		}
+	}
+	texts := make([]string, len(pieces))
+	read := make([]bool, len(pieces))
+	for i, p := range paths {
+		raw, err := os.ReadFile(p + ".txt")
+		if err != nil {
+			continue
+		}
+		read[i], texts[i] = true, WhisperCppText(pystr.DecodeReplace(raw))
+	}
+	return texts, read, failure
 }

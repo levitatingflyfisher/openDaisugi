@@ -1,8 +1,9 @@
 import { LAYOUTS, LOCKED, newTiles, reset, swap, focused, slotOf, shown } from './tiles.js';
+import { reconcile } from './reconcile.js';
 import { mountChat, lastReply, DESK_LINE, actFor, actDone } from './chat.js';
 import { stateOf, askFor, paneName, tierLine, answerBody, denyButton, allowControl, verdictLine, needsYou, heldLine, heldTierLine, heldAnswer, isHeadless, HEADLESS_NOTE, trustFor, trustCommand, trustDone, TRUST_TEXT, TRUST_YES, TRUST_NO } from './pane.js';
 import { stateChip } from './chips.js';
-import { applyFrame, gridToText, drawGrid, measureAdvance } from './grid.js';
+import { applyFrame, gridToText, drawGrid, measureAdvance, lastContentRow } from './grid.js';
 import { paneRows, setFloor, render as renderRail, killButton, confirmLine, editInPlace, focusRename } from './roster.js';
 import {
   cellFor, windowCapacity, windowShape, fillOrder, startSelect, endedLine, endedSlot, isEndedSlot, paneOfSlot, livePanes,
@@ -10,7 +11,7 @@ import {
 } from './windows.js';
 import { keyBytes, isPaste, isLeave, routeKey } from './keys.js';
 import { message, fixButtons, toMessage } from './messages.js';
-import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox, modeDone, modelDone, routerDone, moveLine, moveDone } from './stackbar.js';
+import { segments, wardenMark, light, details, stackBarEl, wardenMarkEls, detailsBox, modeDone, modelDone, routeDone, moveLine, moveDone } from './stackbar.js';
 import { railEntries, railOrder, treeOrder, killKey, dropAction, rowFromEvent, ROW_TYPE } from './rail.js';
 
 export { verdictLine, keyBytes, isPaste, isLeave, rowFromEvent };
@@ -169,7 +170,7 @@ export const TITLE = 'coppice';
 
 // titleFor is the tab title for a pane list: the count of panes that need
 // the operator and the name, as 2 · coppice, or the name alone when none
-// does. An ask a foreman holds does not count.
+// does. An ask a steward holds does not count.
 export function titleFor(panes) {
   const n = (Array.isArray(panes) ? panes : []).filter(needsYou).length;
   return n > 0 ? n + ' · ' + TITLE : TITLE;
@@ -246,10 +247,10 @@ export function mountFloor(root, floorState) {
   let endedShown = false;   // the status line holds an ended line
   let advance = 0;          // measured glyph advance, once a canvas exists
   const openSeg = new Map(); // pane id to the stack segment whose details show
-  const screenOf = new Set(); // foreman pane ids whose window shows the terminal, not the chat
-  let chatLast = '';        // id of the foreman's newest reply, from the last floor.chat read
+  const screenOf = new Set(); // steward pane ids whose window shows the terminal, not the chat
+  let chatLast = '';        // id of the steward's newest reply, from the last floor.chat read
   let chatSeen = '';        // id of the newest reply a chat window has shown
-  let chatFor = '';         // the foreman the chat was last read for
+  let chatFor = '';         // the steward the chat was last read for
   let chatBusy = false;     // a floor.chat read for chatLast is on its way
   let chatAgain = false;    // a probe asked while one ran; it runs once more after
 
@@ -264,16 +265,16 @@ export function mountFloor(root, floorState) {
     return slot && !isEndedSlot(slot) ? slot : null;
   };
 
-  // foremanId is the floor's tracked foreman, from the facts, or ''.
-  const foremanId = () => {
+  // stewardId is the floor's tracked steward, from the facts, or ''.
+  const stewardId = () => {
     const f = typeof floorState.facts === 'function' ? floorState.facts() : null;
-    return f && f.foreman && typeof f.foreman.pane === 'string' ? f.foreman.pane : '';
+    return f && f.steward && typeof f.steward.pane === 'string' ? f.steward.pane : '';
   };
-  // chatMode is true for the foreman's window while it draws the chat. The
-  // Screen button turns it to the foreman's terminal.
-  const chatMode = (pane) => Boolean(pane) && pane === foremanId() && !screenOf.has(pane) && rows.has(pane);
+  // chatMode is true for the steward's window while it draws the chat. The
+  // Screen button turns it to the steward's terminal.
+  const chatMode = (pane) => Boolean(pane) && pane === stewardId() && !screenOf.has(pane) && rows.has(pane);
   // takesLine is true for a window that takes whole lines in a line of its
-  // own: a headless agent, and the foreman's chat.
+  // own: a headless agent, and the steward's chat.
   const takesLine = (pane) => isHeadless(rows.get(pane)) || chatMode(pane);
 
   // The rail is drawn by the roster. The floor asks for a redraw when the
@@ -401,7 +402,7 @@ export function mountFloor(root, floorState) {
   const followCursor = (view, grid, cell) => {
     const at = scrollFollow({
       shownW: Number(view.body.clientWidth) || 0, shownH: Number(view.body.clientHeight) || 0,
-      cols: grid.cols, rows: grid.rows, cellW: cell.w, cellH: cell.h, cursor: grid.cursor,
+      cols: grid.cols, rows: grid.rows, cellW: cell.w, cellH: cell.h, cursor: grid.cursor, contentRow: lastContentRow(grid),
       top: view.body.scrollTop, left: view.body.scrollLeft, autoTop: view.autoTop, lastX: view.cursorX,
     });
     if (at.top !== (Number(view.body.scrollTop) || 0)) view.body.scrollTop = at.top;
@@ -647,8 +648,8 @@ export function mountFloor(root, floorState) {
       make('span', 'dot dot-' + chip.word),
       label,
     );
-    const mark = gateMark(row && row.gate);
-    if (mark) head.append(...gateEl(view.pane, mark));
+    const mark = wardenMark(row && row.warden);
+    if (mark) head.append(...wardenEl(view.pane, mark));
     // The second line holds what the agent runs, its state word and its
     // directory, so the stack bar has the width to show its words. With no
     // stack the harness shows as a word, and one the server does not know
@@ -663,7 +664,7 @@ export function mountFloor(root, floorState) {
     const changed = changedLine(row && row.workspace_changed);
     if (changed) head.append(make('span', 'changed', changed));
     if (view.pane === typing()) head.append(make('span', 'typing-words', TYPING_TEXT));
-    if (view.pane === foremanId()) head.append(screenButton(view));
+    if (view.pane === stewardId()) head.append(screenButton(view));
     head.append(killButton(view.pane, labelText, askKill));
     const confirm = killAsk === view.pane ? confirmLine(labelText, () => stopKill(true), () => stopKill(false)) : null;
     const segOpen = openSeg.get(view.pane);
@@ -673,7 +674,7 @@ export function mountFloor(root, floorState) {
     if (ask.visible) {
       askbar = make('div', 'askbar');
       askbar.append(make('p', 'summary', ask.summary));
-      // A held ask can still be answered here. The line says a foreman
+      // A held ask can still be answered here. The line says a steward
       // hears it first.
       if (row && row.held) askbar.append(make('p', 'muted held', heldLine(row.held, Date.now() / 1000)));
       const verdict = verdictLine(st.ask);
@@ -721,7 +722,7 @@ export function mountFloor(root, floorState) {
       askbar.append(yes, no);
     }
     view.askbar = askbar;
-    // The notes are the commands the pane ran, most often the foreman's
+    // The notes are the commands the pane ran, most often the steward's
     // hands. They draw dim under the header.
     const kept = notes.get(view.pane) || [];
     const noteLines = kept.length ? make('div', 'notes') : null;
@@ -730,7 +731,10 @@ export function mountFloor(root, floorState) {
     const line = takesLine(view.pane) ? messageLine(view) : null;
     const body = chatMode(view.pane) ? chatBody(view) : view.body;
     const had = line && typeof document !== 'undefined' && document.activeElement === view.promptInput;
-    view.section.replaceChildren(...[head, line2, confirm, segPanel, noteLines, askbar, body, line, view.note, view.noteFix].filter(Boolean));
+    // The body, the message line and the notes stay in the page: a header
+    // draw replaces the header parts and leaves them, with their scroll and
+    // focus, where they are.
+    reconcile(view.section, [head, line2, confirm, segPanel, noteLines, askbar, body, line, view.note, view.noteFix]);
     if (had) focusOn(view.promptInput);
     scrollTo(view, at);
   };
@@ -739,10 +743,10 @@ export function mountFloor(root, floorState) {
   const focusOn = (el) => { if (el && typeof el.focus === 'function') el.focus(); };
 
   // messageLine is the line under a headless agent's window, and under the
-  // foreman's chat. A headless agent has no terminal to type into, so the
+  // steward's chat. A headless agent has no terminal to type into, so the
   // window sends it no keys: Enter in this line sends the whole message
   // (agent.prompt), and ctrl-space gives the keys back to the rail. The
-  // chat's line sends the words to the foreman (floor.talk), not to its
+  // chat's line sends the words to the steward (floor.talk), not to its
   // terminal. A line is made once per window and kind, so typed text
   // survives a redraw.
   const messageLine = (view) => {
@@ -753,7 +757,7 @@ export function mountFloor(root, floorState) {
     const input = make('input', 'prompt-input');
     input.type = 'text';
     input.placeholder = chat ? DESK_LINE : 'Message to the agent';
-    input.setAttribute('aria-label', chat ? 'Tell the foreman' : 'Message to the agent');
+    input.setAttribute('aria-label', chat ? 'Tell the steward' : 'Message to the agent');
     input.addEventListener('click', (e) => { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); });
     input.addEventListener('focus', () => {
       if (typing() === view.pane) return;
@@ -805,7 +809,7 @@ export function mountFloor(root, floorState) {
     return line;
   };
 
-  // chatBody is the foreman window's chat: the same message list the phone
+  // chatBody is the steward window's chat: the same message list the phone
   // draws, from floor.chat. It is made once per window.
   const chatBody = (view) => {
     if (view.chatBox) return view.chatBox;
@@ -829,12 +833,12 @@ export function mountFloor(root, floorState) {
     return box;
   };
 
-  // screenButton switches the foreman's window between its chat and its
+  // screenButton switches the steward's window between its chat and its
   // terminal.
   const screenButton = (view) => {
     const b = make('button', 'ghost screen-toggle', screenOf.has(view.pane) ? 'Chat' : 'Screen');
     b.type = 'button';
-    b.title = screenOf.has(view.pane) ? 'Show the chat with the foreman' : "Show the foreman's terminal";
+    b.title = screenOf.has(view.pane) ? 'Show the chat with the steward' : "Show the steward's terminal";
     b.addEventListener('click', (e) => {
       if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
       if (screenOf.has(view.pane)) screenOf.delete(view.pane);
@@ -849,11 +853,11 @@ export function mountFloor(root, floorState) {
     return b;
   };
 
-  // probeChat reads the newest of the chat to learn the foreman's latest
+  // probeChat reads the newest of the chat to learn the steward's latest
   // reply, for the unseen mark. A window that shows the chat has seen it.
   // A reply no window showed claims a window.
   const probeChat = () => {
-    const f = foremanId();
+    const f = stewardId();
     if (!f) return;
     if (chatBusy) {
       chatAgain = true;
@@ -873,23 +877,23 @@ export function mountFloor(root, floorState) {
       });
   };
 
-  // chatShown is true while a visible window draws the foreman's chat.
+  // chatShown is true while a visible window draws the steward's chat.
   const chatShown = () => {
-    const f = foremanId();
+    const f = stewardId();
     return Boolean(f) && visible() && chatMode(f) && windowSlots().includes(f);
   };
 
-  // replyWaiting is true for the foreman while it holds a reply no window
+  // replyWaiting is true for the steward while it holds a reply no window
   // showed and no window holds it. Its roster row says so.
-  const replyWaiting = (pane) => Boolean(pane) && pane === foremanId() && Boolean(chatLast) && chatLast !== chatSeen
+  const replyWaiting = (pane) => Boolean(pane) && pane === stewardId() && Boolean(chatLast) && chatLast !== chatSeen
     && !screenOf.has(pane) && !windowSlots().includes(pane);
 
   // claimChat gives the chat a window the way an agent gets one: only a
   // free window, never a filled, locked or focused one. With none free the
-  // foreman's roster row shows the reply as unseen. A window that shows
+  // steward's roster row shows the reply as unseen. A window that shows
   // the chat has seen the reply.
   const claimChat = () => {
-    const f = foremanId();
+    const f = stewardId();
     if (f && replyWaiting(f) && rows.has(f) && !looked.has(f) && n > 0 && visible()) {
       if (!tiles.locked) fillFree();
     }
@@ -902,9 +906,9 @@ export function mountFloor(root, floorState) {
   // segment's details below the header, or closes them.
   const stackBar = (pane, segs, lit) => stackBarEl(segs, { open: openSeg.get(pane), lit, onSeg: (key) => toggleSeg(pane, key) });
 
-  // gateEl is the last verdict's mark and its tip. A click opens the
+  // wardenEl is the last verdict's mark and its tip. A click opens the
   // daisugi details, which show the tool and clause too.
-  const gateEl = (pane, mark) => gateMarkEls(mark, () => toggleSeg(pane, 'daisugi'));
+  const wardenEl = (pane, mark) => wardenMarkEls(mark, () => toggleSeg(pane, 'daisugi'));
 
   // modeAsking holds the agents whose daisugi details ask before Watch
   // only. setMode sends agent.set_mode and says the new mode.
@@ -916,9 +920,9 @@ export function mountFloor(root, floorState) {
       .catch((e) => status(e.message));
   };
 
-  // swapAsking holds, for an agent whose router details ask, the route
-  // asked about. swap sends agent.set_model or agent.set_router and says
-  // when it lands. A router swap resumes the agent as a new window.
+  // swapAsking holds, for an agent whose route details ask, the route
+  // asked about. swap sends agent.set_model or agent.set_route and says
+  // when it lands. A route swap resumes the agent as a new window.
   const swapAsking = new Map();
   // swapLines holds, for an agent whose loop details ask, the replay cost
   // line the server's preview gave.
@@ -929,7 +933,7 @@ export function mountFloor(root, floorState) {
     let call;
     if (kind === 'model') call = rpc('agent.set_model', { pane, model: value }).then((res) => modelDone(label, value, res && res.when));
     else if (kind === 'loop') call = rpc('agent.move', { pane, harness: value }).then((res) => moveDone(label, value, res));
-    else call = rpc('agent.set_router', { pane, router: value }).then(() => routerDone(label, value));
+    else call = rpc('agent.set_route', { pane, route: value }).then(() => routeDone(label, value));
     call.then((words) => status(words)).catch((e) => status(e.message));
   };
 
@@ -1197,9 +1201,9 @@ export function mountFloor(root, floorState) {
     const rowsNow = paneRows(lastList, Date.now() / 1000);
     const byId = new Map(rowsNow.map((r) => [r.id, r]));
     const rail = treeOrder(rowsNow, tasks).map((id) => byId.get(id));
-    const first = foremanId();
+    const first = stewardId();
     let ids = fillOrder(rail);
-    // The foreman fills right after the agents that need you while it
+    // The steward fills right after the agents that need you while it
     // holds a reply no window showed. An agent only takes a free window.
     if (first && chatLast && chatLast !== chatSeen && ids.includes(first) && !screenOf.has(first)) {
       const needs = ids.filter((x) => x !== first && byId.get(x) && byId.get(x).state === 'blocked');
@@ -1247,7 +1251,7 @@ export function mountFloor(root, floorState) {
       if (stopping.has(slot)) tiles.slots[tiles.slots.indexOf(slot)] = '';
       else agentGone(slot, before.get(slot) && before.get(slot).label);
     }
-    if (foremanId() && foremanId() !== chatFor) probeChat();
+    if (stewardId() && stewardId() !== chatFor) probeChat();
     fillFree();
     closeUp();
     if (!started && visible() && list.length > 0 && n > 0) {

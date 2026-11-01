@@ -104,7 +104,7 @@ async def test_judge_can_override_structural_match_with_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_judge_exception_falls_back_to_structural() -> None:
+async def test_a_judge_that_raises_fails_the_ab() -> None:
     env = _mk_envelope()
     pathway = _mk_pathway(env)
 
@@ -117,8 +117,10 @@ async def test_judge_exception_falls_back_to_structural() -> None:
     result = await ab_test(pathway, "do X", tier2_generator=gen, judge=judge)
     assert result.judge_verdict is None
     assert any("judge_error" in n for n in result.notes)
-    # Falls back to structural, which passes here.
-    assert result.passed
+    # A judge error is no vote, and no vote is no pass, whatever the structure says.
+    assert result.judge_error == "RuntimeError: judge crashed"
+    assert result.postconditions_match and result.permissions_match
+    assert result.passed is False
 
 
 @pytest.mark.asyncio

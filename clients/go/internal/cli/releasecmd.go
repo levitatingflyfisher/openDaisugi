@@ -13,12 +13,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/registry"
 	"daisugi-verify/internal/signing"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is `daisugi release keygen|sign|verify` (opendaisugi/release.py
@@ -117,7 +117,7 @@ func (e *Env) releaseKeygen(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "Generate an ed25519 release-signing keypair.", opts)
 	}
-	outDir := gateroot.PathStr(p.str("--out-dir", cwd()))
+	outDir := wardenroot.PathStr(p.str("--out-dir", cwd()))
 	name := p.str("--name", "release_signing")
 	if err := mkdirParentsPy(outDir); err != nil {
 		return e.raise(cmd, err)
@@ -126,8 +126,8 @@ func (e *Env) releaseKeygen(args []string) error {
 	if err != nil {
 		return e.fail(cmd, err)
 	}
-	privPath := gateroot.PathStr(gateroot.Join(outDir, name+".key"))
-	pubPath := gateroot.PathStr(gateroot.Join(outDir, name+".pub"))
+	privPath := wardenroot.PathStr(wardenroot.Join(outDir, name+".key"))
+	pubPath := wardenroot.PathStr(wardenroot.Join(outDir, name+".pub"))
 	if err := writeText(privPath, priv+"\n"); err != nil {
 		return e.raise(cmd, err)
 	}
@@ -240,7 +240,7 @@ func (e *Env) releaseSign(args []string) error {
 	arts := make([]string, len(p.args))
 	var missing []string
 	for i, a := range p.args {
-		arts[i] = gateroot.PathStr(a)
+		arts[i] = wardenroot.PathStr(a)
 		if _, err := os.Stat(arts[i]); err != nil {
 			missing = append(missing, arts[i])
 		}
@@ -272,7 +272,7 @@ func (e *Env) releaseSign(args []string) error {
 	for i, en := range entries {
 		list[i] = pyjson.NewObject().Set("name", en.name).Set("sha256", en.sha).Set("size", pyjson.Int{Text: fmt.Sprint(en.size)})
 	}
-	priv, err := readTextStrip(gateroot.PathStr(p.str("--key", "")))
+	priv, err := readTextStrip(wardenroot.PathStr(p.str("--key", "")))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
@@ -283,7 +283,7 @@ func (e *Env) releaseSign(args []string) error {
 		return e.raise(cmd, perr)
 	}
 	m.Set("signature", sig)
-	out := gateroot.PathStr(p.str("--out", "release-manifest.json"))
+	out := wardenroot.PathStr(p.str("--out", "release-manifest.json"))
 	if err := writeText(out, pyjson.DumpsIndent(sortKeys(m), 2, true)+"\n"); err != nil {
 		return e.raise(cmd, err)
 	}
@@ -310,7 +310,7 @@ func duplicateNames(arts []string) []string {
 
 // pathName is Path(p).name.
 func pathName(p string) string {
-	p = gateroot.PathStr(p)
+	p = wardenroot.PathStr(p)
 	if i := strings.LastIndex(p, "/"); i >= 0 {
 		return p[i+1:]
 	}
@@ -370,7 +370,7 @@ func verifyArtifacts(m *pyjson.Object, dir string) ([]string, error) {
 		}
 		path := name
 		if !strings.HasPrefix(name, "/") {
-			path = gateroot.Join(dir, name)
+			path = wardenroot.Join(dir, name)
 		}
 		if _, err := os.Stat(path); err != nil {
 			bad = append(bad, name)
@@ -408,7 +408,7 @@ func (e *Env) releaseVerify(args []string) error {
 	if len(p.args) == 0 {
 		return e.usageArgs(cmd, "MANIFEST_PATH", &usageError{"Missing argument 'manifest_path'."})
 	}
-	regPath := gateroot.PathStr(p.str("--registry", gateroot.Join(e.dataHome(), "trusted_signers.json")))
+	regPath := wardenroot.PathStr(p.str("--registry", wardenroot.Join(e.dataHome(), "trusted_signers.json")))
 	reg, err := signing.LoadRegistry(regPath)
 	if err != nil {
 		return e.raise(cmd, err)
@@ -421,7 +421,7 @@ func (e *Env) releaseVerify(args []string) error {
 		e.errf("no trusted signers: add the release pubkey to %s or pass --signer\n", regPath)
 		return exit(1)
 	}
-	raw, err := os.ReadFile(gateroot.PathStr(p.args[0]))
+	raw, err := os.ReadFile(wardenroot.PathStr(p.args[0]))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
@@ -454,7 +454,7 @@ func (e *Env) releaseVerify(args []string) error {
 			break
 		}
 	}
-	bad, err := verifyArtifacts(m, gateroot.PathStr(p.str("--artifact-dir", cwd())))
+	bad, err := verifyArtifacts(m, wardenroot.PathStr(p.str("--artifact-dir", cwd())))
 	if err != nil {
 		return e.raise(cmd, err)
 	}

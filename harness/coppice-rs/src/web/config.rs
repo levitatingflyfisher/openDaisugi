@@ -36,10 +36,10 @@ pub fn config_path(data_dir: &Path) -> PathBuf {
     data_dir.join("web").join("web.json")
 }
 
-/// The gate directory beside the data dir: its parent, plus "gate",
+/// The warden directory beside the data dir: its parent, plus "warden",
 /// cleaned as Go's filepath.Join cleans it.
-pub fn gate_root(data_dir: &Path) -> PathBuf {
-    PathBuf::from(sys::clean(&format!("{}/../gate", data_dir.display())))
+pub fn warden_root(data_dir: &Path) -> PathBuf {
+    PathBuf::from(sys::clean(&format!("{}/../warden", data_dir.display())))
 }
 
 /// The persisted phone server.
@@ -56,7 +56,7 @@ pub struct Config {
     pub ntfy_topic: String,
     pub ntfy_token_env: String,
     pub external_url: String,
-    pub gate_root: String,
+    pub warden_root: String,
     pub voice_url: String,
     pub voice_token_file: String,
 }
@@ -76,7 +76,7 @@ static CONFIG_TY: StructTy = StructTy {
         ("ntfy_topic", Ty::Str),
         ("ntfy_token_env", Ty::Str),
         ("external_url", Ty::Str),
-        ("gate_root", Ty::Str),
+        ("warden_root", Ty::Str),
         ("voice_url", Ty::Str),
         ("voice_token_file", Ty::Str),
     ],
@@ -105,7 +105,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
         ntfy_topic: g.f("ntfy_topic").s(),
         ntfy_token_env: g.f("ntfy_token_env").s(),
         external_url: g.f("external_url").s(),
-        gate_root: g.f("gate_root").s(),
+        warden_root: g.f("warden_root").s(),
         voice_url: g.f("voice_url").s(),
         voice_token_file: g.f("voice_token_file").s(),
     })
@@ -125,7 +125,7 @@ pub fn marshal(c: &Config) -> String {
         ("ntfy_topic", json!(c.ntfy_topic)),
         ("ntfy_token_env", json!(c.ntfy_token_env)),
         ("external_url", json!(c.external_url)),
-        ("gate_root", json!(c.gate_root)),
+        ("warden_root", json!(c.warden_root)),
         ("voice_url", json!(c.voice_url)),
     ];
     if !c.voice_token_file.is_empty() {

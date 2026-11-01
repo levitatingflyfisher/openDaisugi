@@ -1,4 +1,4 @@
-// Command recall-probe is a test instrument for clients/gateway_compare.py:
+// Command recall-probe is a test instrument for clients/router_compare.py:
 // it runs internal/recall on one query per input line and prints the
 // result the way the oracle's MCP tools return it. A line is
 // {"kind": "recall", "db", "matcher", "task", "envelope", "z3_timeout_ms"}
@@ -13,11 +13,11 @@ import (
 	"os"
 
 	"daisugi-verify/internal/embed/potion"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/recall"
+	"daisugi-verify/internal/router"
 )
 
 type query struct {
@@ -74,7 +74,7 @@ func main() {
 				out.Set("provenance", nil)
 			}
 		case "answer":
-			entries, err := gateway.LoadAnswers(q.Answers)
+			entries, err := router.LoadAnswers(q.Answers)
 			if err != nil {
 				out.Set("error", err.Error())
 				break

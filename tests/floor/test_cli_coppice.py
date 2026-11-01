@@ -252,7 +252,7 @@ def test_list_json_carries_state_and_source(tmp_path, fake_floor_backend):
     assert result.exit_code == 0
     rows = json.loads(result.stdout)
     assert rows[0]["pane"] == "p1"
-    assert rows[0]["state"] == "working" and rows[0]["source"] == "gate"
+    assert rows[0]["state"] == "working" and rows[0]["source"] == "warden"
 
 
 def test_read_passes_the_source_through(tmp_path, fake_floor_backend):
@@ -766,7 +766,7 @@ def test_wait_json_carries_the_pane_state_and_source(tmp_path, fake_floor_backen
     )
     assert result.exit_code == 0
     body = json.loads(result.stdout)
-    assert body == {"pane": "p1", "state": "working", "source": "gate"}
+    assert body == {"pane": "p1", "state": "working", "source": "warden"}
 
 
 # --- fix round 1: an unknown --until is refused before polling -------------
@@ -906,7 +906,7 @@ def test_task_create_passes_every_field_and_prints_the_id(tmp_path, fake_floor_b
             "task",
             "create",
             "--label",
-            "gate-refactor",
+            "warden-refactor",
             "--parent",
             "t1",
             "--cwd",
@@ -922,7 +922,7 @@ def test_task_create_passes_every_field_and_prints_the_id(tmp_path, fake_floor_b
     assert "t2" in result.stdout
     assert fake_floor_backend.tasks_created == [
         {
-            "label": "gate-refactor",
+            "label": "warden-refactor",
             "parent": "t1",
             "cwd": str(tmp_path),
             "worktree": True,

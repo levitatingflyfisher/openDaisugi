@@ -107,7 +107,7 @@
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "x1c", "file": "{WORK}/v1/coppice/coppice.toml"}
 {"id": "$id", "ok": true, "result": "*"}
-{"id": "x2a", "write": "{WORK}/v2/coppice/coppice.toml", "text": "default = \"a\"\nplugins = [\"tree\"]\ngateway = \"http://127.0.0.1:1\"\nprojects = [\"/x\"]\n[harness.b]\ncommand = \"b\"\nargs = []\nstate = \"hooks\"\n[harness.a]\ncommand = \"a\"\nresume_args = [\"--resume\", \"{session}\"]\n"}
+{"id": "x2a", "write": "{WORK}/v2/coppice/coppice.toml", "text": "default = \"a\"\nplugins = [\"tree\"]\nrouter = \"http://127.0.0.1:1\"\nprojects = [\"/x\"]\n[harness.b]\ncommand = \"b\"\nargs = []\nstate = \"hooks\"\n[harness.a]\ncommand = \"a\"\nresume_args = [\"--resume\", \"{session}\"]\n"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "x2b", "cli": ["project", "add", "{START}"], "env": {"XDG_CONFIG_HOME": "{WORK}/v2"}}
 {"id": "$id", "ok": true, "result": {"code": 0}}

@@ -3,7 +3,7 @@
     PYTHONPATH=src python oracle.py SEED N out.jsonl
 
 Each line is {"text": ..., "yaml": dump or {"exc": type}, "config":
-{"gate_mode", "verifier_client"} or {"exc": type}}. The texts are random
+{"warden_mode", "verifier_client"} or {"exc": type}}. The texts are random
 config files built from fragments, many of them broken on purpose.
 """
 
@@ -19,14 +19,14 @@ import yaml
 from opendaisugi.config import load_config
 
 KEYS = [
-    "gate_mode",
+    "warden_mode",
     "verifier_client",
     "model",
     "max_task_chars",
     "z3_timeout_ms",
     "data_dir",
     "auto_tend",
-    "gate_ask",
+    "warden_ask",
     "llm_context_window",
     "floor_report",
     "voice_cleanup",
@@ -219,7 +219,7 @@ def saved(rng):
     from opendaisugi.config import Config, save_config
 
     fields = {
-        "gate_mode": rng.choice(["shadow", "enforce", "on", "yes: no", "#x", "a b"]),
+        "warden_mode": rng.choice(["shadow", "enforce", "on", "yes: no", "#x", "a b"]),
         "verifier_client": rng.choice(["python", "go", "rust", "", "- x", "été"]),
         "max_task_chars": rng.choice([1, 4000, 10**20]),
         "auto_tend": rng.choice([None, True, False]),
@@ -270,7 +270,7 @@ def main():
             cfg.write_bytes(t.encode("utf-8", "surrogatepass"))
             try:
                 c = load_config(cfg)
-                row["config"] = {"gate_mode": c.gate_mode, "verifier_client": c.verifier_client}
+                row["config"] = {"warden_mode": c.warden_mode, "verifier_client": c.verifier_client}
             except Exception as exc:  # noqa: BLE001
                 row["config"] = {"exc": type(exc).__name__}
             f.write(json.dumps(row) + "\n")

@@ -21,7 +21,7 @@ uv run --no-sync ruff check .
 uv run --no-sync ruff format --check .
 HF_HUB_OFFLINE=1 uv run --no-sync pytest -q
 uv run --no-sync pytest -q tests/test_adversarial.py
-uv run --no-sync daisugi gate audit
+uv run --no-sync daisugi warden audit
 ```
 
 `uv.lock` pins every package and its hash. `--locked` stops when the lock
@@ -63,11 +63,11 @@ first build takes a long time; do not delete the prefix.
 
 ```sh
 clients/go/scripts/native.sh
-clients/go/scripts/build.sh                  # daisugi, daisugi-gate, conform
+clients/go/scripts/build.sh                  # daisugi, daisugi-warden, conform
 cd clients/go
 export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
 go test -p 1 ./... -count=1
-for p in pathway-probe gateway-probe recall-probe; do go build -o "$SCRATCH/$p" ./cmd/$p; done
+for p in pathway-probe router-probe recall-probe; do go build -o "$SCRATCH/$p" ./cmd/$p; done
 ```
 
 ```sh
@@ -82,20 +82,20 @@ The golden compares run a binary over the cases the oracle recorded in
 each run its own scratch directories:
 
 ```sh
-export DAISUGI_GATE_SCRATCH=$SCRATCH/gate DAISUGI_CLI_SCRATCH=$SCRATCH/cli \
+export DAISUGI_WARDEN_SCRATCH=$SCRATCH/warden DAISUGI_CLI_SCRATCH=$SCRATCH/cli \
   DAISUGI_PATHWAY_SCRATCH=$SCRATCH/pathway DAISUGI_GARDEN_SCRATCH=$SCRATCH/garden \
-  DAISUGI_GATEWAY_SCRATCH=$SCRATCH/gateway DAISUGI_RECALL_PROBE=$SCRATCH/recall-probe \
+  DAISUGI_ROUTER_SCRATCH=$SCRATCH/router DAISUGI_RECALL_PROBE=$SCRATCH/recall-probe \
   HF_HUB_OFFLINE=1
 B=clients/go                                  # or clients/rust/target/release
-uv run --no-sync python clients/gate_compare.py --binary $B/daisugi-gate
+uv run --no-sync python clients/warden_compare.py --binary $B/daisugi-warden
 uv run --no-sync python clients/cli_compare.py --binary $B/daisugi
 uv run --no-sync python clients/pathway_compare.py --binary $B/daisugi --probe $SCRATCH/pathway-probe
 uv run --no-sync python clients/garden_compare.py --binary $B/daisugi
-uv run --no-sync python clients/gateway_compare.py --binary $B/daisugi
+uv run --no-sync python clients/router_compare.py --binary $B/daisugi
 ```
 
 For the Rust client the probes are in `clients/rust/target/release`. The
-gateway compare answers from its own fake upstream. `--oracle` also reruns
+router compare answers from its own fake upstream. `--oracle` also reruns
 the Python side and `--fuzz N` adds seeded fuzz items; both take longer.
 
 CI: `.github/workflows/clients.yml`. The `native` job builds the prefix on
@@ -122,7 +122,7 @@ scripts/smoke-tarball.sh dist/opendaisugi-0.0.0-dev-linux-x86_64.tar.gz
 ```
 
 `smoke-tarball.sh` unpacks the tarball into a scratch HOME, with PATH set to
-the binaries and `/usr/bin:/bin`. It installs the gate, checks that the
+the binaries and `/usr/bin:/bin`. It installs the warden, checks that the
 hook allows a Read and denies `rm -rf /etc`, and starts and stops a
 coppice server.
 

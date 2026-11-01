@@ -53,7 +53,7 @@ visible_idle = true
 line_regex = ['^ \[(BUILD|PLAN|BASH)\]']
 
 # On narrow panes the right side of the status bar overwrites the mode label,
-# so fall back to the prompt chevron above the input box border. The not-gates
+# so fall back to the prompt chevron above the input box border. The not-conditions
 # keep this from matching the streaming placeholder or a status bar that still
 # shows the spinner.
 [[rules]]

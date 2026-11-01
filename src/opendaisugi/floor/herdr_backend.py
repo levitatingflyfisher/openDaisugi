@@ -1,7 +1,7 @@
 """Herdr as a pane backend, driven through its CLI.
 
 Master spec 5.5 keeps Herdr first-class. A Herdr user gets exact `blocked`
-from our gate on day one, and a coppice user can fall back to Herdr without
+from our warden on day one, and a coppice user can fall back to Herdr without
 relearning a vocabulary.
 
 Two facts are PINNED in `herdr_verbs.json` rather than hardcoded, because
@@ -18,14 +18,14 @@ Herdr's own CLI reference contradicted the sub-spec:
 The pin carries `verified: false` until a box with `herdr` on it confirms
 both. Read the pin, never the sub-spec, for the argv.
 
-State source: `gate` only when `herdr agent explain <target> --json` names
+State source: `warden` only when `herdr agent explain <target> --json` names
 `daisugi` at the PINNED authority path, compared exactly. Anything else is
-`manifest`. A substring search would stamp Herdr's screen guess as a gate
-fact, and master spec 3.1 ranks a gate fact above a screen guess, so this
-fails closed: no field, no dict, no match, no `gate`.
+`manifest`. A substring search would stamp Herdr's screen guess as a warden
+fact, and master spec 3.1 ranks a warden fact above a screen guess, so this
+fails closed: no field, no dict, no match, no `warden`.
 
 A blocked row is the one exception. Herdr's agent list carries no Ask, and
-PaneStateEvent refuses a gate source on a blocked state with no Ask. A block
+PaneStateEvent refuses a warden source on a blocked state with no Ask. A block
 Herdr attributes to daisugi is reported as manifest instead, with a detail
 that says where it really came from, so the operator still learns it.
 
@@ -65,7 +65,7 @@ _DEFAULT_ARGV = {
 _PROBE_S = 0.5
 _CALL_S = 10.0
 _POLL_S = 1.0
-_GATE_BLOCKED_DETAIL = "reported by herdr as gate-blocked"
+_WARDEN_BLOCKED_DETAIL = "reported by herdr as warden-blocked"
 
 # Our states map onto the four Herdr accepts on `pane report-agent --state`.
 # `done` maps to `unknown`, never `idle`: `idle` in Herdr's UI reads as
@@ -131,20 +131,20 @@ class HerdrBackend:
         verbs: HerdrVerbs | None = None,
         *,
         timeout_s: float = _PROBE_S,
-        gate_states: Callable[[], dict[str, PaneStateEvent]] | None = None,
+        warden_states: Callable[[], dict[str, PaneStateEvent]] | None = None,
     ) -> None:
         self.verbs = verbs or load_verbs()
         self._probe_s = timeout_s
-        self._gate_states = gate_states or (lambda: {})
+        self._warden_states = warden_states or (lambda: {})
         # The backend's own idea of each pane's current state, merged
         # forward the same way tmux's own cache is: a fresh screen guess
-        # never overwrites a still-live gate hold outright, it goes
+        # never overwrites a still-live warden hold outright, it goes
         # through merge() first.
         self._current: dict[str, PaneStateEvent] = {}
-        # The ts of the last gate event actually merged in for each pane, so
-        # a gate_states() callback that keeps returning the same snapshot
+        # The ts of the last warden event actually merged in for each pane, so
+        # a warden_states() callback that keeps returning the same snapshot
         # does not get re-applied every poll.
-        self._gate_seen: dict[str, float] = {}
+        self._warden_seen: dict[str, float] = {}
         # subscribe() polls forever until this is set. close_connection()
         # is the only way to set it from outside the loop.
         self._stopped = False
@@ -490,7 +490,7 @@ class HerdrBackend:
 
     # --- state ------------------------------------------------------------
     def _authority_is_daisugi(self, pane_id: str) -> bool:
-        """`agent explain --json` says who decided. Only the gate may speak as the gate.
+        """`agent explain --json` says who decided. Only the warden may speak as the warden.
 
         Walks the PINNED path and compares exactly. Never a substring search
         over the document: `daisugi` appears in a cwd like `/work/openDaisugi`,
@@ -511,19 +511,19 @@ class HerdrBackend:
 
     def _agent_states(self) -> dict[str, PaneStateEvent]:
         """Herdr's own screen guess for each pane, merged behind whatever the
-        gate itself already reported for that pane.
+        warden itself already reported for that pane.
 
-        Master 5.1 ranks a gate fact above a screen guess the same way on
-        every backend. gate_states(), when it names a newer event for this
+        Master 5.1 ranks a warden fact above a screen guess the same way on
+        every backend. warden_states(), when it names a newer event for this
         pane than the last one already merged in, is folded in first,
         through the same merge() tmux's own cache uses; Herdr's own guess
-        for this cycle is then merged on top of that, so a gate hold still
+        for this cycle is then merged on top of that, so a warden hold still
         outranks a stale or wrong screen read.
         """
         parsed, text = self._list_json(self.verbs.verb("list_agents"))
         rows = parsed if isinstance(parsed, list) else _parse_table(text)
         now = time.time()
-        gate = self._gate_states()
+        warden = self._warden_states()
         out: dict[str, PaneStateEvent] = {}
         for row in rows:
             pane_id = str(row.get("pane_id") or row.get("col0") or "")
@@ -534,18 +534,18 @@ class HerdrBackend:
             authored_by_daisugi = self._authority_is_daisugi(pane_id)
             if state == "blocked":
                 # agent list carries no Ask id, tool, summary or deadline, so
-                # a blocked row can never be a gate source: PaneStateEvent
-                # requires an Ask whenever source is gate and state is
+                # a blocked row can never be a warden source: PaneStateEvent
+                # requires an Ask whenever source is warden and state is
                 # blocked. Report the honest screen fact instead, and say in
                 # the detail when Herdr itself thinks the block is ours.
                 source = "manifest"
                 detail = (
-                    _GATE_BLOCKED_DETAIL
+                    _WARDEN_BLOCKED_DETAIL
                     if authored_by_daisugi
                     else f"herdr agent list says {source}"
                 )
             else:
-                source = "gate" if authored_by_daisugi else "manifest"
+                source = "warden" if authored_by_daisugi else "manifest"
                 detail = f"herdr agent list says {source}"
             event = PaneStateEvent(
                 session_id="",
@@ -557,10 +557,10 @@ class HerdrBackend:
                 detail=detail,
             )
             prior = self._current.get(pane_id)
-            gate_event = gate.get(pane_id)
-            if gate_event is not None and gate_event.ts > self._gate_seen.get(pane_id, 0.0):
-                self._gate_seen[pane_id] = gate_event.ts
-                prior = merge(prior, gate_event, now=now)
+            warden_event = warden.get(pane_id)
+            if warden_event is not None and warden_event.ts > self._warden_seen.get(pane_id, 0.0):
+                self._warden_seen[pane_id] = warden_event.ts
+                prior = merge(prior, warden_event, now=now)
             prior = merge(prior, event, now=now)
             self._current[pane_id] = prior
             out[pane_id] = prior

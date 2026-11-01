@@ -1,16 +1,16 @@
-"""The gate's rule that no agent answers an ask.
+"""The warden's rule that no agent answers an ask.
 
 An agent can propose. Only the operator can allow. A pane's agent could try
 to allow in three ways: run ``coppice agent allow``, write the answer file
-the gate reads under ``asks/`` or ``answers/`` in the gate directory, or
+the warden reads under ``asks/`` or ``answers/`` in the warden directory, or
 take the phone's bearer token and call the phone's answer route. This
-module finds all three in a tool call. The gate denies such a call before
+module finds all three in a tool call. The warden denies such a call before
 any envelope check, in every mode.
 
 A wire call of ``agent.set_mode`` counts as an allow: it lowers an agent
 from enforcing to watching, which only the operator may do (F11-R-11).
 
-``coppice agent deny`` is not an allow and passes here. A task foreman
+``coppice agent deny`` is not an allow and passes here. A task steward
 denies the asks it holds that way, and coppice-server lets a pane deny
 only an ask it holds now. The server knows a pane only by the caller's
 process tree and session, so a deny that leaves both reads as the
@@ -34,8 +34,8 @@ a config file that holds no secret is left to the envelope.
 
 The chat and the journal are private, not keys, but they hold the owner's
 whole working life: ``chat/`` keeps the owner's words to the floor's
-foreman, one ``YYYY-MM-DD.jsonl`` file a day, and ``journal/verdicts.jsonl``
-keeps the gate's verdicts. The door takes a chat day file or the journal
+steward, one ``YYYY-MM-DD.jsonl`` file a day, and ``journal/verdicts.jsonl``
+keeps the warden's verdicts. The door takes a chat day file or the journal
 file by name, as it takes a key, and the two directories by their place
 under the default data directory (``opendaisugi/coppice/chat`` and
 ``.../journal``) in any text. Under a data directory a pane names through
@@ -44,18 +44,18 @@ directory that holds a secret, and a read inside it, through ``cd`` or
 the call's cwd, is the floor rule's. ``$COPPICE_DATA_DIR``, which every
 pane has, ``$OPENDAISUGI_HOME`` and the XDG homes expand as ``$HOME``
 does. What is not seen is a path a program builds at run time, or one a
-variable the gate does not expand holds.
+variable the warden does not expand holds.
 
-The foreman's own directories are private the same way. Its log dir
+The steward's own directories are private the same way. Its log dir
 (``main/``, ``tree/``, ``view.json``, ``turns.jsonl``, ``work/``) sits
 beside the coppice data dir under each data home, and under each
-COPPICE_DATA_DIR; its turn dir is ``coppice/foreman`` under the state
+COPPICE_DATA_DIR; its turn dir is ``coppice/steward`` under the state
 home. The door takes the dir by its place in any text, and a file read
 whose path is the dir or lies under it, through any tool and from any
 cwd, is denied; Glob included, since the log holds the owner's words and
 the file names in it say which node they sit in. The floor rule counts the
 log dir too, so a shell word that names it and a ``cd`` into it are
-refused (not the turn dir: the pane-mode foreman works from it). The search
+refused (not the turn dir: the pane-mode steward works from it). The search
 rule counts both, so a search rooted above one is refused.
 
 The check reads the call's text. It finds the command through the shell
@@ -63,7 +63,7 @@ decomposition when that parses, and through plain text matches always, so
 ``x && coppice agent allow``, ``sh -c '...'``, a raw ``agent.allow`` wire
 line, and a path to the ask files or any of these secret files, in any
 common spelling, are all caught. A file read's path and an MCP tool's
-arguments also go through the gate's path normalizer, so a doubled
+arguments also go through the warden's path normalizer, so a doubled
 slash, a bare ``.`` segment, or a bogus segment a ``..`` undoes cannot
 spell a secret's path past the plain text match. A program that builds
 the path at run time is not caught here, nor is a secret an operator
@@ -111,7 +111,7 @@ _ALLOW_TEXT = re.compile(r"\bcoppice\b[^\n;&|]*?\bagent\b[\s'\"]+(allow)\b")
 # the CLI words as a list in a program. A bare mention, as in a grep for
 # the verb name, is left to the envelope. agent.set_mode counts as an allow
 # (F11-R-11): it lowers an agent to watching, and a pane may not, so the
-# gate refuses a typed call of it in every mode, as coppice refuses it
+# warden refuses a typed call of it in every mode, as coppice refuses it
 # from a pane.
 _WIRE_TEXT = re.compile(
     r"['\"]?(cmd|method)\\?['\"]?\s*[:=]\s*\\?['\"]agent\.(allow|set_mode)\\?['\"]"
@@ -193,15 +193,21 @@ _SECRET_FILE = re.compile(
 # The chat and journal directories under the default data directory, in
 # any text: ~/.opendaisugi/coppice, or $XDG_DATA_HOME/opendaisugi/coppice.
 _PRIVATE_DIR_TEXT = re.compile(r"opendaisugi/coppice/(chat|journal)($|[/ \t\n\r'\"`;&|)])")
-# The foreman's log dir under the default data home and its turn dir under
+# The steward's log dir under the default data home and its turn dir under
 # the state home, in any text. The log dir holds the owner's whole log of
-# words to the foreman, its summaries, the turn records and the workers'
+# words to the steward, its summaries, the turn records and the workers'
 # session files.
-_FOREMAN_DIR_TEXT = re.compile(r"(opendaisugi|coppice)/foreman($|[/ \t\n\r'\"`;&|)*])")
+# The Pando dir (ADR-0023) under the default data home in either spelling:
+# ~/.opendaisugi/pando or ~/.local/share/opendaisugi/pando. A bare
+# opendaisugi/pando is the Python package's source and is left alone.
+_STEWARD_DIR_TEXT = re.compile(  # names-ok: foreman is the old log dir name on disk
+    r"((opendaisugi|coppice)/(steward|foreman)|(\.opendaisugi|share/opendaisugi)/pando)"  # names-ok
+    r"($|[/ \t\n\r'\"`;&|)*])"
+)
 _WEB_ANSWER_ROUTE = "/api/ask/answer"
 
-# A gate directory's ask files in a relative or home spelling.
-_ASK_PATH_TEXT = re.compile(r"(^|[\s'\"=:(/])gate/(asks|answers)\b")
+# A warden directory's ask files in a relative or home spelling.
+_ASK_PATH_TEXT = re.compile(r"(^|[\s'\"=:(/])warden/(asks|answers)\b")
 
 # Global options of the coppice CLI that take a value.
 _VALUE_OPTIONS = frozenset({"--socket", "--remote", "--data-dir"})
@@ -224,6 +230,42 @@ def _is_allow_words(words: list[str]) -> bool:
         while j < len(words) and words[j].startswith("--"):
             j += 2 if words[j] in _VALUE_OPTIONS else 1
         if j + 1 < len(words) and words[j] == "agent" and words[j + 1] == "allow":
+            return True
+    return False
+
+
+_DAISUGI_MODULES = frozenset({"opendaisugi.cli", "opendaisugi.cli_entry"})
+
+
+def _daisugi_arg_starts(words: list[str]) -> list[int]:
+    """The index after each word that names the daisugi program: the
+    ``daisugi`` word, or ``python -m opendaisugi.cli`` (also ``cli_entry``,
+    ``python3``, behind ``uv run``)."""
+    starts: list[int] = []
+    for i, w in enumerate(words):
+        if os.path.basename(w) == "daisugi":
+            starts.append(i + 1)
+        elif (
+            w == "-m"
+            and i >= 1
+            and os.path.basename(words[i - 1]).startswith("python")
+            and i + 1 < len(words)
+            and words[i + 1] in _DAISUGI_MODULES
+        ):
+            starts.append(i + 2)
+    return starts
+
+
+def _is_pando_words(words: list[str]) -> bool:
+    """True when a word list runs ``daisugi [options] pando``: any verb of
+    the owner's conversation memory (ADR-0023). A pane or a worker reads the
+    memory through the tools it is given, never through this command, as
+    the warden keeps its files out of reach too. Every word that starts
+    with ``-`` is an option (``-q``, ``-v``, ``--quiet``)."""
+    for j in _daisugi_arg_starts(words):
+        while j < len(words) and words[j].startswith("-"):
+            j += 2 if words[j] in _VALUE_OPTIONS else 1
+        if j < len(words) and words[j] == "pando":
             return True
     return False
 
@@ -252,7 +294,7 @@ def web_door(text: str) -> bool:
         _WEB_TOKEN_CMD.search(text)
         or _SECRET_FILE.search(text)
         or _PRIVATE_DIR_TEXT.search(text)
-        or _FOREMAN_DIR_TEXT.search(text)
+        or _STEWARD_DIR_TEXT.search(text)
         or _WEB_ANSWER_ROUTE in text
     )
 
@@ -307,7 +349,7 @@ def shell_allows(command: str) -> bool:
             words = shlex.split(cmd)
         except ValueError:
             words = cmd.split()
-        if _is_allow_words(words):
+        if _is_allow_words(words) or _is_pando_words(words):
             return True
     return bool(
         _ALLOW_TEXT.search(command)
@@ -317,11 +359,11 @@ def shell_allows(command: str) -> bool:
 
 
 def _roots(root: Path | None) -> list[Path]:
-    """The gate roots to guard: the one in force and the default one."""
-    from opendaisugi.gate import DEFAULT_GATE_ROOT
+    """The warden roots to guard: the one in force and the default one."""
+    from opendaisugi.warden import DEFAULT_WARDEN_ROOT
 
     out: list[Path] = []
-    for r in (root, DEFAULT_GATE_ROOT):
+    for r in (root, DEFAULT_WARDEN_ROOT):
         if r is None:
             continue
         for p in (Path(r).expanduser(), Path(r).expanduser().resolve(strict=False)):
@@ -340,7 +382,7 @@ def _under_ask_dirs(path: Path, roots: list[Path]) -> bool:
 
 
 def path_touches_asks(raw: str, cwd: str, root: Path | None) -> bool:
-    """True when a tool's file path is inside a gate's asks or answers."""
+    """True when a tool's file path is inside a warden's asks or answers."""
     if not raw:
         return False
     p = Path(_home_spellings(raw)).expanduser()
@@ -354,8 +396,8 @@ def path_touches_asks(raw: str, cwd: str, root: Path | None) -> bool:
 def path_names_secret(raw: str, cwd: str) -> bool:
     """True when a file path, as typed and as the OS resolves it from
     cwd, names one of the coppice secrets ``_SECRET_FILE`` matches. Both
-    spellings go through the gate's one path normalizer, the same as
-    ``path_touches_asks`` does for the gate's own ask files, so a doubled
+    spellings go through the warden's one path normalizer, the same as
+    ``path_touches_asks`` does for the warden's own ask files, so a doubled
     slash, a bare ``.`` segment, or a bogus segment a ``..`` undoes
     cannot spell past the plain substring check ``web_door`` runs on the
     text as typed."""
@@ -407,10 +449,10 @@ def path_holds_secret(raw: str, cwd: str) -> bool:
     return os.path.normpath(str(p)) in dirs or str(p.resolve(strict=False)) in dirs
 
 
-def path_in_foreman(raw: str, cwd: str) -> bool:
+def path_in_steward(raw: str, cwd: str) -> bool:
     """True when a path, as typed, normalized and resolved from cwd, is a
-    foreman directory or lies under one."""
-    from opendaisugi.floor_config import foreman_dirs
+    steward directory or lies under one."""
+    from opendaisugi.floor_config import steward_dirs
 
     if not raw:
         return False
@@ -418,7 +460,7 @@ def path_in_foreman(raw: str, cwd: str) -> bool:
     if not p.is_absolute():
         p = Path(cwd or os.getcwd()) / p
     cands = (os.path.normpath(str(p)), str(p.resolve(strict=False)))
-    dirs = [str(d) for d in foreman_dirs()]
+    dirs = [str(d) for d in steward_dirs()]
     return any(c == d or c.startswith(d + "/") for d in dirs for c in cands)
 
 
@@ -461,10 +503,10 @@ def shell_globs_secret(command: str, cwd: str) -> bool:
 
 
 def shell_touches_asks(command: str, cwd: str, root: Path | None) -> bool:
-    """True when a shell line names a gate's asks or answers: by a full path,
-    by the gate directory and one of the two names, by a ``gate/asks`` or
-    ``gate/answers`` fragment, or by a relative name from a working
-    directory inside the gate directory."""
+    """True when a shell line names a warden's asks or answers: by a full path,
+    by the warden directory and one of the two names, by a ``warden/asks`` or
+    ``warden/answers`` fragment, or by a relative name from a working
+    directory inside the warden directory."""
     text = _home_spellings(command)
     if _ASK_PATH_TEXT.search(text):
         return True
@@ -521,11 +563,11 @@ def pane_rule_hit(
             return path_touches_asks(str(record.get("path") or ""), cwd, root)
         if step == "file_read":
             path = str(record.get("path") or "")
-            if web_door(path) or path_names_secret(path, cwd) or path_in_foreman(path, cwd):
+            if web_door(path) or path_names_secret(path, cwd) or path_in_steward(path, cwd):
                 return True
             tool = str(record.get("tool_name") or "")
             if tool in _NAMES_ONLY:
-                return path_in_foreman(cwd, cwd)
+                return path_in_steward(cwd, cwd)
             if path_holds_secret(path, cwd):
                 return True
             if tool not in _ONE_FILE:
@@ -533,11 +575,11 @@ def pane_rule_hit(
 
                 paths = search_paths(payload)
                 if paths is None or any(
-                    path_holds_secret(p, cwd) or path_in_foreman(p, cwd) for p in paths
+                    path_holds_secret(p, cwd) or path_in_steward(p, cwd) for p in paths
                 ):
                     return True
             return tool not in _ONE_FILE and (
-                path_holds_secret(cwd, cwd) or path_in_foreman(cwd, cwd)
+                path_holds_secret(cwd, cwd) or path_in_steward(cwd, cwd)
             )
         if step == "mcp":
             return any(

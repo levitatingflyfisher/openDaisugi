@@ -1,20 +1,20 @@
 //! `daisugi graft install|status|remove`: the large-read rule file in the
-//! gate root, and the refusal beside a rival PreToolUse hook (GR-3).
+//! warden root, and the refusal beside a rival PreToolUse hook (GR-3).
 
 use num_bigint::BigInt;
 
-use super::gateroot::{getwd, join, path_str};
-use super::words::{gate_hook_kind, is_record_hook, KIND_GATE};
+use super::wardenroot::{getwd, join, path_str};
+use super::words::{warden_hook_kind, is_record_hook, KIND_WARDEN};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::delegate::{load_rules, parse_rule, Rule};
-use crate::gate::pyjson::{dumps, dumps_indent, loads, LoadError, Object, Value};
+use crate::spawn::{load_rules, parse_rule, Rule};
+use crate::warden::pyjson::{dumps, dumps_indent, loads, LoadError, Object, Value};
 
 const GRAFT_HELP: &str = "Usage: daisugi graft [OPTIONS] COMMAND [ARGS]...
 
-  Install, show and remove the gate's graft rule for large reads.
+  Install, show and remove the warden's graft rule for large reads.
 
 Commands:
-  install  Write the large-read graft rule into <data-dir>/gate/grafts.
+  install  Write the large-read graft rule into <data-dir>/warden/grafts.
   status   Show the graft rule files, the one in force, and any rival...
   remove   Remove a graft rule file.
 ";
@@ -29,12 +29,12 @@ fn refusal(file: &str, what: &str) -> String {
     if what == NOT_READABLE {
         format!(
             "Refused: {file} is not readable JSON, so its PreToolUse hooks cannot be checked. \
-             No graft was installed; the gate is not changed."
+             No graft was installed; the warden is not changed."
         )
     } else {
         format!(
             "Refused: {file} has a PreToolUse hook that may rewrite a tool's input: {what}. \
-             No graft was installed; the gate is not changed."
+             No graft was installed; the warden is not changed."
         )
     }
 }
@@ -119,7 +119,7 @@ impl Env {
                 for h in inner {
                     if let Value::Obj(ho) = h {
                         let c = ho.value("command");
-                        if gate_hook_kind(c) == KIND_GATE || is_record_hook(c, "") {
+                        if warden_hook_kind(c) == KIND_WARDEN || is_record_hook(c, "") {
                             continue;
                         }
                         if let Value::Str(s) = c {
@@ -163,7 +163,7 @@ impl Env {
         ];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
-            return self.cmd_help(CMD, "", "Write the large-read graft rule into <data-dir>/gate/grafts.", &opts);
+            return self.cmd_help(CMD, "", "Write the large-read graft rule into <data-dir>/warden/grafts.", &opts);
         }
         let lines = self.click_int(CMD, &p, "--file-lines-over", 350)?;
         let seed = self.click_int(CMD, &p, "--seed", 0)?;
@@ -195,7 +195,7 @@ impl Env {
             self.echo_err(&format!("{line}\n"));
             return exit(1);
         }
-        let dir = join(&join(&self.graft_data_dir(&p), "gate"), "grafts");
+        let dir = join(&join(&self.graft_data_dir(&p), "warden"), "grafts");
         let path = join(&dir, &format!("{id}.json"));
         let mut version = BigInt::from(0);
         if let Ok(Some(Ok(v))) = read_json(&path) {
@@ -211,7 +211,7 @@ impl Env {
         matched.set("tool", "Read");
         matched.set("file_lines_over", Value::Int(lines.to_string()));
         let mut redirect = Object::new();
-        redirect.set("tool", "delegate");
+        redirect.set("tool", "spawn");
         let mut worker = Object::new();
         worker.set("choose", "router");
         worker.set("allow_remote", p.flag("--allow-remote"));
@@ -230,17 +230,17 @@ impl Env {
             rule.set("trial", Value::Obj(trial));
             shown = format!("trial, seed {seed}");
         }
-        // The gate reads a rule only from a directory and a file no group or
+        // The warden reads a rule only from a directory and a file no group or
         // other user can write (GR-R-1), whatever the umask, and the rule is
         // written through the directory fd (GR-R-9): a link at its name is
-        // refused, and the file is read back with the gate's reader.
-        let root = join(&self.graft_data_dir(&p), "gate");
+        // refused, and the file is read back with the warden's reader.
+        let root = join(&self.graft_data_dir(&p), "warden");
         let text = dumps_indent(&Value::Obj(rule), 2, true) + "\n";
         let file = format!("{id}.json");
-        let wrote = crate::gate::statewrite::write_file(&root, &["grafts"], &file, &text, false)
-            .and_then(|_| crate::gate::statewrite::verify_written(&root, &["grafts"], &file));
+        let wrote = crate::warden::statewrite::write_file(&root, &["grafts"], &file, &text, false)
+            .and_then(|_| crate::warden::statewrite::verify_written(&root, &["grafts"], &file));
         if let Err(e) = wrote {
-            if let Some(t) = crate::gate::statewrite::write_refused(&e) {
+            if let Some(t) = crate::warden::statewrite::write_refused(&e) {
                 self.echo_err(&format!("not installed: {t}\n"));
                 return exit(1);
             }
@@ -267,7 +267,7 @@ impl Env {
                 &opts,
             );
         }
-        let root = join(&self.graft_data_dir(&p), "gate");
+        let root = join(&self.graft_data_dir(&p), "warden");
         let (rules, bad) = load_rules(&root);
         let rivals = match self.graft_rivals() {
             Ok(r) => r,
@@ -369,16 +369,16 @@ impl Env {
         ];
         let p = parse_args(args, &opts, 0).map_err(|m| self.usage_stop(CMD, m))?;
         if p.help {
-            return self.cmd_help(CMD, "", "Remove a graft rule file. The gate is not changed.", &opts);
+            return self.cmd_help(CMD, "", "Remove a graft rule file. The warden is not changed.", &opts);
         }
         let id = self.graft_id(&p)?;
-        let path = join(&join(&join(&self.graft_data_dir(&p), "gate"), "grafts"), &format!("{id}.json"));
-        let root = join(&self.graft_data_dir(&p), "gate");
-        match crate::gate::statewrite::unlink_file(&root, &["grafts"], &format!("{id}.json")) {
+        let path = join(&join(&join(&self.graft_data_dir(&p), "warden"), "grafts"), &format!("{id}.json"));
+        let root = join(&self.graft_data_dir(&p), "warden");
+        match crate::warden::statewrite::unlink_file(&root, &["grafts"], &format!("{id}.json")) {
             Ok(true) => self.echo(&format!("Removed graft rule {id}: {path}\n")),
             Ok(false) => self.echo(&format!("No graft rule {id} at {path}.\n")),
             Err(e) => {
-                if let Some(t) = crate::gate::statewrite::write_refused(&e) {
+                if let Some(t) = crate::warden::statewrite::write_refused(&e) {
                     self.echo_err(&format!("not removed: {t}\n"));
                     return exit(1);
                 }

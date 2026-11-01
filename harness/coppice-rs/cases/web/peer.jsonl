@@ -3,7 +3,7 @@
 # ask through the web server, the same as on the coppice socket.
 {"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
 {"id": "$id", "ok": true, "result": {"written": true}}
-{"id": "f1", "write": "{WORK}/gate/asks/toolu_q1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
+{"id": "f1", "write": "{WORK}/warden/asks/toolu_q1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
 {"id": "$id", "ok": true, "result": {"started": true}}
@@ -16,7 +16,7 @@
 {"id": "$id", "ok": true, "result": {"count": 1}}
 {"id": "r1b", "file": "{WORK}/peer-out.txt"}
 {"id": "$id", "ok": true, "result": {"text": "status 403 {\"error\":\"a pane can propose. It cannot allow.\"}\n\n"}}
-{"id": "f2", "ls": "{WORK}/gate"}
+{"id": "f2", "ls": "{WORK}/warden"}
 {"id": "$id", "ok": true, "result": "*"}
 # The same answer from this box, not from a pane, is written.
 {"id": "a1", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_q1\",\"decision\":\"deny\"}"}

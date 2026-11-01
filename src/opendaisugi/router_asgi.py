@@ -1,0 +1,975 @@
+"""The token-saving router's async transport — a bare ASGI proxy for Anthropic Messages.
+
+Point any harness at this process with ``base_url`` and it forwards each whole turn to the
+real provider, first swapping an easy turn onto the cheap model. It carries the credential it
+is handed straight through — the transport probe showed Claude Code authenticates with
+``Authorization: Bearer`` (OAuth/subscription), so this proxy never needs an API key of its
+own; it forwards whatever the harness sent.
+
+The design's one hard rule lives here: **fail open, and decide before the upstream call
+opens.** If the body can't be parsed or routed, the original bytes go upstream untouched. If
+the *cheap* model rejects the swapped body with a 4xx, the turn is retried once on the
+original model — a pre-stream decision, so it never violates "no mid-stream recovery." Either
+way the client gets a real answer; only the saving is lost.
+
+Streaming is proxied byte-for-byte while a lightweight sniffer reads the ``usage`` off the
+SSE events in passing (never buffering the stream to parse it), so the meter and journal see
+real token counts without touching the bytes the client receives.
+
+Requires the ``[router]`` extra (httpx). The routing/meter/journal layer works without it;
+only :func:`make_router_app` imports httpx.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import re
+import signal
+from dataclasses import replace
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import httpx
+
+from opendaisugi.datahome import data_home
+from opendaisugi.route_model import off
+from opendaisugi.router import _strictly_cheaper, estimate_prefix_tokens
+from opendaisugi.router_openai import (
+    OpenAIUsageSniffer,
+    extract_openai_text,
+    is_openai_wire,
+    normalize_openai_usage,
+    openai_stop_reason,
+)
+from opendaisugi.routing_switchyard import SELECTED_MODEL_HEADER
+
+if TYPE_CHECKING:
+    from opendaisugi.router_pipeline import ExternalRouterConfig, PreparedTurn, Router
+
+_log = logging.getLogger("opendaisugi.router_asgi")
+
+# Hop-by-hop headers never forwarded either way; plus framing headers we recompute.
+_DROP_REQUEST = {
+    b"host",
+    b"content-length",
+    b"connection",
+    b"keep-alive",
+    b"transfer-encoding",
+    b"upgrade",
+    b"te",
+    b"trailers",
+    b"proxy-connection",
+}
+# On the response we also drop content-encoding: httpx has already decoded the body via
+# aiter_bytes, so passing the header through would tell the client to decode a second time.
+_DROP_RESPONSE = {
+    "content-length",
+    "connection",
+    "keep-alive",
+    "transfer-encoding",
+    "upgrade",
+    "te",
+    "trailers",
+    "proxy-connection",
+    "content-encoding",
+}
+
+
+class _UsageSniffer:
+    """Pulls token counts and the answer text out of an SSE stream incrementally, line by line.
+
+    ``message_start`` carries the input buckets (fresh + cache) in ``message.usage``;
+    ``message_delta`` carries the final ``output_tokens``. Later values overwrite earlier
+    ones, so a plain merge yields the correct end-of-turn totals. ``content_block_delta``
+    events of type ``text_delta`` carry the streamed answer text, concatenated in order into
+    ``self.text``. ``message_start`` also carries ``message.model``, the model that served
+    the turn, kept in ``self.model``. Anything it cannot parse is ignored. Measurement is
+    best-effort and must never disturb the proxied bytes.
+    """
+
+    def __init__(self) -> None:
+        self.usage: dict[str, int] = {}
+        self.text: str = ""
+        self.model: str | None = None
+        self.stop_reason: str | None = None
+        self._buf = ""
+
+    def feed(self, chunk: bytes) -> None:
+        self._buf += chunk.decode("utf-8", "replace")
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:") :].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                obj = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            try:
+                u = None
+                if obj.get("type") == "message_start":
+                    message = obj.get("message", {})
+                    u = message.get("usage")
+                    model = message.get("model")
+                    if isinstance(model, str):
+                        self.model = model
+                elif obj.get("type") == "message_delta":
+                    u = obj.get("usage")
+                    delta = obj.get("delta")
+                    if isinstance(delta, dict) and isinstance(delta.get("stop_reason"), str):
+                        self.stop_reason = delta["stop_reason"]
+                elif obj.get("type") == "content_block_delta":
+                    delta = obj.get("delta")
+                    if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                        text = delta.get("text")
+                        if isinstance(text, str):
+                            self.text += text
+                if isinstance(u, dict):
+                    self.usage.update({k: v for k, v in u.items() if isinstance(v, int)})
+            except Exception:  # best-effort: a malformed event must never break the stream
+                continue
+
+
+async def _read_request_body(receive) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        msg = await receive()
+        if msg["type"] == "http.request":
+            chunks.append(msg.get("body", b""))
+            if not msg.get("more_body"):
+                break
+        elif msg["type"] == "http.disconnect":
+            break
+    return b"".join(chunks)
+
+
+_PENDING: set = set()
+
+
+async def _ask_model(cl, url: str, headers, body: bytes) -> str | None:
+    """One short question to a model through the user's own upstream: the same client,
+    URL and headers as the turn. None on any error or timeout (one log line)."""
+    from opendaisugi.route_model import ASK_TIMEOUT_S, reply_text
+
+    try:
+        # httpx times each phase on its own; wait_for caps the whole call.
+        resp = await asyncio.wait_for(
+            cl.request(
+                "POST",
+                url,
+                content=body,
+                headers=[(k, v) for k, v in headers if k.lower() != "content-length"],
+                timeout=ASK_TIMEOUT_S,
+            ),
+            ASK_TIMEOUT_S,
+        )
+        if resp.status_code >= 400:
+            _log.warning("router: the helper model answered with status %d", resp.status_code)
+            return None
+        return reply_text(resp.json())
+    except Exception as exc:
+        _log.warning("router: the helper model call failed: %s", type(exc).__name__)
+        return None
+
+
+async def _pick(cl, url: str, headers, router: "Router", body_bytes: bytes):
+    """Ask the router model which allowed name to use. Returns (name, why) for prepare()."""
+    from opendaisugi.route_model import parse_pick
+
+    try:
+        req = router.pick_request(json.loads(body_bytes))
+    except Exception:
+        return None
+    if req is None:
+        return None
+    request, cands = req
+    text = await _ask_model(cl, url, headers, request)
+    if text is None:
+        return None, "the router model call failed"
+    name = parse_pick(text, cands)
+    if name is None:
+        return None, "the router model named a model that is not allowed"
+    return name, None
+
+
+def _schedule_grade(cl, url, headers, router, record, prepared, answer, stop_reason) -> None:
+    """After the reply is sent: ask the grader model, and write its answer to the
+    outcome table. It never blocks the turn. Only a finished answer is graded: a turn
+    that ends in a tool call is one step of a loop, not an answer."""
+    if (
+        stop_reason != "end_turn"
+        or record is None
+        or not getattr(router, "grader_model", None)
+        or router.knn is None
+        or prepared is None
+        or not prepared.conversation
+        or not answer
+    ):
+        return
+    own = getattr(cl, "_daisugi_own", False)
+    task = asyncio.ensure_future(
+        _grade(
+            None if own else cl,
+            url,
+            headers,
+            router,
+            getattr(record, "turn_id", None),
+            prepared,
+            answer,
+        )
+    )
+    _PENDING.add(task)
+    task.add_done_callback(_PENDING.discard)
+
+
+async def _grade(cl, url, headers, router, turn_id: str | None, prepared, answer: str) -> None:
+    """Grade a finished answer against the governing ask (the latest human text, which
+    ``prepared.task`` holds). The grade goes to the row booked for that ask: this turn's
+    row, or on a tool-loop step the conversation's last booked row (RT-R-13a)."""
+    from opendaisugi.route_model import grader_body, parse_grade
+
+    owned = cl is None
+    if owned:
+        cl = httpx.AsyncClient(timeout=None)
+    try:
+        if not turn_id:
+            if prepared.ask.strip():
+                return  # a new ask whose booking failed has no row to grade
+            row = await asyncio.to_thread(
+                router.knn.store.last_in_conversation, prepared.conversation
+            )
+            if row is None:
+                return
+            turn_id = row.turn_id
+        text = await _ask_model(
+            cl, url, headers, grader_body(router.grader_model, prepared.task, answer)
+        )
+        grade = parse_grade(text)
+        if grade is None:
+            _log.warning("router grader: no usable answer for %s; nothing written", turn_id)
+            return
+        await asyncio.to_thread(router.knn.store.set_outcome, turn_id, grade, "grader")
+    except Exception as exc:
+        _log.warning("router grader failed for %s: %s", turn_id, type(exc).__name__)
+    finally:
+        if owned:
+            await cl.aclose()
+
+
+def _prepare(router: "Router", body_bytes: bytes, choice=None):
+    """Route the turn, fail-open. Returns (outbound_bytes, prepared_or_None, wants_stream)."""
+    try:
+        body = json.loads(body_bytes)
+        prepared = router.prepare(body, choice) if choice is not None else router.prepare(body)
+        return json.dumps(prepared.outbound_body).encode(), prepared, body.get("stream") is True
+    except Exception:  # unparseable / unroutable → forward the original bytes untouched
+        return body_bytes, None, False
+
+
+_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
+
+
+async def _send_json(send, status: int, payload: dict) -> None:
+    body = json.dumps(payload).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"application/json")],
+        }
+    )
+    await send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+async def _answer_count_tokens_locally(send, body_bytes: bytes, upstream_kind: str) -> None:
+    """Answer Claude Code's count_tokens preflight in the router.
+
+    Ollama and most self-hosted Anthropic-compatible servers do not implement
+    this route, and Ollama has been observed to wedge afterwards. A
+    non-anthropic upstream never sees this request. The answer is an honest
+    estimate, good enough for Claude Code's display and budgeting, and never
+    claimed as exact. A body that is not a JSON object gets a 400 in the
+    Anthropic error shape, not a made-up count.
+    """
+    try:
+        body = json.loads(body_bytes)
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        await _send_json(
+            send,
+            400,
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "count_tokens needs a JSON object body",
+                },
+            },
+        )
+        return
+    try:
+        estimate = estimate_prefix_tokens(body)
+    except (AttributeError, TypeError):
+        await _send_json(
+            send,
+            400,
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "count_tokens body has a malformed system or messages field",
+                },
+            },
+        )
+        return
+    _log.debug(
+        "count_tokens shim: estimated %d input tokens (upstream_kind=%s)", estimate, upstream_kind
+    )
+    await _send_json(send, 200, {"input_tokens": estimate})
+
+
+def _forward_request_headers(scope) -> list[tuple[str, str]]:
+    return [
+        (k.decode("latin-1"), v.decode("latin-1"))
+        for k, v in scope.get("headers", [])
+        if k.lower() not in _DROP_REQUEST
+    ]
+
+
+def _response_headers(resp: httpx.Response) -> list[tuple[bytes, bytes]]:
+    return [
+        (k.encode("latin-1"), v.encode("latin-1"))
+        for k, v in resp.headers.items()
+        if k.lower() not in _DROP_RESPONSE
+    ]
+
+
+class ConfigReloader:
+    """Re-read config.yaml in place so a running router follows a config change.
+
+    The check is one ``stat`` at the start of a request, throttled to
+    ``min_interval_s``, plus an explicit ``reload()`` for SIGHUP and
+    ``POST /_reload``. A thread would buy nothing here: the router only acts
+    on config when a turn arrives, so checking then is the same behaviour with
+    none of the lifetime problems.
+
+    A config that will not load, or a rebuild that raises, keeps the running
+    one. Routing is an optimization, never policy, so a typo must cost a
+    saving, not a service. A file that failed is not parsed again until its
+    mtime changes, so a typo left in place costs one warning, not one per
+    interval; an explicit ``reload()`` always retries.
+    """
+
+    def __init__(self, config_path: Path, rebuild, *, min_interval_s: float = 2.0) -> None:
+        self._path = Path(config_path)
+        self._rebuild = rebuild
+        self._min_interval = min_interval_s
+        self._built = None
+        self._mtime: float | None = None
+        self._failed_mtime: float | None = None
+        self._checked_at = 0.0
+
+    def _load(self) -> bool:
+        from opendaisugi.config import load_config
+
+        try:
+            mtime = self._path.stat().st_mtime if self._path.exists() else 0.0
+        except OSError:
+            mtime = 0.0
+        if self._built is not None and mtime in (self._mtime, self._failed_mtime):
+            return False
+        try:
+            built = self._rebuild(load_config(self._path))
+        except Exception as exc:  # noqa: BLE001 - a bad config keeps the running one
+            _log.warning("router config reload failed, keeping the running one: %s", exc)
+            self._failed_mtime = mtime
+            return False
+        if built is None:
+            _log.warning("router config reload produced nothing; keeping the running one")
+            self._failed_mtime = mtime
+            return False
+        self._built, self._mtime, self._failed_mtime = built, mtime, None
+        return True
+
+    def current(self):
+        """What the router should use for this turn, or None before any build."""
+        import time as _time
+
+        now = _time.monotonic()
+        if self._built is None or now - self._checked_at >= self._min_interval:
+            self._checked_at = now
+            self._load()
+        return self._built
+
+    def reload(self) -> bool:
+        """Force a re-read now. True when it rebuilt."""
+        import time as _time
+
+        self._checked_at = _time.monotonic()
+        self._mtime = None
+        self._failed_mtime = None
+        return self._load()
+
+
+# A coppice pane's base URL carries its pane: <router>/pane/<floor>/<pane>.
+# The floor is 16 lower-case hex digits and the pane is w<n>:p<n>. The
+# router takes the prefix off before it routes, so the upstream never sees
+# it, and stamps the turn record with the pane and the floor.
+_PANE_PREFIX = re.compile(r"/pane/([0-9a-f]{16})/(w[0-9]{1,9}:p[0-9]{1,9})(?=/|\Z)", re.ASCII)
+
+
+def split_pane_path(path: str) -> tuple[str, str, str]:
+    """(floor, pane, path without the prefix). A path with no well-formed
+    prefix comes back unchanged with an empty floor and pane."""
+    m = _PANE_PREFIX.match(path)
+    if m is None:
+        return "", "", path
+    return m.group(1), m.group(2), path[m.end() :] or "/"
+
+
+def _is_loopback(client) -> bool:
+    """True only for a connection from this machine's loopback address.
+
+    Absent or unparseable peer information is refused. A reload endpoint anyone
+    on the network can hit is a control surface, so it fails closed.
+    """
+    if not client:
+        return False
+    try:
+        host = str(client[0])
+    except (TypeError, IndexError, KeyError):
+        return False
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def make_router_app(
+    router: "Router",
+    *,
+    upstream_base_url: str = "https://api.anthropic.com",
+    upstream_kind: str = "anthropic",
+    openai_router: "Router | None" = None,
+    openai_upstream_base_url: str = "https://api.openai.com",
+    client: httpx.AsyncClient | None = None,
+    reloader: "ConfigReloader | None" = None,
+):
+    """Build the ASGI app. ``client`` is injectable so tests can supply a mock upstream;
+    in production it is created per-process with no timeout (agent turns run long).
+
+    With a ``reloader``, the Anthropic wire is served by ``reloader.current()``
+    on every request, falling back to ``router`` when the reloader holds
+    nothing usable, so a config change reaches the next turn with no restart.
+    ``POST /_reload`` from loopback forces a re-read; any other peer gets 403
+    and any other method 405. The OpenAI wire does not reload: its cheap model
+    is a launch flag, not a config field.
+
+    Two wires share the proxy, selected per-request by path: Anthropic Messages
+    (default) and OpenAI Chat Completions (``…/chat/completions`` — Codex and
+    every OpenAI-wire agent). Each wire has its own upstream and its own
+    Router instance, because a downgrade must land on a model the upstream
+    serves — a Claude name would 404 on api.openai.com and vice versa. With no
+    ``openai_router`` configured, OpenAI-wire requests pass through unrouted
+    and unmetered.
+
+    ``upstream_kind`` names the wire the Anthropic upstream speaks:
+    ``"anthropic"`` for the real API, the default, where nothing changes; or
+    ``"ollama"``, ``"openai-compatible"``, or ``"anthropic-compatible"`` for a
+    self-hosted host recorded by ``daisugi tiers setup --remote``. Any value
+    other than ``"anthropic"`` makes this app answer
+    ``/v1/messages/count_tokens`` itself instead of forwarding it. Most
+    self-hosted servers do not implement that route."""
+    base = upstream_base_url.rstrip("/")
+    openai_base = openai_upstream_base_url.rstrip("/")
+
+    async def app(scope, receive, send) -> None:
+        if scope["type"] != "http":
+            return
+
+        floor, pane, path = split_pane_path(scope["path"])
+
+        if path == "/_reload":
+            if reloader is None:
+                await _send_json(send, 404, {"error": "no reloader configured"})
+                return
+            if str(scope.get("method", "")).upper() != "POST":
+                await _send_json(send, 405, {"error": "reload accepts POST"})
+                return
+            if not _is_loopback(scope.get("client")):
+                await _send_json(send, 403, {"error": "reload is loopback only"})
+                return
+            await _send_json(send, 200, {"reloaded": reloader.reload()})
+            return
+
+        if path == "/_caps":
+            # What this router understands, for coppice to read before it
+            # stamps a pane prefix on a base URL. Local, like /_reload: an
+            # older router has no such route and forwards it, so silence or
+            # an error is the 'no'.
+            if str(scope.get("method", "")).upper() != "GET":
+                await _send_json(send, 405, {"error": "caps accepts GET"})
+                return
+            if not _is_loopback(scope.get("client")):
+                await _send_json(send, 403, {"error": "caps is loopback only"})
+                return
+            await _send_json(send, 200, {"pane_prefix": True})
+            return
+
+        wire = "openai" if is_openai_wire(path) else "anthropic"
+        if wire == "openai":
+            active_router = openai_router
+        else:
+            # The Anthropic wire is served by whatever the reloader holds now,
+            # so a config change reaches the NEXT turn with no restart. A
+            # reload that produced nothing usable falls back to the router
+            # this app was built with, never to "no router", which would
+            # silently stop metering.
+            active_router = router
+            if reloader is not None:
+                active_router = reloader.current() or router
+        body_bytes = await _read_request_body(receive)
+
+        if (
+            wire == "anthropic"
+            and upstream_kind != "anthropic"
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
+        ):
+            await _answer_count_tokens_locally(send, body_bytes, upstream_kind)
+            return
+
+        headers = _forward_request_headers(scope)
+        url = (openai_base if wire == "openai" else base) + path
+        if scope.get("query_string"):
+            url += "?" + scope["query_string"].decode("latin-1")
+        owns_client = client is None
+        cl = client or httpx.AsyncClient(timeout=None)
+        cl._daisugi_own = owns_client  # a grade task opens its own client when this one is closed
+        choice = None
+        if (
+            active_router is not None
+            and getattr(active_router, "routing_mode", "rules") == "model"
+            and path.rstrip("/") != _COUNT_TOKENS_PATH
+        ):
+            choice = await _pick(cl, url, headers, active_router, body_bytes)
+        if active_router is not None:
+            if getattr(active_router, "routing_mode", "rules") in ("knn", "model"):
+                # Embedding and the outcome table are blocking work: keep them off the loop.
+                outbound_bytes, prepared, wants_stream = await asyncio.to_thread(
+                    _prepare, active_router, body_bytes, choice
+                )
+            else:
+                outbound_bytes, prepared, wants_stream = _prepare(active_router, body_bytes, choice)
+        else:
+            outbound_bytes, prepared = body_bytes, None
+            try:
+                wants_stream = json.loads(body_bytes).get("stream") is True
+            except Exception:
+                wants_stream = False
+        # A count_tokens preflight is not a turn. Outside rules mode it still
+        # goes to the upstream with the route id, but it is not journaled.
+        record_prepared = prepared
+        if record_prepared is not None and pane:
+            record_prepared = replace(record_prepared, pane=pane, floor=floor)
+        if (
+            active_router is not None
+            and getattr(active_router, "routing_mode", "rules") != "rules"
+            and path.rstrip("/") == _COUNT_TOKENS_PATH
+        ):
+            record_prepared = None
+
+        # Attempts: the (possibly downgraded) body first; on a downgrade, the original body is
+        # the fail-open retry if the cheap model 4xxs. Only ever one retry, decided pre-stream.
+        attempts: list[tuple[bytes, bool]] = [(outbound_bytes, False)]
+        if prepared is not None and prepared.decision.downgraded:
+            attempts.append((body_bytes, True))
+
+        try:
+            if wants_stream:
+                await _dispatch_streaming(
+                    cl, url, headers, attempts, send, active_router, record_prepared, wire
+                )
+            else:
+                await _dispatch_buffered(
+                    cl, url, headers, attempts, send, active_router, record_prepared, wire
+                )
+        finally:
+            if owns_client:
+                await cl.aclose()
+
+    return app
+
+
+UNKNOWN_TARGET = "unknown"
+
+
+def _served_target(header_model: str | None, body_model: str | None) -> str | None:
+    """The target the external router names, or None when it does not name one clearly.
+
+    Switchyard 0.3.0 names the served target in the response header and in the
+    body ``model``. Both must be present and agree. Anything less is unknown.
+    """
+    if not header_model or not body_model:
+        return None
+    header_model = header_model.strip()
+    return header_model if header_model == body_model.strip() else None
+
+
+def _external_decision(router: "Router", prepared: "PreparedTurn", served: str | None):
+    """The decision an external-mode turn is booked with, once its target is known.
+
+    It counts as a saving only when all of these hold: the served target is
+    the configured efficient target, both it and the model the harness asked
+    for have a price, and the served price is lower on input and on output.
+    An upgrade, or a model with no price, books no saving. The
+    counterfactual stays the model the harness asked for, as in rules mode.
+    A served name that is missing, unclear, or the route id itself is
+    recorded as unknown and never counts as a saving.
+    """
+    ext = router.external
+    requested = prepared.decision.requested_model
+    if served is None or (ext is not None and served == ext.route_id):
+        return replace(
+            prepared.decision,
+            model=UNKNOWN_TARGET,
+            downgraded=False,
+            reason="the external router did not name a clear target; booked no saving",
+        )
+    downgraded = (
+        ext is not None
+        and served == ext.efficient_target
+        and _strictly_cheaper(served, requested, router.prices)
+    )
+    reason = (
+        f"the external router served the efficient target {served}"
+        if downgraded
+        else f"the external router served {served}; booked no saving"
+    )
+    return replace(prepared.decision, model=served, downgraded=downgraded, reason=reason)
+
+
+def _record(
+    router: "Router",
+    prepared: "PreparedTurn | None",
+    usage: dict,
+    used_original: bool,
+    answer_text: str | None = None,
+    served_target: str | None = None,
+    failed: bool = False,
+):
+    """Measure and journal the turn — best-effort; a meter failure never breaks the proxy.
+
+    ``used_original`` means the fail-open retry ran: the turn actually served on the requested
+    model, so it must be booked as *not* downgraded — no phantom saving. ``answer_text`` is
+    threaded straight into :meth:`Router.finish`, which decides (opt-in, default-off)
+    whether it's worth capturing — this function only carries it, never checks it.
+
+    In external mode ``served_target`` is the target the response named, or
+    None. The decision is replaced by :func:`_external_decision` before the
+    meter sees it. ``failed`` marks an upstream error or a refusal; the knn
+    router books such a turn as bad."""
+    if prepared is None:
+        return None
+    try:
+        eff = prepared
+        if getattr(router, "routing_mode", "rules") == "external":
+            eff = replace(prepared, decision=_external_decision(router, prepared, served_target))
+        elif used_original:
+            reverted = replace(
+                prepared.decision,
+                model=prepared.decision.requested_model,
+                tier="tier2-frontier",
+                downgraded=False,
+                reason="downgrade rejected by upstream 4xx; served the original model",
+            )
+            eff = replace(prepared, decision=reverted)
+        return router.finish(eff, usage, answer_text=answer_text, failed=failed)[1]
+    except Exception as exc:  # pragma: no cover - defensive
+        _log.warning("router meter/journal failed (turn still served): %s", exc)
+    return None
+
+
+async def _record_async(router, *args, **kwargs):
+    """:func:`_record`, on a worker thread when the turn is booked in the outcome table."""
+    if getattr(router, "routing_mode", "rules") in ("knn", "model"):
+        return await asyncio.to_thread(_record, router, *args, **kwargs)
+    return _record(router, *args, **kwargs)
+
+
+async def _dispatch_streaming(
+    cl, url, headers, attempts, send, router, prepared, wire="anthropic"
+) -> None:
+    sniffer = OpenAIUsageSniffer() if wire == "openai" else _UsageSniffer()
+    for i, (content, used_original) in enumerate(attempts):
+        is_last = i == len(attempts) - 1
+        async with cl.stream("POST", url, content=content, headers=headers) as resp:
+            if resp.status_code >= 400 and not is_last:
+                continue  # fail open: retry on the original model before touching the client
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": resp.status_code,
+                    "headers": _response_headers(resp),
+                }
+            )
+            async for chunk in resp.aiter_bytes():
+                sniffer.feed(chunk)
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            rec = await _record_async(
+                router,
+                prepared,
+                sniffer.usage,
+                used_original,
+                answer_text=sniffer.text,
+                served_target=_served_target(
+                    resp.headers.get(SELECTED_MODEL_HEADER), getattr(sniffer, "model", None)
+                ),
+                failed=resp.status_code >= 400
+                or getattr(sniffer, "stop_reason", None) == "refusal",
+            )
+            _schedule_grade(
+                cl,
+                url,
+                headers,
+                router,
+                rec,
+                prepared,
+                sniffer.text,
+                getattr(sniffer, "stop_reason", None),
+            )
+            return
+
+
+async def _dispatch_buffered(
+    cl, url, headers, attempts, send, router, prepared, wire="anthropic"
+) -> None:
+    for i, (content, used_original) in enumerate(attempts):
+        is_last = i == len(attempts) - 1
+        resp = await cl.request("POST", url, content=content, headers=headers)
+        if resp.status_code >= 400 and not is_last:
+            continue
+        await send(
+            {
+                "type": "http.response.start",
+                "status": resp.status_code,
+                "headers": _response_headers(resp),
+            }
+        )
+        await send({"type": "http.response.body", "body": resp.content, "more_body": False})
+        usage = {}
+        answer_text = ""
+        body_model = None
+        refused = False
+        stop_reason = None
+        try:
+            data = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            if wire == "openai":
+                usage = normalize_openai_usage(data.get("usage"))
+                answer_text = extract_openai_text(data)
+                choices = data.get("choices")
+                if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                    stop_reason = openai_stop_reason(choices[0].get("finish_reason"))
+            else:
+                usage = data.get("usage", {}) or {}
+                answer_text = _extract_buffered_text(data)
+                model = data.get("model")
+                body_model = model if isinstance(model, str) else None
+                stop_reason = data.get("stop_reason")
+                refused = stop_reason == "refusal"
+        rec = await _record_async(
+            router,
+            prepared,
+            usage,
+            used_original,
+            answer_text=answer_text,
+            served_target=_served_target(resp.headers.get(SELECTED_MODEL_HEADER), body_model),
+            failed=resp.status_code >= 400 or refused,
+        )
+        _schedule_grade(cl, url, headers, router, rec, prepared, answer_text, stop_reason)
+        return
+
+
+def _extract_buffered_text(data: dict) -> str:
+    """Concatenate the text of a non-streamed Messages response's ``content`` blocks.
+
+    Best-effort, mirroring ``_UsageSniffer``: any shape surprise (a missing key, a
+    block that isn't a dict, ``content`` that isn't a list) degrades to ``""`` rather
+    than raising — extraction must never be able to break the response the client
+    already received."""
+    try:
+        content = data.get("content", [])
+        if not isinstance(content, list):
+            return ""
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    except Exception:
+        return ""
+
+
+def build_default_router(
+    *,
+    data_dir: Path,
+    cheap_model: str | None = None,
+    journalling: bool = True,
+    capture_answers: bool = False,
+    local_model: str | None = None,
+    routing_mode: str = "rules",
+    external: "ExternalRouterConfig | None" = None,
+    routing_model: str | None = None,
+    grader_model: str | None = None,
+):
+    """A :class:`~opendaisugi.router_pipeline.Router` with a turn journal under
+    ``<data_dir>/router/turns.jsonl`` — the store the meter and any later reuse tool read.
+
+    ``capture_answers`` is opt-in and default-off: persisting raw response text is a
+    privacy choice. When on, an :class:`~opendaisugi.router_answers.AnswerStore` is
+    created under ``<data_dir>/router/answers.jsonl``; when off (the default), no
+    answer store exists and nothing is captured."""
+    from opendaisugi.router_journal import RouterJournal
+    from opendaisugi.router_pipeline import Router
+
+    journal = RouterJournal(path=Path(data_dir) / "router" / "turns.jsonl") if journalling else None
+    kwargs: dict = {"journal": journal, "routing_mode": routing_mode, "external": external}
+    kwargs["routing_model"] = routing_model
+    kwargs["grader_model"] = grader_model
+    if routing_mode in ("knn", "model"):
+        from opendaisugi._search import active_threshold
+        from opendaisugi.exceptions import MatcherNotAvailable
+        from opendaisugi.route_knn import KnnRouter, OutcomeStore, default_embed
+
+        try:
+            threshold = active_threshold()
+        except MatcherNotAvailable:
+            threshold = 1.0  # no built embedder: no neighbour matches, so the rules router runs
+        try:
+            from opendaisugi._search import _get_model
+
+            _get_model()  # load the embedder now, not on the first turn
+        except Exception as exc:
+            _log.warning("knn: the embedder did not load at start: %s", type(exc).__name__)
+        kwargs["knn"] = KnnRouter(
+            OutcomeStore(Path(data_dir) / "router" / "routing.db"), default_embed, threshold
+        )
+    if cheap_model:
+        kwargs["cheap_model"] = cheap_model
+    if local_model:
+        kwargs["local_model"] = local_model
+    if capture_answers:
+        from opendaisugi.router_answers import AnswerStore
+
+        kwargs["answer_store"] = AnswerStore(path=Path(data_dir) / "router" / "answers.jsonl")
+        kwargs["capture_answers"] = True
+    return Router(**kwargs)
+
+
+def serve_router(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    upstream_base_url: str = "https://api.anthropic.com",
+    upstream_kind: str = "anthropic",
+    data_dir: Path | None = None,
+    cheap_model: str | None = None,
+    router: "Router | None" = None,
+    capture_answers: bool = False,
+    local_model: str | None = None,
+    openai_upstream_base_url: str = "https://api.openai.com",
+    openai_cheap_model: str | None = "gpt-5-mini",
+    routing_mode: str = "rules",
+    external: "ExternalRouterConfig | None" = None,
+) -> None:
+    """Run the router under uvicorn. ``upstream_base_url`` is where saved turns go — a raw
+    provider (replace) or a NeMo Switchyard endpoint (compose). Requires the ``[router]`` extra.
+
+    ``capture_answers`` is forwarded to :func:`build_default_router` when no ``router`` is
+    supplied directly; it is ignored if the caller passes an already-built ``router``.
+
+    ``local_model`` is the launch flag. When it is None the file's
+    ``router_local_model`` is used, and the Anthropic wire follows that file
+    while the process runs: on a config mtime change, on SIGHUP, and on a
+    loopback ``POST /_reload``. The flag still outranks the file on every
+    reload. A supplied ``router`` is served as given: config did not build
+    it, so config cannot rebuild it, and no reloader or SIGHUP handler is
+    installed. The OpenAI wire does not reload; its cheap model is a flag.
+
+    ``routing_mode`` and ``external`` are launch choices. Every rebuild keeps
+    them, because a Switchyard child started for this process cannot follow
+    a config change. The OpenAI wire keeps the rules router in every mode."""
+    try:
+        import uvicorn
+    except ImportError:  # pragma: no cover - environment-dependent
+        raise ImportError(
+            "The router server needs the [router] extra: uv add 'opendaisugi[router]' "
+            "(or: pip install 'opendaisugi[router]')"
+        ) from None
+
+    resolved_dir = data_dir or data_home()
+    config_path = resolved_dir / "config.yaml"
+
+    def _rebuild(config):
+        # The launch flag still wins; the config file is the rung below it,
+        # the same precedence resolve_backend uses for llm_backend.
+        return build_default_router(
+            data_dir=resolved_dir,
+            cheap_model=cheap_model,
+            capture_answers=capture_answers,
+            local_model=local_model or config.router_local_model,
+            routing_mode=routing_mode,
+            external=external,
+            routing_model=off(config.routing_model),
+            grader_model=off(config.router_grader),
+        )
+
+    reloader: ConfigReloader | None = None
+    if router is None:
+        reloader = ConfigReloader(config_path, _rebuild)
+        router = reloader.current()
+        if router is None:
+            from opendaisugi.config import Config
+
+            router = _rebuild(Config())
+    # The OpenAI wire gets its own pipeline: a downgrade must land on a model
+    # the upstream serves. Same journal file — the meter aggregates both wires.
+    openai_router = (
+        build_default_router(
+            data_dir=resolved_dir,
+            cheap_model=openai_cheap_model,
+            capture_answers=capture_answers,
+            local_model=local_model,
+        )
+        if openai_cheap_model
+        else None
+    )
+    app = make_router_app(
+        router,
+        upstream_base_url=upstream_base_url,
+        upstream_kind=upstream_kind,
+        openai_router=openai_router,
+        openai_upstream_base_url=openai_upstream_base_url,
+        reloader=reloader,
+    )
+
+    if reloader is not None:
+        live = reloader
+
+        def _on_sighup(signum, frame):  # noqa: ARG001 - signal handler signature
+            live.reload()
+
+        with contextlib.suppress(ValueError, AttributeError, OSError):
+            # Not on the main thread, or no SIGHUP on this platform: the mtime
+            # check and POST /_reload still work, so this is a convenience,
+            # not the mechanism.
+            signal.signal(signal.SIGHUP, _on_sighup)
+
+    uvicorn.run(app, host=host, port=port)

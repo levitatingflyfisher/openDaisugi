@@ -19,6 +19,9 @@ use super::upstream::{self, CallError, Dialer};
 use crate::godec::Any;
 use crate::server::ask::{self, AnswerError};
 
+#[path = "cards.rs"]
+mod cards;
+
 /// A view plugin the server serves at /plugins/<id>/.
 #[derive(Clone)]
 pub struct View {
@@ -51,11 +54,15 @@ pub fn views_of(ps: &[crate::plugins::Plugin]) -> Vec<View> {
 pub struct Options {
     pub dial: Dialer,
     pub tokens: TokenStore,
-    pub gate_root: PathBuf,
+    pub warden_root: PathBuf,
     pub push: Option<Arc<Publisher>>,
     pub voice_url: String,
     pub voice_token_file: String,
     pub views: Vec<View>,
+    /// Daisugi data directories beside the configured one whose cards the
+    /// floor shows too: the steward's work dir, where its branching spawns
+    /// open their cards.
+    pub extra_data_dirs: Vec<PathBuf>,
     pub events: Option<Arc<EventRing>>,
     /// Gets the addresses serve listens on, once every one is bound.
     pub listening: Option<Box<dyn Fn(&[String]) + Send + Sync>>,
@@ -81,7 +88,7 @@ pub struct Server {
 /// The refusal every guarded route gives a request from a view frame.
 pub const VIEW_REFUSAL: &str = "A view holds no token. It gets its data from the floor page.";
 const BAD_TOKEN: &str = "Bad token. Run coppice web token to see the current one.";
-const ASK_GONE: &str = "That ask is gone. The gate timed out, or another client answered it.";
+const ASK_GONE: &str = "That ask is gone. The warden timed out, or another client answered it.";
 const NO_ANSWER: &str = "coppice-server did not answer. Run coppice server status.";
 
 /// Go's json.NewEncoder(w).Encode(body): the JSON and a newline.
@@ -120,6 +127,11 @@ enum Route {
     Views,
     Tasks,
     Events,
+    Cards,
+    CardDiff(String),
+    CardAnswer,
+    Tree,
+    TreeAnswer,
     Static,
 }
 
@@ -161,6 +173,10 @@ fn matches(path: &str) -> Vec<Hit> {
         ("GET", &["api", "views"], || Route::Views),
         ("GET", &["api", "tasks"], || Route::Tasks),
         ("GET", &["api", "events"], || Route::Events),
+        ("GET", &["api", "cards"], || Route::Cards),
+        ("POST", &["api", "cards", "answer"], || Route::CardAnswer),
+        ("GET", &["api", "tree"], || Route::Tree),
+        ("POST", &["api", "tree", "answer"], || Route::TreeAnswer),
     ];
     for (m, want, r) in fixed {
         if exact(want) {
@@ -171,6 +187,15 @@ fn matches(path: &str) -> Vec<Hit> {
                 route: r(),
             });
         }
+    }
+    // GET /api/cards/{id}/diff: the id is one non-empty segment.
+    if s.len() == 4 && s[0] == "api" && s[1] == "cards" && s[3] == "diff" && !s[2].is_empty() {
+        out.push(Hit {
+            method: "GET",
+            multi: false,
+            segments: 4,
+            route: Route::CardDiff(s[2].to_string()),
+        });
     }
     if path == "/" {
         out.push(Hit {
@@ -241,7 +266,7 @@ fn clean_path(p: &str) -> String {
     np
 }
 
-/// What the router chose for a request.
+/// What the route chose for a request.
 enum Choice {
     Route(Route),
     Redirect(String),
@@ -388,6 +413,8 @@ impl Server {
                 }
             }
             Route::AskAnswer => self.handle_ask_answer(req, &mut resp),
+            Route::CardAnswer => self.handle_card_answer(req, &mut resp),
+            Route::TreeAnswer => self.handle_tree_answer(req, &mut resp),
             Route::ViewFile(id, file) => self.handle_view_file(req, &mut resp, &id, &file),
             Route::ViewLib(file) => self.handle_view_lib(req, &mut resp, &file),
             Route::Static => serve_static(req, &mut resp),
@@ -409,6 +436,9 @@ impl Server {
                     Route::VoiceRetry => self.handle_voice_retry(req, &mut resp),
                     Route::Views => self.handle_views(&mut resp),
                     Route::Events => self.handle_events(req, &mut resp),
+                    Route::Cards => self.handle_cards(req, &mut resp),
+                    Route::CardDiff(id) => self.handle_card_diff(&mut resp, &id),
+                    Route::Tree => self.handle_tree(&mut resp),
                     _ => http::not_found(&mut resp),
                 }
             }
@@ -459,6 +489,13 @@ impl Server {
                 None
             }
         }
+    }
+
+    /// True when req carries a token the store knows. It counts no failure
+    /// toward a ban: the guard does that when it answers.
+    pub fn holds_good_token(&self, req: &Request) -> bool {
+        let tok = super::ws::bearer_from(req);
+        !tok.is_empty() && self.opts.tokens.who(&tok).is_some()
     }
 
     fn proxy_list(&self, resp: &mut Response, cmd: &str) {
@@ -735,7 +772,7 @@ impl Server {
                 }
             }
         }
-        let res = ask::answer(&self.opts.gate_root, &reply);
+        let res = ask::answer(&self.opts.warden_root, &reply);
         if let Err(AnswerError::NoAsk) = &res {
             if let Ok(f) = lookup_ask(&self.opts.dial, &b.tool_use_id, &b.pane) {
                 if f.held {
@@ -757,7 +794,7 @@ impl Server {
                 write_err(
                     resp,
                     500,
-                    "The answer could not be written. Check that the gate directory exists.",
+                    "The answer could not be written. Check that the warden directory exists.",
                 );
             }
             Ok(()) => {
@@ -1003,8 +1040,8 @@ pub fn serve(c: &Config, mut opts: Options, stop: Arc<AtomicBool>) -> Result<(),
     } else {
         c.listen.clone()
     };
-    if !c.gate_root.is_empty() {
-        opts.gate_root = PathBuf::from(&c.gate_root);
+    if !c.warden_root.is_empty() {
+        opts.warden_root = PathBuf::from(&c.warden_root);
     }
     if !c.voice_url.is_empty() {
         opts.voice_url = c.voice_url.clone();
@@ -1190,12 +1227,12 @@ pub fn serve(c: &Config, mut opts: Options, stop: Arc<AtomicBool>) -> Result<(),
     } else {
         None
     };
-    let gate = opts.gate_root.to_string_lossy().into_owned();
+    let warden = opts.warden_root.to_string_lossy().into_owned();
     let server = Arc::new(Server::new(opts));
     super::log(
         "INFO",
         "web: serving the phone",
-        &[("listen", &listen), ("tls", source), ("gate_root", &gate)],
+        &[("listen", &listen), ("tls", source), ("warden_root", &warden)],
     );
     // Every address is bound before any is served. Under --tls tailscale
     // with no host, a tailnet address the box will not bind is skipped;
@@ -1423,14 +1460,28 @@ fn serve_conn(tcp: TcpStream, server: &Server, tls: Option<Arc<rustls::ServerCon
                 return;
             }
         }
-        if http::read_body(&mut r, &mut req).is_err() {
+        // A body over the ordinary limit (a voice clip) is read only for a
+        // request that carries a good token. Without one, nothing of the body
+        // is read, the guard answers 401, and the connection closes, so an
+        // unknown host cannot hold 64 MiB of buffer per connection.
+        let unproven = http::body_limit(&req) > http::MAX_BODY && !server.holds_good_token(&req);
+        if unproven {
+            req.body_too_big = true;
+        } else if http::read_body(&mut r, &mut req).is_err() {
             return;
         }
         match server.handle(&req) {
             Outcome::Reply(resp) => match http::write_response(r.get_mut(), &req, resp) {
-                Ok(false) => continue,
+                Ok(false) if !unproven => continue,
                 _ => {
                     let _ = ctl.shutdown(std::net::Shutdown::Write);
+                    if unproven {
+                        // The client is still sending its body. Closing now
+                        // with unread bytes makes the kernel reset the
+                        // connection, and the reset can wipe the 401 before
+                        // the page reads it. Read a little first.
+                        drain_briefly(&mut r, &ctl);
+                    }
                     return;
                 }
             },
@@ -1445,6 +1496,21 @@ fn serve_conn(tcp: TcpStream, server: &Server, tls: Option<Arc<rustls::ServerCon
                 let _ = ctl.shutdown(std::net::Shutdown::Both);
                 return;
             }
+        }
+    }
+}
+
+/// Reads and drops what the client still sends, for at most a second and a
+/// few MiB, so the close that follows is not a reset.
+fn drain_briefly(r: &mut impl std::io::Read, ctl: &std::net::TcpStream) {
+    let _ = ctl.set_read_timeout(Some(Duration::from_millis(250)));
+    let end = std::time::Instant::now() + Duration::from_secs(1);
+    let mut left = 8usize << 20;
+    let mut buf = [0u8; 64 * 1024];
+    while left > 0 && std::time::Instant::now() < end {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => left = left.saturating_sub(n),
         }
     }
 }
@@ -1470,7 +1536,7 @@ fn serve_ca_cert(listen: &str, pem: Vec<u8>, stop: Arc<AtomicBool>) -> Result<()
                     }
                     _ => return,
                 };
-                if http::read_body(&mut r, &mut req).is_err() {
+                if http::read_body_max(&mut r, &mut req, http::MAX_CA_BODY).is_err() {
                     return;
                 }
                 let mut resp = Response::new(200);
@@ -1550,6 +1616,78 @@ mod tests {
         );
         assert!(first_value(b"{\"a\":").is_none());
         assert_eq!(first_value(b"true x").unwrap(), b"true");
+    }
+
+    fn quiet_server(name: &str) -> (Server, String) {
+        let dir = std::env::temp_dir().join(format!("coppice-rs-serve-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let tokens = super::super::token::TokenStore::new(dir.join("token"));
+        let good = tokens.mint().unwrap();
+        let opts = Options {
+            dial: super::super::upstream::Dialer { path: dir.join("none.sock") },
+            tokens,
+            warden_root: dir.clone(),
+            push: None,
+            voice_url: String::new(),
+            voice_token_file: String::new(),
+            views: vec![],
+            extra_data_dirs: vec![],
+            events: None,
+            listening: None,
+            cert_check_every: None,
+            wait_for_tailnet: false,
+            tailnet_retry: None,
+            serving_file: String::new(),
+        };
+        (Server::new(opts), good)
+    }
+
+    // A clip-sized body without a good token is not read: the answer is 401
+    // and the connection closes while the 60 MiB the head claims is unsent.
+    #[test]
+    fn a_voice_upload_without_a_token_is_refused_before_its_body_is_read() {
+        use std::io::{Read, Write};
+        let (server, _good) = quiet_server("unproven");
+        let ln = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = ln.local_addr().unwrap();
+        let t = std::thread::spawn(move || {
+            let (s, _) = ln.accept().unwrap();
+            serve_conn(s, &server, None);
+        });
+        let mut c = TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(b"POST /api/voice/transcribe HTTP/1.1\r\nHost: x\r\nContent-Length: 62914560\r\n\r\n").unwrap();
+        let mut got = Vec::new();
+        let _ = c.read_to_end(&mut got);
+        let text = String::from_utf8_lossy(&got).to_string();
+        assert!(text.starts_with("HTTP/1.1 401"), "{text}");
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn only_a_known_token_proves_a_request() {
+        let (server, good) = quiet_server("proof");
+        let mk = |auth: &str| {
+            let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+            let headers = if auth.is_empty() { vec![] } else { vec![("Authorization".to_string(), auth.to_string())] };
+            Request {
+                method: "POST".into(),
+                path: "/api/voice/transcribe".into(),
+                escaped_path: "/api/voice/transcribe".into(),
+                raw_query: String::new(),
+                proto_minor: 1,
+                headers,
+                body: vec![],
+                body_too_big: false,
+                remote: addr,
+                local: addr,
+                host: "x".into(),
+            }
+        };
+        assert!(server.holds_good_token(&mk(&format!("Bearer {good}"))));
+        assert!(!server.holds_good_token(&mk("Bearer nope")));
+        assert!(!server.holds_good_token(&mk("")));
     }
 
     #[test]

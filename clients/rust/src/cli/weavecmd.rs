@@ -9,16 +9,16 @@ use std::rc::Rc;
 
 use num_bigint::BigInt;
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::pathwayscmd::py_int;
 use super::runcmd::{prepare, tty};
 use super::weaveattempts::{ChoiceAsk, Shared};
 use super::{exit, parse_args, Env, Opt, Parsed, Res, Stop};
-use crate::delegate::strip_fence;
+use crate::spawn::strip_fence;
 use crate::distill::params::capability_head_any;
-use crate::gate::py::text::{rstrip, splitlines, strip};
-use crate::gate::pyjson::{dumps, dumps_indent, loads, loads_py, LoadError, Object, Value};
-use crate::gateway::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
+use crate::warden::py::text::{rstrip, splitlines, strip};
+use crate::warden::pyjson::{dumps, dumps_indent, loads, loads_py, LoadError, Object, Value};
+use crate::router::route::{estimate_difficulty, DEFAULT_CHEAP_MODEL, DEFAULT_FRONTIER_MODEL};
 use crate::llm::Client;
 use crate::orchestrate::executors::{delegate, task_prompt};
 use crate::pathways::pmodel::{validate_model, Id, Mode};
@@ -560,7 +560,7 @@ impl Env {
             match py_int(&raw) {
                 Some(n) => n,
                 None => {
-                    let m = format!("Invalid value for '--max-parallel': {} is not a valid int.", crate::gate::py::text::repr(&raw));
+                    let m = format!("Invalid value for '--max-parallel': {} is not a valid int.", crate::warden::py::text::repr(&raw));
                     return self.usage_args(CMD, "PLAN_PATH", &m);
                 }
             }
@@ -656,7 +656,7 @@ impl Env {
         if p.flag("--yes") {
             self.env.insert("DAISUGI_APPROVE".into(), "always".into());
         }
-        let hexd = crate::gate::sha256::hexdigest(&raw);
+        let hexd = crate::warden::sha256::hexdigest(&raw);
         let digest = format!("sha256:{hexd}");
         let state = join(&join(&data_dir, "weave"), &format!("sha256-{hexd}.jsonl"));
         let mut prior = None;
@@ -683,7 +683,7 @@ impl Env {
             }
         }
         let rerun: BTreeSet<String> = p.list("--rerun").into_iter().collect();
-        let cwd = super::gateroot::getwd().unwrap_or_else(|_| self.home.clone());
+        let cwd = super::wardenroot::getwd().unwrap_or_else(|_| self.home.clone());
         let shared = Rc::new(RefCell::new(Shared {
             data_dir: data_dir.clone(),
             digest: digest.clone(),
@@ -861,7 +861,7 @@ impl Env {
                         args,
                         &format!(
                             "Invalid value for '{name}': {} is not a valid integer.",
-                            crate::gate::py::text::repr(&v)
+                            crate::warden::py::text::repr(&v)
                         ),
                     );
                     return Err(Stop::Exit(2));
@@ -872,7 +872,7 @@ impl Env {
         if agent != "claude" && agent != "sprig" {
             self.errf(&format!(
                 "Invalid --agent {}; choose from ['claude', 'sprig'].\n",
-                crate::gate::py::text::repr(&agent)
+                crate::warden::py::text::repr(&agent)
             ));
             return Err(Stop::Exit(2));
         }

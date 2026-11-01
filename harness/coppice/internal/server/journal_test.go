@@ -13,10 +13,10 @@ import (
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
-// verdictLine is one gate report that carries a verdict.
+// verdictLine is one warden report that carries a verdict.
 func verdictLine(n int, decision, tool string) string {
 	v := fmt.Sprintf(`"mode":"enforcing","verdict":{"decision":%q,"tool":%q,"clause":"c%d"}`, decision, tool, n)
-	return gateReportLine(fmt.Sprintf("v%d", n), "w1:p1", v)
+	return wardenReportLine(fmt.Sprintf("v%d", n), "w1:p1", v)
 }
 
 func journalOf(t *testing.T, s *Server, params string) []any {
@@ -26,7 +26,7 @@ func journalOf(t *testing.T, s *Server, params string) []any {
 	return list
 }
 
-// floor.journal lists the verdicts the gate told the server about, newest
+// floor.journal lists the verdicts the warden told the server about, newest
 // first, and keeps them in a 0600 file.
 func TestFloorJournalListsVerdictsNewestFirstInA0600File(t *testing.T) {
 	s := newFactsServer(t)
@@ -54,7 +54,7 @@ func TestFloorJournalListsVerdictsNewestFirstInA0600File(t *testing.T) {
 // A report with no verdict adds nothing.
 func TestFloorJournalSkipsReportsWithNoVerdict(t *testing.T) {
 	s := newFactsServer(t)
-	roundTrip(t, s, gateReportLine("r", "w1:p1", ""))
+	roundTrip(t, s, wardenReportLine("r", "w1:p1", ""))
 	if list := journalOf(t, s, ""); len(list) != 0 {
 		t.Fatalf("entries %v, want none", list)
 	}
@@ -107,7 +107,7 @@ func TestFloorJournalKeepsFiveHundredAcrossARestart(t *testing.T) {
 		t.Fatalf("file has %d lines", n)
 	}
 	s2, err := New(Config{SocketPath: filepath.Join(dir, "server.sock"), DataDir: dir,
-		ForemanDir: filepath.Join(dir, "state", "foreman"), HookHome: dir})
+		StewardDir: filepath.Join(dir, "state", "steward"), HookHome: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestFloorJournalMovesABrokenFileAside(t *testing.T) {
 }
 
 // A sprig pane's verdicts are in its session tree and are reported by no
-// gate. The tailer keeps each one it reads, and the journal takes them
+// warden. The tailer keeps each one it reads, and the journal takes them
 // once, even after a restart reads the same tree again.
 func TestSprigTreeVerdictsReachTheJournalOnceAcrossARestart(t *testing.T) {
 	tl := newTailer(copyFixture(t, "sprig-tree.jsonl"), kindSprig)
@@ -184,7 +184,7 @@ func TestSprigTreeVerdictsReachTheJournalOnceAcrossARestart(t *testing.T) {
 	dir := s.cfg.DataDir
 	_ = s.Close()
 	s2, err := New(Config{SocketPath: filepath.Join(dir, "server.sock"), DataDir: dir,
-		ForemanDir: filepath.Join(dir, "state", "foreman"), HookHome: dir})
+		StewardDir: filepath.Join(dir, "state", "steward"), HookHome: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestFloorJournalKeepsAPaneToItsQuota(t *testing.T) {
 	dir := s.cfg.DataDir
 	_ = s.Close()
 	s2, err := New(Config{SocketPath: filepath.Join(dir, "server.sock"), DataDir: dir,
-		ForemanDir: filepath.Join(dir, "state", "foreman"), HookHome: dir})
+		StewardDir: filepath.Join(dir, "state", "steward"), HookHome: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestFloorJournalKeepsAPaneToItsQuota(t *testing.T) {
 // the server's time.
 func TestTreeVerdictsAreKeyedOnTheWholeTupleAndNeedATime(t *testing.T) {
 	s := newFactsServer(t)
-	v := gateFact{Decision: "deny", Tool: "bash", Clause: "no-rm", At: 4}
+	v := wardenFact{Decision: "deny", Tool: "bash", Clause: "no-rm", At: 4}
 	s.noteTreeVerdict("w1:p1", v, "")
 	s.noteTreeVerdict("w1:p1", v, "enforcing")
 	if n := len(journalOf(t, s, "")); n != 1 {
@@ -468,8 +468,8 @@ func TestFloorJournalGivesNothingToAPluginOrAnUnknownPeerThatClaimsAPane(t *test
 // still comes in.
 func TestTreeVerdictsThePaneQuotaPrunedStayOutAfterARestart(t *testing.T) {
 	s := newFactsServer(t)
-	tree := func(i int) gateFact {
-		return gateFact{Decision: "deny", Tool: "bash", Clause: fmt.Sprintf("t%d", i), At: float64(1000 + i)}
+	tree := func(i int) wardenFact {
+		return wardenFact{Decision: "deny", Tool: "bash", Clause: fmt.Sprintf("t%d", i), At: float64(1000 + i)}
 	}
 	for i := 1; i <= 110; i++ {
 		s.noteTreeVerdict("w1:p1", tree(i), "")

@@ -186,7 +186,7 @@ func TestCtlQuotesAValueThatLooksLikeAFlag(t *testing.T) {
 	}
 }
 
-// A blocked pane whose ask a foreman holds counts as working, not as
+// A blocked pane whose ask a steward holds counts as working, not as
 // needing you, until the hold ends.
 func TestStatusLineCountsAHeldAskAsWorking(t *testing.T) {
 	panes := PanesFromList(map[string]any{"panes": []any{

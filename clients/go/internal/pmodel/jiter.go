@@ -1,7 +1,7 @@
 // Package pmodel validates JSON and Python values the way pydantic 2.13
 // (pydantic-core 2.46) does for the oracle's models: the same lax
 // coercions, the same errors in the same order, and the same
-// ValidationError text, which the gate puts into a deny reason.
+// ValidationError text, which the warden puts into a deny reason.
 //
 // model_validate_json reads its text with jiter, not json.loads; jiter.go
 // is that reader, with its error messages and positions.

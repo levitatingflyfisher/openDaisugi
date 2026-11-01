@@ -4,7 +4,7 @@
 #
 # What it installs (ruling PK-R-15), the same files as the source package
 # opendaisugi: coppice and sprig (Go), daisugi (the Go build, the
-# default), daisugi-rs (the Rust build) and daisugi-gate-rs (the Rust hook
+# default), daisugi-rs (the Rust build) and daisugi-warden-rs (the Rust hook
 # entry alone). The Python daisugi is the package daisugi-py.
 # DAISUGI_PORT=rust or python makes `daisugi install` hand the install to
 # that port, which then writes hooks that run it directly.
@@ -16,7 +16,7 @@
 pkgname=opendaisugi-bin
 pkgver=0.43.0
 pkgrel=1
-pkgdesc='Agent floor (coppice), loop (sprig) and tool-call gate (daisugi) for AI coding agents'
+pkgdesc='Agent floor (coppice), loop (sprig) and tool-call warden (daisugi) for AI coding agents'
 arch=('x86_64')
 url='https://github.com/levitatingflyfisher/openDaisugi'
 license=('MIT')
@@ -42,7 +42,7 @@ package() {
   install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README"
   cd "${srcdir}/opendaisugi-rust-${pkgver}-linux-x86_64"
   install -Dm755 daisugi "${pkgdir}/usr/bin/daisugi-rs"
-  install -Dm755 daisugi-gate "${pkgdir}/usr/bin/daisugi-gate-rs"
+  install -Dm755 daisugi-warden "${pkgdir}/usr/bin/daisugi-warden-rs"
   install -Dm644 NOTICE-rust "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE-daisugi-rs"
   install -Dm644 README "${pkgdir}/usr/share/doc/${pkgname}/README-rust"
 }

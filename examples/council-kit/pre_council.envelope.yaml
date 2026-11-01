@@ -1,5 +1,5 @@
 # examples/council-kit/pre_council.envelope.yaml
-# Deterministic structural gate run BEFORE any council LLM sees a contribution.
+# Deterministic structural warden run BEFORE any council LLM sees a contribution.
 generated_by: council-kit-pre
 task: "Structural pre-screening of KB contributions"
 stakes: medium

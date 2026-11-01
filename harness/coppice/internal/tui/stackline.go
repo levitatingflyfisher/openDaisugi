@@ -8,14 +8,14 @@ import (
 )
 
 // stackText is the one line a window shows under its header: what the
-// agent runs on, its last gate verdict, and its tokens. It reads the
-// stack, gate and tokens objects of one pane.list row. A field the server
+// agent runs on, its last warden verdict, and its tokens. It reads the
+// stack, warden and tokens objects of one pane.list row. A field the server
 // does not send is left out, never guessed, and a row with none of the
 // three gives "".
 func stackText(p map[string]any) string {
 	var parts []string
 	if st, ok := p["stack"].(map[string]any); ok {
-		for _, k := range []string{"loop", "model", "router"} {
+		for _, k := range []string{"loop", "model", "route"} {
 			if v := str(st, k); v != "" {
 				parts = append(parts, v)
 			}
@@ -23,14 +23,14 @@ func stackText(p map[string]any) string {
 		if d, ok := st["daisugi"].(map[string]any); ok {
 			if mode := str(d, "mode"); mode != "" {
 				text := "daisugi " + mode
-				// The owner set watching; the gate reads it on the next call.
+				// The owner set watching; the warden reads it on the next call.
 				if str(d, "marker") == "watching" && mode != "watching" {
 					text += " → watching"
 				}
-				// The gate would refuse a path on the way to the marker
+				// The warden would refuse a path on the way to the marker
 				// (GR-R-11): say so, and the line says which.
 				if str(d, "marker") == "refused" {
-					text += " (gate state refused)"
+					text += " (warden state refused)"
 				}
 				if armed, isBool := d["armed"].(bool); isBool && !armed {
 					text += " disarmed"
@@ -39,9 +39,9 @@ func stackText(p map[string]any) string {
 			}
 		}
 	}
-	if g, ok := p["gate"].(map[string]any); ok {
+	if g, ok := p["warden"].(map[string]any); ok {
 		if dec := str(g, "decision"); dec != "" {
-			text := "gate " + dec
+			text := "warden " + dec
 			if tool := str(g, "tool"); tool != "" {
 				text += " " + tool
 			}

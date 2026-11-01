@@ -9,7 +9,7 @@ predicate-algebra / skill-subsumption stages, via `z3 -in`).
 
 Matched against the reference corpus generated on this box:
 
-| Gate | Cases | Matched |
+| Check | Cases | Matched |
 |---|---|---|
 | decompose slice | 11,089 | 11,089/11,089 |
 | verify slice | 361 | 361/361 |
@@ -40,7 +40,7 @@ npm install          # installs only web-tree-sitter (runtime) + typescript/@typ
 npm run build         # tsc -> dist/
 npm test              # the 134-case fixture, via node:test
 
-# from the repo root, the differential gate:
+# from the repo root, the differential check:
 CUDA_VISIBLE_DEVICES="" uv run daisugi conformance run \
   .opendaisugi/conformance/corpus.jsonl \
   --client "node clients/ts/dist/conform.js"
@@ -270,7 +270,7 @@ Nothing required by the plan's task ladder. Scoping decisions, not gaps:
   in any of the 303 verify cases (`stages` seen in the corpus: `permissions`,
   `predicate`, `z3`, `delegation`, `dag` — never `inheritance`). Confirmed
   with the advisor before skipping; porting 251 dead lines would not move
-  any gate.
+  any check.
 - **Full generality of the predicate-algebra symbolic compiler.** `exists`,
   `is_empty`, `length_range`, `depends_on`, `before`, `forall_outputs` are
   all ported for *ground* evaluation (`predicateEval.ts`, used for the
@@ -366,7 +366,7 @@ and consumed against the same string in the same units), so the two only
 need to agree on *whether* a given position is a bare newline, not on a
 shared numeric offset value; empirically checked, not just assumed — 1,523
 of the corpus's decompose cases mix a raw newline with non-ASCII content,
-and all match. Confirmed by the full decompose gate (11,089/11,089) rather
+and all match. Confirmed by the full decompose check (11,089/11,089) rather
 than by a targeted fixture (no `bare_newline` group exists in
 `clients/fixtures/semantics.json`).
 
@@ -383,5 +383,5 @@ code was deleted from `pyport.ts` rather than left as an unused alternate
 path.
 
 All three re-verified together: the 134-case fixture (`npm test`, 6/6
-groups) and the full 11,450-case corpus gate both green after every fix
+groups) and the full 11,450-case corpus check both green after every fix
 above landed in this client.

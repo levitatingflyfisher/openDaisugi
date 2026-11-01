@@ -158,7 +158,7 @@ func pickCoppice(cfg FloorConfig, home string) (*coppice, error) {
 	return nil, &FloorNotAvailable{"coppice is not available: coppice did not answer. " + coppiceFix + "."}
 }
 
-// promptPane is registry.prompt_pane with no foreman and no wait: an
+// promptPane is registry.prompt_pane with no steward and no wait: an
 // agent prompt for a headless pane, typed text with Enter for any other.
 func (c *coppice) promptPane(pane, text string) (string, error) {
 	kind := "pty"

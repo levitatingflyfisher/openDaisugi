@@ -1,7 +1,7 @@
-//! NVIDIA NeMo Switchyard as the gateway's external model chooser:
-//! `opendaisugi.router_switchyard`. It finds the switchyard-server binary,
+//! NVIDIA NeMo Switchyard as the router's external model chooser:
+//! `opendaisugi.routing_switchyard`. It finds the switchyard-server binary,
 //! writes its TOML deployment file, starts and stops it as a managed child
-//! on loopback, and probes its health. The gateway stays the meter. The Go
+//! on loopback, and probes its health. The router stays the meter. The Go
 //! client's `switchyard` package is the reference.
 
 pub mod toml;
@@ -12,9 +12,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::gate::paths::strerror;
-use crate::gate::py::text::{self, repr};
-use crate::gate::pyjson::{self, loads_py, Object, Value};
+use crate::warden::paths::strerror;
+use crate::warden::py::text::{self, repr};
+use crate::warden::pyjson::{self, loads_py, Object, Value};
 use toml::{parse, Table, TomlDecodeError, Tv};
 
 pub const BINARY_NAME: &str = "switchyard-server";
@@ -22,7 +22,7 @@ pub const PINNED_TAG: &str = "v0.3.0";
 pub const INSTALL_CMD: &str = "cargo install --locked --git https://github.com/NVIDIA-NeMo/Switchyard --tag v0.3.0 switchyard-server";
 pub const HEALTH_PATH: &str = "/health";
 pub const DEFAULT_HOST: &str = "127.0.0.1";
-pub const FORWARD_LOGIN: &str = "forwards your own login, as the gateway does";
+pub const FORWARD_LOGIN: &str = "forwards your own login, as the router does";
 pub const NO_CREDENTIAL: &str = "no credential: a local host";
 const ANTHROPIC_API: &str = "https://api.anthropic.com";
 const DEFAULT_LOCAL: &str = "http://127.0.0.1:11434";
@@ -213,7 +213,7 @@ pub fn render(t: &Targets, route_id: &str, key_present: &dyn Fn(&str) -> bool) -
     }
     if !t.api_key_env.is_empty() && !key_present(&t.api_key_env) {
         return Err(format!(
-            "switchyard_api_key_env names {}, which is not set. Export it before the gateway starts, or clear the \
+            "switchyard_api_key_env names {}, which is not set. Export it before the router starts, or clear the \
              field to forward your login.",
             t.api_key_env
         ));
@@ -313,7 +313,7 @@ pub fn route_targets(path: &str, route_id: &str) -> Result<(String, String), Rou
     let route = find_route(&doc, route_id).ok_or_else(no_route)?;
     let pair = tier_pair(route).ok_or_else(|| {
         RouteErr::Meter(format!(
-            "route {} in {path} does not name two tiers. The gateway meters capable_target and efficient_target, \
+            "route {} in {path} does not name two tiers. The router meters capable_target and efficient_target, \
              or strong_target and weak_target.",
             repr(route_id)
         ))
@@ -445,7 +445,7 @@ pub struct Files {
 
 /// `child_files_for`.
 pub fn child_files(data_dir: &str, port: i64) -> Files {
-    let gw = format!("{data_dir}/gateway");
+    let gw = format!("{data_dir}/router");
     Files {
         config: format!("{gw}/switchyard-{port}.toml"),
         log: format!("{gw}/switchyard-{port}.log"),
@@ -455,7 +455,7 @@ pub fn child_files(data_dir: &str, port: i64) -> Files {
 
 /// `state_path_for`.
 pub fn state_path(data_dir: &str, port: i64) -> String {
-    format!("{data_dir}/gateway/switchyard-{port}.json")
+    format!("{data_dir}/router/switchyard-{port}.json")
 }
 
 /// A state file as `read_state` reads it.
@@ -492,9 +492,9 @@ pub struct StateFile {
     pub state: Option<State>,
 }
 
-/// `list_states`: every gateway/switchyard-*.json, sorted.
+/// `list_states`: every router/switchyard-*.json, sorted.
 pub fn list_states(data_dir: &str) -> Vec<StateFile> {
-    let dir = format!("{data_dir}/gateway");
+    let dir = format!("{data_dir}/router");
     let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
     let mut paths: Vec<String> = rd
         .filter_map(|e| e.ok())
@@ -628,7 +628,7 @@ impl Handle {
         unsafe { libc::kill(self.pid as i32, sig) == 0 }
     }
 
-    /// `stop_own_child` with a five-second wait: the child this gateway
+    /// `stop_own_child` with a five-second wait: the child this router
     /// started, by its own handle. The state file goes only while it still
     /// names this pid.
     pub fn stop_own(&self, state_file: &str) -> String {
@@ -739,7 +739,7 @@ pub fn start(o: &StartOptions) -> (Option<Handle>, String) {
         return (
             None,
             format!(
-                "something already answers on http://{host}:{}{HEALTH_PATH}. If it is a switchyard-server a gateway \
+                "something already answers on http://{host}:{}{HEALTH_PATH}. If it is a switchyard-server a router \
                  started earlier, stop it with `daisugi router stop`. Else pick another port with --switchyard-port.",
                 o.port
             ),

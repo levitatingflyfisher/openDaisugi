@@ -1,5 +1,5 @@
 // Package weave runs a WORKFLOW: a small directed graph of steps, each a sprig
-// agent task, each gated by the envelope. The plan is DATA (plain JSON — a format
+// agent task, each checked by the envelope. The plan is DATA (plain JSON — a format
 // the model already knows, so no novel-format prompt-tax; the research showed
 // invented encodings can *reverse* their savings). The control flow — order,
 // dependencies — is deterministic Go and spends ZERO model tokens; the model only
@@ -69,7 +69,7 @@ func Parse(data []byte) (*Workflow, error) {
 }
 
 // Run executes the steps in dependency order, each on an agent built by newAgent
-// (which wires the model + the envelope gate). Fail-stop: if a step errors, the
+// (which wires the model + the envelope warden). Fail-stop: if a step errors, the
 // run stops. Returns each step's result in execution order.
 func (wf *Workflow) Run(newAgent func(Step) *sprig.Agent) ([]Result, error) {
 	order, err := topoOrder(wf.Steps)

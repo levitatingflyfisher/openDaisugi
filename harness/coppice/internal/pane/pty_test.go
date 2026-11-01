@@ -75,7 +75,7 @@ func TestBuildEnvInjectsTheSocketAndPaneID(t *testing.T) {
 
 // Spec-02 makes the injection unconditional, so an inherited value must be
 // removed rather than passed on. A server started from inside a coppice pane
-// would otherwise hand its own pane id to every child it spawns, and the gate
+// would otherwise hand its own pane id to every child it spawns, and the warden
 // hook in that child would report state for the wrong pane.
 func TestBuildEnvScrubsAnInheritedPaneID(t *testing.T) {
 	got := BuildEnv([]string{"PATH=/bin", "COPPICE_PANE=w9:p9", "COPPICE_SOCK=/old.sock"},
@@ -373,8 +373,8 @@ func TestStartPTYRejectsAnEmptyArgv(t *testing.T) {
 	}
 }
 
-// COPPICE_DATA_DIR tells the gate hook where this server keeps its
-// secrets, so the gate guards them under a custom --data-dir. Only the
+// COPPICE_DATA_DIR tells the warden hook where this server keeps its
+// secrets, so the warden guards them under a custom --data-dir. Only the
 // server may name it: an inherited value or a pane's own env never wins.
 func TestBuildEnvSetsTheDataDirOverAnyOtherValue(t *testing.T) {
 	got := BuildEnv([]string{"PATH=/bin", "COPPICE_DATA_DIR=/inherited"},

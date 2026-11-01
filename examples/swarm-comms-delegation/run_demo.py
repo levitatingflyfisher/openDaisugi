@@ -8,14 +8,14 @@ The idea: in openDaisugi a **message that carries authority IS a delegation.**
 the recipient (or a coordinator) PROVES the transferred authority is contained
 *before anyone acts* — `envelope_subsumes(recipient_authority, task)` for delegation,
 disjointness (`aabb_disjoint` / `verify_swarm_tasking`) for deconfliction. Every
-hand-off, reassignment, and cross-swarm entry is gated on re-proof, fail-closed.
+hand-off, reassignment, and cross-swarm entry is checked on re-proof, fail-closed.
 
 Four onboarding/verification scenarios, each LEADING WITH THE REJECTION (the value
 is what the verifier refuses):
 
   1. Delegation down a hierarchy   (mission → squads → drones; nested containment)
   2. Lateral hand-off              (drone A hands a task to drone B)
-  3. Comms-loss reassignment       (a survivor covers a downed peer, gated on re-proof)
+  3. Comms-loss reassignment       (a survivor covers a downed peer, checked on re-proof)
   4. Cross-swarm coordination      (two swarms verify disjoint airspace before entry)
 
 HONEST SCOPE (see docs/spec/yellow-paper.md §7): analytic geometry, plan/volume level
@@ -119,7 +119,7 @@ def scenario_handoff():
 
 def scenario_comms_loss():
     print("\n" + RULE)
-    print(" 3. COMMS-LOSS REASSIGNMENT — a survivor covers a downed peer, gated on re-proof")
+    print(" 3. COMMS-LOSS REASSIGNMENT — a survivor covers a downed peer, checked on re-proof")
     print(RULE)
     mission = authority("mission", ((0, 0, 0), (30, 20, 10)))
     fleet = partition_and_assign(mission, ["west", "mid", "east"], axis=0, margin=MARGIN)

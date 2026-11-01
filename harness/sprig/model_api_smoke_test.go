@@ -17,8 +17,8 @@ import (
 // speaks the Anthropic Messages API shape AND validates every incoming request
 // against Anthropic's documented contract, then drives the WHOLE agent loop —
 // real net/http over a real socket, the native tool_use/tool_result exchange, and
-// the gate — to a disk side-effect. A green run means: E emits a contract-conformant
-// request, completes the tool loop through the gate, and parses a real HTTP reply.
+// the warden — to a disk side-effect. A green run means: E emits a contract-conformant
+// request, completes the tool loop through the warden, and parses a real HTTP reply.
 //
 // What it deliberately does NOT prove (only a real key can): that api.anthropic.com
 // itself accepts the exact schema, and E's real minimal-prompt token number. The
@@ -173,7 +173,7 @@ func TestAPIModelDrivesTheFullLoopOverARealSocket(t *testing.T) {
 	if final != "done: wrote the file" {
 		t.Fatalf("final answer not returned from the real reply, got %q", final)
 	}
-	// The objective proof: the tool actually ran through the gate and hit disk.
+	// The objective proof: the tool actually ran through the warden and hit disk.
 	got, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("the write tool never reached disk: %v", err)

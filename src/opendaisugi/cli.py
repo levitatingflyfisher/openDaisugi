@@ -1,6 +1,6 @@
 """opendaisugi command-line interface.
 
-One entry: ``daisugi start``. The short top level is Start here / Run / Gate /
+One entry: ``daisugi start``. The short top level is Start here / Run / Warden /
 Garden / Settings; ``daisugi help --all`` lists every command, including the
 hidden operational groups (``lora``, ``release``, ``batch``, ``conformance``,
 ``registry``, ``hook``, ``mcp``, ``tiers``, ``gardener``) and hidden top-level
@@ -8,7 +8,7 @@ commands (``onboard``, ``run``, ``verify``, ``tend``, and others) — nothing is
 deleted, hiding only shortens the default view, and a typo of a hidden name
 still gets suggested. Read commands take ``--json``; the root takes
 ``--plain``, ``-q``/``--quiet``, ``-v``/``--verbose``, ``--no-color``. The
-gate group uses ``--root`` (``<data home>/gate``); most others take
+warden group uses ``--root`` (``<data home>/warden``); most others take
 ``--data-dir`` (the data home: ``$OPENDAISUGI_HOME``, else
 ``$XDG_DATA_HOME/opendaisugi`` when ``~/.opendaisugi`` does not exist, else
 ``~/.opendaisugi``; see ``opendaisugi.datahome``).
@@ -48,11 +48,11 @@ app = typer.Typer(
 )
 
 _START_HERE = """\
-daisugi: a gate that proves each agent action stays inside an envelope, and a garden
+daisugi: a warden that proves each agent action stays inside an envelope, and a garden
 of reusable pathways distilled from the work.
 
 Start here
-  daisugi start                          gate this directory (audit mode) and watch it
+  daisugi start                          warden this directory (audit mode) and watch it
   daisugi start --enforce                the same, but out-of-envelope calls are denied
   daisugi orchestrate "list three risks" run a prompt end to end under a verified plan
   daisugi status                         is this machine ready; what is installed
@@ -138,7 +138,7 @@ def _all_commands_grouped() -> list[tuple[str, list[tuple[str, object]]]]:
     """Every top-level command (hidden included), grouped by its rich_help_panel."""
     from typer.main import get_command
 
-    order = ["Start here", "Run", "Gate", "Garden", "Settings"]
+    order = ["Start here", "Run", "Warden", "Garden", "Settings"]
     groups: dict[str, list[tuple[str, object]]] = {}
     for name, cmd in get_command(app).commands.items():
         panel = getattr(cmd, "rich_help_panel", None) or "Other"
@@ -181,6 +181,10 @@ journal_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(journal_app, name="journal", rich_help_panel="Garden")
+
+from opendaisugi.pando.cli import pando_app  # noqa: E402
+
+app.add_typer(pando_app, name="pando", rich_help_panel="Garden")
 
 pathways_app = typer.Typer(
     name="pathways",
@@ -310,25 +314,26 @@ hook_app = typer.Typer(
 )
 app.add_typer(hook_app, name="hook", hidden=True)
 
-gate_app = typer.Typer(
-    name="gate",
-    help="Call-time tool gate (ADR-0007) — verify each live tool call against "
-    "a registered envelope. Audit by default; --mode enforce denies.",
+warden_app = typer.Typer(
+    name="warden",
+    help="The warden watches each tool call and records it. With --mode enforce it also "
+    "stops calls outside the registered envelope.",
     no_args_is_help=True,
 )
-app.add_typer(gate_app, name="gate", rich_help_panel="Gate")
+app.add_typer(warden_app, name="warden", rich_help_panel="Warden")
 
 router_app = typer.Typer(
     name="router",
-    help="The gateway's model chooser: NVIDIA NeMo Switchyard as a managed child, or the "
-    "built-in rules router.",
+    help="The router: a local proxy in front of your model provider. It answers repeated "
+    "turns from the garden and sends the rest on, by routing mode (rules, switchyard, knn, "
+    "model, off).",
     no_args_is_help=True,
 )
-app.add_typer(router_app, name="router", hidden=True)
+app.add_typer(router_app, name="router", rich_help_panel="Router")
 
 graft_app = typer.Typer(
     name="graft",
-    help="Install, show and remove the gate's graft rule for large reads.",
+    help="Install, show and remove the warden's graft rule for large reads.",
     no_args_is_help=True,
 )
 app.add_typer(graft_app, name="graft", hidden=True)
@@ -687,7 +692,7 @@ def hook_record_cmd(
     # record_and_contract never raises and always returns the host allow contract.
     typer.echo(record_and_contract(raw, root=captures_root, fmt=fmt))
     # No-cron distillation: the contract is already emitted, so this can only
-    # add latency, never correctness. Consent-gated, rate-limited, fully detached.
+    # add latency, never correctness. Consent-checked, rate-limited, fully detached.
     maybe_trigger_background_tend(captures_root.parent, now=time.time())
 
 
@@ -695,17 +700,17 @@ def hook_record_cmd(
 def hook_report_cmd(
     pane: str = typer.Option(None, "--pane", help="Pane id to stamp onto the event, if known."),
     root: Path = typer.Option(
-        data_home() / "gate",
+        data_home() / "warden",
         "--root",
-        help="Gate data root — where the session tree this event appends to lives.",
+        help="Warden data root — where the session tree this event appends to lives.",
     ),
 ) -> None:
     """Read one PaneStateEvent JSON line from stdin and deliver it.
 
     For a headless adapter or an in-process extension (the pi extension,
-    the OpenCode plugin — specs 04/05) that cannot speak to the gate
-    directly. Downgrades a claimed 'gate' or 'operator' source to
-    'headless' — only the gate process itself may speak as the gate.
+    the OpenCode plugin — specs 04/05) that cannot speak to the warden
+    directly. Downgrades a claimed 'warden' or 'operator' source to
+    'headless' — only the warden process itself may speak as the warden.
     Exits 0 once stdin parses to a valid event; exits 1 with the
     validation message on stderr for anything malformed.
     """
@@ -730,33 +735,42 @@ def hook_report_cmd(
 
 @hook_app.command("list")
 def hook_list_cmd(
-    captures_root: Path = typer.Option(
-        data_home() / "captures",
+    captures_root: Path | None = typer.Option(
+        None,
         "--captures-root",
+        help="Read this one directory only. Default: <data>/captures, then <data>/warden/captures.",
+    ),
+    data_dir: Path = typer.Option(
+        data_home(),
+        "--data-dir",
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
     """List captured sessions with call counts."""
-    from opendaisugi.hook import list_sessions
+    from opendaisugi.hook import capture_roots, list_sessions_in
 
-    sessions = list_sessions(root=captures_root)
+    roots = [captures_root] if captures_root is not None else capture_roots(data_dir)
+    sessions = list_sessions_in(roots)
     if json_output:
         typer.echo(json.dumps(sessions))
         return
     if not sessions:
         typer.echo("(no captured sessions)")
         return
-    typer.echo(f"{'session_id':40s}  {'calls':>6s}  last_at")
+    show_root = len({s["root"] for s in sessions}) > 1
+    typer.echo(f"{'session_id':40s}  {'calls':>6s}  last_at" + ("  root" if show_root else ""))
     for s in sessions:
-        typer.echo(f"{s['session_id']:40s}  {s['calls']:>6d}  {s.get('last_at', '')}")
+        line = f"{s['session_id']:40s}  {s['calls']:>6d}  {s.get('last_at', '')}"
+        typer.echo(line + (f"  {s['root']}" if show_root else ""))
 
 
 @hook_app.command("to-trace")
 def hook_to_trace_cmd(
     session_id: str = typer.Argument(..., help="Captured session id (filename stem)."),
-    captures_root: Path = typer.Option(
-        data_home() / "captures",
+    captures_root: Path | None = typer.Option(
+        None,
         "--captures-root",
+        help="Read this one directory only. Default: <data>/captures, then <data>/warden/captures.",
     ),
     data_dir: Path = typer.Option(
         data_home(),
@@ -776,12 +790,14 @@ def hook_to_trace_cmd(
     appends a Trace to the journal. The trace then feeds normal
     ``daisugi tend`` distillation.
     """
-    from opendaisugi.hook import captures_to_trace
+    from opendaisugi.hook import capture_roots, captures_to_trace, find_capture
     from opendaisugi.journal import Journal
 
-    session_jsonl = captures_root / f"{session_id}.jsonl"
-    if not session_jsonl.exists():
-        typer.echo(f"error: no capture at {session_jsonl}", err=True)
+    roots = [captures_root] if captures_root is not None else capture_roots(data_dir)
+    session_jsonl = find_capture(session_id, roots)
+    if session_jsonl is None:
+        searched = ", ".join(str(r / f"{session_id}.jsonl") for r in roots)
+        typer.echo(f"error: no capture at {searched}", err=True)
         raise typer.Exit(code=1)
     decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
     journal = Journal(data_dir=data_dir)
@@ -794,9 +810,10 @@ def hook_to_trace_cmd(
 
 @hook_app.command("auto-tend")
 def hook_auto_tend_cmd(
-    captures_root: Path = typer.Option(
-        data_home() / "captures",
+    captures_root: Path | None = typer.Option(
+        None,
         "--captures-root",
+        help="Read this one directory only. Default: <data>/captures, then <data>/warden/captures.",
     ),
     data_dir: Path = typer.Option(
         data_home(),
@@ -810,7 +827,7 @@ def hook_auto_tend_cmd(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Ignore the min-interval gate.",
+        help="Ignore the min-interval check.",
     ),
     skip_distill: bool = typer.Option(
         False,
@@ -822,11 +839,11 @@ def hook_auto_tend_cmd(
     """Close the captures→traces→distillation loop in one cron-friendly call.
 
     For every captured session not already converted, runs `to-trace`. If any
-    new traces land, runs ``Daisugi.tend()``. A min-interval gate (default
+    new traces land, runs ``Daisugi.tend()``. A min-interval check (default
     1h) prevents wasteful re-runs; --force overrides. Designed for cron /
     systemd timers / Claude `/loop` skill invocations:
 
-        # cron — every 30 minutes; gate ensures real work only every 1h
+        # cron — every 30 minutes; warden ensures real work only every 1h
         */30 * * * * /usr/local/bin/daisugi hook auto-tend
 
     The thesis-3 reproduction loop is closed by this command. Without it,
@@ -836,10 +853,10 @@ def hook_auto_tend_cmd(
     import time
 
     from opendaisugi.config import auto_tend_enabled, load_config
-    from opendaisugi.hook import captures_to_trace, list_sessions
+    from opendaisugi.hook import capture_roots, captures_to_trace, list_sessions_in
     from opendaisugi.journal import Journal
 
-    # Consent gate: background distillation runs only when the user opted in
+    # Consent check: background distillation runs only when the user opted in
     # (`daisugi install`). --force tends once regardless, for a manual run.
     if not force and not auto_tend_enabled(load_config(data_dir / "config.yaml")):
         typer.echo(
@@ -865,13 +882,15 @@ def hook_auto_tend_cmd(
 
     decompose = _resolve_decompose(allow_shell_decomposition, data_dir / "config.yaml")
     journal = Journal(data_dir=data_dir)
-    sessions = list_sessions(root=captures_root)
+    roots = [captures_root] if captures_root is not None else capture_roots(data_dir)
+    # Primary root first: list_sessions_in keeps the first copy of a session id.
+    sessions = list_sessions_in(roots)
     converted: list[str] = []
     for s in sessions:
         sid = s["session_id"]
         if journal.is_session_converted(sid):
             continue
-        session_jsonl = captures_root / f"{sid}.jsonl"
+        session_jsonl = Path(s["root"]) / f"{sid}.jsonl"
         try:
             trace_id = captures_to_trace(
                 session_jsonl, journal, allow_shell_decomposition=decompose
@@ -901,29 +920,29 @@ def hook_auto_tend_cmd(
     stamp_file.write_text(f"{now}")
 
 
-# What `install --gate --enforce` says when no envelope is registered.
+# What `install --enforce` says when no envelope is registered.
 ENFORCE_NEEDS_POLICY = (
-    "Enforce needs a policy first. Run: daisugi gate init --workspace DIR "
+    "Enforce needs a policy first. Run: daisugi warden init --workspace DIR "
     "for a starter envelope, then this command again. "
-    "Or install in audit mode: daisugi install --gate"
+    "Or run: daisugi install (audit mode records every call and blocks none)"
 )
 
-_GATE_ROOT_OPT = typer.Option(
-    data_home() / "gate",
+_WARDEN_ROOT_OPT = typer.Option(
+    data_home() / "warden",
     "--root",
-    help="Gate state directory (envelopes, audit log, disarm marker).",
+    help="Warden state directory (envelopes, audit log, disarm marker).",
 )
 
 
-@gate_app.command("init")
-def gate_init_cmd(
+@warden_app.command("init")
+def warden_init_cmd(
     workspace: Path = typer.Option(
         Path.cwd,
         "--workspace",
         help="The directory the session may read/write (default: cwd).",
     ),
     session: str | None = typer.Option(None, "--session"),
-    root: Path = _GATE_ROOT_OPT,
+    root: Path = _WARDEN_ROOT_OPT,
     force: bool = typer.Option(
         False,
         "--force",
@@ -938,11 +957,11 @@ def gate_init_cmd(
     already running: a tight, sane default (read/write the workspace, a
     conservative shell allowlist, no network) that you then review and adjust.
     It is a starting point, not a finished policy — run audit mode and
-    `daisugi gate report` to tune it.
+    `daisugi warden report` to tune it.
     """
     from opendaisugi._state_files import StateWriteRefused
-    from opendaisugi.gate import _envelopes_dir, register_envelope, starter_envelope
     from opendaisugi.hook import _safe_session_id
+    from opendaisugi.warden import _envelopes_dir, register_envelope, starter_envelope
 
     decompose = _resolve_decompose(allow_shell_decomposition, root.parent / "config.yaml")
     name = session or "default"
@@ -970,9 +989,33 @@ def gate_init_cmd(
     _warn_if_decomposition_unusable(decompose)
     typer.echo("REVIEW it before enforcing — it is a tight default, not a finished policy.")
     typer.echo("Then launch audit mode:")
-    # A session's envelope is read only by a gate pinned to it.
+    # A session's envelope is read only by a warden pinned to it.
     pin = f" --session {shlex.quote(session)}" if session else ""
-    typer.echo(f'  claude --settings "$(daisugi gate settings --root {root}{pin})"')
+    typer.echo(f'  claude --settings "$(daisugi warden settings --root {root}{pin})"')
+
+
+@app.command(  # names-ok: the old verb
+    "gate",  # names-ok: the old verb
+    hidden=True,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def _old_gate_verb() -> None:  # names-ok: the old verb
+    """Refused: this verb is now warden. A hook from before the rename lands here; it
+    exits 2 (fail closed) and says to run install."""
+    typer.echo(
+        "daisugi gate is now daisugi warden; run daisugi install to update the hook",  # names-ok
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _warden_flag_moved(value: bool) -> bool:
+    """``install``: the warden hook is part of every install now."""
+    if value:
+        raise typer.BadParameter(
+            "the warden hook is part of every install: drop --warden (add --enforce to make it deny)"
+        )
+    return value
 
 
 def _shadow_moved(value: bool) -> bool:
@@ -997,15 +1040,15 @@ class _ModeChoice(click.Choice):
             raise typer.BadParameter(exc.message) from None
 
 
-@gate_app.command("check")
-def gate_check_cmd(
+@warden_app.command("check")
+def warden_check_cmd(
     mode: str = typer.Option(
         "audit",
         "--mode",
         click_type=_ModeChoice(["audit", "enforce"]),
         help="audit = observe and log only; enforce = deny out-of-envelope calls.",
     ),
-    root: Path = _GATE_ROOT_OPT,
+    root: Path = _WARDEN_ROOT_OPT,
     fmt: str = typer.Option(
         "claude", "--format", help="Host contract: claude | pi | opencode | hermes | openclaw."
     ),
@@ -1019,19 +1062,19 @@ def gate_check_cmd(
     """Read one hook payload from stdin and emit the host's verdict contract.
 
     On the Claude Code path a deny is exit code 2 with the reason on stderr —
-    the contract pinned by tests/test_hook_gate_contract.py. Prefer wiring
-    hosts to ``python -m opendaisugi.gate`` (same behavior, faster import);
+    the contract pinned by tests/test_hook_warden_contract.py. Prefer wiring
+    hosts to ``python -m opendaisugi.warden`` (same behavior, faster import);
     this command exists for parity and manual testing.
     """
     import sys
 
-    from opendaisugi.gate import gate_and_contract
+    from opendaisugi.warden import warden_and_contract
 
     try:
         raw = sys.stdin.buffer.read()
     except Exception:
         raw = b""
-    out = gate_and_contract(
+    out = warden_and_contract(
         raw,
         root=root,
         fmt=fmt,
@@ -1045,17 +1088,62 @@ def gate_check_cmd(
     raise typer.Exit(code=out.exit_code)
 
 
-@gate_app.command("register")
-def gate_register_cmd(
+schemas_app = typer.Typer(
+    name="schemas",
+    help="The MCP tool schemas on file, which `warden register` checks mcp_rules against.",
+    no_args_is_help=True,
+)
+warden_app.add_typer(schemas_app, name="schemas")
+
+
+@schemas_app.command("import")
+def warden_schemas_import_cmd(
+    server: str = typer.Argument(..., help="The MCP server name, as in mcp__<server>__<tool>."),
+    file: Path = typer.Argument(..., help="A tools/list result (JSON)."),
+    root: Path = _WARDEN_ROOT_OPT,
+) -> None:
+    """Store a tools/list result as the schema of one MCP server."""
+    from opendaisugi._state_files import StateWriteRefused
+    from opendaisugi.mcp_schemas import import_schema, load_schemas
+
+    try:
+        path = import_schema(root, server, file)
+    except (ValueError, StateWriteRefused) as exc:
+        typer.echo(f"daisugi warden schemas import: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    count = len(load_schemas(root).get(server, {}).get("tools", []))
+    typer.echo(f"stored the schema of {server} ({count} tools) at {path}")
+
+
+@schemas_app.command("list")
+def warden_schemas_list_cmd(root: Path = _WARDEN_ROOT_OPT) -> None:
+    """Print the schemas on file."""
+    from opendaisugi.mcp_schemas import load_schemas
+
+    schemas = load_schemas(root)
+    if not schemas:
+        typer.echo(
+            "no schemas on file; import one with: "
+            "daisugi warden schemas import <server> <tools-list.json>"
+        )
+        return
+    for name, data in schemas.items():
+        typer.echo(
+            f"{name}  {len(data.get('tools', []))} tools  {root / 'schemas' / (name + '.json')}"
+        )
+
+
+@warden_app.command("register")
+def warden_register_cmd(
     envelope_path: Path = typer.Argument(..., help="Envelope file (JSON or YAML)."),
     session: str | None = typer.Option(
         None,
         "--session",
-        help="Bind to one session id, read only by a gate pinned to it with "
+        help="Bind to one session id, read only by a warden pinned to it with "
         "--session; omit to register the default envelope every unpinned "
         "call is checked against.",
     ),
-    root: Path = _GATE_ROOT_OPT,
+    root: Path = _WARDEN_ROOT_OPT,
     parent: str | None = typer.Option(
         None,
         "--parent",
@@ -1063,13 +1151,13 @@ def gate_register_cmd(
         "and a refused edge registers nothing.",
     ),
 ) -> None:
-    """Register the envelope the gate checks this session's calls against."""
+    """Register the envelope the warden checks this session's calls against."""
     import yaml
     from pydantic import ValidationError
 
     from opendaisugi._state_files import StateWriteRefused
-    from opendaisugi.gate import register_envelope
     from opendaisugi.models import Envelope
+    from opendaisugi.warden import register_envelope
 
     try:
         envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
@@ -1082,6 +1170,18 @@ def gate_register_cmd(
         )
         typer.echo(f"not registered: {envelope_path} is not a valid envelope: {why}", err=True)
         raise typer.Exit(code=1) from exc
+    from opendaisugi.models import opaque_unrecognized
+
+    unchecked = opaque_unrecognized(envelope)
+    if unchecked:
+        typer.echo(
+            f"envelope declares {len(unchecked)} item(s) nothing can check: "
+            f"{', '.join(unchecked)}. Give each an expr, name a word (keep_unchanged), "
+            "or set enforce: false.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    _lint_mcp_rules(envelope, root)
     if parent is not None:
         envelope = _proved_child(envelope, session=session, parent=parent, root=root)
     try:
@@ -1092,12 +1192,31 @@ def gate_register_cmd(
     typer.echo(f"registered {'session ' + session if session else 'default'} envelope → {path}")
 
 
+def _lint_mcp_rules(envelope: Any, root: Path) -> None:
+    """``warden register``: refuse an mcp_rules entry the schemas or the regex
+    rule reject (exit 2, nothing registered); print a note for a server with no
+    schema on file (MP-5, MP-8)."""
+    from opendaisugi.mcp_rules import rule_lint
+    from opendaisugi.mcp_schemas import load_schemas
+
+    rules = envelope.permissions.mcp_rules
+    if not rules:
+        return
+    refusals, notes = rule_lint(rules, load_schemas(root), envelope.permissions)
+    for note in notes:
+        typer.echo(note, err=True)
+    if refusals:
+        for line in refusals:
+            typer.echo(f"not registered: {line}", err=True)
+        raise typer.Exit(code=2)
+
+
 def _proved_child(envelope: Any, *, session: str | None, parent: str, root: Path) -> Any:
-    """``gate register --parent``: the child as it registers once the edge
+    """``warden register --parent``: the child as it registers once the edge
     from ``parent`` is proved, or a one-line refusal and exit 1."""
     from opendaisugi import tree
-    from opendaisugi.gate import _envelopes_dir
     from opendaisugi.hook import _safe_session_id
+    from opendaisugi.warden import _envelopes_dir
 
     def refuse(why: str) -> None:
         typer.echo(f"not registered: {why}", err=True)
@@ -1120,47 +1239,47 @@ def _proved_child(envelope: Any, *, session: str | None, parent: str, root: Path
     return res.child.model_copy(update={"parent_envelope": penv.id})
 
 
-@gate_app.command("disarm")
-def gate_disarm_cmd(root: Path = _GATE_ROOT_OPT) -> None:
-    """Kill switch: the gate allows everything until re-armed.
+@warden_app.command("disarm")
+def warden_disarm_cmd(root: Path = _WARDEN_ROOT_OPT) -> None:
+    """Kill switch: the warden allows everything until re-armed.
 
     Deliberately requires no allowed tool call — run it from any shell if
-    an over-denying gate has locked an agent up.
+    an over-denying warden has locked an agent up.
     """
     from opendaisugi._state_files import StateWriteRefused
-    from opendaisugi.gate import disarm
+    from opendaisugi.warden import disarm
 
     try:
         marker = disarm(root)
     except StateWriteRefused as exc:
-        typer.echo(f"gate NOT disarmed: {exc}", err=True)
+        typer.echo(f"warden NOT disarmed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo(f"gate DISARMED (marker: {marker}) — `daisugi gate arm` to re-enable")
+    typer.echo(f"warden DISARMED (marker: {marker}) — `daisugi warden arm` to re-enable")
 
 
-@gate_app.command("arm")
-def gate_arm_cmd(root: Path = _GATE_ROOT_OPT) -> None:
-    """Remove the disarm marker; the gate resumes evaluating calls."""
+@warden_app.command("arm")
+def warden_arm_cmd(root: Path = _WARDEN_ROOT_OPT) -> None:
+    """Remove the disarm marker; the warden resumes evaluating calls."""
     from opendaisugi._state_files import StateWriteRefused
-    from opendaisugi.gate import arm
+    from opendaisugi.warden import arm
 
     try:
         arm(root)
     except StateWriteRefused as exc:
-        typer.echo(f"gate NOT armed: {exc}", err=True)
+        typer.echo(f"warden NOT armed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo("gate armed")
+    typer.echo("warden armed")
 
 
-@gate_app.command("status")
-def gate_status_cmd(
-    root: Path = _GATE_ROOT_OPT,
+@warden_app.command("status")
+def warden_status_cmd(
+    root: Path = _WARDEN_ROOT_OPT,
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
     """Show armed/disarmed state, the verdict mode, and the registered envelopes.
 
     The mode is the EFFECTIVE one across both a machine-global hook
-    (~/.claude/settings.json, what `daisugi install --gate` writes) and a
+    (~/.claude/settings.json, what `daisugi install` writes) and a
     directory-scoped one (./.claude/settings.json, what `daisugi start`
     writes) — the stricter of the two, since Claude Code fires every hook
     that exists and a call is allowed only if every firing hook allows it.
@@ -1169,20 +1288,20 @@ def gate_status_cmd(
     """
     from opendaisugi._state_files import refused_paths
     from opendaisugi.config import effective_hook_mode, hook_source_label
-    from opendaisugi.gate import _envelopes_dir, is_disarmed, resolve_gate_mode
+    from opendaisugi.warden import _envelopes_dir, is_disarmed, resolve_warden_mode
 
     armed = not is_disarmed(root)
     try:
         cwd = Path.cwd()
     except OSError:
-        # A deleted launch directory must not crash `gate status` — fall back
+        # A deleted launch directory must not crash `warden status` — fall back
         # to the global-only view (== home, so the cwd-hook check is a no-op).
         cwd = Path.home()
     eff = effective_hook_mode(home=Path.home(), cwd=cwd)
     if eff.mode:
         mode, source = eff.mode, hook_source_label(eff)
     else:
-        mode, source = resolve_gate_mode(None, root=root), "config"
+        mode, source = resolve_warden_mode(None, root=root), "config"
     d = _envelopes_dir(root)
     envelopes = sorted(e.stem for e in d.glob("*.json")) if d.exists() else []
     # A hook whose program is gone fails on every call: an enforce hook then
@@ -1200,10 +1319,15 @@ def gate_status_cmd(
     from opendaisugi.config import stale_mode_hooks, stale_mode_warning
 
     gone += [stale_mode_warning(f) for f in settings_files if stale_mode_hooks(f)]
-    dialect = _gate_dialect_status(root)
-    # Each path the gate refuses to read, with the fix (GR-R-8); the key and
+    dialect = _warden_dialect_status(root, mode)
+    hints = _rename_hints()
+    # Each path the warden refuses to read, with the fix (GR-R-8); the key and
     # the lines appear only when there is one.
     refused = refused_paths(root)
+    from opendaisugi.fence_notice import LINE as unconfined_line
+    from opendaisugi.fence_notice import unconfined
+
+    open_files = unconfined(root)
     if json_output:
         body: dict[str, Any] = {
             "armed": armed,
@@ -1214,63 +1338,96 @@ def gate_status_cmd(
         }
         if refused:
             body["refused"] = refused
+        if open_files:
+            body["unconfined"] = True
         typer.echo(json.dumps(body))
-        for line in gone:
+        for line in gone + hints:
             typer.echo(line, err=True)
         return
-    # "unknown": a gate hook in a form this CLI does not read. It may enforce.
-    shown = "unknown gate hook" if mode == "unknown" else mode
-    typer.echo(f"gate: {'armed' if armed else 'DISARMED'} · mode: {shown} ({source})")
+    # "unknown": a warden hook in a form this CLI does not read. It may enforce.
+    shown = "unknown warden hook" if mode == "unknown" else mode
+    typer.echo(f"warden: {'armed' if armed else 'DISARMED'} · mode: {shown} ({source})")
     if not envelopes:
         typer.echo("no envelopes registered — enforce mode would deny everything")
     for e in envelopes:
         typer.echo(f"  envelope: {e}")
     for line in refused:
         typer.echo(f"refused: {line}")
-    typer.echo(_gate_dialect_line(dialect))
+    typer.echo(_warden_dialect_line(dialect))
+    if open_files:
+        typer.echo(unconfined_line)
+    for line in hints:
+        typer.echo(line)
     for line in gone:
         typer.echo(line, err=True)
 
 
-def _gate_dialect_status(root: Path) -> dict:
-    """The system dialect as the gate uses it: its hash, the pin config.yaml
-    names, the mode that follows, and the calls a word would deny."""
+def _rename_hints() -> list[str]:
+    """Lines for state that still carries a name from before the rename: the
+    old data directory and each old config key. `daisugi install` moves them."""
+    from opendaisugi.config import stale_config_keys
+
+    data = data_home()
+    out: list[str] = []
+    if (data / "gate").is_dir() and not (data / "warden").exists():  # names-ok: old dir
+        out.append(
+            f"found {data}/gate from before the rename: run daisugi install to move it"  # names-ok: old dir
+        )
+    for old, new in stale_config_keys(data / "config.yaml"):
+        out.append(f"config: unknown key {old} (now {new})")
+    return out
+
+
+def _warden_dialect_status(root: Path, mode: str = "audit") -> dict:
+    """The system dialect as the warden uses it: its hash, the pin config.yaml
+    names, whether the words are enforced and why, and the calls a word would
+    deny. ``mode`` is the warden's verdict mode (SG-9)."""
     from opendaisugi.dialect import DIALECT_HASH
-    from opendaisugi.gate import _configured_dialect_pin, word_would_deny
+    from opendaisugi.warden import _configured_dialect_pin, word_would_deny
 
     pin = _configured_dialect_pin(root)
-    if pin is None:
-        mode = "audit"
-    elif pin == DIALECT_HASH:
-        mode = "enforce"
+    if pin is not None and pin != DIALECT_HASH:
+        state, source = "mismatch", "pin"
+    elif pin is not None:
+        state, source = "enforced", "pin"
+    elif mode == "enforce":
+        state, source = "enforced", "warden_mode"
     else:
-        mode = "pin_mismatch"
+        state, source = "audit", "none"
     return {
         "hash": DIALECT_HASH,
         "pin": pin,
-        "mode": mode,
+        "mode": state,
+        "source": source,
         "word_would_deny": word_would_deny(root=root),
     }
 
 
-def _gate_dialect_line(d: dict) -> str:
-    if d["mode"] == "pin_mismatch":
-        head = f"dialect: {d['hash']} · pinned {d['pin']}, not this build's: every word use denies"
+def _warden_dialect_line(d: dict) -> str:
+    if d["mode"] == "mismatch":
+        head = (
+            f"dialect {d['hash']}: pin mismatch: {d['pin']} is not this build's {d['hash']}; "
+            f"pin is from an earlier dialect; set dialect_enforce: {d['hash']} or remove it"
+        )
+    elif d["source"] == "pin":
+        head = f"dialect {d['hash']}: enforced (pinned)"
+    elif d["mode"] == "enforced":
+        head = f"dialect {d['hash']}: enforced (warden mode enforce)"
     else:
-        head = f"dialect: {d['hash']} · words: {d['mode']}"
+        head = f"dialect {d['hash']}: audit (warden mode audit)"
     return f"{head} · word would-denies: {d['word_would_deny']}"
 
 
-@gate_app.command("report")
-def gate_report_cmd(
+@warden_app.command("report")
+def warden_report_cmd(
     session: str | None = typer.Option(None, "--session"),
-    root: Path = _GATE_ROOT_OPT,
+    root: Path = _WARDEN_ROOT_OPT,
     as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
 ) -> None:
-    """Summarize the audit log: what an enforcing gate would have denied."""
+    """Summarize the audit log: what an enforcing warden would have denied."""
     import json as _json
 
-    from opendaisugi.gate import audit_report
+    from opendaisugi.warden import audit_report
 
     rep = audit_report(root=root, session_id=session)
     if as_json:
@@ -1290,15 +1447,15 @@ def gate_report_cmd(
             typer.echo(f"  WORD {r.get('tool_name')} {r.get('detail', '')!r}: {line}")
 
 
-@gate_app.command("replay")
-def gate_replay_cmd(
+@warden_app.command("replay")
+def warden_replay_cmd(
     captures_jsonl: Path = typer.Argument(..., help="A passive-capture session file."),
     envelope_path: Path = typer.Option(
         ..., "--envelope", help="Envelope to evaluate against (JSON/YAML)."
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
 ) -> None:
-    """Replay a captured session through the gate offline (nothing executes).
+    """Replay a captured session through the warden offline (nothing executes).
 
     The envelope-tuning loop: run this against real captured sessions and
     adjudicate the would-denies before trusting --mode enforce.
@@ -1307,8 +1464,8 @@ def gate_replay_cmd(
 
     import yaml
 
-    from opendaisugi.gate import replay_captures
     from opendaisugi.models import Envelope
+    from opendaisugi.warden import replay_captures
 
     envelope = Envelope(**yaml.safe_load(envelope_path.read_text()))
     rep = replay_captures(captures_jsonl, envelope)
@@ -1325,34 +1482,34 @@ def gate_replay_cmd(
         typer.echo(f"  DENY{fp} {r.get('tool_name')} {r.get('detail', '')!r}: {r.get('reason')}")
 
 
-@gate_app.command("settings")
-def gate_settings_cmd(
+@warden_app.command("settings")
+def warden_settings_cmd(
     enforce: bool = typer.Option(
         False,
         "--enforce",
         help="Emit enforce-mode settings (default is audit — observation only).",
     ),
-    root: Path = _GATE_ROOT_OPT,
+    root: Path = _WARDEN_ROOT_OPT,
     fmt: str = typer.Option("claude", "--format"),
     session: str | None = typer.Option(
         None,
         "--session",
-        help="Pin the gate to this registered session's envelope, ignoring "
+        help="Pin the warden to this registered session's envelope, ignoring "
         "the session id in each payload — authorization must not key on "
         "caller-influenceable input.",
     ),
 ) -> None:
-    """Print the Claude Code hooks-settings JSON that wires in the gate.
+    """Print the Claude Code hooks-settings JSON that wires in the warden.
 
-    Usage: ``claude --settings "$(daisugi gate settings)"`` for audit mode,
+    Usage: ``claude --settings "$(daisugi warden settings)"`` for audit mode,
     add ``--enforce`` for the one-flag flip to protection. Add ``--session``
     to pin which registered envelope is checked, so a forged payload session
     id cannot select a more permissive one.
     """
-    from opendaisugi.gate import gate_settings_json
+    from opendaisugi.warden import warden_settings_json
 
     typer.echo(
-        gate_settings_json(
+        warden_settings_json(
             mode="enforce" if enforce else "audit",
             root=root,
             fmt=fmt,
@@ -1361,16 +1518,16 @@ def gate_settings_cmd(
     )
 
 
-@gate_app.command("audit")
-def gate_audit_cmd(
+@warden_app.command("audit")
+def warden_audit_cmd(
     as_json: bool = typer.Option(False, "--json", help="Emit the full report as JSON."),
 ) -> None:
     """Run the deterministic adversarial corpus and report both error rates.
 
-    The same suite that gates merges (`tests/test_adversarial.py`), runnable
+    The same suite that checks merges (`tests/test_adversarial.py`), runnable
     by anyone: attack-denial rate, false-positive rate (with the known,
     budgeted FPs called out), per-category breakdown, and the comparison arms
-    (no gate / literal-glob matching / this gate). Exactly reproducible —
+    (no warden / literal-glob matching / this warden). Exactly reproducible —
     the corpus is content-addressed.
     """
     import json as _json
@@ -1403,9 +1560,9 @@ def gate_audit_cmd(
         typer.echo(f"  {arm:16} {m['attack_denial_rate']:.2f} / {m['false_positive_rate']:.2f}")
 
 
-@gate_app.command("serve")
-def gate_serve_cmd(
-    root: Path = _GATE_ROOT_OPT,
+@warden_app.command("serve")
+def warden_serve_cmd(
+    root: Path = _WARDEN_ROOT_OPT,
     captures_root: Path | None = typer.Option(
         None,
         "--captures-root",
@@ -1413,22 +1570,22 @@ def gate_serve_cmd(
         "a request never names one.",
     ),
 ) -> None:
-    """Run the resident gate in the foreground (Ctrl-C to stop).
+    """Run the resident warden in the foreground (Ctrl-C to stop).
 
-    Hooks installed by `daisugi install --gate` try this server first and fall
-    back to a cold in-process gate when it is not running. Verdicts are the
+    Hooks installed by `daisugi install` try this server first and fall
+    back to a cold in-process warden when it is not running. Verdicts are the
     same either way; only latency differs (~0.7 s cold, milliseconds warm).
     """
     import signal
 
-    from opendaisugi.gate_server import SOCK_NAME, GateAlreadyServed, probe, serve
+    from opendaisugi.warden_server import SOCK_NAME, WardenAlreadyServed, probe, serve
 
     sock = root / SOCK_NAME
-    busy = f"gate: a resident gate already answers on {sock}; stop it first"
+    busy = f"warden: a resident warden already answers on {sock}; stop it first"
     if probe(sock) == "live":
         typer.echo(busy, err=True)
         raise typer.Exit(1)
-    typer.echo(f"gate: serving on {sock} (Ctrl-C to stop)", err=True)
+    typer.echo(f"warden: serving on {sock} (Ctrl-C to stop)", err=True)
 
     def _on_sigterm(_signum: int, _frame: object) -> None:
         # Unwinds serve(), which removes the socket on the way out.
@@ -1441,14 +1598,14 @@ def gate_serve_cmd(
         serve(root, captures_root=captures_root)
     except KeyboardInterrupt:
         typer.echo("", err=True)
-    except GateAlreadyServed:
+    except WardenAlreadyServed:
         typer.echo(busy, err=True)
         raise typer.Exit(1) from None
 
 
-@gate_app.command("proposals")
-def gate_proposals_cmd(
-    root: Path = _GATE_ROOT_OPT,
+@warden_app.command("proposals")
+def warden_proposals_cmd(
+    root: Path = _WARDEN_ROOT_OPT,
     as_json: bool = typer.Option(False, "--json", help="Emit proposals as a JSON array."),
 ) -> None:
     """List recorded envelope-edit proposals (`opendaisugi.ask.propose`).
@@ -1691,12 +1848,12 @@ def _check_agent(agent: str) -> None:
 def _echo_resolved(data_dir: Path) -> None:
     """One stderr line that says what daisugi resolved, so no state stays hidden."""
     from opendaisugi import console
-    from opendaisugi.gate import is_disarmed, resolve_gate_mode
     from opendaisugi.llm import resolve_backend
+    from opendaisugi.warden import is_disarmed, resolve_warden_mode
 
-    root = data_dir / "gate"
-    gate = "disarmed" if is_disarmed(root) else resolve_gate_mode(None, root=root)
-    console.note(f"backend: {resolve_backend()} · gate: {gate} · data: {_tilde(data_dir)}")
+    root = data_dir / "warden"
+    warden = "disarmed" if is_disarmed(root) else resolve_warden_mode(None, root=root)
+    console.note(f"backend: {resolve_backend()} · warden: {warden} · data: {_tilde(data_dir)}")
 
 
 voice_app = typer.Typer(
@@ -2229,9 +2386,9 @@ def gardener_watch_cmd(
     """Cron-friendly one-shot gardener. Skips if last run is within --min-interval.
 
     Designed to be invoked by cron/systemd-timer every few minutes — the
-    --min-interval gate prevents running more often than desired regardless
+    --min-interval check prevents running more often than desired regardless
     of scheduler granularity. Writes a timestamp file to --data-dir so the
-    gate survives restarts.
+    warden survives restarts.
     """
     import time
 
@@ -2995,10 +3152,14 @@ def onboard_cmd(
         # The harness id doubles as the parser format name (claude-code, ...).
         # A --dry-run must make ZERO model calls (it is "discover + report only").
         # The parser's LLM episode-splitter fires for any episode over max_tools
-        # and runs before the dry-run gate, so lift the cap above any real episode
+        # and runs before the dry-run check, so lift the cap above any real episode
         # in dry-run to disable it — otherwise a "free" preview silently bills the
         # user for `claude -p` splitting calls across every large transcript.
         effective_max_tools = 10**9 if dry_run else max_tools
+        if t.harness not in _ONBOARD_HARNESSES:
+            # pi and OpenCode parse through `journal parse --format`; onboard does
+            # not discover their session trees yet.
+            return None
         try:
             parser = get_parser(
                 t.harness,
@@ -3142,7 +3303,7 @@ def route_cmd(
         False,
         "--knn",
         help="Also show the knn router's choice and its nearest past turns "
-        "(reads <data-dir>/gateway/routing.db).",
+        "(reads <data-dir>/router/routing.db).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
@@ -3208,11 +3369,11 @@ def _route_feedback(data_dir: Path, rest: list[str], json_output: bool) -> None:
     turn_id, outcome = rest
     if outcome not in (GOOD, BAD):
         raise typer.BadParameter(f"the outcome must be good or bad, not {outcome!r}")
-    store = OutcomeStore(data_dir / "gateway" / "routing.db")
+    store = OutcomeStore(data_dir / "router" / "routing.db")
     if not store.set_outcome(turn_id, outcome):
         _fail(
             f"no booked turn {turn_id!r}.",
-            "the knn router books turns in <data-dir>/gateway/routing.db.",
+            "the knn router books turns in <data-dir>/router/routing.db.",
             "see the turn ids with: daisugi router status",
             code=1,
         )
@@ -3222,8 +3383,8 @@ def _route_feedback(data_dir: Path, rest: list[str], json_output: bool) -> None:
         typer.echo(f"turn {turn_id}: outcome set to {outcome}")
 
 
-@app.command("gateway", hidden=True)
-def gateway_cmd(
+@router_app.command("serve")
+def router_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
     port: int = typer.Option(8787, "--port", help="Bind port."),
     upstream: str = typer.Option(
@@ -3241,9 +3402,9 @@ def gateway_cmd(
     capture_answers: bool = typer.Option(
         False,
         "--capture-answers/--no-capture-answers",
-        help="Persist each turn's raw response text to <data-dir>/gateway/answers.jsonl (a "
-        "bounded ring) for freshness-gated reuse. Opt-in and off by default — this is the "
-        "one place the gateway retains response content, so leave it off unless you want "
+        help="Persist each turn's raw response text to <data-dir>/router/answers.jsonl (a "
+        "bounded ring) for freshness-checked reuse. Opt-in and off by default — this is the "
+        "one place the router retains response content, so leave it off unless you want "
         "that reuse.",
     ),
     local_model: str = typer.Option(
@@ -3251,7 +3412,7 @@ def gateway_cmd(
         "--local-model",
         help="A qualified local model id (ADR-0015): easy turns take this rung ahead of "
         "any cloud downgrade — zero quota, and cache stickiness never blocks it. "
-        "Defaults to gateway_local_model from config.yaml.",
+        "Defaults to router_local_model from config.yaml.",
     ),
     openai_upstream: str = typer.Option(
         "https://api.openai.com",
@@ -3273,31 +3434,31 @@ def gateway_cmd(
         "the kind `daisugi tiers setup --remote` recorded for the host, but only when "
         "--upstream still points at that same recorded host. Any other --upstream, the default real "
         "Anthropic API included, defaults to anthropic. A non-anthropic kind makes the "
-        "gateway answer Claude Code's count_tokens preflight itself instead of forwarding "
+        "router answer Claude Code's count_tokens preflight itself instead of forwarding "
         "it. Most self-hosted servers do not implement that route.",
     ),
-    router: str = typer.Option(
+    routing_mode: str = typer.Option(
         None,
-        "--router",
+        "--routing-mode",
         help="Who picks the model for each turn: rules, the built-in heuristic; "
         "switchyard, NVIDIA NeMo Switchyard started as a managed child on loopback, which "
         "replaces --upstream; knn, which learns from the outcomes of similar past turns; "
-        "model, where gateway_router_model picks from the allowed names; "
+        "model, where routing_model picks from the allowed names; "
         "or off, which forwards each turn unchanged and only meters "
-        "it. Defaults to gateway_router in config.yaml.",
+        "it. Defaults to routing_mode in config.yaml.",
     ),
     switchyard_config: Path = typer.Option(
         None,
         "--switchyard-config",
-        help="Your own Switchyard TOML file. The gateway leaves it as it is and reads the "
-        "two tiers of the route switchyard_route_id from it. Without it, the gateway "
+        help="Your own Switchyard TOML file. The router leaves it as it is and reads the "
+        "two tiers of the route switchyard_route_id from it. Without it, the router "
         "writes <data-dir>/switchyard.toml from config.yaml on each start.",
     ),
     switchyard_port: int = typer.Option(
         4000, "--switchyard-port", help="The loopback port of the managed switchyard-server."
     ),
 ) -> None:
-    """Run the token-saving gateway: a local proxy any harness points at via base_url.
+    """Run the token-saving router: a local proxy any harness points at via base_url.
 
     It forwards each whole agent turn to the provider, first routing an easy turn onto the
     cheap model (never overriding a hard turn) and journalling what that saved. It fails open
@@ -3314,41 +3475,41 @@ def gateway_cmd(
     outranks the file for the life of the process. The OpenAI wire does not reload; its
     cheap model is the --openai-cheap-model flag.
 
-    With --router switchyard the gateway starts switchyard-server on loopback,
+    With --routing-mode switchyard the router starts switchyard-server on loopback,
     sends each Anthropic-wire turn to its route, and journals the target that
-    served it. It stops the child when it exits. The router choice is read
-    once at start; a change to gateway_router needs a restart.
+    served it. It stops the child when it exits. The routing mode is read
+    once at start; a change to routing_mode needs a restart.
     """
     from opendaisugi.config import load_config
-    from opendaisugi.gateway_asgi import serve_gateway
     from opendaisugi.model_host import UPSTREAM_KINDS, upstream_kind_for_recorded_host
+    from opendaisugi.router_asgi import serve_router
 
-    if router is None:
-        router = load_config(data_dir / "config.yaml").gateway_router
-    if router not in _ROUTERS:
+    if routing_mode is None:
+        routing_mode = load_config(data_dir / "config.yaml").routing_mode
+    if routing_mode not in _ROUTING_MODES:
         _fail(
-            f"unknown --router {router!r}.",
-            "the gateway knows five choosers.",
-            f"choose one of: {', '.join(_ROUTERS)}",
+            f"unknown --routing-mode {routing_mode!r}.",
+            "the router knows five choosers.",
+            f"choose one of: {', '.join(_ROUTING_MODES)}",
             code=1,
         )
 
-    # The flag stays None here so the file rung stays live: serve_gateway
-    # re-reads gateway_local_model on every config change, and a flag given
+    # The flag stays None here so the file rung stays live: serve_router
+    # re-reads router_local_model on every config change, and a flag given
     # here outranks the file for the life of the process.
     cfg_models = load_config(data_dir / "config.yaml")
-    shown_local_model = local_model or cfg_models.gateway_local_model
+    shown_local_model = local_model or cfg_models.router_local_model
     if upstream_kind is not None and upstream_kind not in UPSTREAM_KINDS:
         _fail(
             f"unknown --upstream-kind {upstream_kind!r}.",
-            "the gateway only knows the wires it can shim count_tokens for.",
+            "the router only knows the wires it can shim count_tokens for.",
             f"choose one of: {', '.join(UPSTREAM_KINDS)}",
             code=1,
         )
     if upstream_kind is None:
         # Trust the recorded kind only when --upstream names that same host.
         # A stale recording plus the default, the real Anthropic API, must
-        # never make this gateway shim a real, working count_tokens call.
+        # never make this router shim a real, working count_tokens call.
         # A recorded host is self-hosted whatever wire it speaks, so its
         # kind maps onto the shim's vocabulary and never onto "anthropic".
         cfg = load_config()
@@ -3359,34 +3520,34 @@ def gateway_cmd(
             and upstream.rstrip("/") == cfg.llm_base_url.rstrip("/")
             else "anthropic"
         )
-    router_mode = {
+    pipeline_mode = {
         "rules": "rules",
         "switchyard": "external",
         "knn": "knn",
         "model": "model",
         "off": "off",
-    }[router]
+    }[routing_mode]
     external = None
     switchyard_child = None
-    if router == "switchyard":
-        external, upstream, switchyard_child = _start_switchyard_for_gateway(
+    if routing_mode == "switchyard":
+        external, upstream, switchyard_child = _start_switchyard_for_router(
             data_dir, switchyard_config, switchyard_port
         )
         # Switchyard serves /v1/messages/count_tokens through the route, so
-        # the gateway forwards it instead of answering it.
+        # the router forwards it instead of answering it.
         upstream_kind = "anthropic"
-    typer.echo(f"opendaisugi gateway  →  {upstream}")
-    typer.echo(f"  router: {router}")
-    if shown_local_model and router == "rules":
+    typer.echo(f"opendaisugi router  →  {upstream}")
+    typer.echo(f"  routing mode: {routing_mode}")
+    if shown_local_model and routing_mode == "rules":
         typer.echo(f"  local rung: easy turns go to {shown_local_model}")
-    if router == "knn":
-        typer.echo(f"  knn outcomes: {data_dir}/gateway/routing.db")
-    if router == "model":
-        typer.echo(f"  router model: {cfg_models.gateway_router_model or 'not set'}")
-        typer.echo(f"  outcomes: {data_dir}/gateway/routing.db")
-    if cfg_models.gateway_grader not in (None, "", "off"):
-        typer.echo(f"  grader: {cfg_models.gateway_grader}")
-    typer.echo(f"  listening on http://{host}:{port}  (journal: {data_dir}/gateway/turns.jsonl)")
+    if routing_mode == "knn":
+        typer.echo(f"  knn outcomes: {data_dir}/router/routing.db")
+    if routing_mode == "model":
+        typer.echo(f"  routing model: {cfg_models.routing_model or 'not set'}")
+        typer.echo(f"  outcomes: {data_dir}/router/routing.db")
+    if cfg_models.router_grader not in (None, "", "off"):
+        typer.echo(f"  grader: {cfg_models.router_grader}")
+    typer.echo(f"  listening on http://{host}:{port}  (journal: {data_dir}/router/turns.jsonl)")
     typer.echo(
         f"  config reload: on change to {data_dir}/config.yaml, on SIGHUP, "
         f"or POST http://{host}:{port}/_reload from this machine"
@@ -3398,10 +3559,10 @@ def gateway_cmd(
             f"(easy turns → {openai_cheap_model})"
         )
     if capture_answers:
-        typer.echo(f"  capturing answers to:      {data_dir}/gateway/answers.jsonl")
+        typer.echo(f"  capturing answers to:      {data_dir}/router/answers.jsonl")
     stop_child = _switchyard_cleanup(switchyard_child)
     try:
-        serve_gateway(
+        serve_router(
             host=host,
             port=port,
             upstream_base_url=upstream,
@@ -3412,7 +3573,7 @@ def gateway_cmd(
             capture_answers=capture_answers,
             openai_upstream_base_url=openai_upstream,
             openai_cheap_model=openai_cheap_model or None,
-            router_mode=router_mode,
+            routing_mode=pipeline_mode,
             external=external,
         )
     finally:
@@ -3420,7 +3581,7 @@ def gateway_cmd(
 
 
 def _switchyard_cleanup(switchyard_child):
-    """The gateway's exit cleanup for its Switchyard child: stop the child
+    """The router's exit cleanup for its Switchyard child: stop the child
     and remove its state file, once. It runs on a normal exit, and from a
     SIGTERM handler that then ends the process by SIGTERM as before.
     uvicorn keeps SIGTERM while it serves, drains, puts this handler back
@@ -3439,7 +3600,7 @@ def _switchyard_cleanup(switchyard_child):
         if previous and previous[0] is not None:
             with contextlib.suppress(ValueError):
                 signal.signal(signal.SIGTERM, previous[0])
-        from opendaisugi.router_switchyard import stop_own_child
+        from opendaisugi.routing_switchyard import stop_own_child
 
         handle, state_path = switchyard_child
         typer.echo(f"  switchyard: {stop_own_child(handle, state_path, wait_s=5.0)}")
@@ -3456,20 +3617,20 @@ def _switchyard_cleanup(switchyard_child):
     return stop_child
 
 
-_ROUTERS = ("rules", "switchyard", "knn", "model", "off")
+_ROUTING_MODES = ("rules", "switchyard", "knn", "model", "off")
 
 
-def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port: int):
-    """Start the managed child for `daisugi gateway --router switchyard`.
+def _start_switchyard_for_router(data_dir: Path, own_config: Path | None, port: int):
+    """Start the managed child for `daisugi router serve --routing-mode switchyard`.
 
     Returns (ExternalRouterConfig, upstream URL, (handle, state file path)). Every
     failure exits: a missing binary or a child that will not answer with 3,
-    a config it cannot meter with 1. The gateway never runs in switchyard
+    a config it cannot meter with 1. The router never runs in switchyard
     mode without a healthy child and a target pair to meter by.
     """
     from opendaisugi.config import load_config
-    from opendaisugi.gateway_pipeline import ExternalRouterConfig
-    from opendaisugi.router_switchyard import (
+    from opendaisugi.router_pipeline import ExternalRouterConfig
+    from opendaisugi.routing_switchyard import (
         SwitchyardConfigError,
         check_prerequisite,
         child_files_for,
@@ -3491,7 +3652,7 @@ def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port:
     cfg = load_config(data_dir / "config.yaml")
     prices: dict[str, tuple[float, float]] = {}
     # The child loads its own per-port copy, so a later install or another
-    # gateway cannot change what it runs or who it bills.
+    # router cannot change what it runs or who it bills.
     files = child_files_for(data_dir, port)
     copy_name = files["config"].name
     if own_config is not None:
@@ -3500,7 +3661,7 @@ def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port:
         except (OSError, UnicodeDecodeError) as exc:
             _fail(
                 f"cannot read {own_config}: {exc}",
-                "the gateway copies your Switchyard config before it starts the child.",
+                "the router copies your Switchyard config before it starts the child.",
                 "check the path you gave to --switchyard-config.",
                 code=1,
             )
@@ -3512,7 +3673,7 @@ def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port:
             _fail(
                 "no efficient model is set for Switchyard.",
                 "the stage router needs a cheaper tier to choose.",
-                "run: daisugi install --gateway --router switchyard --efficient-model <id>",
+                "run: daisugi install --router --routing-mode switchyard --efficient-model <id>",
                 code=1,
             )
         try:
@@ -3534,7 +3695,7 @@ def _start_switchyard_for_gateway(data_dir: Path, own_config: Path | None, port:
     except SwitchyardConfigError as exc:
         _fail(
             f"cannot meter this Switchyard config: {exc}",
-            "the gateway books each turn by the two tiers of the route it sends.",
+            "the router books each turn by the two tiers of the route it sends.",
             "name a stage_router route with id switchyard_route_id, or pass a "
             "--switchyard-config that has one.",
             code=1,
@@ -3574,13 +3735,13 @@ def distill_repeats_cmd(
     data_dir: Path = typer.Option(
         DEFAULT_DATA_DIR,
         "--data-dir",
-        help="Daisugi data directory (reads <data-dir>/gateway/turns.jsonl).",
+        help="Daisugi data directory (reads <data-dir>/router/turns.jsonl).",
     ),
     top: int = typer.Option(20, "--top", help="Maximum number of rows to print."),
 ) -> None:
-    """Rank repeated gateway asks into a reuse worklist — the frontier spend, ranked.
+    """Rank repeated router asks into a reuse worklist — the frontier spend, ranked.
 
-    Reads the gateway turn journal, clusters repeated asks by embedding similarity
+    Reads the router turn journal, clusters repeated asks by embedding similarity
     (paraphrases included), and prints the clusters ranked by the frontier tokens
     they've collectively cost — the biggest, most-repeated asks are exactly the
     ones worth turning into a reusable pathway first. Tokens first, dollars
@@ -3588,14 +3749,14 @@ def distill_repeats_cmd(
     does one read-only pathway-store lookup to flag a repeat that's already
     reusable. It never mints a pathway.
     """
-    from opendaisugi.gateway_distill import rank_reuse_candidates
-    from opendaisugi.gateway_journal import GatewayJournal
     from opendaisugi.pathway_store import PathwayStore
+    from opendaisugi.router_distill import rank_reuse_candidates
+    from opendaisugi.router_journal import RouterJournal
 
-    journal_path = data_dir / "gateway" / "turns.jsonl"
-    records = GatewayJournal(path=journal_path).load()
+    journal_path = data_dir / "router" / "turns.jsonl"
+    records = RouterJournal(path=journal_path).load()
     if not records:
-        typer.echo("no turns recorded yet — run `daisugi gateway` to start journaling.")
+        typer.echo("no turns recorded yet — run `daisugi router serve` to start journaling.")
         return
 
     db = data_dir / "pathways.db"
@@ -3623,34 +3784,34 @@ def distill_repeats_cmd(
         )
 
 
-@app.command("gateway-report", hidden=True)
-def gateway_report_cmd(
+@router_app.command("report")
+def router_report_cmd(
     data_dir: Path = typer.Option(
         DEFAULT_DATA_DIR,
         "--data-dir",
-        help="Daisugi data directory (reads <data-dir>/gateway/turns.jsonl).",
+        help="Daisugi data directory (reads <data-dir>/router/turns.jsonl).",
     ),
 ) -> None:
-    """Calibrate the gateway on a real recorded day: realized routing + potential reuse.
+    """Calibrate the router on a real recorded day: realized routing + potential reuse.
 
-    Reads the gateway turn journal and prints three clearly-separated sections: what
+    Reads the router turn journal and prints three clearly-separated sections: what
     routing has ALREADY saved (measured, straight off the journal), what repeat-driven
     reuse COULD additionally save (a ceiling — every repeat-after-the-first served from a
     perfect, fresh cache, which nothing here does yet), and the two combined. Tokens
     first, dollars alongside. LLM-free except for the same one embed call
     `distill-repeats` uses to cluster repeats (requires the [search] extra).
     """
-    from opendaisugi.gateway_journal import GatewayJournal
-    from opendaisugi.gateway_report import (
+    from opendaisugi.router_journal import RouterJournal
+    from opendaisugi.router_report import (
         build_report,
         build_target_share_table,
         format_target_share_table,
     )
 
-    journal_path = data_dir / "gateway" / "turns.jsonl"
-    records = GatewayJournal(path=journal_path).load()
+    journal_path = data_dir / "router" / "turns.jsonl"
+    records = RouterJournal(path=journal_path).load()
     if not records:
-        typer.echo("no turns recorded yet — run `daisugi gateway` to start journaling.")
+        typer.echo("no turns recorded yet — run `daisugi router serve` to start journaling.")
         return
 
     # The share table needs no embedder, so it prints before the reuse
@@ -3701,20 +3862,20 @@ def router_status_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
 ) -> None:
-    """Show the router choice, the Switchyard binary, each running child, and recent turns.
+    """Show the routing mode, the Switchyard binary, each running child, and recent turns.
 
-    Each child is read from its own state file, <data-dir>/gateway/switchyard-PORT.json.
+    Each child is read from its own state file, <data-dir>/router/switchyard-PORT.json.
     A child whose pid is gone, or is no longer switchyard-server, is shown
     as a stale state file. Health is probed on the host and port each running
-    child uses. Who pays is the record the gateway wrote at start, from the
+    child uses. Who pays is the record the router wrote at start, from the
     per-port config copy that child loaded. Recent turns
-    and target shares come from the gateway's own turn journal.
+    and target shares come from the router's own turn journal.
     """
-    from opendaisugi import router_report
-    from opendaisugi import router_switchyard as sy
+    from opendaisugi import router_status
+    from opendaisugi import routing_switchyard as sy
     from opendaisugi.config import load_config
-    from opendaisugi.gateway_journal import GatewayJournal
-    from opendaisugi.gateway_report import build_target_share_table, format_target_share_table
+    from opendaisugi.router_journal import RouterJournal
+    from opendaisugi.router_report import build_target_share_table, format_target_share_table
 
     cfg = load_config(data_dir / "config.yaml")
     binary = sy.locate_binary()
@@ -3742,24 +3903,24 @@ def router_status_cmd(
         )
     targets = sy.targets_from_config(cfg)
     next_auth = sy.client_auth_modes(targets) if targets else None
-    records = GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").load()
+    records = RouterJournal(path=data_dir / "router" / "turns.jsonl").load()
     recent = [r for r in records if r.tier == "tier-switchyard"][-10:]
     share = build_target_share_table(records)
-    weeks = router_report.weekly(data_dir)
-    delegate_state = router_report.delegate_state(data_dir)
-    trial = router_report.trial_state(data_dir)
+    weeks = router_status.weekly(data_dir)
+    spawn_state = router_status.spawn_state(data_dir)
+    trial = router_status.trial_state(data_dir)
     knn_state = None
-    if cfg.gateway_router in ("knn", "model"):
+    if cfg.routing_mode in ("knn", "model"):
         from opendaisugi.route_knn import OutcomeStore, outcome_summary
 
-        knn_state = outcome_summary(OutcomeStore(data_dir / "gateway" / "routing.db"))
+        knn_state = outcome_summary(OutcomeStore(data_dir / "router" / "routing.db"))
 
     if json_output:
         typer.echo(
             json.dumps(
                 {
                     **({"knn": knn_state} if knn_state is not None else {}),
-                    "router": cfg.gateway_router,
+                    "routing_mode": cfg.routing_mode,
                     "binary": binary,
                     "version": version,
                     "children": children,
@@ -3772,20 +3933,20 @@ def router_status_cmd(
                     ],
                     "weeks": weeks,
                     "escalation_built": False,
-                    "delegate": delegate_state,
+                    "spawn": spawn_state,
                     "trial": trial,
                 }
             )
         )
         return
 
-    typer.echo(f"configured router: {cfg.gateway_router}")
+    typer.echo(f"configured routing mode: {cfg.routing_mode}")
     typer.echo(f"  binary:  {binary or 'not found. Install it with: ' + sy.INSTALL_CMD}")
     if version:
         typer.echo(f"  version: {version}")
     live = [c for c in children if c["running"]]
     if live:
-        typer.echo("running router: switchyard")
+        typer.echo("running routing mode: switchyard")
     for child in children:
         if not child["running"]:
             typer.echo(
@@ -3805,7 +3966,9 @@ def router_status_cmd(
         else:
             typer.echo("    auth: not recorded at start")
     if not live:
-        typer.echo("  child:   not running. Start it with: daisugi gateway --router switchyard")
+        typer.echo(
+            "  child:   not running. Start it with: daisugi router serve --routing-mode switchyard"
+        )
         if next_auth:
             typer.echo(f"  capable auth at next start:   {next_auth['capable']}")
             typer.echo(f"  efficient auth at next start: {next_auth['efficient']}")
@@ -3835,17 +3998,17 @@ def router_status_cmd(
     if not weeks:
         typer.echo("  no turns and no delegations recorded")
     for w in weeks:
-        typer.echo(f"  {router_report.week_line(w)}")
-    for line in router_report.delegate_lines(delegate_state):
+        typer.echo(f"  {router_status.week_line(w)}")
+    for line in router_status.spawn_lines(spawn_state):
         typer.echo(line)
     if trial is not None:
-        for line in router_report.trial_lines(trial):
+        for line in router_status.trial_lines(trial):
             typer.echo(line)
 
 
 @router_app.command("label")
 def router_label_cmd(
-    session: str = typer.Argument(..., help="The gate's session id."),
+    session: str = typer.Argument(..., help="The warden's session id."),
     outcome: str = typer.Argument(..., help="pass or fail."),
     note: str | None = typer.Option(None, "--note", help="Why, in a few words."),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
@@ -3853,30 +4016,30 @@ def router_label_cmd(
 ) -> None:
     """Record whether a session's task succeeded: the outcome a graft trial
     counts. The last label of a session wins. The operator's command: the
-    gate denies an agent that runs it.
+    warden denies an agent that runs it.
     """
-    from opendaisugi import router_report
+    from opendaisugi import router_status
 
-    if outcome not in router_report.OUTCOMES:
+    if outcome not in router_status.OUTCOMES:
         typer.echo("Error: OUTCOME must be pass or fail.", err=True)
         raise typer.Exit(code=2)
-    if not router_report.session_ok(session):
+    if not router_status.session_ok(session):
         typer.echo(
-            "Error: SESSION must be a session id as the gate names it: 1 to 128 of "
+            "Error: SESSION must be a session id as the warden names it: 1 to 128 of "
             "A-Z a-z 0-9 . _ -, with no dot at either end.",
             err=True,
         )
         raise typer.Exit(code=2)
-    if note is not None and len(note) > router_report.MAX_NOTE_CHARS:
+    if note is not None and len(note) > router_status.MAX_NOTE_CHARS:
         typer.echo(
-            f"Error: --note must be at most {router_report.MAX_NOTE_CHARS} characters.", err=True
+            f"Error: --note must be at most {router_status.MAX_NOTE_CHARS} characters.", err=True
         )
         raise typer.Exit(code=2)
     try:
-        row = router_report.write_label(data_dir, session, outcome, note)
+        row = router_status.write_label(data_dir, session, outcome, note)
     except OSError:
         typer.echo(
-            f"Error: the label could not be written to {router_report.labels_path(data_dir)}.",
+            f"Error: the label could not be written to {router_status.labels_path(data_dir)}.",
             err=True,
         )
         raise typer.Exit(code=1) from None
@@ -3890,13 +4053,13 @@ def router_label_cmd(
 def router_stop_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
 ) -> None:
-    """Stop every switchyard-server that a gateway started and left running.
+    """Stop every switchyard-server that a router started and left running.
 
-    A gateway stops its own child when it exits, and on Linux the kernel stops
-    the child when its gateway is killed. Use this for what is left. A pid
+    A router stops its own child when it exits, and on Linux the kernel stops
+    the child when its router is killed. Use this for what is left. A pid
     gets a signal only when its command line still names switchyard-server.
     """
-    from opendaisugi.router_switchyard import list_states, stop_switchyard
+    from opendaisugi.routing_switchyard import list_states, stop_switchyard
 
     states = list_states(data_dir)
     if not states:
@@ -3931,15 +4094,15 @@ def graft_install_cmd(
         None, "--seed", help="With --state trial: the seed that splits sessions (default 0)."
     ),
 ) -> None:
-    """Write the large-read graft rule into <data-dir>/gate/grafts.
+    """Write the large-read graft rule into <data-dir>/warden/grafts.
 
     Refuses, and writes nothing, when a harness settings file holds a
-    PreToolUse hook that is not the gate or the capture hook: such a hook may
-    rewrite a tool's input after the gate saw it. The gate is not changed.
+    PreToolUse hook that is not the warden or the capture hook: such a hook may
+    rewrite a tool's input after the warden saw it. The warden is not changed.
     """
     from opendaisugi import graft_install
     from opendaisugi._state_files import StateWriteRefused
-    from opendaisugi.delegate import MAX_SEED
+    from opendaisugi.spawn import MAX_SEED
 
     _graft_id_ok(rule_id)
     if state not in graft_install.STATES:
@@ -3956,7 +4119,7 @@ def graft_install_cmd(
         raise typer.Exit(code=2)
     try:
         got = graft_install.install(
-            data_dir / "gate",
+            data_dir / "warden",
             home=Path.home(),
             cwd=Path.cwd(),
             rule_id=rule_id,
@@ -3986,7 +4149,7 @@ def graft_status_cmd(
     """Show the graft rule files, the one in force, and any rival PreToolUse hook."""
     from opendaisugi import graft_install
 
-    doc = graft_install.status(data_dir / "gate", home=Path.home(), cwd=Path.cwd())
+    doc = graft_install.status(data_dir / "warden", home=Path.home(), cwd=Path.cwd())
     if json_output:
         typer.echo(json.dumps(doc, indent=2))
         return
@@ -3998,13 +4161,13 @@ def graft_remove_cmd(
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     rule_id: str = typer.Option("big-read", "--id", help="The rule's id and file name."),
 ) -> None:
-    """Remove a graft rule file. The gate is not changed."""
+    """Remove a graft rule file. The warden is not changed."""
     from opendaisugi import graft_install
     from opendaisugi._state_files import StateWriteRefused
 
     _graft_id_ok(rule_id)
     try:
-        removed, path = graft_install.remove(data_dir / "gate", rule_id)
+        removed, path = graft_install.remove(data_dir / "warden", rule_id)
     except StateWriteRefused as exc:
         typer.echo(f"not removed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -4041,14 +4204,21 @@ def _rank_fit(r: Any, data_dir: Path) -> dict[str, Any]:
 
     warnings: list[str] = []
     comps = None
-    if r.comparisons is None:
+    if not r.comparisons:  # none, or an empty list: the journal supplies the votes
         comps, bad = rank.journal_comparisons(data_dir, r.ranking_id)
         if bad:
             warnings.append(f"{bad} rows of the comparison journal did not read; skipped")
     owner = None
     if r.owner is None:
         owner = rank.owner_answers(data_dir, r.ranking_id, {a.id: a for a in r.attempts}, warnings)
-    return rank.fit(r, comparisons=comps, owner=owner, warnings=warnings)
+    weights = None
+    if comps is not None:
+        # The journal supplies the votes: each judge weighs by its record (W3K-2).
+        judges = sorted({*r.policy.judges, *(c.judge for c in comps)})
+        if judges:
+            seed = rank.seed_of(r, comps, owner if owner is not None else r.owner or [])
+            weights, _ = rank.weights_for(data_dir, judges, seed)
+    return rank.fit(r, comparisons=comps, owner=owner, warnings=warnings, weights=weights)
 
 
 @rank_app.command("fit")
@@ -4116,6 +4286,142 @@ def rank_choose_cmd(
     raise typer.Exit(code=rank.EXIT[res["status"]])
 
 
+@rank_app.command("show")
+def rank_show_cmd(
+    ranking: str | None = typer.Option(None, "--ranking", help="A ranking id."),
+    choice: str | None = typer.Option(None, "--choice", help="A choice id."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show a ranking as the journal holds it: votes, choices, card, owner answers.
+
+    Reads only. Exit codes: 0 shown, 1 not found, 2 bad selectors.
+    """
+    from opendaisugi import rank
+
+    if (ranking is None) == (choice is None):
+        typer.echo("Error: Give --ranking or --choice, not both.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        doc = rank.show_doc(data_dir, ranking_id=ranking, choice_id=choice, now=rank.now())
+    except rank.RankError as e:
+        typer.echo(str(e))
+        raise typer.Exit(code=1) from e
+    if json_output:
+        typer.echo(json.dumps(doc, indent=2))
+    else:
+        typer.echo(rank.show_text(doc), nl=False)
+
+
+@rank_app.command("judge")
+def rank_judge_cmd(
+    attempts_path: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the attempts JSON."
+    ),
+    judge: str | None = typer.Option(None, "--judge", help="PROFILE/MODEL to ask."),
+    loop: bool = typer.Option(False, "--loop", help="Repeat until the judges are exhausted."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Ask a judge model to compare the next pair, in both orders, and record the vote.
+
+    A reply that is not A, B or tie, and any call error, records no vote.
+    Exit codes: 0 a comparison was recorded, 1 a call failed, 2 bad input,
+    3 nothing to judge.
+    """
+    from opendaisugi import rank, rank_judge
+
+    r = _rank_read(attempts_path)  # checks the file first; exit 2 on bad input
+    doc = json.loads(attempts_path.read_bytes().decode("utf-8"))
+    if judge is None and not r.policy.judges:
+        typer.echo("policy.judges names no judge.", err=True)
+        raise typer.Exit(code=3)
+    profiles = rank_judge.load_profiles()
+    recorded = 0
+    last: dict[str, Any] = {}
+    while True:
+        last = rank_judge.judge_once(
+            doc, data_dir, profiles=profiles, env=dict(os.environ), judge=judge, now=rank.now()
+        )
+        if not last["recorded"]:
+            break
+        recorded += 1
+        if not loop or last["fit"]["next"] is None:
+            break
+    fit = last["fit"]
+    stop = last["reason"] if not last["recorded"] else (fit or {}).get("stop")
+    out = {
+        "recorded": recorded,
+        "stop": stop,
+        "why": last["why"],
+        "last": {k: last[k] for k in ("pair", "judge", "outcomes")},
+        "fit": fit,
+    }
+    if json_output:
+        typer.echo(json.dumps(out, indent=2))
+    else:
+        typer.echo(f"Recorded {recorded} comparison(s). {last['why']}")
+    if recorded:
+        raise typer.Exit(code=0)
+    raise typer.Exit(code=1 if last.get("reason") == "failed" else 3)
+
+
+@rank_app.command("judges")
+def rank_judges_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show how far each judge agrees with the owner, and its current weight.
+
+    Reads only. A judge under 0.5 agreement over 5 answered cards is dropped.
+    """
+    from opendaisugi import rank
+
+    trust = rank.judge_trust(data_dir)
+    doc = {"judges": trust, "weights": rank.judge_weights(trust, "")}
+    if json_output:
+        typer.echo(json.dumps(doc, indent=2))
+    else:
+        typer.echo(rank.judges_text(doc), nl=False)
+
+
+@rank_app.command("pivot")
+def rank_pivot_cmd(
+    choice: str = typer.Option(..., "--choice", help="The card's choice id."),
+    to: str = typer.Option(..., "--to", help="The attempt to switch to."),
+    apply: bool = typer.Option(False, "--apply", help="Change the work. Only the owner."),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show what switching a card to another attempt would do; with --apply, do it.
+
+    Undoes only steps the ledger marks reversible, then applies the
+    alternative's patch inside the chosen worktree. When the undo would be
+    dishonest it prints a follow-up task and changes nothing. Exit codes: 0
+    shown or applied, 1 no such choice or not applied, 2 bad attempt.
+    """
+    from opendaisugi import rank, rank_pivot
+
+    card = next((c for c in rank.read_cards(data_dir) if c.id == choice), None)
+    if card is None:
+        typer.echo(f"There is no choice {choice}.")
+        raise typer.Exit(code=1)
+    try:
+        p = rank_pivot.plan(card, data_dir, to)
+    except rank.RankError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=2) from e
+    result = rank_pivot.apply(p, data_dir) if apply else None
+    if json_output:
+        typer.echo(json.dumps({"plan": p, "result": result}, indent=2))
+    else:
+        typer.echo(rank_pivot.plan_text(p), nl=False)
+        if result is not None:
+            typer.echo("Applied." if result["applied"] else f"Not applied: {result['why']}")
+    if result is not None and not result["applied"]:
+        raise typer.Exit(code=1)
+
+
 @rank_app.command("queue")
 def rank_queue_cmd(
     sort: str = typer.Option(
@@ -4140,8 +4446,10 @@ def rank_queue_cmd(
         typer.echo(rank.queue_text(doc), nl=False)
 
 
-def _rank_answer(data_dir: Path, cid: str, pick: str | None, json_output: bool) -> None:
-    from opendaisugi import rank
+def _rank_answer(
+    data_dir: Path, cid: str, pick: str | None, json_output: bool, apply: bool = False
+) -> None:
+    from opendaisugi import rank, rank_pivot
 
     t = rank.now()
     rows = rank.sweep(data_dir, t)
@@ -4192,23 +4500,34 @@ def _rank_answer(data_dir: Path, cid: str, pick: str | None, json_output: bool) 
         "ts": t,
     }
     rank.append_rows(data_dir, [row])
+    pivot = None
+    if apply:
+        pivot = rank_pivot.apply(rank_pivot.plan(card, data_dir, pick), data_dir)
     if json_output:
-        typer.echo(
-            json.dumps(
-                {
-                    "choice_id": cid,
-                    "event": "overridden",
-                    "chosen": chosen,
-                    "pick": pick,
-                    "switch": {k: sc[k] for k in ("cost", "undo_steps", "text")},
-                },
-                indent=2,
-            )
-        )
+        doc = {
+            "choice_id": cid,
+            "event": "overridden",
+            "chosen": chosen,
+            "pick": pick,
+            "switch": {k: sc[k] for k in ("cost", "undo_steps", "text")},
+        }
+        if pivot is not None:
+            doc["pivot"] = pivot
+        typer.echo(json.dumps(doc, indent=2))
     else:
         typer.echo(f"Recorded on {cid}: switch from {chosen} to {pick}.")
         typer.echo(f"What switching will do ({sc['cost']}): {sc['text']}")
-        typer.echo("The pick is recorded; the work is not changed yet.")
+        if pivot is None:
+            typer.echo("The pick is recorded; the work is not changed yet.")
+        elif pivot["applied"]:
+            typer.echo(f"The pick is recorded and applied: undid {len(pivot['undone'])} steps.")
+        else:
+            typer.echo(
+                "The pick is recorded; the work is not changed: "
+                + (pivot.get("follow_up") or pivot.get("why", ""))
+            )
+    if pivot is not None and not pivot["applied"]:
+        raise typer.Exit(code=1)
 
 
 @rank_record_app.command("pick")
@@ -4217,9 +4536,10 @@ def rank_pick_cmd(
     attempt: str = typer.Argument(..., help="The attempt the owner picks."),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+    apply: bool = typer.Option(False, "--apply", help="Then pivot: change the work to the pick."),
 ) -> None:
     """Pick an attempt on a card: the chosen one confirms it, another overrides it."""
-    _rank_answer(data_dir, choice, attempt, json_output)
+    _rank_answer(data_dir, choice, attempt, json_output, apply)
 
 
 @rank_record_app.command("drop")
@@ -4281,13 +4601,13 @@ def _tree_run(fn: Any) -> Any:
 
 
 _TREE_ROOT_OPT = typer.Option(
-    None, "--root", help="Gate state directory (default: the data directory's gate)."
+    None, "--root", help="Warden state directory (default: the data directory's warden)."
 )
 _Z3_EDGE_OPT = typer.Option(2000, "--z3-timeout-ms", help="Z3 budget for each proof, in ms.")
 
 
-def _gate_root_of(root: Path | None, data_dir: Path) -> Path:
-    return root if root is not None else data_dir / "gate"
+def _warden_root_of(root: Path | None, data_dir: Path) -> Path:
+    return root if root is not None else data_dir / "warden"
 
 
 @tree_app.command("check")
@@ -4326,7 +4646,7 @@ def tree_root_cmd(
     env = _tree_envelope(envelope)
     path = _tree_run(
         lambda: tree.make_root(
-            data_dir, _gate_root_of(root, data_dir), env, session, tokens=tokens, turns=turns
+            data_dir, _warden_root_of(root, data_dir), env, session, tokens=tokens, turns=turns
         )
     )
     typer.echo(f"root {session} registered → {path}")
@@ -4355,7 +4675,7 @@ def tree_spawn_cmd(
     res = _tree_run(
         lambda: tree.spawn(
             data_dir,
-            _gate_root_of(root, data_dir),
+            _warden_root_of(root, data_dir),
             env,
             parent=parent,
             session=session,
@@ -4414,6 +4734,15 @@ def tree_run_cmd(
         "--sprig-fence",
         help="Start nothing unless DAISUGI_SPRIG_FENCE names the fence sprig runs under.",
     ),
+    parallel: int | None = typer.Option(
+        None, "--parallel", help="Branches live at once when the request has attempts (default 4)."
+    ),
+    check: list[str] = typer.Option(
+        [], "--check", help="NAME=COMMAND: a hard check run in each branch's worktree."
+    ),
+    judge: str | None = typer.Option(
+        None, "--judge", help="PROFILE/MODEL that judges the branches (another family)."
+    ),
 ) -> None:
     """Start a child of the tree on sprig, wait for it, and end it: the one starter.
 
@@ -4423,10 +4752,15 @@ def tree_run_cmd(
     total. Prints {status, session, answer, tokens_used, turns_used,
     reasons, ask_id}. Exit codes: 0 ran, 1 refused or failed, 3 sent to
     the operator as an ask (nothing starts), 2 bad input.
+
+    With attempts (2 to 8) and why in the request it starts that many
+    children in parallel, each in its own git worktree, ranks the ones that
+    pass their checks, and goes on with the leader (a card opens). The reply
+    adds branches, leader, choice_id and ranking.
     """
     from pydantic import ValidationError
 
-    from opendaisugi import agent_profiles, tree_run
+    from opendaisugi import agent_profiles, tree_branch, tree_run
     from opendaisugi.models import Envelope
 
     what = "Tried to read the tree run request on stdin."
@@ -4454,7 +4788,7 @@ def tree_run_cmd(
                 code=2,
             )
     profiles = agent_profiles.from_bundle(bundle)
-    gate_root = _gate_root_of(root, data_dir)
+    warden_root = _warden_root_of(root, data_dir)
     # DAISUGI_SPRIG_FENCE: the fence prefix sprig starts under (FN-R-25).
     # A value that is not a list of words refuses, and so does a run that
     # coppice marks --sprig-fence with no fence named: never run unfenced
@@ -4485,10 +4819,55 @@ def tree_run_cmd(
             "Set DAISUGI_SPRIG_FENCE to the fence command, as coppice does.",
             code=2,
         )
+    attempts = req.get("attempts")
+    if attempts is not None and attempts != 1:
+        if session is not None:
+            _fail(what, "--session cannot name a child when the request has attempts.", fix, code=2)
+        checks = []
+        for raw in check:
+            name, sep, cmd = raw.partition("=")
+            try:
+                argv = shlex.split(cmd)
+            except ValueError:
+                argv = []
+            if not sep or not name or not argv:
+                _fail(what, f"--check wants NAME=COMMAND, not {raw!r}.", fix, code=2)
+            checks.append({"name": name, "argv": argv, "required": True})
+        run = _tree_run(
+            lambda: tree_branch.run_branches(
+                data_dir,
+                warden_root,
+                parent=parent,
+                envelope=envelope,
+                profiles=profiles,
+                profile_name=profile,
+                model=model,
+                tokens=tokens,
+                turns=turns,
+                parent_tokens_used=parent_tokens_used,
+                parent_turns_used=parent_turns_used,
+                task=req["task"],
+                tools=list(req["tools"]),
+                max_turns=req.get("max_turns"),
+                cwd=os.getcwd(),
+                timeout_s=int(envelope.permissions.max_execution_time_s),
+                sprig_binary=os.environ.get("DAISUGI_SPRIG", "sprig"),
+                environ=dict(os.environ),
+                attempts=attempts,
+                why=req["why"],
+                parallel=parallel,
+                checks=checks,
+                judge=judge,
+                fence=fence,
+                timeout_ms=timeout_ms,
+            )
+        )
+        typer.echo(json.dumps(run.doc()))
+        raise typer.Exit(code=2 if run.usage else {"ran": 0, "asked": 3}.get(run.status, 1))
     node = _tree_run(
         lambda: tree_run.run_node(
             data_dir,
-            gate_root,
+            warden_root,
             parent=parent,
             session=session,
             envelope=envelope,
@@ -4512,6 +4891,51 @@ def tree_run_cmd(
     )
     typer.echo(json.dumps(node.doc()))
     raise typer.Exit(code={"started": 0, "asked": 3}.get(node.status, 1))
+
+
+@tree_app.command("prune-branches")
+def tree_prune_branches_cmd(
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Remove the worktrees of branches whose card is closed or never opened.
+
+    A running branch and a branch of an open card stay.
+    """
+    from opendaisugi import tree_branch
+
+    removed = tree_branch.prune_branches(data_dir)
+    if json_output:
+        typer.echo(json.dumps({"removed": removed}))
+    elif removed:
+        typer.echo("Removed the worktrees of " + ", ".join(removed) + ".")
+    else:
+        typer.echo("No worktree to remove.")
+
+
+@tree_app.command("adopt")
+def tree_adopt_cmd(
+    session: str = typer.Argument(..., help="The branch session whose edits to take."),
+    cwd: str | None = typer.Option(
+        None, "--cwd", help="The tree to apply to. Default: the repository the branch came from."
+    ),
+    data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Apply a branch's edits to your working tree.
+
+    Nothing is copied unless you run this. It refuses, and changes nothing,
+    when a file the edits touch has uncommitted changes or the edits do not
+    apply cleanly.
+    """
+    from opendaisugi import tree_branch
+
+    res = tree_branch.adopt(data_dir, session, cwd=cwd)
+    if json_output:
+        typer.echo(json.dumps(res.doc()))
+    else:
+        typer.echo(res.why)
+    raise typer.Exit(code=2 if res.status == "refused" else 0)
 
 
 @agent_profiles_app.command("list")
@@ -4581,7 +5005,7 @@ def tree_end_cmd(
     node, t = _tree_run(
         lambda: tree.end(
             data_dir,
-            _gate_root_of(root, data_dir),
+            _warden_root_of(root, data_dir),
             session,
             tokens_used=tokens_used,
             turns_used=turns_used,
@@ -4607,7 +5031,7 @@ def tree_answer_cmd(
     from opendaisugi import tree
 
     ask, path = _tree_run(
-        lambda: tree.answer(data_dir, _gate_root_of(root, data_dir), ask_id, verdict)
+        lambda: tree.answer(data_dir, _warden_root_of(root, data_dir), ask_id, verdict)
     )
     if path is None:
         typer.echo(f"denied {ask_id}; {ask['parent']} may propose again.")
@@ -4700,7 +5124,7 @@ def orchestrate_cmd(
         None,
         "--budget",
         "-b",
-        help="Approximate token budget for the run (gates routing during execution). Omit for unbudgeted.",
+        help="Approximate token budget for the run (checks routing during execution). Omit for unbudgeted.",
     ),
     strict_budget: bool = typer.Option(
         False,
@@ -5173,12 +5597,12 @@ def models_pin_cmd(
 @app.command("start", rich_help_panel="Start here")
 def start_cmd(
     enforce: bool = typer.Option(
-        False, "--enforce", help="Install the gate in enforce mode (default: audit)."
+        False, "--enforce", help="Install the warden in enforce mode (default: audit)."
     ),
     ask: bool = typer.Option(
         False,
         "--ask",
-        help="Let the gate hand a would-deny to a present operator instead of denying "
+        help="Let the warden hand a would-deny to a present operator instead of denying "
         "outright. Needs --enforce — audit mode never denies, so there is nothing to ask.",
     ),
     no_ui: bool = typer.Option(False, "--no-ui", help="Do the setup, do not open the view."),
@@ -5187,12 +5611,12 @@ def start_cmd(
     ),
     data_dir: Path = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Daisugi data directory."),
 ) -> None:
-    """Get a gated session over this directory and watch it. One command, four steps.
+    """Get a checked session over this directory and watch it. One command, four steps.
 
-    1. find the harness (Claude Code)  2. install the gate hook, scoped to this
+    1. find the harness (Claude Code)  2. install the warden hook, scoped to this
     directory only — never a machine-global hook (audit by default)
     3. register a starter envelope keyed to this directory  4. start the
-    resident gate, then open the multi-session view. Run it again any time:
+    resident warden, then open the multi-session view. Run it again any time:
     it skips what is already done.
     """
     from opendaisugi import console
@@ -5207,12 +5631,24 @@ def start_cmd(
         )
 
     opts = StartOptions(cwd=Path.cwd(), data_dir=data_dir, enforce=enforce, ask=ask, no_ui=no_ui)
-    steps = plan_start(opts) if dry_run else run_start(opts)
+    from opendaisugi.install import WardenRootError
+
+    try:
+        steps = plan_start(opts) if dry_run else run_start(opts)
+    except WardenRootError as exc:
+        typer.echo(f"daisugi start: {exc}. Nothing was changed.", err=True)
+        raise typer.Exit(code=2)
     width = max(len(s.key) for s in steps)
     for s in steps:
         console.say(f"  {s.key:<{width}}  {s.state:<7}  {s.text}")
     if any(s.state == "failed" for s in steps):
         raise typer.Exit(code=1)
+    if not dry_run:
+        from opendaisugi.fence_notice import LINE as unconfined_line
+        from opendaisugi.fence_notice import unconfined
+
+        if unconfined(data_dir / "warden"):
+            console.note(unconfined_line)
     if dry_run or no_ui:
         return
     view = next(s for s in steps if s.key == "view")
@@ -5245,8 +5681,11 @@ def setup_cmd(
     kind: str = typer.Option(
         "auto",
         "--kind",
-        help="auto | ollama | openai | anthropic. The wire --remote speaks. "
-        "auto probes in order and stops at the first one that answers.",
+        help="auto | ollama | openai | anthropic. The wire the host speaks. "
+        "With --remote, auto probes in order and stops at the first that answers. "
+        "With --endpoint, auto asks the server once whether it is Ollama; ollama and "
+        "openai skip the question. An Ollama host gets reasoning_effort none, so a "
+        "thinking model answers without thinking.",
     ),
     context: int = typer.Option(
         None,
@@ -5271,7 +5710,7 @@ def setup_cmd(
 
     With no --endpoint or --remote: prints the hardware profile, a size-appropriate
     llamafile recommendation, and the commands to get a local server running. With
-    --endpoint and --model: runs the qualification gate against the live model and,
+    --endpoint and --model: runs the qualification check against the live model and,
     with --wire, persists it as Tier-1 only if it clears the pass-rate threshold.
     With --remote: probes a self-hosted model server and records it as the
     operator's model host. That has nothing to do with local hardware sizing, so
@@ -5288,7 +5727,7 @@ def setup_cmd(
         _fail(
             "--endpoint and --remote are mutually exclusive.",
             "--endpoint qualifies a local /v1 server against the envelope-generation "
-            "gate. --remote probes and records a model host for your harness to point at.",
+            "warden. --remote probes and records a model host for your harness to point at.",
             "run one at a time: --endpoint URL --model NAME, or --remote HOST[:PORT].",
             code=1,
         )
@@ -5304,7 +5743,7 @@ def setup_cmd(
             _fail(
                 str(exc),
                 "the remote probe needs an HTTP client.",
-                "run: uv add 'opendaisugi[gateway]'",
+                "run: uv add 'opendaisugi[router]'",
                 code=1,
             )
         except ValueError as exc:
@@ -5340,17 +5779,26 @@ def setup_cmd(
         )
         raise typer.Exit(code=2)
 
+    if endpoint and kind not in ("auto", "ollama", "openai"):
+        typer.echo(
+            f"--kind {kind!r} does not apply to --endpoint: an endpoint speaks the OpenAI "
+            "wire. Use --kind auto, ollama or openai.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     profile = detect_hardware()
     rec = recommend_model(profile)
 
     qual = None
     wired = False
+    host_kind = None
     served_context = None
     if endpoint:
         from opendaisugi.llm import configured_backend_name
         from opendaisugi.local_setup import DEFAULT_PROBE_TASKS, QUALIFY_TIMEOUT_S
-        from opendaisugi.model_host import endpoint_context
-        from opendaisugi.tier1 import HTTPTier1Provider
+        from opendaisugi.model_host import endpoint_context, endpoint_kind
+        from opendaisugi.tier1 import OLLAMA_NO_THINK_EFFORT, HTTPTier1Provider
 
         # An endpoint is an HTTP server. The claude-code backend ignores it, so
         # it must never be chosen here, by auto-detection or by force.
@@ -5362,8 +5810,13 @@ def setup_cmd(
                 err=True,
             )
             raise typer.Exit(code=2)
+        host_kind = endpoint_kind(endpoint) if kind == "auto" else kind
         provider = HTTPTier1Provider(
-            model=model, base_url=endpoint, backend="api", timeout_s=QUALIFY_TIMEOUT_S
+            model=model,
+            base_url=endpoint,
+            backend="api",
+            timeout_s=QUALIFY_TIMEOUT_S,
+            reasoning_effort=OLLAMA_NO_THINK_EFFORT if host_kind == "ollama" else None,
         )
         from opendaisugi import console
 
@@ -5371,6 +5824,11 @@ def setup_cmd(
         console.note(
             f"qualifying {model} at {endpoint}: {total} probes, up to {QUALIFY_TIMEOUT_S:.0f} s each"
         )
+        if host_kind == "ollama":
+            console.note(
+                "  host: ollama, thinking off (reasoning_effort none); "
+                "pass --kind openai to send the request as is"
+            )
 
         def _probe_note(done: int, of: int, outcome: str, reason: str) -> None:
             tail = "" if outcome == "valid" else f": {reason}"
@@ -5383,8 +5841,10 @@ def setup_cmd(
         )
         served_context = endpoint_context(endpoint, model)
         if qual.passed and wire:
-            write_tier1_config(data_dir, model=model, base_url=endpoint)
+            write_tier1_config(data_dir, model=model, base_url=endpoint, host_kind=host_kind)
             wired = True
+
+    runtime = "ollama" if host_kind == "ollama" else rec.runtime
 
     if json_output:
         payload = {
@@ -5402,7 +5862,7 @@ def setup_cmd(
                 "size_class": rec.size_class,
                 "params_b_max": rec.params_b_max,
                 "quant": rec.quant,
-                "runtime": rec.runtime,
+                "runtime": runtime,
                 "est_download_gb": rec.est_download_gb,
                 "candidate_families": rec.candidate_families,
                 "provisional": rec.provisional,
@@ -5418,9 +5878,10 @@ def setup_cmd(
                 "passed": qual.passed,
                 "threshold": qual.threshold,
                 "wired": wired,
+                "host_kind": host_kind,
                 "outcomes": [
                     {"task": task, "outcome": kind, "reason": why}
-                    for (task, kind), why in zip(qual.outcomes, qual.reasons)
+                    for (task, kind), why in zip(qual.outcomes, qual.reasons, strict=False)
                 ],
             }
             if served_context is not None:
@@ -5442,7 +5903,7 @@ def setup_cmd(
     typer.echo("")
     typer.echo(
         f"Recommended: a {rec.size_class}-class instruct model at {rec.quant} "
-        f"via {rec.runtime} (~{rec.est_download_gb}GB)."
+        f"via {runtime} (~{rec.est_download_gb}GB)."
     )
     typer.echo(
         f"  candidate families (your pick, none verified-best): {', '.join(rec.candidate_families)}"
@@ -5473,6 +5934,11 @@ def setup_cmd(
         )
         if served_context is not None:
             typer.echo(f"  Context window: {served_context} tokens (what the server serves).")
+        if host_kind is not None:
+            typer.echo(
+                f"  Host kind: {host_kind}"
+                + (" (thinking off: reasoning_effort none)" if host_kind == "ollama" else "")
+            )
         failure = None if qual.passed else qual.first_failure()
         if failure is not None:
             typer.echo(f"  → First failure ({failure[0]}): {failure[1]}")
@@ -5489,6 +5955,12 @@ def setup_cmd(
                     "  → ALL attempts errored — this is a wiring problem, not model capacity. "
                     "Check the server is reachable at --endpoint and serving /v1, and that "
                     "--model matches the name it serves."
+                )
+            elif qual.all_failures_truncated():
+                typer.echo(
+                    "  → Every failed probe was truncated: the model stops at the token limit "
+                    "before the envelope is complete. Turn thinking off at the server, or "
+                    "raise its output limit, then re-run."
                 )
             else:
                 typer.echo(
@@ -5550,6 +6022,10 @@ def status_cmd(
     from opendaisugi.onboarding import gather_status
 
     rep = gather_status(data_dir, threshold=threshold)
+    from opendaisugi.fence_notice import LINE as unconfined_line
+    from opendaisugi.fence_notice import unconfined
+
+    open_files = unconfined(Path(rep.data_dir) / "warden")
 
     if json_output:
         payload = dict(rep.__dict__)
@@ -5557,6 +6033,8 @@ def status_cmd(
         payload["token_savings_ready"] = rep.token_savings_ready
         payload["trust_ready"] = rep.trust_ready
         payload["shell_decomposition_ready"] = rep.shell_decomposition_ready
+        if open_files:
+            payload["unconfined"] = True
         typer.echo(json.dumps(payload, indent=2))
         return
 
@@ -5586,9 +6064,11 @@ def status_cmd(
         f"({rep.journal_passed} verified, {rep.journal_failed} rejected)"
     )
     typer.echo("  • verification: strict at stakes high/physical (rejects unprovable invariants)")
+    if open_files:
+        typer.echo(f"  • {unconfined_line}")
     typer.echo(
         f"  • dialect would-denies: {rep.word_would_deny_plans} plans in the journal, "
-        f"{rep.word_would_deny_calls} calls in the gate's audit log"
+        f"{rep.word_would_deny_calls} calls in the warden's audit log"
     )
     if not rep.shell_decomposition_enabled:
         typer.echo("  • compound shell (`a && b`): rejected outright (ADR-0010 opt-in is off)")
@@ -5631,12 +6111,12 @@ def config_cmd(
     """Show every setting as daisugi will use it, and where each one came from.
 
     Sources: file (config.yaml in the data directory), default, env, auto (detected),
-    hook (an installed Claude Code gate hook's --mode). After plan 5's `daisugi
+    hook (an installed Claude Code warden hook's --mode). After plan 5's `daisugi
     start`, the winning hook may be a per-directory one, not the machine-global
-    one `daisugi install --gate` writes — this reports BOTH the machine-global
+    one `daisugi install` writes — this reports BOTH the machine-global
     hook (~/.claude/settings.json) and the current directory's
     (./.claude/settings.json) when either or both exist, and the effective
-    `gate_mode (resolved)` is whichever is stricter (both fire; an enforce
+    `warden_mode (resolved)` is whichever is stricter (both fire; an enforce
     anywhere denies), never just one of them read in isolation.
     """
     from opendaisugi.config import resolved_config, unknown_config_keys
@@ -6497,6 +6977,10 @@ def journal_stats_cmd(
         typer.echo(f"avg duration (ms): {stats.avg_duration_ms:.2f}")
 
 
+# The harness ids `daisugi onboard` reads transcripts for.
+_ONBOARD_HARNESSES = frozenset({"claude-code", "codex"})
+
+
 @journal_app.command("parse")
 def journal_parse_cmd(
     transcript: Path = typer.Argument(
@@ -6515,7 +6999,7 @@ def journal_parse_cmd(
     format_name: str = typer.Option(
         "claude-code",
         "--format",
-        help="Parser format (default: claude-code).",
+        help="Parser format: claude-code | codex | pi | opencode (default: claude-code).",
     ),
     min_tools: int = typer.Option(
         3,
@@ -6671,7 +7155,163 @@ def journal_ingest_cmd(
         raise typer.Exit(code=1)
 
 
-@app.command("install", rich_help_panel="Gate")
+recipe_app = typer.Typer(
+    name="recipe",
+    help="Recipes: named setups that run through install. List, show, apply, revert.",
+    no_args_is_help=True,
+)
+app.add_typer(recipe_app, name="recipe", rich_help_panel="Warden")
+
+
+def _recipe_or_exit(name: str) -> dict:
+    from opendaisugi import recipes
+
+    if name not in recipes.names():
+        typer.echo(f"unknown recipe '{name}'. Recipes: {', '.join(recipes.names())}", err=True)
+        raise typer.Exit(code=2)
+    return recipes.load(name)
+
+
+@recipe_app.command("list")
+def recipe_list_cmd(
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """List the recipes."""
+    from opendaisugi import recipes
+
+    loaded = recipes.load_all()
+    if json_output:
+        typer.echo(
+            json.dumps([{"name": r["name"], "title": r["title"], "doc": r["doc"]} for r in loaded])
+        )
+        return
+    for r in loaded:
+        typer.echo(f"{r['name']:<26}{r['title']}")
+
+
+@recipe_app.command("show")
+def recipe_show_cmd(
+    name: str = typer.Argument(..., help="The recipe name. See: daisugi recipe list."),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show a recipe: its slots, params and steps."""
+    from opendaisugi import recipes
+
+    recipe = _recipe_or_exit(name)
+    if json_output:
+        typer.echo(json.dumps(recipe, indent=2))
+        return
+    typer.echo(recipes.render_show(recipe))
+
+
+def _parse_sets(sets: list[str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in sets or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            typer.echo(f"--set needs KEY=VALUE, not '{item}'", err=True)
+            raise typer.Exit(code=2)
+        out[key] = value
+    return out
+
+
+@recipe_app.command("apply")
+def recipe_apply_cmd(
+    name: str = typer.Argument(..., help="The recipe name. See: daisugi recipe list."),
+    sets: list[str] = typer.Option(None, "--set", help="A recipe param, KEY=VALUE. Repeatable."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Write the changes. Without it: a dry run."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output."),
+) -> None:
+    """Show what a recipe would write; with --yes, write it.
+
+    Each step runs an install primitive. A receipt under <data>/recipes/ lets
+    `daisugi recipe revert` undo the recipe.
+    """
+    from opendaisugi import recipes
+
+    recipe = _recipe_or_exit(name)
+    home = Path.home()
+    try:
+        params = recipes.resolve_params(recipe, _parse_sets(sets))
+        plan = recipes.plan_apply(recipe, params, home=home)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2)
+    if not yes:
+        if json_output:
+            typer.echo(json.dumps({"recipe": name, "dry_run": True, "steps": plan}, indent=2))
+            return
+        for line in recipes.render_plan(recipe, plan):
+            typer.echo(line)
+        typer.echo("Dry run. Add --yes to apply.")
+        return
+    from datetime import datetime, timezone
+
+    from opendaisugi.install import move_old_state
+
+    # The names of the warden and the router changed: move the owner's own
+    # state once, before anything new is written (as `daisugi install` does).
+    move_old_state(
+        data_home(home=home),
+        home,
+        datetime.now(timezone.utc),
+        sys.stderr if json_output else sys.stdout,
+    )
+    try:
+        receipt = recipes.apply(recipe, params, home=home, out=typer.echo, quiet=json_output)
+    except recipes.StepFailed as exc:
+        typer.echo(f"step {exc.index} failed: {exc}", err=True)
+        typer.echo(
+            f"recipe stopped at step {exc.index}; nothing after it ran. "
+            f"Run: daisugi recipe revert {name}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if json_output:
+        typer.echo(json.dumps(receipt, indent=2))
+
+
+@recipe_app.command("revert")
+def recipe_revert_cmd(
+    name: str = typer.Argument(..., help="The recipe name. See: daisugi recipe list."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Undo the changes. Without it: a dry run."),
+) -> None:
+    """Undo a recipe from its receipt."""
+    from opendaisugi import recipes
+
+    home = Path.home()
+    found = recipes.revert_plan(name, home=home)
+    if found is None:
+        typer.echo(
+            f"nothing to revert: no receipt for '{name}' under {data_home(home=home) / 'recipes'}/",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if recipes.unread_undo(found[1]):
+        typer.echo(
+            f"receipt for '{name}' holds a step this daisugi does not read; "
+            f"nothing was changed. Remove {recipes.receipt_path(name, home)} by hand.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if not yes:
+        for line in recipes.revert_lines(*found):
+            typer.echo(line)
+        typer.echo("Dry run. Add --yes to revert.")
+        return
+    if recipes.revert(name, home=home, out=typer.echo) == 2:
+        typer.echo(
+            f"Some steps were not undone. The receipt keeps them. Fix the cause, "
+            f"then run: daisugi recipe revert {name}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    typer.echo("Reverted. Receipt deleted.")
+
+
+@app.command("install", rich_help_panel="Warden")
 def install_cmd(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show what would change without writing anything."
@@ -6680,6 +7320,9 @@ def install_cmd(
     print_skill: bool = typer.Option(
         False, "--print-skill", help="Print the opendaisugi-checklist skill content to stdout."
     ),
+    list_only: bool = typer.Option(
+        False, "--list", help="List the components install can write, and stop."
+    ),
     do_uninstall: bool = typer.Option(False, "--uninstall", help="Reverse all managed changes."),
     runtime: list[str] = typer.Option(
         None, "--runtime", help="Target named runtime(s) only, e.g. --runtime claude."
@@ -6687,19 +7330,23 @@ def install_cmd(
     harness: list[str] = typer.Option(
         None,
         "--harness",
-        help="Install a loop harness's gate extension. Supported: pi, opencode. "
+        help="Install a loop harness's warden extension. Supported: pi, opencode. "
         "Independent of --runtime.",
     ),
-    gate: bool = typer.Option(
-        False,
-        "--gate/--no-gate",
-        help="Also install the ADR-0007 fail-closed verify hook (opt-in; audit by default).",
+    only: list[str] = typer.Option(
+        None,
+        "--only",
+        help="Install only these components, comma-separated or repeated: skill, mcp, "
+        "capture, instructions, warden, pando, router. Default: all but router. See --list.",
+    ),
+    _warden: bool = typer.Option(
+        False, "--warden", hidden=True, callback=lambda v: _warden_flag_moved(v)
     ),
     enforce: bool = typer.Option(
         False,
         "--enforce/--audit",
-        help="Gate mode: --enforce denies out-of-envelope calls; --audit (default) only "
-        "observes. Only meaningful together with --gate.",
+        help="Warden mode: --enforce denies out-of-envelope calls; --audit (default) "
+        "records them and allows.",
     ),
     _shadow: bool = typer.Option(
         False, "--shadow", hidden=True, callback=lambda v: _shadow_moved(v)
@@ -6709,39 +7356,38 @@ def install_cmd(
         "--ask/--no-ask",
         help="Hand an enforce-mode would-deny to a present operator for a bounded time "
         "before letting the deny stand (Claude Code only). Off by default; only "
-        "meaningful together with --gate --enforce.",
+        "meaningful together with --enforce.",
     ),
-    gateway: bool = typer.Option(
+    router: bool = typer.Option(
         False,
-        "--gateway/--no-gateway",
-        help="Also point the harness at the local token-saving gateway (opt-in).",
+        "--router/--no-router",
+        help="Also point the harness at the local token-saving router (opt-in).",
     ),
     allow_shell_decomposition: bool | None = _DECOMPOSE_OPT,
     base_url: str = typer.Option(
         "http://127.0.0.1:8787",
         "--base-url",
-        help="Gateway base_url to wire in when --gateway is set.",
+        help="Router base_url to wire in when --router is set.",
     ),
     report: str = typer.Option(
         None,
         "--report",
-        help="Report gate state (idle/working/blocked/done) to a floor host. "
+        help="Report warden state (idle/working/blocked/done) to a floor host. "
         "herdr wires Stop + Notification hooks (Claude Code only). coppice "
-        "records the preference in config.yaml. Nothing reports to it yet. "
-        "Only meaningful together with --gate.",
+        "records the preference in config.yaml. Nothing reports to it yet.",
     ),
-    router: str = typer.Option(
+    routing_mode: str = typer.Option(
         None,
-        "--router",
-        help="Who picks the model for each gateway turn: rules, switchyard, knn, model, or off. "
-        "Saved as gateway_router in config.yaml. Leave it out to keep the current choice. "
-        "Only meaningful together with --gateway.",
+        "--routing-mode",
+        help="How the router picks the model for each turn: rules, switchyard, knn, model, or off. "
+        "Saved as routing_mode in config.yaml. Leave it out to keep the current choice. "
+        "Only meaningful together with --routing-mode.",
     ),
     efficient_model: str = typer.Option(
         None,
         "--efficient-model",
         help="The model id of Switchyard's efficient tier: a local model id, or a claude-* "
-        "id on the Anthropic API. Needed with --router switchyard.",
+        "id on the Anthropic API. Needed with --routing-mode switchyard.",
     ),
     capable_model: str = typer.Option(
         None,
@@ -6759,17 +7405,18 @@ def install_cmd(
 ) -> None:
     """Wire openDaisugi into every detected agent harness.
 
-    Detects Claude Code, Codex, Hermes, and OpenClaw and installs four layers
-    by default: the opendaisugi-checklist skill (discovered on demand — no
-    per-session cost), the MCP tool server, a passive capture hook that feeds
-    distillation, and pathway-routing instructions. All changes are
-    idempotent, backed up, and reversible with --uninstall.
+    Detects Claude Code, Codex, Hermes, and OpenClaw and installs six layers:
+    the opendaisugi-checklist skill (discovered on demand, so no per-session
+    cost), the MCP tool server, a passive capture hook that feeds
+    distillation, pathway-routing instructions, the warden hook in audit
+    mode, which records every tool call and blocks none, and the Pando memory
+    (its MCP server, chat hooks, Hermes plugin and a follow service). All
+    changes are idempotent, backed up, and reversible with --uninstall.
 
-    Two more layers are opt-in (ADR-0013, "one install that both saves and
-    verifies"): --gate installs the fail-closed ADR-0007 verify hook
-    (Claude Code, audit unless --enforce), and --gateway points the harness
-    at the local token-saving gateway (Claude Code, OpenClaw and Codex;
-    Hermes is reported as an honest gap rather than silently skipped).
+    --enforce makes the warden deny out-of-envelope calls; it needs a registered
+    envelope (daisugi warden init). --router points the harness at the local
+    token-saving router (Claude Code, OpenClaw and Codex; Hermes is reported
+    as an honest gap). --only names the components to write; --list shows them.
     """
     if print_skill:
         from opendaisugi.install import print_skill as _print_skill
@@ -6777,8 +7424,37 @@ def install_cmd(
         typer.echo(_print_skill())
         return
 
+    if list_only:
+        from opendaisugi.install import list_components
+
+        typer.echo(list_components())
+        return
+
+    only_layers = None
+    if only:
+        from opendaisugi.install import component_layers
+
+        try:
+            only_layers = component_layers(only)
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2)
+        if not do_uninstall and not harness:
+            from opendaisugi.install import Layer as _Layer
+
+            if enforce and _Layer.WARDEN not in only_layers:
+                typer.echo("--enforce needs the warden component: add warden to --only", err=True)
+                raise typer.Exit(code=2)
+            if router and _Layer.BASE_URL not in only_layers:
+                typer.echo(
+                    "--router is a component: add router to --only, or drop --router", err=True
+                )
+                raise typer.Exit(code=2)
+
     from opendaisugi.install import (
         DEFAULT_LAYERS,
+        PANDO_UNIT_NAME,
+        RESTART_LINE,
         Layer,
         _select_runtimes,
         detect_runtimes,
@@ -6792,7 +7468,20 @@ def install_cmd(
 
     home = Path.home()
 
+    if not do_uninstall:
+        # The names of the warden and the router changed: move the owner's
+        # own state once, before anything new is written.
+        from datetime import datetime, timezone
+
+        from opendaisugi.install import move_old_state
+
+        move_old_state(
+            data_home(home=home), home, datetime.now(timezone.utc), sys.stdout, dry_run=dry_run
+        )
+
     if harness:
+        if only:
+            typer.echo("Note: --only does not apply to --harness.")
         from opendaisugi.install import (
             SUPPORTED_HARNESSES,
             harness_extension_target,
@@ -6836,11 +7525,11 @@ def install_cmd(
             except ValueError as exc:
                 typer.echo(f"[{h}] error: {exc}", err=True)
                 raise typer.Exit(code=1)
-            typer.echo(f"[{h}] gate extension installed. {restart[h]}")
+            typer.echo(f"[{h}] warden extension installed. {restart[h]}")
         for h in harness:
             typer.echo(
-                f"{label[h]} asks the gate in-process. The gate only watches until you set "
-                "gate_mode: enforce. Start it with `daisugi start`."
+                f"{label[h]} asks the warden in-process. The warden only watches until you set "
+                "warden_mode: enforce. Start it with `daisugi start`."
             )
         return
     try:
@@ -6855,7 +7544,12 @@ def install_cmd(
         raise typer.Exit(code=0)
 
     if do_uninstall:
-        result = _uninstall(home=home, runtimes=runtimes)
+        unit_lines, prev_hook = _arm_pando_unit_hook(home)
+        try:
+            result = _uninstall(home=home, runtimes=runtimes, layers=only_layers)
+        finally:
+            _disarm_pando_unit_hook(prev_hook)
+        _say_unit_lines(unit_lines)
         typer.echo(result.summary)
         if result.modified_files:
             typer.echo("\nReverted:")
@@ -6867,55 +7561,60 @@ def install_cmd(
 
     # With no envelope registered, an enforce hook denies every call, so the
     # agent can do nothing at all. Refuse before anything is written.
-    if gate and enforce:
-        from opendaisugi.gate import _envelopes_dir
+    if enforce:
+        from opendaisugi.warden import _envelopes_dir
 
-        env_dir = _envelopes_dir(data_home(home=home) / "gate")
+        env_dir = _envelopes_dir(data_home(home=home) / "warden")
         if not (env_dir.exists() and any(env_dir.glob("*.json"))):
             typer.echo(ENFORCE_NEEDS_POLICY, err=True)
             raise typer.Exit(code=1)
 
-    selected_layers = set(DEFAULT_LAYERS)
-    if gate:
-        selected_layers.add(Layer.GATE)
-    if gateway:
+    selected_layers = set(DEFAULT_LAYERS) if only_layers is None else set(only_layers)
+    if router:
         selected_layers.add(Layer.BASE_URL)
 
-    if enforce and not gate:
-        typer.echo("Note: --enforce only applies with --gate; no gate hook will be installed.")
-    if ask and not (gate and enforce):
-        typer.echo("Note: --ask only applies with --gate --enforce; no operator ask will be wired.")
-    # The message above is the contract: --ask without --gate --enforce is a
-    # no-op. effective_ask is what actually reaches every call site below —
-    # a plain `ask` here would bake --ask (and the widened ~105s hook
-    # timeout) into an audit-mode install while telling the operator it
-    # wasn't wired.
-    effective_ask = ask and gate and enforce
+    if ask and not enforce:
+        typer.echo("Note: --ask only applies with --enforce; no operator ask will be wired.")
+    # The message above is the contract: --ask without --enforce is a no-op.
+    # effective_ask is what actually reaches every call site below: a plain
+    # `ask` here would bake --ask (and the widened ~105s hook timeout) into an
+    # audit-mode install while telling the operator it wasn't wired.
+    effective_ask = ask and enforce
 
     if report is not None and report not in ("herdr", "coppice"):
-        # Global Constraints §Exit codes: 1 = user error, not 2 (gate deny)
-        # — a bad --report value never touched the gate. STE100 (whole-branch
+        # Global Constraints §Exit codes: 1 = user error, not 2 (warden deny)
+        # — a bad --report value never touched the warden. STE100 (whole-branch
         # review, minor 10): teach the next command instead of echoing the
         # bad value back.
         typer.echo(
-            "Error: --report must be herdr or coppice. Run: daisugi install --gate --report herdr",
+            "Error: --report must be herdr or coppice. Run: daisugi install --report herdr",
             err=True,
         )
         raise typer.Exit(code=1)
-    if report and not gate:
-        typer.echo("Note: --report needs --gate. This run installs no floor-report hooks.")
-    effective_report = report if gate else None
+    effective_report = report
 
-    # Check the router choice before anything is written, so a bad value
+    # Check the routing mode before anything is written, so a bad value
     # leaves the harness and config.yaml as they were.
-    router_update = _plan_router_update(
+    routing_update = _plan_routing_update(
         home,
-        router,
-        gateway=gateway,
+        routing_mode,
+        router=router or Layer.BASE_URL in selected_layers,
         efficient_model=efficient_model,
         capable_model=capable_model,
         api_key_env=api_key_env,
     )
+
+    if runtimes and Layer.WARDEN in selected_layers:
+        # A relative warden root is refused before the plan prints and before
+        # any write, in a dry run too.
+        from opendaisugi.install import WardenRootError, _absolute_warden_root
+        from opendaisugi.warden import DEFAULT_WARDEN_ROOT
+
+        try:
+            _absolute_warden_root(DEFAULT_WARDEN_ROOT)
+        except WardenRootError as exc:
+            typer.echo(f"daisugi install: {exc}. Nothing was changed.", err=True)
+            raise typer.Exit(code=2)
 
     typer.echo("\nDetected runtimes:")
     for rt in runtimes:
@@ -6934,9 +7633,14 @@ def install_cmd(
     }
 
     typer.echo("\nopenDaisugi will make these changes:\n")
+    unit_shown = False
     for rt in runtimes:
         typer.echo(f"[{rt.name}]")
         for step in plans[rt.name]:
+            if step.layer is Layer.PANDO and str(step.target).endswith(PANDO_UNIT_NAME):
+                if unit_shown:
+                    continue  # Claude Code and Hermes share the one unit
+                unit_shown = True
             target_hint = f"  → {step.target}" if step.target else ""
             marker = "+" if step.supported else "!"
             typer.echo(f"  {marker} [{step.layer.value}] {step.description}{target_hint}")
@@ -6955,20 +7659,27 @@ def install_cmd(
         typer.echo("")
 
     typer.echo("Skill is discovered on demand — zero added tokens for simple sessions.")
-    captures = _tilde(data_home(home=home) / "captures")
-    typer.echo(f"Tool calls are captured to {captures}/ for distillation.\n")
+    if Layer.CAPTURE in selected_layers:
+        captures = _tilde(data_home(home=home) / "captures")
+        typer.echo(f"Tool calls are captured to {captures}/ for distillation.\n")
+    else:
+        typer.echo("")
 
-    if Layer.GATE in selected_layers:
-        # The gate hook is wired here; the policy it checks against is not. With
-        # no envelope registered, enforce mode denies every call.
+    # The warden hook is wired here; the policy it checks against is not. With
+    # no envelope registered, enforce mode denies every call.
+    # Said only when a hook is written: on a harness with no warden, the gap
+    # list above already says so.
+    if Layer.WARDEN in selected_layers and any(
+        step.layer is Layer.WARDEN and step.supported for plan in plans.values() for step in plan
+    ):
         typer.echo(
-            "The gate checks each call against a registered envelope — this install "
-            "writes the hook, not the policy. Run `daisugi gate init` to register one "
+            "The warden checks each call against a registered envelope — this install "
+            "writes the hook, not the policy. Run `daisugi warden init` to register one "
             "(add --allow-shell-decomposition to admit `a && b` and pipes).\n"
         )
 
-    if router_update is not None:
-        typer.echo(f"Router: set gateway_router to {router_update['gateway_router']}.")
+    if routing_update is not None:
+        typer.echo(f"Router: set routing_mode to {routing_update['routing_mode']}.")
 
     if dry_run:
         typer.echo("Dry run — no files written.")
@@ -6980,24 +7691,39 @@ def install_cmd(
             typer.echo("Aborted.")
             raise typer.Exit(code=0)
 
-    result = _install(
-        home=home,
-        yes=True,
-        runtimes=runtimes,
-        layers=selected_layers,
-        enforce=enforce,
-        ask=effective_ask,
-        base_url=base_url,
-        report=effective_report,
-    )
+    unit_lines, prev_hook = _arm_pando_unit_hook(home)
+    try:
+        result = _install(
+            home=home,
+            yes=True,
+            runtimes=runtimes,
+            layers=selected_layers,
+            enforce=enforce,
+            ask=effective_ask,
+            base_url=base_url,
+            report=effective_report,
+        )
+    finally:
+        _disarm_pando_unit_hook(prev_hook)
+    _say_unit_lines(unit_lines)
 
     if result.modified_files:
         typer.echo("\nDone. Files modified:")
         for f in result.modified_files:
             typer.echo(f"  {f}")
-        typer.echo("\nRestart your agent session to pick up the changes.")
+        for note in result.notes:
+            typer.echo(note)
+        typer.echo(f"\n{RESTART_LINE}")
     elif not result.failures:
-        typer.echo("\nAll runtimes were already configured — nothing changed.")
+        from opendaisugi.install import LEFT_AS_IS
+
+        # A hook install left as it is was not configured by this run.
+        if not any(LEFT_AS_IS in note for note in result.notes):
+            typer.echo("\nAll runtimes were already configured — nothing changed.")
+        else:
+            typer.echo("")
+        for note in result.notes:
+            typer.echo(note)
     # A runtime whose apply raised wrote nothing. Say which, and exit 1 at
     # the end: never report it as already configured.
     for failure in result.failures:
@@ -7023,8 +7749,8 @@ def install_cmd(
         )
         _warn_if_decomposition_unusable(allow_shell_decomposition)
 
-    if router_update is not None:
-        _apply_router_update(home, router_update)
+    if routing_update is not None:
+        _apply_routing_update(home, routing_update)
 
     if effective_report is not None:
         # Every --report value is persisted, herdr included (Fix round 1,
@@ -7070,51 +7796,133 @@ def install_cmd(
             else:
                 typer.echo("Left OFF — run `daisugi tend` yourself whenever you want it.")
 
-    if result.failures:
+    from opendaisugi.install import temporary_exe_note, unrunnable_commands
+
+    broken = unrunnable_commands(
+        [rt for rt in runtimes if not any(f.startswith(f"{rt.name}:") for f in result.failures)],
+        home=home,
+    )
+    for line in broken:
+        typer.echo(line, err=True)
+    temporary = temporary_exe_note()
+    if temporary:
+        typer.echo(temporary, err=True)
+    if result.failures or broken:
         raise typer.Exit(code=1)
 
 
-def _plan_router_update(
+def _arm_pando_unit_hook(home: Path) -> "tuple[list[tuple[bool, str]], object]":
+    """Set the hook that runs systemctl for the pando follow service, and
+    return where its lines go. The real systemctl runs only for the real home
+    of the user who runs it (never for a scratch HOME, so a test or a compare
+    run cannot touch the owner's services) and only with DAISUGI_NO_SYSTEMCTL
+    unset. A failure is one line and goes on: the files are written either
+    way."""
+    import pwd
+    import shutil as _shutil
+    import subprocess
+
+    from opendaisugi import install as _inst
+
+    lines: list[tuple[bool, str]] = []
+    prev = _inst.UNIT_HOOK
+    if prev is not None or os.environ.get("DAISUGI_NO_SYSTEMCTL"):
+        return lines, prev
+    try:
+        real = os.path.normpath(pwd.getpwuid(os.getuid()).pw_dir) == os.path.normpath(str(home))
+    except KeyError:
+        real = False
+    systemctl = _shutil.which("systemctl")
+    if not real or systemctl is None:
+        return lines, prev
+
+    def run(*args: str) -> None:
+        r = subprocess.run(
+            [systemctl, "--user", *args], capture_output=True, text=True, timeout=20, check=False
+        )
+        if r.returncode != 0:
+            first = (r.stderr or "").strip().splitlines()[:1]
+            raise RuntimeError(f"systemctl --user {args[0]}: exit {r.returncode}: {''.join(first)}")
+
+    def hook(action: str, unit: str) -> None:
+        by_hand = {"enable": "enable --now", "disable": "disable --now"}.get(
+            action, "daemon-reload"
+        )
+        try:
+            if action == "enable":
+                run("daemon-reload")
+                run("enable", "--now", unit)
+                lines.append((False, f"Pando follow service is enabled and running ({unit})."))
+            elif action == "disable":
+                run("disable", "--now", unit)
+            else:
+                run("daemon-reload")
+        except Exception as exc:  # noqa: BLE001 - one line, then go on
+            lines.append(
+                (
+                    True,
+                    f"Pando follow service: {exc}. Do it yourself: systemctl --user {by_hand} {unit}",
+                )
+            )
+
+    _inst.UNIT_HOOK = hook
+    return lines, prev
+
+
+def _disarm_pando_unit_hook(prev: object) -> None:
+    from opendaisugi import install as _inst
+
+    _inst.UNIT_HOOK = prev  # type: ignore[assignment]
+
+
+def _say_unit_lines(lines: "list[tuple[bool, str]]") -> None:
+    for is_err, line in lines:
+        typer.echo(line, err=is_err)
+
+
+def _plan_routing_update(
     home: Path,
-    router: str | None,
+    routing_mode: str | None,
     *,
-    gateway: bool,
+    router: bool,
     efficient_model: str | None,
     capable_model: str | None,
     api_key_env: str | None = None,
 ) -> dict | None:
-    """The config.yaml fields a --router choice sets, checked, or None for no change.
+    """The config.yaml fields a --routing-mode choice sets, checked, or None for no change.
 
     Every refusal exits with code 1 before anything is written.
     """
-    if router is None:
+    if routing_mode is None:
         if efficient_model or capable_model or api_key_env is not None:
             typer.echo(
                 "Note: --efficient-model, --capable-model and --api-key-env apply with "
-                "--router switchyard."
+                "--routing-mode switchyard."
             )
         return None
-    if router not in _ROUTERS:
+    if routing_mode not in _ROUTING_MODES:
         _fail(
-            f"unknown --router {router!r}.",
-            "the gateway knows four choosers.",
-            f"choose one of: {', '.join(_ROUTERS)}",
+            f"unknown --routing-mode {routing_mode!r}.",
+            "the router knows four choosers.",
+            f"choose one of: {', '.join(_ROUTING_MODES)}",
             code=1,
         )
-    if not gateway:
-        typer.echo("Note: --router only applies with --gateway. This run writes no router config.")
+    if not router:
+        typer.echo(
+            "Note: --routing-mode only applies with --router. This run writes no router config."
+        )
         return None
-    update: dict = {"gateway_router": router}
-    if router != "switchyard":
+    update: dict = {"routing_mode": routing_mode}
+    if routing_mode != "switchyard":
         return update
     from opendaisugi.config import load_config
-    from opendaisugi.router_switchyard import render_switchyard_toml, targets_from_config
+    from opendaisugi.routing_switchyard import render_switchyard_toml, targets_from_config
 
     cfg = load_config(data_home(home=home) / "config.yaml")
     efficient = efficient_model or cfg.switchyard_efficient_model
     if not efficient:
         _fail(
-            "--router switchyard needs an efficient model.",
+            "--routing-mode switchyard needs an efficient model.",
             "the stage router chooses between a capable tier and a cheaper one.",
             "add --efficient-model <id>: a local model id, or a claude-* id.",
             code=1,
@@ -7125,7 +7933,7 @@ def _plan_router_update(
         update["switchyard_api_key_env"] = api_key_env.strip() or None
     candidate = cfg.model_copy(update=update)
     try:
-        # The key variable is checked when the gateway starts, in its own
+        # The key variable is checked when the router starts, in its own
         # environment, not in the shell that runs install.
         render_switchyard_toml(
             targets_from_config(candidate),
@@ -7142,20 +7950,20 @@ def _plan_router_update(
     return update
 
 
-def _apply_router_update(home: Path, update: dict) -> None:
+def _apply_routing_update(home: Path, update: dict) -> None:
     """Save the router fields, and for switchyard write the TOML file next to them."""
     from opendaisugi.config import load_config, save_config
 
     cfg_path = data_home(home=home) / "config.yaml"
     cfg = load_config(cfg_path).model_copy(update=update)
     save_config(cfg, cfg_path)
-    if cfg.gateway_router != "switchyard":
+    if cfg.routing_mode != "switchyard":
         typer.echo(
-            f"Gateway router set to {cfg.gateway_router} in {cfg_path}. "
-            "Restart `daisugi gateway` to use it."
+            f"Routing mode set to {cfg.routing_mode} in {cfg_path}. "
+            "Restart `daisugi router serve` to use it."
         )
         return
-    from opendaisugi.router_switchyard import (
+    from opendaisugi.routing_switchyard import (
         INSTALL_CMD,
         client_auth_modes,
         locate_binary,
@@ -7172,17 +7980,17 @@ def _apply_router_update(home: Path, update: dict) -> None:
         ),
     )
     auth = client_auth_modes(targets)
-    typer.echo(f"Switchyard router: wrote {toml_path} and set gateway_router in {cfg_path}.")
+    typer.echo(f"Switchyard routing mode: wrote {toml_path} and set routing_mode in {cfg_path}.")
     typer.echo(f"  capable tier {targets.capable_id}: {auth['capable']}")
     typer.echo(f"  efficient tier {targets.efficient_id}: {auth['efficient']}")
     if targets.api_key_env and not os.environ.get(targets.api_key_env):
         typer.echo(
-            f"  {targets.api_key_env} is not set in this shell. The gateway refuses to start "
+            f"  {targets.api_key_env} is not set in this shell. The router refuses to start "
             "until it is set in the shell that starts it."
         )
     if locate_binary() is None:
         typer.echo(f"  switchyard-server is not on PATH yet. Install it with: {INSTALL_CMD}")
-    typer.echo("  Start it with: daisugi gateway --router switchyard")
+    typer.echo("  Start it with: daisugi router serve --routing-mode switchyard")
 
 
 @release_app.command("keygen")
@@ -7304,7 +8112,7 @@ def batch_prove_cmd(
 
     Resolves every item to its concrete write-set, proves each write is inside both
     the envelope and the declared footprint F using the same concrete matcher the
-    runtime gate uses, and probes reversibility. Exits non-zero (fail-closed) if the
+    runtime warden uses, and probes reversibility. Exits non-zero (fail-closed) if the
     program is non-batchable, any write is unprovable or under-declared, or any target
     would be irreversible.
     """

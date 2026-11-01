@@ -1,9 +1,9 @@
-# clients/go: the Go gate and the Go conformance client
+# clients/go: the Go warden and the Go conformance client
 
 Two binaries share this module:
 
-- `cmd/daisugi-gate`, the tool-call gate. It answers each hook call the
-  way `python -m opendaisugi.gate` does, with no Python at run time.
+- `cmd/daisugi-warden`, the tool-call warden. It answers each hook call the
+  way `python -m opendaisugi.warden` does, with no Python at run time.
 - `cmd/conform`, the verifier conformance client. It speaks the wire
   protocol of `docs/spec/conformance.md`.
 
@@ -15,7 +15,7 @@ tree-sitter-bash grammar) through cgo. Build those once:
 ```sh
 cd clients/go
 scripts/native.sh     # fetch the pinned sources, check their SHA-256, build, link .native
-scripts/build.sh      # daisugi-gate, daisugi and conform, with -trimpath, then check-paths.sh
+scripts/build.sh      # daisugi-warden, daisugi and conform, with -trimpath, then check-paths.sh
 go test -p 1 ./...
 ```
 
@@ -57,37 +57,37 @@ compiles it on the box from its own release tarball, which
 `harness/coppice/scripts/toolchain.sh` checks), so the zig version pins
 it.
 
-The gate binary is about 32 MB and dynamically links only glibc:
+The warden binary is about 32 MB and dynamically links only glibc:
 
 ```
-$ ldd daisugi-gate
+$ ldd daisugi-warden
 	linux-vdso.so.1
 	libm.so.6 => /lib64/libm.so.6
 	libc.so.6 => /lib64/libc.so.6
 	/lib64/ld-linux-x86-64.so.2
 ```
 
-## daisugi-gate
+## daisugi-warden
 
 ```sh
 echo '{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/work/a"},"cwd":"/work"}' \
-  | ./daisugi-gate --mode audit --root ~/.opendaisugi/gate --format claude
+  | ./daisugi-warden --mode audit --root ~/.opendaisugi/warden --format claude
 ```
 
-It reads what the Python gate reads: the same argv (parsed as Python
+It reads what the Python warden reads: the same argv (parsed as Python
 3.12's argparse parses it, prefixes and errors included), the payload on
-stdin, the environment and the gate root (envelopes, the `DISARMED`
+stdin, the environment and the warden root (envelopes, the `DISARMED`
 marker, `config.yaml` beside the root, asks and answers, the session
-tree). It writes what the Python gate writes: stdout, stderr and the exit
+tree). It writes what the Python warden writes: stdout, stderr and the exit
 code for each format, the audit log line, the session tree entries, the
 captures mirror, the coppice or Herdr state report, checkpoint refs, ask
 files, proposals, `last_dispatch.json` and conformance records. Apart from
-times, latencies and random ids, every byte is the Python gate's
-(`clients/gate_compare.py` checks this).
+times, latencies and random ids, every byte is the Python warden's
+(`clients/warden_compare.py` checks this).
 
 ### How it matches the oracle
 
-The gate is a port of the Python gate, down to the libraries it leans on:
+The warden is a port of the Python warden, down to the libraries it leans on:
 
 | Package | What it models |
 |---|---|
@@ -97,24 +97,24 @@ The gate is a port of the Python gate, down to the libraries it leans on:
 | `internal/pyre` | Python 3.12's `re` for str patterns: parser, errors, warnings, a backtracking matcher |
 | `internal/pystr` | Python `str`: code points, lone surrogates, repr, case mapping, strip and split, the codecs |
 | `internal/pyjson` | `json.loads` and `json.dumps`, depth and digit limits included |
-| `internal/pmodel` | the pydantic models the gate validates (Envelope, Config, the predicate union), error text included |
+| `internal/pmodel` | the pydantic models the warden validates (Envelope, Config, the predicate union), error text included |
 | `internal/pyyaml` | `yaml.safe_load` for the plain YAML a config file holds |
-| `internal/gate` | the gate itself: rules, records, effects and tiers, the verifier stages, logs, asks, checkpoints, dispatch |
+| `internal/warden` | the warden itself: rules, records, effects and tiers, the verifier stages, logs, asks, checkpoints, dispatch |
 
-The verifier stages run in the gate: permissions, envelope
+The verifier stages run in the warden: permissions, envelope
 self-consistency and plan-against-envelope (ground constraints decided
 directly; `z3stages_test.go` asks Z3 the oracle's own formulas over every
 combination and checks they agree), the predicate stage (invariants and
 postconditions, quantifiers, the vacuity check on Z3, `regex_to_z3`), and
-the robotics stage (which finds no target in a one-step gate plan).
+the robotics stage (which finds no target in a one-step warden plan).
 
-Two further ports keep the gate from ever allowing where the oracle
+Two further ports keep the warden from ever allowing where the oracle
 denies:
 
 - **Depth parity.** The oracle denies very deep input through
-  RecursionError. The gate counts the oracle's Python frames on every path
+  RecursionError. The warden counts the oracle's Python frames on every path
   that reaches `decompose_command`, `realpath` and `json.loads`, and raises
-  at the same depth. `DAISUGI_GATE_DEPTH_LOG=<file>` writes the depth of
+  at the same depth. `DAISUGI_WARDEN_DEPTH_LOG=<file>` writes the depth of
   each such call, for comparison with a probe in the oracle.
 - **Crash backstop.** Each call is decided in a child process of the
   binary. A fatal error, a signal, a stack past 256 MB or a child past
@@ -125,7 +125,7 @@ denies:
   5 s past those budgets. The child sends its verdict to the parent on
   an inherited pipe (fd 3), with a nonce the parent chose; on its own
   stdout and exit code it writes only the format's deny. So a child that
-  dies, and a `DAISUGI_GATE_CHILD` variable set by anyone else, both
+  dies, and a `DAISUGI_WARDEN_CHILD` variable set by anyone else, both
   deny. The child has done all its work when it closes the pipe, so a
   complete frame is the answer at once and the child is then killed, not
   waited for. The parent reads at most 16 MiB of stdin, as the oracle does.
@@ -133,7 +133,7 @@ denies:
 ### Calls it does not decide
 
 A call the port cannot decide is denied with exit 2 and a reason
-(`the Go gate cannot decide this call (...), so it denies it`). None of
+(`the Go warden cannot decide this call (...), so it denies it`). None of
 these occurs in the case suite, the fuzz or the corpus:
 
 | Denied undecided | Why |
@@ -141,7 +141,7 @@ these occurs in the case suite, the fuzz or the corpus:
 | an `llm_check` through the claude-code backend, or under `SSL_CERT_FILE`, `SSL_CERT_DIR` or a proxy setting it does not read as httpx does (PX-5) | the port is the model client's HTTP call, not `claude -p` or httpx's certificate handling |
 | an `llm_check` reply the port does not read as the model client does (a content-encoding, a nesting past 900) | the failure text is the deny reason, and is not guessed at |
 | a `config.yaml` outside the YAML subset `internal/pyyaml` reads | not guessed at |
-| no home directory at all | Python cannot import the gate |
+| no home directory at all | Python cannot import the warden |
 | input past what a probe can check (a transcript line nested near the JSON limit, a pid past a C int) | the oracle's behavior there depends on its stack |
 
 `llm_check` is the oracle's own model call (`llm_client.py`): one POST to
@@ -152,32 +152,32 @@ LLM-12; the tests use a fake server, never a model). Warning regexes, `--help` a
 width and `--verify-timeout` of any value are decided natively. A
 `--verify-timeout` under 1 s denies as a timeout (see GT-30).
 
-`DAISUGI_GATE_TRACE=<file>` appends one JSON line per call: `native`,
+`DAISUGI_WARDEN_TRACE=<file>` appends one JSON line per call: `native`,
 `unported` (denied undecided, with the reason) or `crash`. It never
 changes stdout, stderr or the exit code.
 
 Known limits are recorded in `clients/ADJUDICATIONS.md` (GT-19 to
 GT-37). The file-glob matcher, exponential in `**` segments, stops after
-a fixed 100,000 steps in the oracle and in the gate alike
+a fixed 100,000 steps in the oracle and in the warden alike
 (`verify.GLOB_MATCH_STEP_LIMIT`), so no answer depends on the speed of
 the box.
 
 ### Proof and speed
 
-`clients/gate_cases.py` writes the case suite from the oracle
-(`clients/fixtures/gate/cases.jsonl`, 1,342 calls, the 790-command
-redirect list among them); `clients/gate_compare.py` runs the binary over
+`clients/warden_cases.py` writes the case suite from the oracle
+(`clients/fixtures/warden/cases.jsonl`, 1,342 calls, the 790-command
+redirect list among them); `clients/warden_compare.py` runs the binary over
 it and compares every stream, log and file. `--fuzz N --kind K --seed S`
-runs seeded generators (`clients/gate_fuzz.py`): compound shell commands
+runs seeded generators (`clients/warden_fuzz.py`): compound shell commands
 under three envelopes, heredocs, multi-line commands, non-ASCII text, and
 envelopes with invariants, postconditions and robotics bounds built from
 the oracle's models.
 
 ```sh
-uv run --no-sync python clients/gate_cases.py                 # rewrite the cases from the oracle
-uv run --no-sync python clients/gate_compare.py --oracle      # compare, and check the fixture is current
-uv run --no-sync python clients/gate_compare.py --fuzz 10000 --seed 7
-uv run --no-sync python clients/gate_compare.py --fuzz 3000 --kind envelope --seed 11
+uv run --no-sync python clients/warden_cases.py                 # rewrite the cases from the oracle
+uv run --no-sync python clients/warden_compare.py --oracle      # compare, and check the fixture is current
+uv run --no-sync python clients/warden_compare.py --fuzz 10000 --seed 7
+uv run --no-sync python clients/warden_compare.py --fuzz 3000 --kind envelope --seed 11
 ```
 
 Results on the reference box, 2026-09-25:
@@ -200,9 +200,9 @@ Wall time per call, a cold process each time (the case suite):
 
 | | p50 | p90 |
 |---|---|---|
-| daisugi-gate, all cases | 8.8 ms | 9.9 ms |
-| daisugi-gate, a predicate case that runs the Z3 vacuity check | 22 ms | 25 ms |
-| Python gate | 434 ms | 476 ms |
+| daisugi-warden, all cases | 8.8 ms | 9.9 ms |
+| daisugi-warden, a predicate case that runs the Z3 vacuity check | 22 ms | 25 ms |
+| Python warden | 434 ms | 476 ms |
 
 A call starts the binary twice (parent and child), about 2.5 ms each:
 the Go runtime, cgo and package init. Package-level regexps compile on
@@ -221,7 +221,7 @@ line on stdout (`docs/spec/conformance.md`):
 uv run daisugi conformance run .opendaisugi/conformance/corpus.jsonl --client clients/go/conform
 ```
 
-Its shell decomposition is now the gate's: tree-sitter-bash through
+Its shell decomposition is now the warden's: tree-sitter-bash through
 `internal/shell`, the oracle's own grammar. Until 2026-09-25 it used
 mvdan.cc/sh/v3, an independent parser, and the disagreements that found
 are recorded in `clients/ADJUDICATIONS.md` (G-1 to G-7, GT-1 to GT-18).
@@ -233,21 +233,21 @@ VZ-1).
 On the frozen corpus (11,450 cases) `conform` now matches the oracle on
 all 11,450 (it was 11,447 with mvdan).
 
-## daisugi: the Go CLI for the gate
+## daisugi: the Go CLI for the warden
 
-`cmd/daisugi` is one static binary for the gate commands a user runs
-every day, and the gate half of `daisugi install`. The CLI itself never
-runs Python. `daisugi gate check`, the command an installed hook runs,
-answers every call in process through `internal/gate`, the native gate
-above: no call goes to Python. A call the gate cannot decide is denied
-with exit 2 and a reason, as `daisugi-gate` denies it.
+`cmd/daisugi` is one static binary for the warden commands a user runs
+every day, and the warden half of `daisugi install`. The CLI itself never
+runs Python. `daisugi warden check`, the command an installed hook runs,
+answers every call in process through `internal/warden`, the native warden
+above: no call goes to Python. A call the warden cannot decide is denied
+with exit 2 and a reason, as `daisugi-warden` denies it.
 
 ```sh
 cd clients/go
 scripts/build.sh    # after scripts/native.sh
-./daisugi gate init --workspace "$PWD"
-./daisugi install --gate --enforce --yes
-./daisugi gate status
+./daisugi warden init --workspace "$PWD"
+./daisugi install --enforce --yes
+./daisugi warden status
 ```
 
 It carries these commands, with the flags, files and output of the
@@ -255,16 +255,16 @@ Python CLI (`opendaisugi.cli`):
 
 | Command | What it does |
 |---|---|
-| `gate check` | the hook entry: the contract of `python -m opendaisugi.gate`, answered in process by `internal/gate` |
-| `gate init`, `gate register` | write `envelopes/<session or default>.json` as pydantic writes it |
-| `gate arm`, `gate disarm` | remove or write the `DISARMED` marker |
-| `gate status` | armed state, the effective hook mode (global and project `settings.json`), else `config.yaml`'s `gate_mode`, and the envelopes |
-| `gate report` | the audit-log summary |
-| `gate settings` | the hooks-settings JSON for `claude --settings` |
-| `gate proposals` | the recorded envelope-edit proposals, read only |
-| `gate serve [--root R]` | the resident gate on `<root>/gate.sock`, which pi and OpenCode ask (see below) |
-| `install --gate [--enforce\|--audit] [--runtime X] [--dry-run] [--yes]` | the gate hook in Claude Code's `settings.json` and Codex's `hooks.json`; a runtime that cannot be written is named on stderr and the run exits 1 |
-| `install --gate --uninstall` | the gate hook and the floor-report hooks removed |
+| `warden check` | the hook entry: the contract of `python -m opendaisugi.warden`, answered in process by `internal/warden` |
+| `warden init`, `warden register` | write `envelopes/<session or default>.json` as pydantic writes it |
+| `warden arm`, `warden disarm` | remove or write the `DISARMED` marker |
+| `warden status` | armed state, the effective hook mode (global and project `settings.json`), else `config.yaml`'s `warden_mode`, and the envelopes |
+| `warden report` | the audit-log summary |
+| `warden settings` | the hooks-settings JSON for `claude --settings` |
+| `warden proposals` | the recorded envelope-edit proposals, read only |
+| `warden serve [--root R]` | the resident warden on `<root>/warden.sock`, which pi and OpenCode ask (see below) |
+| `install [--enforce\|--audit] [--runtime X] [--dry-run] [--yes]` | the warden hook in Claude Code's `settings.json` and Codex's `hooks.json`; a runtime that cannot be written is named on stderr and the run exits 1 |
+| `install --uninstall` | the warden hook and the floor-report hooks removed |
 | `install --harness pi\|opencode [--uninstall] [--dry-run]` | the pi extension and the OpenCode plugin, byte for byte Python's |
 | `mcp serve`, `onboard`, `tiers setup`, `setup` | stage K3: the MCP server, the day-one onboard and the local-model setup (see below) |
 | `models list`, `models search`, `models use` | the model catalog for the garden: the curated list with the default for this box, the Hugging Face search filtered by size and license, and the recorded choice (`internal/catalog`, MC-R-1 to MC-R-7); `models pin`, `--pull` included, as huggingface_hub does it (RF-7) |
@@ -275,9 +275,9 @@ Python CLI (`opendaisugi.cli`):
 Everything else is not in this binary yet. Such a command or flag prints
 one line, `<command> is not in this binary yet.`, and exits 2 with nothing
 changed. `daisugi --help` lists them under "Not yet in this binary".
-`install --gate` writes the gate layer only: the skill, MCP, capture and
-instruction layers stay with the Python CLI. `install --ask` is not in the
-binary yet (`gate check --ask` itself is answered natively). Files are written atomically
+`install` writes the five layers the Python CLI writes: the skill, MCP, capture,
+instruction and warden layers (the warden in audit mode unless `--enforce`). `install --ask` is not in the
+binary yet (`warden check --ask` itself is answered natively). Files are written atomically
 (a temporary file in the same directory, renamed over the old one). A
 `settings.json` that is a symlink is written through, as Python does,
 and the run prints a note naming the file written. The hook names the
@@ -287,22 +287,22 @@ behind `~/.local/bin/daisugi` does not break it.
 ### The hook it installs
 
 ```
-DAISUGI_GATE_HOOK=opendaisugi.gate '/abs/path/daisugi' gate check --mode enforce \
-  --root ~/.opendaisugi/gate --format claude --verify-timeout 10.0 || exit 2
+DAISUGI_WARDEN_HOOK=opendaisugi.warden '/abs/path/daisugi' warden check --mode enforce \
+  --root ~/.opendaisugi/warden --format claude --verify-timeout 10.0 || exit 2
 ```
 
-The flags after `gate check` are the ones Python's hook passes. Both
-CLIs find a gate hook by its words, never by a substring
-(`config.gate_hook_kind` and `gate_hook_args` in Python,
-`config.GateHookKind` and `GateHookArgs` in Go, one rule, one table of
+The flags after `warden check` are the ones Python's hook passes. Both
+CLIs find a warden hook by its words, never by a substring
+(`config.warden_hook_kind` and `warden_hook_args` in Python,
+`config.WardenHookKind` and `WardenHookArgs` in Go, one rule, one table of
 cases in each). The command is split as the shell splits it (quotes,
 backslashes, `;` `|` `&` runs as their own words, so `--mode
 enforce||exit 2` reads enforce), each simple command is read on its own,
-and these are gate hooks:
+and these are warden hooks:
 
 ```
-[NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.gate[_client] ...
-[NAME=val ...] .../daisugi gate check ...
+[NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.warden[_client] ...
+[NAME=val ...] .../daisugi warden check ...
 sh|bash|dash|zsh|ksh [opts] -c '<one of the above>'
 ```
 
@@ -310,10 +310,10 @@ The mode is the last `--mode` word after the entry point, as argparse
 reads it. So the Python CLI sees, reports and removes a hook this binary
 wrote and does not add a second one, and hand-written hooks (`uv run
 python -m ...`, `python3 -I -m ...`) are read too. A foreign hook such as
-`opendaisugi.gateway-watch`, `echo -m ...` read as text, or a `--mode`
-inside a quoted path, is not a gate hook. A command that holds
-`opendaisugi.gate` as a word (or joined to `-m`) in any other form is an
-unknown gate hook: `gate status` reports mode `unknown` ("unknown gate
+`opendaisugi.router-watch`, `echo -m ...` read as text, or a `--mode`
+inside a quoted path, is not a warden hook. A command that holds
+`opendaisugi.warden` as a word (or joined to `-m`) in any other form is an
+unknown warden hook: `warden status` reports mode `unknown` ("unknown warden
 hook") unless a hook it reads enforces, install counts it as installed,
 and uninstall leaves that runtime untouched, names the hook and exits
 1. `daisugi hook record` hooks are found the same way.
@@ -323,8 +323,8 @@ and uninstall leaves that runtime untouched, names the hook and exits
 `config.yaml` is read as PyYAML's SafeLoader reads it (block and flow
 collections, YAML 1.1 types, plain scalars over several lines), and
 validated field by field with pydantic's lax rules, since one bad field
-makes Python's `load_config` fail and `gate status` fall back to audit.
-An envelope file for `gate register` goes through the same YAML reader,
+makes Python's `load_config` fail and `warden status` fall back to audit.
+An envelope file for `warden register` goes through the same YAML reader,
 JSON included (PyYAML reads `1e-09` in JSON as a string). Anchors, tags,
 block scalars and tabs are outside the reader: the command is refused
 with a reason and nothing is written. The same holds for an uninstall
@@ -340,7 +340,7 @@ every case in a fresh tree and compares the file set, modes, parsed JSON
 and the hook commands by their flags. For `install`, whose Python text
 also describes layers this binary does not write, those lines are
 dropped on both sides. Each install the binary wrote is also read back
-with Python's `gate status`, which must agree with the binary's.
+with Python's `warden status`, which must agree with the binary's.
 
 The fixtures are published, so no path of the box that wrote them may be
 in one. The generator writes the scratch HOME as `{HOME}`, the
@@ -358,7 +358,7 @@ uv run --no-sync python clients/cli_compare.py --binary clients/go/daisugi --ora
 uv run --no-sync python clients/fixture_paths.py        # the leak check alone
 ```
 
-Cold start on the reference box: `daisugi --help` and `daisugi gate
+Cold start on the reference box: `daisugi --help` and `daisugi warden
 status` answer in about 3 ms at p50; the Python CLI takes about 460 ms.
 
 ## daisugi pathways: the pathway store in Go
@@ -480,7 +480,7 @@ Python.
 | `gardener prune\|merge\|run\|status\|watch` | evict stale or failure-dominated pathways, fold near-duplicates into the winner, both, the store's counts; `watch` is the one-shot run behind a stamp file |
 | `tend` | distil successful journal traces into pathways: cluster by the active matcher, intersect, salvage divergent steps or generalize through a model, verify, store |
 | `hook auto-tend` | turn captured sessions into journal traces, then tend |
-| `distill-repeats` | rank repeated gateway asks into a reuse worklist |
+| `distill-repeats` | rank repeated router asks into a reuse worklist |
 
 `registry pull-and-tend` and the other `hook` commands say they are not
 in this binary yet.
@@ -489,7 +489,7 @@ in this binary yet.
 |---|---|
 | `internal/garden` | `gardener.prune` and `gardener.merge`, `intersect_permissions`, pydantic's `==` on dumps |
 | `internal/tracejournal` | `Journal`: the YAML trace bodies and the SQLite index, its schema and migrations, `list_successful_traces`, `load_trace`, refinements, `log`, the converted-session table; networkx's topological order; the envelope cache the facade makes |
-| `internal/distill` | `Distiller.tend` and `pathway_params`; the gateway worklist |
+| `internal/distill` | `Distiller.tend` and `pathway_params`; the router worklist |
 | `internal/llm` | the model call for structured output, two backends |
 | `internal/capture` | `hook.list_sessions`, `infer_envelope` and the plan a capture makes |
 
@@ -563,26 +563,26 @@ Cold process, the binary and Python:
 | `gardener merge --dry-run`, 1,000 pathways (all pairs) | 111 ms | 5,310 ms |
 | `tend`, 7 traces, one cluster salvaged and verified | 145 ms | 848 ms |
 
-## daisugi gateway, gateway-report, router, route: the gateway in Go
+## daisugi router serve, router report, router, route: the router in Go
 
-The token-saving gateway runs in the binary: an HTTP proxy between a
+The token-saving router runs in the binary: an HTTP proxy between a
 harness and its model that routes each turn, meters it, and journals it,
 with the flags, output, files and exit codes of the Python CLI. It never
 runs Python.
 
 | Command | What it does |
 |---|---|
-| `gateway` | the proxy: Anthropic Messages and OpenAI Chat Completions, buffered and streamed, the rules router (ADR-0015 sticky routing), `--router off`, and `--router switchyard` with Switchyard as a managed child |
-| `gateway-report` | the calibration report: realized routing, the prompt cache, the reuse ceiling, the Switchyard target shares |
-| `router status [--json]`, `router stop` | the router choice, the binary and each child from its state file, recent turns; stop what a gateway left running |
+| `router serve` | the proxy: Anthropic Messages and OpenAI Chat Completions, buffered and streamed, the rules routing mode (ADR-0015 sticky routing), `--routing-mode off`, and `--routing-mode switchyard` with Switchyard as a managed child |
+| `router report` | the calibration report: realized routing, the prompt cache, the reuse ceiling, the Switchyard target shares |
+| `router status [--json]`, `router stop` | the routing mode, the binary and each child from its state file, recent turns; stop what a router left running |
 | `route` | the cheapest viable tier for a task, a matching pathway first |
-| `install --gateway [--base-url U] [--router R ...]` | the base_url layer: Claude Code's `ANTHROPIC_BASE_URL`, Codex's model provider, OpenClaw's provider; `--router` writes config.yaml and the Switchyard TOML |
+| `install --router [--base-url U] [--routing-mode R ...]` | the base_url layer: Claude Code's `ANTHROPIC_BASE_URL`, Codex's model provider, OpenClaw's provider; `--routing-mode` writes config.yaml and the Switchyard TOML |
 
 | Package | What it models |
 |---|---|
-| `internal/gateway` | `gateway_asgi` (the proxy), `gateway_pipeline`, `gateway` (route_turn, the meter), `gateway_journal`, `gateway_answers`, `gateway_openai`, `gateway_report`, `routing` |
-| `internal/switchyard` | `router_switchyard`: the TOML it writes and a reader for the TOML a deployment file uses, the child, its state file, health and stop |
-| `internal/recall` | `gateway_recall.recall` and `gateway_answers.recall_answer`, the reuse a harness calls through MCP |
+| `internal/router` | `router_asgi` (the proxy), `router_pipeline`, `router` (route_turn, the meter), `router_journal`, `router_answers`, `router_openai`, `router_report`, `routing` |
+| `internal/switchyard` | `routing_switchyard`: the TOML it writes and a reader for the TOML a deployment file uses, the child, its state file, health and stop |
+| `internal/recall` | `router_recall.recall` and `router_answers.recall_answer`, the reuse a harness calls through MCP |
 | `internal/config` | now also `save_config`: the whole file restated as pydantic dumps it |
 
 How it matches the oracle:
@@ -611,31 +611,31 @@ How it matches the oracle:
   most every two seconds; SIGTERM ends the process by the signal after it
   drains, as uvicorn does.
 - The Switchyard child binds 127.0.0.1, starts in its own session, and is
-  sent SIGTERM by the kernel when the gateway dies (a parent-death signal
+  sent SIGTERM by the kernel when the router dies (a parent-death signal
   set on a thread held for the life of the process).
 
-The gateway serves no answer from the answer store or from pathways, as
+The router serves no answer from the answer store or from pathways, as
 the oracle's does not (GW-1); `internal/recall` carries both reuse paths
 for a later MCP server. The rulings are GW-1 to GW-13 in
 `clients/ADJUDICATIONS.md`.
 
 ### Proof and speed
 
-`clients/gateway_cases.py` writes the cases from the oracle
-(`clients/fixtures/gateway/`): each proxy case starts the gateway on a
+`clients/router_cases.py` writes the cases from the oracle
+(`clients/fixtures/router/`): each proxy case starts the router on a
 free loopback port in front of a fake upstream that answers from a table
 keyed by the path and the exact body bytes, and records what the client
 got, what the upstream got, stdout, stderr and the tree after. The fuzz
 drives turn sequences through the pipeline in process on both sides
-(`cmd/gateway-probe`), in chunks of at most 500 turns.
+(`cmd/router-probe`), in chunks of at most 500 turns.
 
 ```sh
-go build -o /some/scratch/gateway-probe ./cmd/gateway-probe
+go build -o /some/scratch/router-probe ./cmd/router-probe
 go build -o /some/scratch/recall-probe ./cmd/recall-probe
 go build -o /some/scratch/fake-upstream ./cmd/fake-upstream
-uv run --no-sync python clients/gateway_cases.py
-DAISUGI_RECALL_PROBE=/some/scratch/recall-probe uv run --no-sync python clients/gateway_compare.py \
-    --binary clients/go/daisugi --fuzz 2000 --seed 1 --probe /some/scratch/gateway-probe \
+uv run --no-sync python clients/router_cases.py
+DAISUGI_RECALL_PROBE=/some/scratch/recall-probe uv run --no-sync python clients/router_compare.py \
+    --binary clients/go/daisugi --fuzz 2000 --seed 1 --probe /some/scratch/router-probe \
     --speed --upstream-bin /some/scratch/fake-upstream
 ```
 
@@ -643,17 +643,17 @@ Results on the reference box, 2026-09-26:
 
 | Run | Items | Disagreements |
 |---|---|---|
-| gateway cases, stderr on every case | 169 (167 agree, 2 refused as ruled: GW-8, GW-9) | 0 |
-| CLI cases with the `install --gateway` and `--router` cases | 306 (294 agree, 12 not ported or refused as before) | 0 |
+| router cases, stderr on every case | 169 (167 agree, 2 refused as ruled: GW-8, GW-9) | 0 |
+| CLI cases with the `install --router` and `--routing-mode` cases | 306 (294 agree, 12 not ported or refused as before) | 0 |
 | pipeline fuzz, seeds 1, 2 and 3 | 6,000 turns (4,973 routed, 1,027 forwarded untouched, 3,769 journaled) | 0 |
 | pipeline fuzz weighted to easy, repeated asks, seeds 4, 5 and 6 | 6,000 turns (seed 6: 667 on the cheap rung, 224 local, 184 frontier, 116 off, 149 Switchyard) | 0 |
-| gateway cases with `--oracle` (fixture rerun live) | 169 | 0 stale |
-| gateway cases after the 54 proxy cases (PX-1 to PX-8) | 223 (221 agree, 2 refused as ruled) | 0 |
+| router cases with `--oracle` (fixture rerun live) | 169 | 0 stale |
+| router cases after the 54 proxy cases (PX-1 to PX-8) | 223 (221 agree, 2 refused as ruled) | 0 |
 | the 15 garden proxy cases with `--oracle` | 15 | 0 stale |
 
-The gateway's added time on a buffered turn, 400 turns each way against
+The router's added time on a buffered turn, 400 turns each way against
 `cmd/fake-upstream`, alternating: straight to the upstream p50 0.86 ms,
-through the gateway p50 1.75 ms, so 0.88 ms added at p50 (target: under
+through the router p50 1.75 ms, so 0.88 ms added at p50 (target: under
 5 ms).
 
 ## daisugi status, config, start, journal: the everyday commands in Go
@@ -665,7 +665,7 @@ exit codes and files of the Python CLI. The binary never runs Python.
 |---|---|
 | `status [--data-dir D] [--threshold F] [--json]` | day-one readiness: pathway reuse, the journal, compound shell, the local model |
 | `config [--json]` | every setting as daisugi uses it, with its source, and the unknown keys |
-| `start [--no-ui \| --dry-run] [--enforce [--ask]] [--data-dir D]` | the gate hook scoped to this directory, a starter envelope keyed to it, the resident gate, then the plain live view |
+| `start [--no-ui \| --dry-run] [--enforce [--ask]] [--data-dir D]` | the warden hook scoped to this directory, a starter envelope keyed to it, the resident warden, then the plain live view |
 | `journal stats [--data-dir D] [--json]` | the journal index's counts |
 | `journal replay ID [--data-dir D] [--json]` | verify a stored trace again and report drift |
 | `journal search QUERY [--limit N] [--data-dir D] [--json]` | rank traces by task with the lexical or potion matcher |
@@ -681,10 +681,10 @@ What each does not do, and why (rulings C-10 to C-17 in
 - `start` opens the plain live view after its steps, as the oracle does
   without the tui extra (K4-5); the Textual view is not in this binary.
   Python's `start` also launches one
-  program, `python -m opendaisugi.cli gate serve --root <root>`, detached,
-  and waits for its socket; the binary launches its own `gate serve`
+  program, `python -m opendaisugi.cli warden serve --root <root>`, detached,
+  and waits for its socket; the binary launches its own `warden serve`
   the same way, with Python's step text (G2-4). `start --enforce --ask`
-  writes a hook with `--ask`, which `gate check` answers natively.
+  writes a hook with `--ask`, which `warden check` answers natively.
 - `status` reports pathway reuse as off under a matcher the binary does
   not carry (MiniLM, the default, or int8), where Python reports the
   `[search]` extra installed (C-12). It reads the GPU from `nvidia-smi`
@@ -700,7 +700,7 @@ What each does not do, and why (rulings C-10 to C-17 in
 
 ### Proof and speed
 
-The cases are in `clients/cli_cases.py` beside the gate commands', and
+The cases are in `clients/cli_cases.py` beside the warden commands', and
 run through the garden runner (`clients/garden_cases.py`): journals and
 stores laid out by the oracle's own classes, a fake `claude` answering
 recorded replies, every database dumped whole. `clients/cli_compare.py`
@@ -722,7 +722,7 @@ Results on the reference box, 2026-09-26:
 | CLI cases, all (the 167 new ones: status 35, config 24, start 24, journal 84) | 472 (451 agree, 12 not ported as marked, 9 refused as ruled) | 0 |
 | the same with `--oracle` (the fixture rerun live) | 471 | 0 stale |
 | guard: Python reads every journal the binary wrote | every rich case that wrote one | 0 |
-| gate, pathway, garden and gateway cases, rerun on the new binary | 1,310, 158 + finds, 200, 169 | 0 |
+| warden, pathway, garden and router cases, rerun on the new binary | 1,310, 158 + finds, 200, 169 | 0 |
 
 Cold process, 100 runs each, on a box whose bare `daisugi --version`
 took 11.6 ms at p50 that hour:
@@ -744,27 +744,27 @@ numbers are not comparable with those. `status --json`, `status` with no
 stub, about 90 ms with this box's real `nvidia-smi`, whose driver is not
 loaded. The Python `status` takes about 5 s here (it imports torch).
 
-## daisugi gate serve: the resident gate in Go
+## daisugi warden serve: the resident warden in Go
 
-The pi extension and the OpenCode plugin ask the gate over a unix socket,
-`~/.opendaisugi/gate/gate.sock` (or `OPENDAISUGI_GATE_SOCK`), and deny
-every call when nothing answers. `daisugi gate serve [--root R]` answers
-there as `gate_server.py` does, so a Go-only install gates them too.
+The pi extension and the OpenCode plugin ask the warden over a unix socket,
+`~/.opendaisugi/warden/warden.sock` (or `OPENDAISUGI_WARDEN_SOCK`), and deny
+every call when nothing answers. `daisugi warden serve [--root R]` answers
+there as `warden_server.py` does, so a Go-only install checks them too.
 `daisugi start` starts it; it runs in the foreground until Ctrl-C.
 
 ```sh
-./daisugi gate serve --root ~/.opendaisugi/gate
+./daisugi warden serve --root ~/.opendaisugi/warden
 ```
 
 The wire is one JSON line per connection, `{"v": 1, "argv": [...],
 "stdin_b64": "...", "coppice_sock"?, "coppice_pane"?, "herdr_pane"?,
 "coppice_data_dir"?}`, and one reply line, `{"v": 1, "stdout": "...",
 "stderr": "...", "exit_code": N}`, byte for byte the oracle's. argv is
-the gate's own flags (`--format pi --root R --verify-timeout 4` for pi),
+the warden's own flags (`--format pi --root R --verify-timeout 4` for pi),
 or `["hook", "report", ...]` for a state report. The rules (G2-1 to G2-8
 in `clients/ADJUDICATIONS.md`):
 
-- Each call is decided in a child of the binary, as `gate check`
+- Each call is decided in a child of the binary, as `warden check`
   decides one, fed the request on stdin. A crash or a hang of the child
   is the format's deny, never a reply that allows, and never ends the
   server. At most 32 calls are decided at once.
@@ -783,33 +783,33 @@ in `clients/ADJUDICATIONS.md`):
 
 ### Proof and speed
 
-`clients/gate_server_cases.py` drives the Python server with the pi,
-OpenCode and gate_client request shapes, hook reports, malformed and
+`clients/warden_server_cases.py` drives the Python server with the pi,
+OpenCode and warden_client request shapes, hook reports, malformed and
 oversized lines, and scenarios (concurrent, slow and departing clients,
 start, stop, stale files, a second server), and records the replies and
 every log line, tree entry, coppice line and herdr call
-(`clients/fixtures/gate_server/`). `clients/gate_server_compare.py`
+(`clients/fixtures/warden_server/`). `clients/warden_server_compare.py`
 runs the binary's server on them.
 
 ```sh
-uv run --no-sync python clients/gate_server_cases.py      # rewrite the cases from the oracle
-uv run --no-sync python clients/gate_server_compare.py --binary clients/go/daisugi --oracle
+uv run --no-sync python clients/warden_server_cases.py      # rewrite the cases from the oracle
+uv run --no-sync python clients/warden_server_compare.py --binary clients/go/daisugi --oracle
 ```
 
 Results on the reference box, 2026-09-27: 198 cases (190 requests, 8
-scenarios), 198 agree, 0 stale against the live oracle. The gate, CLI,
-pathway, garden and gateway cases rerun on the same binary: 0
-disagreements (1,342 gate calls native; CLI 452 agree, 12 not ported, 9
+scenarios), 198 agree, 0 stale against the live oracle. The warden, CLI,
+pathway, garden and router cases rerun on the same binary: 0
+disagreements (1,342 warden calls native; CLI 452 agree, 12 not ported, 9
 refused).
 
-A gate decision over the socket (connect, one request, the reply), 300
+A warden decision over the socket (connect, one request, the reply), 300
 calls in a row after 20 to warm up:
 
 | Server | allow p50 | allow p90 | deny p50 | deny p90 |
 |---|---|---|---|---|
-| Python (`gate_server.py`) | 6.8 ms | 7.2 ms | 4.6 ms | 5.2 ms |
-| Go `daisugi gate serve` | 5.9 ms | 6.5 ms | 7.4 ms | 8.3 ms |
-| Rust `daisugi gate serve` | 4.8 ms | 5.4 ms | 5.9 ms | 6.3 ms |
+| Python (`warden_server.py`) | 6.8 ms | 7.2 ms | 4.6 ms | 5.2 ms |
+| Go `daisugi warden serve` | 5.9 ms | 6.5 ms | 7.4 ms | 8.3 ms |
+| Rust `daisugi warden serve` | 4.8 ms | 5.4 ms | 5.9 ms | 6.3 ms |
 
 The allow is `ls` and the deny `rm -rf /` under the cases' base envelope,
 in enforce mode, on a 4-core box under a load of about 5 from other work.
@@ -873,10 +873,10 @@ setting the binary does not read the httpx way (PX-5), a MiniLM matcher
 binary wrote (24 cases). Go tests make the Z3 checks answer `unknown` and
 see the envelope refused, the bound plan dropped for its template, and
 the plan not served (K1-2, K1-3).
-The other compares rerun on the same binary: gate 1,348 calls, all
+The other compares rerun on the same binary: warden 1,348 calls, all
 native, 0 disagreements; CLI 0 disagreements; pathway 158 cases, 380 find
-queries; garden 227 cases; gateway 223 (221 agree, 2 refused as ruled);
-resident gate 200 agree. `go test -p 1 ./...` passes.
+queries; garden 227 cases; router 223 (221 agree, 2 refused as ruled);
+resident warden 200 agree. `go test -p 1 ./...` passes.
 
 ## daisugi run and daisugi orchestrate: the supervisor and the orchestrator in Go
 
@@ -925,10 +925,10 @@ back every journal and pathway store the binary wrote (99 cases), and `--oracle`
 found no stale fixture. Go tests reach what no case can: the per-step
 rejection and the recompute fallback (K2-1), and a Z3 check that answers
 `unknown` before `run`, in the decomposition, before `orchestrate`'s run, per
-step and on a recomputed step (K2-2). The other compares rerun on the same binary: gate 1,348 calls, all
+step and on a recomputed step (K2-2). The other compares rerun on the same binary: warden 1,348 calls, all
 native; CLI 498 cases (478 agree, 11 not ported, 9 refused); pathway 158 cases
-and 380 finds; garden 227 cases, run in parts; gateway 223 (221 agree, 2 refused
-as ruled); resident gate 200 agree; K1 186 (183 agree, 3 refused as ruled). 0
+and 380 finds; garden 227 cases, run in parts; router 223 (221 agree, 2 refused
+as ruled); resident warden 200 agree; K1 186 (183 agree, 3 refused as ruled). 0
 disagreements in each. `go test -p 1 ./...` passes.
 
 ## daisugi mcp serve, onboard and tiers setup: stage K3 in Go
@@ -978,8 +978,8 @@ fixture. Go tests reach a Z3 unknown in `verify_plan`, a refused MCP method,
 and the CPU-only recommendation. The other compares rerun on the same
 binary: CLI 507 cases (487 agree, 11 not ported, 9 refused); K2 116 (109
 agree, 7 not ported); K1 186 (183 agree, 3 as ruled); pathway 158 cases and
-380 finds; garden 227 cases in two parts (216 agree, 11 not ported); gateway
-223 (221 agree, 2 refused as ruled); resident gate 200 agree; gate 1,348
+380 finds; garden 227 cases in two parts (216 agree, 11 not ported); router
+223 (221 agree, 2 refused as ruled); resident warden 200 agree; warden 1,348
 calls, all native; conform 11,450 of 11,450. 0 disagreements in each. `go test -p 1 ./...`
 passes, and `scripts/check-paths.sh` finds no build-machine path.
 
@@ -997,7 +997,7 @@ them as the oracle does. After the change: 207 cases, 204 agree, the same
 stage of the pipeline, which module is active, which is available to swap
 in, and which is only a designed slot. `daisugi dashboard [--data-dir D]
 [--once] [--json] [--interval S]` adds a gauge per stage read from the
-local stores (the journal, the pathway store and the gateway's turn
+local stores (the journal, the pathway store and the router's turn
 journal): one frame when stdout is not a terminal or with `--once`, the
 map with its gauges as JSON with `--json`, and on a terminal a new frame
 every interval until Ctrl-C. `daisugi metrics [--data-dir D] [--serve
@@ -1016,7 +1016,7 @@ The map answers as the oracle installed with the extras the binary carries
 MiniLM or int8 it does not fall back to lexical, so the lexical rows are
 available, not active (K4-2). `dashboard --tui` and `--serve`, the Textual
 views, are not in this binary yet (K4-3). A settings file whose hooks are
-in a shape the oracle raises on, and a gateway record of other types, are
+in a shape the oracle raises on, and a router record of other types, are
 refused before any write (K4-4). The endpoint answers HTTP/1.1 with the
 oracle's status, Content-Type and body (K4-6). The map, the floor and
 `status` read the journal read-only and make nothing on a fresh box, as
@@ -1043,8 +1043,8 @@ other compares rerun on the same binary: CLI 508 cases in three parts (490
 agree, 9 not ported, 9 refused; the 3 `start view` cases agree); K3 207
 (204 agree, 3 not ported); K2 116 (109 agree, 7 not ported); K1 186 (183
 agree, 3 as ruled); pathway 158 cases and 380 finds; garden 227 (216 agree,
-11 not ported); gateway 223 (221 agree, 2 refused as ruled); resident gate
-200 agree; gate 1,348 calls, all native. 0 disagreements in each. `go test
+11 not ported); router 223 (221 agree, 2 refused as ruled); resident warden
+200 agree; warden 1,348 calls, all native. 0 disagreements in each. `go test
 -p 1 ./...` passes, and `scripts/check-paths.sh` finds no build-machine
 path.
 
@@ -1067,7 +1067,7 @@ herdr, and append the state to the session tree beside the captures;
 
 | File | What it models |
 |---|---|
-| `internal/gate/hookrecord.go` | `hook.record_and_contract`, `hook.record_lifecycle_event`, `_state_report.report_child` |
+| `internal/warden/hookrecord.go` | `hook.record_and_contract`, `hook.record_lifecycle_event`, `_state_report.report_child` |
 | `internal/cli/hookcmd.go` | the command's options and `hook.maybe_trigger_background_tend` |
 
 Past the options it always prints the contract and exits 0, so a Stop
@@ -1134,8 +1134,8 @@ Results on the reference box, 2026-09-28: 232 cases, 232 agree, 0 refused,
 agree, 9 not ported, 9 refused), garden 227 (217 agree, 10 not ported),
 K1 186 (183 agree, 3 as ruled), K2 116 (109 agree, 7 not ported), K3 207
 (204 agree, 3 not ported), K4 193 (188 agree, 2 not ported, 3 refused),
-pathway 158 cases and 245 finds, gateway 223 (221 agree, 2 refused),
-resident gate 200 agree, gate 1,348 calls, all native: 0 disagreements in
+pathway 158 cases and 245 finds, router 223 (221 agree, 2 refused),
+resident warden 200 agree, warden 1,348 calls, all native: 0 disagreements in
 each. `go test -p 1 ./...` passes, and `scripts/check-paths.sh` finds no
 build-machine path.
 
@@ -1189,7 +1189,7 @@ Results on the reference box, 2026-09-28: 199 cases, 198 agree, 1 refused
 ported; the two auto-tend cases GD-8 refused now agree), K1 186 (183
 agree, 3 as ruled), K2 116 (109 agree, 7 not ported), K3 207 (204 agree, 3
 not ported), K4 193 (188 agree, 2 not ported, 3 refused), L 239 agree,
-pathway 158 cases and 245 finds, gateway 223 (221 agree, 2 refused),
-resident gate 200 agree, gate 1,348 calls, all native: 0 disagreements in
+pathway 158 cases and 245 finds, router 223 (221 agree, 2 refused),
+resident warden 200 agree, warden 1,348 calls, all native: 0 disagreements in
 each. `go test -p 1 ./...` passes, and `scripts/check-paths.sh` finds no
 build-machine path.

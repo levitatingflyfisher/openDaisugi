@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"daisugi-verify/internal/catalog"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/netproxy"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/voice"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var modelsHelp = `Usage: daisugi models [OPTIONS] COMMAND [ARGS]...
@@ -68,7 +68,7 @@ func (e *Env) modelsHardware() voice.VoiceHardware {
 
 // inUse is model_catalog.in_use.
 func inUse(dataDir string) string {
-	raw, err := os.ReadFile(gateroot.Join(dataDir, catalog.ChoiceFile))
+	raw, err := os.ReadFile(wardenroot.Join(dataDir, catalog.ChoiceFile))
 	if err != nil {
 		return ""
 	}
@@ -105,7 +105,7 @@ func (e *Env) modelsList(args []string) error {
 	if err != nil {
 		return e.fail(cmd, err)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	hw := e.modelsHardware()
 	def := cat.Default(hw.RAMGB, hw.VRAMGB)
 	chosen := inUse(dataDir)
@@ -160,11 +160,11 @@ func (e *Env) modelsUse(args []string) error {
 		return e.fail3("A model id cannot be blank.", "models use records the id it is given, as given.",
 			"run: daisugi models list", 2)
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if err := os.MkdirAll(dataDir, 0o777); err != nil {
 		return e.failPy(cmd, err)
 	}
-	path := gateroot.Join(dataDir, catalog.ChoiceFile)
+	path := wardenroot.Join(dataDir, catalog.ChoiceFile)
 	body := pyjson.DumpsIndent(pyjson.NewObject().Set("model", id), 2, true) + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o666); err != nil {
 		return e.failPy(cmd, err)

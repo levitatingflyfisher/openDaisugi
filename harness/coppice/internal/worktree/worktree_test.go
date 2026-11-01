@@ -55,21 +55,21 @@ func commitFile(t *testing.T, dir, name string) {
 
 func TestAddCreatesAWorktreeBesideTheRepo(t *testing.T) {
 	repo := initRepo(t)
-	p, err := Add(repo, "gate-refactor")
+	p, err := Add(repo, "gear-refactor")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Dir(p) != repo+"-worktrees" {
 		t.Fatalf("not beside the repo: %s", p)
 	}
-	if filepath.Base(p) != "gate-refactor" {
+	if filepath.Base(p) != "gear-refactor" {
 		t.Fatalf("not named after the task: %s", p)
 	}
 	if _, err := os.Stat(filepath.Join(p, ".git")); err != nil {
 		t.Fatal("no worktree")
 	}
-	if got := run(t, p, "rev-parse", "--abbrev-ref", "HEAD"); got != "gate-refactor" {
-		t.Fatalf("worktree branch = %q, want gate-refactor", got)
+	if got := run(t, p, "rev-parse", "--abbrev-ref", "HEAD"); got != "gear-refactor" {
+		t.Fatalf("worktree branch = %q, want gear-refactor", got)
 	}
 	if got := run(t, p, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "main" {
 		t.Fatalf("upstream = %q, want main", got)
@@ -78,7 +78,7 @@ func TestAddCreatesAWorktreeBesideTheRepo(t *testing.T) {
 
 func TestBadNamesAreRefusedWithATeachingError(t *testing.T) {
 	repo := initRepo(t)
-	for _, name := range []string{"Gate Refactor", "gate_refactor", "", "a/b", "..", "gate.refactor"} {
+	for _, name := range []string{"Warden Refactor", "warden_refactor", "", "a/b", "..", "warden.refactor"} {
 		_, err := Add(repo, name)
 		if err == nil || !strings.Contains(err.Error(), "lowercase") {
 			t.Fatalf("Add(%q) = %v, want the teaching error", name, err)

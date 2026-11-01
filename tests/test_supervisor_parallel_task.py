@@ -100,7 +100,7 @@ async def test_task_steps_overlap_when_executor_parallel_safe():
 
 async def test_task_steps_stay_sequential_when_not_parallel_safe():
     """An executor that declines parallelism (e.g. a *budgeted* task executor)
-    must run sequentially even at max_parallel>1 — the gate is the executor's
+    must run sequentially even at max_parallel>1 — the warden is the executor's
     own parallel_safe flag, not the step type."""
     delay = 0.15
     ex = _FakeTaskExecutor(delay=delay, parallel_safe=False)

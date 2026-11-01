@@ -3,6 +3,8 @@ package envgen
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -184,5 +186,40 @@ func TestBindGivesTheTemplateOnAZ3Unknown(t *testing.T) {
 	verifyPlan = timeoutVerify
 	if got := Bind(c, pw, "read b", callerEnv(t), DefaultModel, 500); path(got) != "/work/a.txt" {
 		t.Fatalf("a Z3 unknown must give the frozen template: %v", path(got))
+	}
+}
+
+func TestClassifyNamesTruncation(t *testing.T) {
+	outcome, reason := Classify(&llm.Error{Msg: "The output is incomplete due to a max_tokens length limit."})
+	if outcome != OutcomeTruncated {
+		t.Fatalf("outcome %q", outcome)
+	}
+	want := "The output is incomplete due to a max_tokens length limit." + truncatedAdvice
+	if reason != want || len([]rune(reason)) > 200 {
+		t.Fatalf("reason %q", reason)
+	}
+}
+
+func TestLoadConfiguredTier1ReadsHostKind(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) *Tier1 {
+		os.WriteFile(filepath.Join(dir, ConfigFile), []byte(body), 0o644)
+		tier, err := LoadConfiguredTier1(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tier
+	}
+	if got := write(`{"model": "m", "base_url": "http://h/v1", "host_kind": "ollama"}`).ReasoningEffort; got != "none" {
+		t.Fatalf("ollama: %q", got)
+	}
+	for _, body := range []string{
+		`{"model": "m", "base_url": "http://h/v1", "host_kind": "openai"}`,
+		`{"model": "m", "base_url": "http://h/v1"}`,
+		`{"model": "m", "base_url": "http://h/v1", "host_kind": 7}`,
+	} {
+		if got := write(body).ReasoningEffort; got != "" {
+			t.Fatalf("%s: %q", body, got)
+		}
 	}
 }

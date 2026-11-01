@@ -14,7 +14,7 @@ pip install mujoco imageio pillow
 MUJOCO_GL=egl python mujoco_render.py     # regenerate the GIF above (headless CPU render)
 ```
 
-No physics, no GPU, no network, no model needed for the gate — pure envelope algebra,
+No physics, no GPU, no network, no model needed for the warden — pure envelope algebra,
 runs anywhere. (The GIF is a kinematic illustration; the verify calls in it are real.)
 
 ## The idea
@@ -46,7 +46,7 @@ lateral), `verify_swarm_tasking` (subsumption **and** pairwise disjointness),
 
 - [swarm-tasking](../swarm-tasking/) — the static deconfliction certificate.
 - [property-patrol](../property-patrol/) — the Simplex loop *in motion* (a mock VLA
-  proposing actions, gated live).
+  proposing actions, checked live).
 - A physics + real-VLA upgrade (MuJoCo on CPU / Colab, SmolVLA/π0) is documented in
   those READMEs; the verification wiring here does not change.
 

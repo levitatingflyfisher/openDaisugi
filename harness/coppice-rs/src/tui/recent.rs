@@ -190,7 +190,7 @@ impl Model {
     }
 
     /// The order the windows fill in when the floor opens: the agents that
-    /// need you, then the foreman while it holds a reply no window showed,
+    /// need you, then the steward while it holds a reply no window showed,
     /// then the working ones, then the rest. An agent only takes a free
     /// window.
     pub fn start_order(&self) -> Vec<String> {
@@ -198,9 +198,9 @@ impl Model {
         let mut out = Vec::new();
         let picks: [&dyn Fn(&Row) -> bool; 4] = [
             &|r: &Row| r.needs_you(),
-            &|r: &Row| !r.needs_you() && self.foreman_first(&r.id),
-            &|r: &Row| !r.needs_you() && r.state == "working" && !self.foreman_first(&r.id),
-            &|r: &Row| !r.needs_you() && r.state != "working" && !self.foreman_first(&r.id),
+            &|r: &Row| !r.needs_you() && self.steward_first(&r.id),
+            &|r: &Row| !r.needs_you() && r.state == "working" && !self.steward_first(&r.id),
+            &|r: &Row| !r.needs_you() && r.state != "working" && !self.steward_first(&r.id),
         ];
         for pick in picks {
             for r in &rows {

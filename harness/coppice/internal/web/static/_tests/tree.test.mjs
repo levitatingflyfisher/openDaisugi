@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reset, element, setFetch, TOKEN, freshApp, lastSocket } from './browser-stub.mjs';
 import { mountFloor, FOLD_KEY } from '../floor.js';
-import { render, paneRows, renderRecent } from '../roster.js';
+import { render, paneRows, renderRecent, setFinishedShown } from '../roster.js';
 import { ROW_TYPE } from '../rail.js';
 import { mountNewButton, NO_DEFAULT } from '../newpane.js';
 
@@ -287,28 +287,47 @@ test('a double click on a window label renames it there', async () => {
   assert.equal(root.querySelector('[data-tile="b"] .head .label').textContent, 'bee');
 });
 
-test('Recent lists the ended agents with Resume and Forget, and hides with none', () => {
+test('Recent keeps the agents that need a look, tidies the ones that ended well, and hides with none', () => {
   reset();
   element('recent');
   element('recent-list');
   element('recent-count');
+  element('recent-finished');
+  setFinishedShown(false);
   const done = [];
   const act = { resume: (r) => done.push(['resume', r.id]), forget: (r) => done.push(['forget', r.id]) };
   renderRecent([], act, 100);
   assert.equal(element('recent').hidden, true);
-  renderRecent([
+  const ended = [
     { id: 'x', label: 'sh-x', cwd: '/src/one', exit_code: 3, ended_at: 40 },
     { id: 'y', label: 'sh-y', cwd: '/src/two', exit_code: 0, ended_at: 10 },
-  ], act, 100);
+    { id: 'z', label: 'sh-z', cwd: '/src/three', exit_code: -1, ended_at: 20 },
+    { id: 'u', label: 'sh-u', cwd: '/src/four', exit_code: null, ended_at: 30 },
+  ];
+  renderRecent(ended, act, 100);
   assert.equal(element('recent').hidden, false);
-  assert.equal(element('recent-count').textContent, '2');
+  assert.equal(element('recent-count').textContent, '3', 'the count is the agents that need a look');
+  assert.deepEqual(element('recent-list').children.map((li) => li.dataset.recent), ['x', 'z', 'u'], 'a clean end is out of the list');
   const rows = element('recent-list').children;
-  assert.equal(rows[0].textContent.includes('one · exit 3 · 1m ago'), true);
+  assert.equal(rows[0].textContent.includes('one · exit 3 · 1m ago'), true, 'a failure says why');
   assert.ok(rows[0].className.includes('amber'));
-  assert.ok(!rows[1].className.includes('amber'));
+  assert.equal(rows[1].textContent.includes('killed'), true);
+  assert.equal(element('recent-finished').hidden, false);
+  assert.equal(element('recent-finished').textContent, 'Show 1 finished');
   click(rows[0].querySelector('.resume'));
-  click(rows[1].querySelector('.forget'));
-  assert.deepEqual(done, [['resume', 'x'], ['forget', 'y']]);
+  click(rows[0].querySelector('.forget'));
+  assert.deepEqual(done, [['resume', 'x'], ['forget', 'x']]);
+  // Show finished brings the clean ends back, and says it can hide them.
+  setFinishedShown(true);
+  renderRecent(ended, act, 100);
+  assert.deepEqual(element('recent-list').children.map((li) => li.dataset.recent), ['x', 'y', 'z', 'u']);
+  assert.equal(element('recent-finished').textContent, 'Hide finished');
+  setFinishedShown(false);
+  // Only clean ends: the fold stays for the way to see them, with a zero count.
+  renderRecent([ended[1]], act, 100);
+  assert.equal(element('recent').hidden, false);
+  assert.equal(element('recent-count').textContent, '0');
+  assert.deepEqual(element('recent-list').children, []);
 });
 
 test('opening Recent clears the ended lines', async () => {

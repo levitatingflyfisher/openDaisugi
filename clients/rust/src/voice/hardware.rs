@@ -107,10 +107,10 @@ mod tests {
 
     #[test]
     fn a_desktop_gets_parakeet_and_the_line_says_why() {
-        let desk = VoiceHardware { ram_gb: Some(15.5), cpus: 4, vram_gb: 0.0 };
+        let desk = VoiceHardware { ram_gb: Some(12.5), cpus: 6, vram_gb: 0.0 };
         let (e, m, line) = choose_engine(&desk, &["parakeet", "moonshine"], false, true);
         assert_eq!((e, m), ("parakeet", "v2"));
-        assert_eq!(line, "No voice engine is set, so voice uses Parakeet v2: this box has 15.5 GB of RAM and 4 cores.");
+        assert_eq!(line, "No voice engine is set, so voice uses Parakeet v2: this box has 12.5 GB of RAM and 6 cores.");
         let (_, _, line) = choose_engine(&desk, &["moonshine"], false, true);
         assert!(line.ends_with("Parakeet v2 would come first, but parakeet-cli is not on PATH."));
         let (e, _, line) = choose_engine(&VoiceHardware { ram_gb: None, cpus: 1, vram_gb: 0.0 }, &[], false, true);
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn a_machine_that_cannot_run_parakeet_skips_its_tier() {
-        let desk = VoiceHardware { ram_gb: Some(15.5), cpus: 4, vram_gb: 0.0 };
+        let desk = VoiceHardware { ram_gb: Some(12.5), cpus: 6, vram_gb: 0.0 };
         let (e, m, line) = choose_engine(&desk, &["parakeet", "moonshine"], false, false);
         assert_eq!((e, m), ("moonshine", "small"));
         assert!(!line.contains("Parakeet"));

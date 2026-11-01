@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use super::audio::{run_with_input, which};
 use super::wav::wav_duration_s;
-use crate::gate::py::text;
+use crate::warden::py::text;
 
 pub const FASTER_WHISPER_MODEL_NAMES: &[&str] = &[
     "base", "base.en", "distil-large-v3", "large-v2", "large-v3", "medium", "medium.en", "small", "small.en", "tiny",
@@ -83,10 +83,44 @@ pub fn py_path_str(p: &str) -> String {
     }
 }
 
+static BATCH_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub struct Transcript {
     pub text: String,
     pub duration_s: f64,
     pub rtf: f64,
+    /// The text of each window of a long clip, in order. A window the engine
+    /// could not read is `GAP_MARKER`. Empty for a clip of one window.
+    pub parts: Vec<String>,
+    /// How many windows the engine could not read.
+    pub gaps: usize,
+}
+
+/// Stands in the text for a window the engine could not read, so the owner
+/// sees where words are missing.
+pub const GAP_MARKER: &str = "[gap in the recording]";
+
+/// `whisper_cpp_args` for many windows in one run: the model loads once, and
+/// each window's text is written beside its file as `<file>.txt`.
+pub fn whisper_cpp_batch_args(binary: &str, model: &str, wav_paths: &[String], language: Option<&str>) -> Vec<String> {
+    let lang = match language {
+        Some(l) if !l.is_empty() => l,
+        _ => WHISPER_CPP_AUTO_LANGUAGE,
+    };
+    let mut args = vec![binary.to_string(), "-m".into(), model.to_string()];
+    for p in wav_paths {
+        args.push("-f".into());
+        args.push(p.clone());
+    }
+    for a in ["-l", lang, "-nt", "-np", "-otxt"] {
+        args.push(a.to_string());
+    }
+    args
+}
+
+/// Window texts joined in order by one space; an empty window adds nothing.
+pub fn join_texts(parts: &[String]) -> String {
+    parts.iter().map(|p| p.trim()).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 /// An external speech engine: whisper-cli (whisper.cpp), run once per
@@ -123,6 +157,101 @@ impl Engine {
             clip_timeout_s: if t.clip_s > 0.0 { t.clip_s } else { super::resident::CLIP_TIMEOUT_S },
         });
         Engine { name, binary, model, arch, argv, res: Some(res) }
+    }
+
+    /// Transcribes a clip of any length the caller allows: the windows from
+    /// `split_wav` in order, the texts joined by one space. The duration is
+    /// the clip's; the real-time factor is all the engine time over all the
+    /// audio. whisper.cpp reads all windows in one run, so its model loads
+    /// once. A window that fails does not cost the others: its place in the
+    /// text is `GAP_MARKER`. The call fails only when no window was read.
+    pub fn transcribe_long(&self, wav: &[u8], language: Option<&str>) -> Result<Transcript, TranscribeError> {
+        let pieces = super::wav::split_wav(wav).map_err(|e| TranscribeError::Other(e.msg))?;
+        if pieces.len() == 1 {
+            let mut t = self.transcribe(&pieces[0], language)?;
+            t.parts = vec![t.text.clone()];
+            return Ok(t);
+        }
+        let start = Instant::now();
+        let total = wav_duration_s(wav).map_err(|e| TranscribeError::Other(e.msg))?;
+        let mut texts: Vec<String> = Vec::new();
+        let mut read: Vec<bool> = Vec::new();
+        let mut failure: Option<TranscribeError> = None;
+        if self.res.is_none() {
+            match self.run_batch(&pieces, language) {
+                Ok((t, r, f)) => {
+                    texts = t;
+                    read = r;
+                    failure = f.map(TranscribeError::Other);
+                }
+                Err(e) => return Err(TranscribeError::Other(e)),
+            }
+        } else {
+            for p in &pieces {
+                match self.transcribe(p, language) {
+                    Ok(t) => {
+                        texts.push(t.text);
+                        read.push(true);
+                    }
+                    Err(e) => {
+                        failure.get_or_insert(e);
+                        texts.push(String::new());
+                        read.push(false);
+                    }
+                }
+            }
+        }
+        if !read.iter().any(|r| *r) {
+            return Err(failure.unwrap_or_else(|| TranscribeError::Other("the engine read no window".into())));
+        }
+        let parts: Vec<String> = texts.into_iter().zip(&read).map(|(t, ok)| if *ok { t } else { GAP_MARKER.to_string() }).collect();
+        let gaps = read.iter().filter(|r| !**r).count();
+        let rtf = if total > 0.0 { start.elapsed().as_secs_f64() / total } else { 0.0 };
+        Ok(Transcript { text: join_texts(&parts), duration_s: total, rtf, parts, gaps })
+    }
+
+    /// One whisper-cli run over all windows. Each window's text and whether
+    /// it was read (it has a `.txt` file); the last value is the failure of
+    /// the run, when it failed. Windows that finished keep their text.
+    fn run_batch(&self, pieces: &[Vec<u8>], language: Option<&str>) -> Result<(Vec<String>, Vec<bool>, Option<String>), String> {
+        let dir = std::env::temp_dir().join(format!("daisugi-voice-{}-{}", std::process::id(), BATCH_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut paths = Vec::new();
+        for (i, p) in pieces.iter().enumerate() {
+            let path = dir.join(format!("w{i:04}.wav"));
+            std::fs::write(&path, p).map_err(|e| e.to_string())?;
+            paths.push(path.display().to_string());
+        }
+        let args = whisper_cpp_batch_args(&self.binary, &self.model, &paths, language);
+        let rest: Vec<&str> = args[1..].iter().map(|s| s.as_str()).collect();
+        let bin = WHISPER_CPP_BINARY;
+        let ran = run_with_input(&args[0], &rest, None, Duration::from_secs_f64(WHISPER_CPP_TIMEOUT_S * pieces.len() as f64));
+        let failure = match &ran {
+            Err(e) => Some(format!("{bin} {e}")),
+            Ok((code, _, err)) if *code != Some(0) => {
+                let err_text = String::from_utf8_lossy(err).to_string();
+                let lines = text::splitlines(text::strip(&err_text));
+                let last = lines.last().map(|l| text::head(text::strip(l), 200).to_string()).unwrap_or_default();
+                Some(format!("{bin} exited {}: {last}", code.unwrap_or(-1)))
+            }
+            _ => None,
+        };
+        let mut texts = Vec::new();
+        let mut read = Vec::new();
+        for p in &paths {
+            match std::fs::read(format!("{p}.txt")) {
+                Ok(raw) => {
+                    texts.push(whisper_cpp_text(&String::from_utf8_lossy(&raw)));
+                    read.push(true);
+                }
+                Err(_) => {
+                    texts.push(String::new());
+                    read.push(false);
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok((texts, read, failure))
     }
 
     /// The model file or directory the engine runs, as `str(Path)`.
@@ -302,7 +431,7 @@ impl Engine {
             })?;
             let elapsed = start.elapsed().as_secs_f64();
             let rtf = if duration > 0.0 { elapsed / duration } else { 0.0 };
-            return Ok(Transcript { text: whisper_cpp_text(&raw), duration_s: duration, rtf });
+            return Ok(Transcript { text: whisper_cpp_text(&raw), duration_s: duration, rtf, parts: vec![], gaps: 0 });
         }
         self.run_once(wav, language, duration).map_err(TranscribeError::Other)
     }
@@ -325,6 +454,139 @@ impl Engine {
         }
         let t = whisper_cpp_text(&String::from_utf8_lossy(&out));
         let rtf = if duration > 0.0 { elapsed / duration } else { 0.0 };
-        Ok(Transcript { text: t, duration_s: duration, rtf })
+        Ok(Transcript { text: t, duration_s: duration, rtf, parts: vec![], gaps: 0 })
+    }
+}
+
+#[cfg(test)]
+mod long_tests {
+    use super::*;
+    use crate::voice::wav::{split_wav, write_wav_pcm};
+
+    fn tone(seconds: usize, pause_at: usize, pause_len: usize) -> Vec<u8> {
+        let n = seconds * 16000;
+        let mut data = Vec::with_capacity(2 * n);
+        for i in 0..n {
+            let v: i16 = if i >= pause_at && i < pause_at + pause_len { 0 } else { (8000.0 * (i as f64 / 7.0).sin()) as i16 };
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        write_wav_pcm(&data, 16000).unwrap()
+    }
+
+    #[test]
+    fn truncate_keeps_the_first_seconds_and_counts_the_cut_rounded_up() {
+        use crate::voice::wav::truncate_wav;
+        let mut data = vec![0u8; 2 * (16000 * 10 + 8000)];
+        data[0] = 1;
+        let w = write_wav_pcm(&data, 16000).unwrap();
+        let (kept, cut) = truncate_wav(&w, 10.0).unwrap();
+        assert_eq!(wav_duration_s(&kept).unwrap(), 10.0);
+        assert_eq!(cut, 1);
+        let (same, none) = truncate_wav(&kept, 10.0).unwrap();
+        assert_eq!(same, kept);
+        assert_eq!(none, 0);
+    }
+
+    #[test]
+    fn a_short_clip_stays_one_window_unchanged() {
+        let w = tone(30, 0, 0);
+        let got = split_wav(&w).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], w);
+    }
+
+    #[test]
+    fn cuts_fall_in_the_pause_near_the_boundary() {
+        let w = tone(65, 28 * 16000, 3200);
+        let got = split_wav(&w).unwrap();
+        assert_eq!(got.len(), 3);
+        let mut total = 0.0;
+        for g in &got {
+            let d = wav_duration_s(g).unwrap();
+            assert!(d <= 30.0 + 1e-9);
+            total += d;
+        }
+        assert!((total - 65.0).abs() < 1e-6);
+        let d0 = wav_duration_s(&got[0]).unwrap();
+        assert!((28.0..=28.2).contains(&d0), "first cut at {d0}");
+    }
+
+    /// A whisper-cli stand-in: for each -f file it counts a call, and writes
+    /// "window N" to <file>.txt when -otxt is given. A number listed in
+    /// <counter>.fail is skipped, as whisper-cli skips a file it cannot read.
+    fn fake_whisper_body(counter: &std::path::Path) -> String {
+        format!(
+            "#!/bin/sh\nfiles=\"\"; txt=0; prev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-f\" ]; then files=\"$files $a\"; fi\n  if [ \"$a\" = \"-otxt\" ]; then txt=1; fi\n  prev=\"$a\"\ndone\nruns=$(cat {c}.runs 2>/dev/null || echo 0); echo $((runs+1)) > {c}.runs\nfor f in $files; do\n  n=$(cat {c} 2>/dev/null || echo 0)\n  n=$((n+1))\n  echo $n > {c}\n  if grep -qx $n {c}.fail 2>/dev/null; then continue; fi\n  if [ $txt = 1 ]; then echo \"window $n\" > \"$f.txt\"; else echo \"window $n\"; fi\ndone\n",
+            c = counter.display()
+        )
+    }
+
+    fn engine_in(dir: &std::path::Path) -> Engine {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("whisper-cli");
+        std::fs::write(&script, fake_whisper_body(&dir.join("count"))).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Engine {
+            name: "whisper.cpp",
+            binary: script.display().to_string(),
+            model: dir.join("m.bin").display().to_string(),
+            arch: String::new(),
+            argv: vec![],
+            res: None,
+        }
+    }
+
+    #[test]
+    fn a_long_clip_runs_the_engine_once() {
+        let dir = std::env::temp_dir().join(format!("long-once-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let eng = engine_in(&dir);
+        eng.transcribe_long(&tone(180, 0, 0), None).ok().unwrap();
+        let runs = std::fs::read_to_string(dir.join("count.runs")).unwrap();
+        assert_eq!(runs.trim(), "1");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_window_keeps_the_others_and_marks_the_gap() {
+        let dir = std::env::temp_dir().join(format!("long-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("count.fail"), "2\n").unwrap();
+        let eng = engine_in(&dir);
+        let t = eng.transcribe_long(&tone(100, 0, 0), None).ok().unwrap();
+        assert_eq!(t.text, "window 1 [gap in the recording] window 3 window 4");
+        assert_eq!(t.gaps, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn three_minutes_give_the_text_of_all_windows_in_order() {
+        let dir = std::env::temp_dir().join(format!("long-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("whisper-cli");
+        let counter = dir.join("count");
+        std::fs::write(&script, fake_whisper_body(&counter)).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let eng = Engine {
+            name: "whisper.cpp",
+            binary: script.display().to_string(),
+            model: dir.join("m.bin").display().to_string(),
+            arch: String::new(),
+            argv: vec![],
+            res: None,
+        };
+        let t = eng.transcribe_long(&tone(180, 0, 0), None).ok().unwrap();
+        let words: Vec<&str> = t.text.split_whitespace().collect();
+        assert!(words.len() >= 12 && words.len() % 2 == 0, "{}", t.text);
+        for i in 0..words.len() / 2 {
+            assert_eq!(words[2 * i], "window");
+            assert_eq!(words[2 * i + 1], (i + 1).to_string());
+        }
+        assert!((t.duration_s - 180.0).abs() < 1e-6);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -272,7 +272,7 @@ func TestMoveToATerminalAgentHoldsTheBriefUntilItReadsReady(t *testing.T) {
 	}
 	s.StartManifestTick(set)
 	t.Cleanup(s.StopManifestTick)
-	wait, open := gate(t)
+	wait, open := warden(t)
 	// codex reads idle when its terminal title is set (the osc_title_idle rule).
 	if err := config.Save(config.Config{Harness: map[string]config.Harness{
 		"codex": {Command: "bash", Args: []string{"-c", "stty -echo; echo loading; " + wait + "printf '\\033]0;codex\\007'; cat > " + out}},

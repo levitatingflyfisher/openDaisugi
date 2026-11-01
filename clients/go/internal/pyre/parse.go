@@ -3,7 +3,7 @@
 // walks) and a backtracking matcher with _sre's semantics, Unicode
 // classes, IGNORECASE and all.
 //
-// The gate's oracle runs Python regexes over the text an agent sends, and
+// The warden's oracle runs Python regexes over the text an agent sends, and
 // the envelope's predicates carry regexes an operator writes. Go's regexp
 // is RE2: no lookaround, no backreferences, ASCII \b, a different \s. So
 // the port matches with this package, on Python's own pattern strings.

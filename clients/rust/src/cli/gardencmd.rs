@@ -5,9 +5,9 @@
 use super::pathwayscmd::{py_int, DATA_DIR};
 use super::{exit, parse_args, Env, Opt, Parsed, Res, Stop};
 use crate::garden::{self, format_f, int_of, MergeConfig, MergeReport, PruneConfig, PruneReport};
-use crate::gate::argparse::py_float;
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{dumps, dumps_indent, round, Object, Value};
+use crate::warden::argparse::py_float;
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{dumps, dumps_indent, round, Object, Value};
 use crate::pathways::store::Store;
 use crate::pathways::PwErr;
 
@@ -314,5 +314,5 @@ pub fn read_stamp(path: &str) -> Result<f64, PwErr> {
         Err(_) => return Err(PwErr::Invalid("UnicodeDecodeError: the stamp file is not UTF-8".into())),
     };
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    Ok(py_float(crate::gate::py::text::strip(&text)).unwrap_or(0.0))
+    Ok(py_float(crate::warden::py::text::strip(&text)).unwrap_or(0.0))
 }

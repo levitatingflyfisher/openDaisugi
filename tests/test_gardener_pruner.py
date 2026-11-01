@@ -161,7 +161,7 @@ def test_v028_4_failure_only_pathway_falls_through_to_distilled_at(tmp_path):
     ``pathway.last_activation_at and …`` short-circuit kept it forever."""
     store = PathwayStore(tmp_path / "p.db")
     # Old distill, never activated (no mark_failure call so last_activation_at=0.0),
-    # but enough total_activations via direct hits so it clears the grace gate.
+    # but enough total_activations via direct hits so it clears the grace warden.
     ancient = time.time() - 1000 * 86_400
     p = _pathway("old", hit_count=5, last_activation_at=0.0)
     p.distilled_at = ancient

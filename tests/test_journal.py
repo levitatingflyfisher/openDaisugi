@@ -69,7 +69,9 @@ def _sample_envelope() -> Envelope:
         id="env_test01",
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 
@@ -506,7 +508,9 @@ def _minimal_envelope():
         id="env_x",
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 

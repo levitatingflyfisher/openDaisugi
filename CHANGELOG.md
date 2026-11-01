@@ -2,6 +2,105 @@
 
 ## Unreleased
 
+- **The words show while you talk.** On the coppice phone page and in `daisugi voice ptt`, the
+  text so far grows under the Mic button or the prompt while you record, and the final text
+  lands in the prompt box when you stop. `daisugi voice serve` answers `POST /partial` and
+  `GET /status`. What leaves the box does not change. See `docs/how-to/voice.md`.
+- **Install and uninstall leave a harness as they found it.** Claude Code's skill is in
+  `~/.claude/skills`, the dir Claude Code reads; Codex's stays in `~/.agents/skills`. A Claude install
+  with no Codex takes out the copy an older install left in `~/.agents/skills`, and a Claude uninstall
+  leaves Codex's copy. Uninstall removes a file it leaves empty or `{}`, and each dir above a removed
+  path that it leaves empty, up to the harness's own root; it never removes a symlink. A rewrite keeps
+  UTF-8 text and a missing final newline as the file had them. Each run backs up a file it changes
+  once, as the run found it; a file install made has no backup. With no `~/.claude`, install says
+  Claude Code has not run yet and writes nothing.
+- **The warden plugin for OpenCode loads on OpenCode 2.** One file serves OpenCode 2 (`setup`) and
+  OpenCode 1.18.29 or later (`server`). On an OpenCode 2 with no `tool.hook`, the plugin fails to load
+  with one WARN line that names the OpenCode version and says the warden is off.
+- **The steward grants a known project its default permission, with no card.** A project under
+  `[steward] trusted_roots` (default `~/code`) or pinned gets the default envelope at its first
+  spawn: its own dir, shell commands, no budget, a 30 s cap per step. `git push`, `gh release`,
+  `gh pr merge`, `flutter build appbundle`, `fastlane`, `stripe`, `npm publish` and
+  `cargo publish` are denied in it and in every envelope the steward proposes. A proposal that
+  fits the default gets the default written; a card appears only for more, and lists what is
+  more. The default is card-free only when the worker runs fenced. `gh repo delete`,
+  `gh workflow run`, `gh api` on release, merge and delete endpoints, `pnpm publish` and
+  `yarn publish` are denied too, through wrappers and quotes. See
+  `docs/how-to/default-permission.md` and ADR-0030.
+- **An approved envelope reaches the next worker.** Each envelope file has its own root in the
+  tree. A worker of a budgeted project asks for what the root has left.
+- **`max_execution_time_s` caps each shell step, not the run.** A slow bash call is killed and
+  fails with a line that names it. `daisugi tree run --max-run-s` caps a whole run; there is no
+  cap by default. `sprig --step-timeout` (or `SPRIG_STEP_TIMEOUT_S`) sets the step cap. A
+  steward worker's run is capped by `[steward] worker_max_run_s` (1800 s); a lead has no cap.
+- **`scripts/install.sh` restarts the services that run a replaced binary.**
+  `daisugi-pando.service` restarts; `coppice-server.service` restarts only when no agent runs in
+  it, and otherwise prints how to restart it later. `--no-restart` skips both.
+- **A lead's hooks write no session line under the lead's own dir route.** The route already
+  sends that chat to the lead's branch.
+
+- **A fenced Claude reads less of `~/.claude`, and a long or non-ASCII workspace is refused.**
+  `daisugi fence` grants of `~/.claude` only Claude's config, `statsig` and the login token,
+  and of `~/.claude/projects` only the workspace's own dir: other projects' transcripts, the
+  prompt history and other sessions' data stay shut. A workspace whose Claude project dir the
+  fence cannot name (a path over 200 bytes or not ASCII) no longer starts with all of
+  `~/.claude/projects` open: it is refused unless `--allow ~/.claude/projects:rw` is given. A
+  Pando long-running agent works in a shared clone of its repo, not a linked worktree. See
+  ADR-0029.
+- **A fenced pane in a linked git worktree cannot run git.** The fence no longer grants a linked
+  worktree's gitdir and the repo's common dir, which hold the config and hooks the owner's git
+  runs. This hits a fenced task pane made with `task.create` and `worktree: true`. A Pando lead
+  works in a shared clone and runs git there.
+- **The Rust fence and coppice-rs lag the Go build here.** The Rust Claude table still grants
+  `~/.claude/backups`, the Rust gatherer still grants a linked worktree's git dirs, and
+  coppice-rs still gives a lead a linked worktree. Run the Go `daisugi` and coppice for these.
+
+- **An envelope can allow an MCP tool only with certain arguments.** `permissions.mcp_rules` names
+  a tool and the predicates its arguments must meet; a key the rule does not name denies. The new
+  `path_in` op places a path argument inside `file_read` or `file_write`. An existing absolute path
+  in any argument of an admitted MCP tool is a read that `file_read` must admit. `daisugi warden
+  schemas import|list` keeps `tools/list` results, and `warden register` checks rule argument
+  names against them. `true` no longer equals `1` in `equals`, `in_set` and the other set ops.
+  See `docs/how-to/warden.md` and ADR-0027.
+
+- **Four parts have new names, and `daisugi install` moves your state once.** The gate is the
+  **warden**, the gateway is the **router** (its inner policy is the **routing mode**), the foreman
+  is the **steward**, the conversation memory is **Pando R2** (`pando` in code), and the `delegate`
+  MCP tool is `spawn`. Commands: `daisugi warden ...`, `daisugi router serve|report|status|label|stop`,
+  `daisugi install --router --routing-mode MODE`, `daisugi fence --warden-root`, `coppice steward ...`,
+  `coppice skill steward`, `sprig --warden --warden-cmd`. Config keys: `warden_mode`, `warden_ask`,
+  `router_local_model`, `routing_mode`, `routing_model`, `router_grader`; in `coppice.toml`,
+  `router =` and `[steward]`. The 20 environment variables, the socket and lock (`warden.sock`,
+  `warden.lock`), the hook marker (`DAISUGI_WARDEN_HOOK=opendaisugi.warden`), the data directories
+  (`<data>/warden`, `<data>/router`) and the coppice protocol fields follow. There is no alias: run
+  `daisugi install` once (see `docs/start-here.md`, "After the rename"). ADR-0026 is the record.
+
+- **The warden places the files a shell command touches (Python, Go and Rust).** `cp a
+  ~/.ssh/authorized_keys`, `tee /etc/cron.d/x`, `sed -i s/a/b/ /etc/hosts`, `cat /etc/passwd`,
+  `tar -c ~/.aws` and `grep -r KEY ~` passed an envelope that scoped files to `/work/**`: only
+  redirects were checked. Now each file a command reads faces `file_read` and each file it writes
+  faces `file_write`, for the commands in a closed table (`cat`, `grep`, `find`, `ls`, `cp`, `mv`,
+  `tar`, `tee`, `sed`, `rm`, `dd` and more). A recursive access needs a glob that ends in `/**`. A
+  relative path is placed from the call's cwd; a leading `cd DIR` checks both places; any other cwd
+  mover makes it unknown. What the warden cannot place (a glob, `$VAR`, `xargs`, a flag outside the
+  command's closed set) is a deny unless the scope is exactly `**` or `/**`. The dialect's write
+  paths are version 3, so the dialect hash changed and an old `dialect_enforce` pin names an earlier
+  dialect. Rulings SG-1 to SG-6 and SG-12.
+
+- **An invariant nothing can check is never a silent pass.** An enforced invariant or
+  postcondition with no `expr` and no definition was allowed at low and medium stakes. It is now a
+  violation at every stakes. `daisugi warden register` refuses such an envelope (exit 2); a
+  model-written envelope turns each such item into documentation (`enforce: false`) and names it in
+  a warning; a Tier-1 probe that needed that counts as declined. In enforce mode the warden also
+  enforces the dialect's words with this build's dialect; audit mode only logs them.
+  `daisugi warden status` says which: `enforced (warden mode enforce)`, `enforced (pinned)`,
+  `audit (warden mode audit)` or `pin mismatch`. Rulings SG-7 to SG-10.
+
+- **sprig, weave and sprig-mcp check every tool call with the warden by default.** The command is
+  `daisugi warden check` with no `--mode`, so the installed mode decides. With no `daisugi` on PATH
+  every call is denied. `--warden=false` is the only opt-out and prints one line to stderr.
+  `sprig-hook` has no opt-out. Ruling SG-11.
+
 - **Messages to a running turn are safer (Go and Rust).** The owner's block now
   carries a nonce that is new for each turn, and the skill tells the model to
   trust only that block; a look-alike `message-now` tag in a worker log or a
@@ -383,7 +482,7 @@
   30 instructions tokenize the same; a chunk differs by 2.4e-6 at most; in
   the pick-place closed loop the replayed runs differ by 3.7e-6 at most,
   and Go and Rust agree bit for bit (VL-R-6, VL-R-7). A chunk takes 2.8 s
-  in Go and 3.0 s in Rust on a 4-core i5; the PyTorch oracle takes 2.6 to
+  in Go and 3.0 s in Rust on a laptop CPU; the PyTorch oracle takes 2.6 to
   3.2 s on the check and golden inputs and 6.7 s on the loop's dark frames.
   The project's own `TransformersVLAExecutor` still cannot load this model.
 

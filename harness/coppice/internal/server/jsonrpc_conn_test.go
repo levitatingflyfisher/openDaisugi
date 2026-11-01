@@ -245,7 +245,7 @@ func TestJSONRPCEventsArriveAsNotifications(t *testing.T) {
 	}
 	w.call(`{"jsonrpc":"2.0","id":2,"method":"events.subscribe","params":{"kinds":["state"],"panes":"*"}}`)
 	w.write(`{"jsonrpc":"2.0","id":3,"method":"pane.report_state","params":{"pane":"` + id + `","event":{` +
-		`"v":1,"ts":1,"session_id":"` + id + `","harness":"shell","state":"blocked","source":"gate",` +
+		`"v":1,"ts":1,"session_id":"` + id + `","harness":"shell","state":"blocked","source":"warden",` +
 		`"detail":"","ask":{"id":"a1","tool":"Bash","summary":"rm","deadline":9999999999}}}}`)
 	var ev map[string]any
 	for ev == nil {

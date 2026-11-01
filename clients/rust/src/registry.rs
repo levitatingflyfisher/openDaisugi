@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
 use crate::bundle;
-use crate::gate::py::text::{repr_list, strip};
-use crate::gate::pyjson::{loads_py, Object, Value};
+use crate::warden::py::text::{repr_list, strip};
+use crate::warden::pyjson::{loads_py, Object, Value};
 use crate::lerr::{LErr, PyError, LR};
 use crate::pathways::importer::py_row;
 use crate::pathways::pathway::Pathway;
@@ -160,7 +160,7 @@ pub struct Options {
 }
 
 fn join(a: &str, b: &str) -> String {
-    crate::cli::gateroot::join(a, b)
+    crate::cli::wardenroot::join(a, b)
 }
 
 /// One bundle file read: its validated dump, or None when the oracle
@@ -175,7 +175,7 @@ impl Store {
     /// the clone are put in it. The count put is dropped, as the
     /// constructor drops it.
     pub fn open(repo_path: &str, o: Options) -> LR<Store> {
-        let repo = crate::cli::gateroot::path_str(repo_path);
+        let repo = crate::cli::wardenroot::path_str(repo_path);
         if std::fs::metadata(&repo).is_err() {
             return Err(PyError::new(
                 "ValueError",
@@ -185,7 +185,7 @@ impl Store {
         }
         let cache_dir = join(&repo, ".cache");
         let found = read_bundles(&join(&repo, PATHWAYS_SUBDIR))?;
-        crate::cli::gateroot::mkdir_parents(&cache_dir, 0o777)
+        crate::cli::wardenroot::mkdir_parents(&cache_dir, 0o777)
             .map_err(|e| LErr::io(e, &cache_dir))?;
         let cache = Cache::open(&join(&cache_dir, "pathways.db"))?;
         let s = Store {
@@ -300,7 +300,7 @@ impl Store {
             ))
         })?;
         let dir = self.pathways_dir();
-        crate::cli::gateroot::mkdir_parents(&dir, 0o777).map_err(|e| LErr::io(e, &dir))?;
+        crate::cli::wardenroot::mkdir_parents(&dir, 0o777).map_err(|e| LErr::io(e, &dir))?;
         let hash = b.value("bundle_hash").as_str().unwrap_or("").to_string();
         let rel = format!("{PATHWAYS_SUBDIR}/{hash}.yaml");
         let full = join(&self.repo_path, &rel);
@@ -444,7 +444,7 @@ mod tests {
     }
 
     fn pathway() -> Pathway {
-        let v = crate::gate::pyjson::loads(
+        let v = crate::warden::pyjson::loads(
             r#"{"id": "pw_1", "task_description": "deploy", "task_embedding": [0.5, 0.0],
             "envelope": {"id": "env_00000001", "generated_by": "t", "task": "t", "permissions": {}},
             "plan_template": {"id": "plan_00000001", "source": "script", "task": "t",

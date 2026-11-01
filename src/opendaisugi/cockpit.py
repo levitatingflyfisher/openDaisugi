@@ -60,7 +60,7 @@ _DESTRUCTIVE_RE = tuple(
 )
 
 # Tool names that mean "run an arbitrary shell command" across the harnesses the
-# gate recognizes (claude `Bash`; codex `shell`/`exec_command`/`container.exec`/
+# warden recognizes (claude `Bash`; codex `shell`/`exec_command`/`container.exec`/
 # `local_shell_call`, which it normalizes to `Bash`; a generic `run_shell`). A raw
 # shell call is inherently high-blast — its blast radius is "whatever the string
 # does" — so the screen requires the strong (typed-token) confirm for ALL of these,
@@ -107,11 +107,11 @@ class Roster:
 
 @dataclass(frozen=True)
 class HeaderState:
-    gate_mode: str  # ENFORCE | AUDIT | DISARMED
-    gate_mode_source: str  # hook | config
+    warden_mode: str  # ENFORCE | AUDIT | DISARMED
+    warden_mode_source: str  # hook | config
     cache_hit_rate: float | None
-    cache_source: str  # transcripts | gateway | none
-    cache_is_estimate: bool  # True when cache_hit_rate is a gateway-blended estimate,
+    cache_source: str  # transcripts | router | none
+    cache_is_estimate: bool  # True when cache_hit_rate is a router-blended estimate,
     # not a live measurement from this run's own transcripts (S5 honesty correction)
     session_count: int
 
@@ -143,7 +143,7 @@ def _tree_model(entries) -> str | None:
 
 def build_roster(data_dir: Path, *, now: float | None = None) -> Roster:
     now = time.time() if now is None else now
-    root = data_dir / "gate"
+    root = data_dir / "warden"
     asks_by_session: dict[str, dict[str, Any]] = {}
     for a in _ask.pending_asks(root, now=now):
         sid = str(a.get("sessionId") or "")
@@ -214,7 +214,7 @@ def header_state(
     roster: Roster | None = None,
 ) -> HeaderState:
     from opendaisugi.config import effective_hook_mode, hook_source_label
-    from opendaisugi.gate import is_disarmed, resolve_gate_mode
+    from opendaisugi.warden import is_disarmed, resolve_warden_mode
 
     home = home or Path.home()
     # The TUI's own launch directory (wherever the operator ran `daisugi
@@ -231,12 +231,12 @@ def header_state(
             cwd = Path.cwd()
         except OSError:
             cwd = home
-    root = data_dir / "gate"
+    root = data_dir / "warden"
     eff = effective_hook_mode(home=home, cwd=cwd)
     if eff.mode:
         mode, source = eff.mode, hook_source_label(eff)
     else:
-        mode = resolve_gate_mode(None, root=root)
+        mode = resolve_warden_mode(None, root=root)
         source = "config"
     if is_disarmed(root):
         mode, source = "disarmed", "marker"  # the DISARMED file overrides hook/config; say so
@@ -249,16 +249,16 @@ def header_state(
     else:
         rate, cache_source = None, "none"
         try:
-            from opendaisugi.gateway_journal import GatewayJournal
+            from opendaisugi.router_journal import RouterJournal
 
-            summ = GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").summary()
+            summ = RouterJournal(path=data_dir / "router" / "turns.jsonl").summary()
             if summ.turns:
-                rate, cache_source, is_estimate = summ.cache_hit_rate, "gateway", True
+                rate, cache_source, is_estimate = summ.cache_hit_rate, "router", True
         except Exception:  # noqa: BLE001 — the header must never fail on a store
             pass
     return HeaderState(
-        gate_mode=mode.upper(),
-        gate_mode_source=source,
+        warden_mode=mode.upper(),
+        warden_mode_source=source,
         cache_hit_rate=rate,
         cache_source=cache_source,
         cache_is_estimate=is_estimate,

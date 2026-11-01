@@ -13,7 +13,7 @@ Design constraints:
   so the agent (under the Checklist skill) can author per-step preferences.
 - Records the model used on the executor instance so the supervisor's
   ``_write_step_receipt`` can stamp it into ``Receipt.model_id`` (L6).
-- Does not gate on stakes; the verifier's ``_check_delegation_safety``
+- Does not warden on stakes; the verifier's ``_check_delegation_safety``
   (L4) refuses physical-stakes envelopes before any executor is invoked.
 """
 

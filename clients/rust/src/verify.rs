@@ -6,13 +6,13 @@ use crate::glob_engine;
 use crate::interpreter_parse::parse_interpreter;
 use crate::models::{self, ActionPlan, Envelope, Permission, Step, StepKind};
 use crate::predicate::{self, Expr};
-use crate::shell_decompose::{Decomposition, ShellParser};
+use crate::shell_decompose::ShellParser;
 use crate::subsumption;
-use crate::gate::pyjson::Value as PValue;
+use crate::warden::pyjson::Value as PValue;
 use crate::violation::{kv, Violation};
 use crate::z3_bridge::Vacuity;
 use crate::z3_checks;
-use crate::gate::py::text::{repr, repr_list};
+use crate::warden::py::text::{repr, repr_list};
 use serde_json::Value;
 use std::sync::OnceLock;
 
@@ -57,47 +57,69 @@ fn iv(n: u32) -> PValue {
     PValue::Int(n.to_string())
 }
 
-const SANCTIONED_WRITE_SINKS: [&str; 3] = ["/dev/null", "/dev/stdout", "/dev/stderr"];
-const SANCTIONED_READ_SOURCES: [&str; 2] = ["/dev/null", "/dev/stdin"];
-
-/// `_check_redirect_scopes`.
-fn check_redirect_scopes(decomp: &Decomposition, step_id: &str, perms: &Permission) -> Vec<Violation> {
+/// `_check_shell_accesses`: every file a shell line reads or writes faces the
+/// envelope's file scopes (SG-1 to SG-6).
+fn check_shell_accesses(command: &str, step_id: &str, perms: &Permission, base: Option<&str>) -> Vec<Violation> {
+    let acc = crate::dialect::shell_accesses(command, base);
     let mut out = Vec::new();
-    for path in &decomp.writes {
-        if SANCTIONED_WRITE_SINKS.contains(&path.as_str()) {
-            continue;
-        }
-        if !glob_engine::path_matches_any(path, &perms.file_write) {
-            out.push(
-                Violation::step("permissions", step_id.to_string())
-                    .msg(format!(
-                        "Step '{step_id}' shell redirect writes '{path}' outside file_write scope {}",
-                        repr_list(&perms.file_write)
-                    ))
-                    .with(
-                        kv(&[("step", sv(step_id)), ("redirect_write", sv(path))]),
-                        Some(format!("Add '{path}' (or a covering glob) to permissions.file_write")),
-                    ),
-            );
+    for (verb, scope_name, noun, accesses, scope) in [
+        ("writes", "file_write", "write", &acc.writes, &perms.file_write),
+        ("reads", "file_read", "read", &acc.reads, &perms.file_read),
+    ] {
+        for a in accesses {
+            let path = &a.path;
+            let (message, detail, remediation);
+            if a.tree {
+                if glob_engine::covers_tree(path, scope) {
+                    continue;
+                }
+                message = format!(
+                    "Step '{step_id}' shell {verb} under '{path}' (recursive) outside {scope_name} scope {}",
+                    repr_list(scope)
+                );
+                detail = kv(&[("step", sv(step_id)), (&format!("shell_{noun}_tree"), sv(path))]);
+                remediation = format!("Add '{path}/**' to permissions.{scope_name}");
+            } else {
+                if glob_engine::path_matches_any(path, scope) {
+                    continue;
+                }
+                if a.via == "redirect" {
+                    message = format!(
+                        "Step '{step_id}' shell redirect {verb} '{path}' outside {scope_name} scope {}",
+                        repr_list(scope)
+                    );
+                    detail = kv(&[("step", sv(step_id)), (&format!("redirect_{noun}"), sv(path))]);
+                } else {
+                    message = format!(
+                        "Step '{step_id}' shell {verb} '{path}' outside {scope_name} scope {}",
+                        repr_list(scope)
+                    );
+                    detail = kv(&[("step", sv(step_id)), (&format!("shell_{noun}"), sv(path))]);
+                }
+                remediation = format!("Add '{path}' (or a covering glob) to permissions.{scope_name}");
+            }
+            out.push(Violation::step("permissions", step_id.to_string()).msg(message).with(detail, Some(remediation)));
         }
     }
-    for path in &decomp.reads {
-        if SANCTIONED_READ_SOURCES.contains(&path.as_str()) {
+    for (noun, scope_name, unknown, scope) in [
+        ("write", "file_write", &acc.writes_unknown, &perms.file_write),
+        ("read", "file_read", &acc.reads_unknown, &perms.file_read),
+    ] {
+        let Some(why) = unknown else { continue };
+        if glob_engine::covers_everything(scope) {
             continue;
         }
-        if !glob_engine::path_matches_any(path, &perms.file_read) {
-            out.push(
-                Violation::step("permissions", step_id.to_string())
-                    .msg(format!(
-                        "Step '{step_id}' shell redirect reads '{path}' outside file_read scope {}",
-                        repr_list(&perms.file_read)
-                    ))
-                    .with(
-                        kv(&[("step", sv(step_id)), ("redirect_read", sv(path))]),
-                        Some(format!("Add '{path}' (or a covering glob) to permissions.file_read")),
-                    ),
-            );
-        }
+        out.push(
+            Violation::step("permissions", step_id.to_string())
+                .msg(format!(
+                    "Step '{step_id}' shell {noun} targets cannot be placed ({why}) and {scope_name} scope {} is not everything",
+                    repr_list(scope)
+                ))
+                .with(
+                    kv(&[("step", sv(step_id)), (&format!("shell_{noun}s_unknown"), sv(why))]),
+                    Some(format!("Name each file the command {noun}s, without xargs, globs or variables")),
+                ),
+        );
     }
     out
 }
@@ -134,7 +156,7 @@ fn check_shell_command(
         if perms.shell_allow_decomposition && depth <= MAX_INTERPRETER_DEPTH {
             let decomp = shell_parser.decompose(command);
             if decomp.ok {
-                let mut violations = check_redirect_scopes(&decomp, step_id, perms);
+                let mut violations = Vec::new();
                 for simple in &decomp.commands {
                     violations.extend(verify_simple_command(simple, step_id, perms, policy, depth, shell_parser));
                 }
@@ -146,7 +168,7 @@ fn check_shell_command(
         if !refused.is_empty() {
             detail.set("decomposition_refused", refused);
         }
-        let remediation = crate::gate::check::decomposition_remediation(step_id, command).unwrap_or(None);
+        let remediation = crate::warden::check::decomposition_remediation(step_id, command).unwrap_or(None);
         return vec![Violation::step("permissions", step_id.to_string())
             .msg(format!(
                 "Step '{step_id}' shell command contains dangerous metacharacters (;, |, &, `, <, >, $(, newline){}",
@@ -219,13 +241,13 @@ const AGENTIC_TOOL_CAPABILITIES: &[(&str, &str)] = &[
     ("MultiEdit", "file_write"),
     ("WebFetch", "network"),
     ("WebSearch", "network"),
-    // sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which the
+    // sprig's spawn tool: the warden sees it as mcp__sprig__spawn, which the
     // envelope admits only when mcp_allowlist names sprig/spawn.
     ("Spawn", "mcp_allowlist"),
 ];
 
 /// `verify.SPAWN_MCP_KEY`: the mcp_allowlist key of the Spawn tool, as
-/// the gate keys mcp__sprig__spawn.
+/// the warden keys mcp__sprig__spawn.
 pub const SPAWN_MCP_KEY: &str = "sprig/spawn";
 
 /// `verify.agentic_tool_granted`: whether the envelope backs a host tool
@@ -304,7 +326,7 @@ fn check_agentic_step(step: &Step, perms: &Permission) -> Vec<Violation> {
 }
 
 /// Minimal `urllib.parse.urlparse` scheme+hostname extraction — only used
-/// where the oracle uses it (network step scheme/host gating).
+/// where the oracle uses it (network step scheme/host checking).
 fn parse_url_scheme_host(url: &str) -> (String, String) {
     let colon = match url.find(':') {
         Some(i) => i,
@@ -342,6 +364,46 @@ fn parse_url_scheme_host(url: &str) -> (String, String) {
 
 /// `check_permissions` — Stage 1.
 pub fn check_permissions(plan: &ActionPlan, env: &Envelope, strict: bool, shell_parser: &mut ShellParser) -> Vec<Violation> {
+    check_permissions_at(plan, env, strict, shell_parser, None)
+}
+
+/// `check_permissions` with its base: the directory a shell step's relative
+/// accesses are placed from.
+pub fn check_permissions_at(
+    plan: &ActionPlan,
+    env: &Envelope,
+    strict: bool,
+    shell_parser: &mut ShellParser,
+    base: Option<&str>,
+) -> Vec<Violation> {
+    check_permissions_fenced(plan, env, strict, shell_parser, base, false)
+}
+
+/// `verify.FENCE_PREFIX`: the start of a warning that records a shell file
+/// access a fenced call made, which the kernel fence stops (ADR-0028).
+pub const FENCE_PREFIX: &str = "fence-enforced: ";
+
+/// `verify._names_net_device` on a shell-access message: the finding is for a
+/// path under /dev/tcp or /dev/udp. Bash opens those with socket and connect,
+/// which the kernel fence never sees. The path is the quoted text before
+/// " outside ".
+pub fn names_net_device(message: &str) -> bool {
+    let head = message.split(" outside ").next().unwrap_or("");
+    ["/dev/tcp", "/dev/udp"]
+        .iter()
+        .any(|dev| head.contains(&format!("'{dev}/")) || head.contains(&format!("'{dev}'")))
+}
+
+/// `check_permissions` with a fence log: when `fenced`, the shell-access
+/// findings are left out of the violations (ADR-0028).
+pub fn check_permissions_fenced(
+    plan: &ActionPlan,
+    env: &Envelope,
+    strict: bool,
+    shell_parser: &mut ShellParser,
+    base: Option<&str>,
+    fenced: bool,
+) -> Vec<Violation> {
     let mut out = Vec::new();
     let perms = &env.permissions;
     for step in &plan.steps {
@@ -355,7 +417,24 @@ pub fn check_permissions(plan: &ActionPlan, env: &Envelope, strict: bool, shell_
                     );
                     continue;
                 }
-                out.extend(check_shell_command(command, &step.id, perms, &env.shell_interpreter_policy, 0, shell_parser));
+                let shell_violations =
+                    check_shell_command(command, &step.id, perms, &env.shell_interpreter_policy, 0, shell_parser);
+                // A head the allowlist refused already denies the step;
+                // naming its files too would only repeat it.
+                let head_refused = shell_violations
+                    .iter()
+                    .any(|v| v.detail.as_ref().is_some_and(|d| d.get("command_head").is_some()));
+                out.extend(shell_violations);
+                if !head_refused {
+                    let accesses = check_shell_accesses(command, &step.id, perms, base);
+                    if fenced {
+                        // The fence does not limit the network, so /dev/tcp
+                        // and /dev/udp still decide (ADR-0028).
+                        out.extend(accesses.into_iter().filter(|v| names_net_device(&v.message)));
+                    } else {
+                        out.extend(accesses);
+                    }
+                }
             }
             StepKind::Network { url } => {
                 if !perms.network {
@@ -422,18 +501,7 @@ pub fn check_permissions(plan: &ActionPlan, env: &Envelope, strict: bool, shell_
                 }
             }
             StepKind::Mcp { server, tool } => {
-                let key = format!("{server}/{tool}");
-                if !glob_engine::head_allowed(&key, &perms.mcp_allowlist) {
-                    out.push(
-                        Violation::step("permissions", step.id.clone())
-                            .msg(format!(
-                                "Step '{}' MCP tool '{key}' not in mcp_allowlist {}",
-                                step.id,
-                                repr_list(&perms.mcp_allowlist)
-                            ))
-                            .with(kv(&[("step", sv(&step.id)), ("mcp_tool", sv(&key))]), None),
-                    );
-                }
+                out.extend(crate::mcp_rules::check_mcp_step(step, server, tool, perms, base));
             }
             StepKind::Agentic { .. } => {
                 out.extend(check_agentic_step(step, perms));
@@ -659,10 +727,17 @@ fn check_predicate_item(
             }
             let discharged = (label == "invariant" && z3_checks::RECOGNIZED_OPAQUE_TYPES.contains(&type_name))
                 || (label == "postcondition" && RECOGNIZED_STAGE2_POSTCONDITION_TYPES.contains(&type_name));
-            if strict && !discharged {
-                return Ok(vec![Violation::plan("predicate")]);
+            if discharged {
+                return Ok(vec![]);
             }
-            return Ok(vec![]);
+            // A dialect word with no pin is audited: below strict stakes it
+            // passes, at strict stakes it is rejected. Any other item
+            // nothing can check is rejected at every stakes (SG-8).
+            let is_word = opaque && label == "invariant" && crate::dialect::word_for(type_name).is_some();
+            if is_word && !strict {
+                return Ok(vec![]);
+            }
+            return Ok(vec![Violation::plan("predicate")]);
         }
     };
 
@@ -769,6 +844,21 @@ pub fn verify_pin(
     base: Option<&str>,
     shell_parser: &mut ShellParser,
 ) -> Result<VerifyOutcome, String> {
+    verify_fenced(plan, env, strict, pin, base, false, shell_parser)
+}
+
+/// `verify(..., fenced=fenced)` (ADR-0028): a fenced call's shell-access
+/// findings are not violations. The oracle keeps them as warnings that
+/// start with `FENCE_PREFIX`; this verdict carries no warnings.
+pub fn verify_fenced(
+    plan: &ActionPlan,
+    env: &Envelope,
+    strict: Option<bool>,
+    pin: Option<&str>,
+    base: Option<&str>,
+    fenced: bool,
+    shell_parser: &mut ShellParser,
+) -> Result<VerifyOutcome, String> {
     let base = crate::dialect::dialect_base(base);
     let base = base.as_deref();
     let effective_strict = models::resolve_strict(strict, env);
@@ -780,7 +870,7 @@ pub fn verify_pin(
         return Ok(VerifyOutcome { ok: false, violations, word_audit });
     }
 
-    violations.extend(check_permissions(plan, env, effective_strict, shell_parser));
+    violations.extend(check_permissions_fenced(plan, env, effective_strict, shell_parser, base, fenced));
     if !violations.is_empty() {
         return Ok(VerifyOutcome { ok: false, violations, word_audit });
     }
@@ -810,4 +900,26 @@ pub fn verify_pin(
 
     let ok = violations.is_empty();
     Ok(VerifyOutcome { ok, violations, word_audit })
+}
+
+#[cfg(test)]
+mod net_device_tests {
+    use super::names_net_device;
+
+    #[test]
+    fn a_finding_for_a_net_device_is_named() {
+        for m in [
+            "Step 's' shell redirect writes '/dev/tcp/1.2.3.4/80' outside file_write scope ['/w/**']",
+            "Step 's' shell reads '/dev/udp/1.2.3.4/53' outside file_read scope ['/w/**']",
+            "Step 's' shell writes under '/dev/tcp' (recursive) outside file_write scope ['/w/**']",
+        ] {
+            assert!(names_net_device(m), "{m}");
+        }
+        for m in [
+            "Step 's' shell reads '/etc/passwd' outside file_read scope ['/dev/tcp/x']",
+            "Step 's' shell reads '/dev/tcpx/a' outside file_read scope ['/w/**']",
+        ] {
+            assert!(!names_net_device(m), "{m}");
+        }
+    }
 }

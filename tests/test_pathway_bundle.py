@@ -22,7 +22,11 @@ from opendaisugi.pathway_bundle import (
 
 def _pathway(structure_signature: str = "shell→file_read") -> CompiledPathway:
     env = Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",

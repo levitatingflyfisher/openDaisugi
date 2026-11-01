@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
 	"github.com/opendaisugi/coppice/internal/plugins"
+	"github.com/opendaisugi/coppice/internal/steward"
 	"github.com/opendaisugi/coppice/internal/web"
 )
 
@@ -54,7 +56,7 @@ func (c *CLI) webOpenCommand(args []string) int {
 	}
 	cfg := web.Config{
 		Enabled: true, Listen: addr, TLS: string(web.TLSOff),
-		GateRoot: web.GateRoot(c.DataDir),
+		WardenRoot: web.WardenRoot(c.DataDir),
 	}
 	if _, _, err := (web.TLSOptions{Source: web.TLSOff, Listen: addr}).Resolve(); err != nil {
 		fmt.Fprintf(c.Err, "%v\n", err)
@@ -88,11 +90,13 @@ func (c *CLI) webOpenCommand(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = serve(ctx, cfg, web.Options{
-		Dial:    web.UnixDialer{Path: c.Socket},
-		Tokens:  store,
-		Gate:    web.AskChannel{Root: cfg.GateRoot},
-		Views:   plugins.ViewsOf(c.loadPlugins()),
-		ViewLib: plugins.SharedLib(),
+		Dial:   web.UnixDialer{Path: c.Socket},
+		Tokens: store,
+		Warden: web.AskChannel{Root: cfg.WardenRoot},
+		// The steward's branching spawns open their cards in its work dir.
+		ExtraDataDirs: []string{filepath.Join(steward.LogDir(c.DataDir), "work")},
+		Views:         plugins.ViewsOf(c.loadPlugins()),
+		ViewLib:       plugins.SharedLib(),
 	})
 	if err != nil {
 		fmt.Fprintf(c.Err, "%v\n", err)

@@ -21,7 +21,7 @@ def test_home_is_the_scratch_home():
 
 def test_the_default_dirs_are_in_the_scratch_home():
     from opendaisugi.floor_config import coppice_data_dirs
-    from opendaisugi.gate import DEFAULT_GATE_ROOT
+    from opendaisugi.warden import DEFAULT_WARDEN_ROOT
 
-    for p in [DEFAULT_GATE_ROOT, *coppice_data_dirs()]:
+    for p in [DEFAULT_WARDEN_ROOT, *coppice_data_dirs()]:
         assert Path(p).is_relative_to(TEST_HOME), p

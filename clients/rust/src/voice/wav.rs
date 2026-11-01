@@ -289,6 +289,78 @@ pub fn write_wav_pcm(data: &[u8], rate: i64) -> AR<Vec<u8>> {
     Ok(h)
 }
 
+/// A window is at most this long (see `split_wav`).
+pub const WINDOW_SECONDS: f64 = 30.0;
+/// A cut falls in the quietest 20 ms frame of this last stretch of a window.
+pub const CUT_SEARCH_SECONDS: f64 = 3.0;
+const CUT_FRAME_SAMPLES: usize = 320;
+
+/// Cuts a 16 kHz mono WAV into windows of at most `WINDOW_SECONDS`, each cut
+/// at the quietest 20 ms frame in the last `CUT_SEARCH_SECONDS` of a window,
+/// so a cut lands in a pause and not in a word. The windows do not overlap.
+/// A clip that fits in one window comes back whole.
+pub fn split_wav(wav: &[u8]) -> AR<Vec<Vec<u8>>> {
+    let w = open_wave(wav)?;
+    if w.sampwidth != 2 || w.channels != 1 || w.rate <= 0 {
+        return Ok(vec![wav.to_vec()]);
+    }
+    let pcm = &w.frames;
+    let total = pcm.len() / 2;
+    let window = (WINDOW_SECONDS * w.rate as f64) as usize;
+    if total <= window {
+        return Ok(vec![wav.to_vec()]);
+    }
+    let search = (CUT_SEARCH_SECONDS * w.rate as f64) as usize;
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while total - pos > window {
+        let cut = quietest_cut(pcm, pos + window - search, pos + window);
+        out.push(write_wav_pcm(&pcm[2 * pos..2 * cut], w.rate)?);
+        pos = cut;
+    }
+    out.push(write_wav_pcm(&pcm[2 * pos..], w.rate)?);
+    Ok(out)
+}
+
+/// Keeps the first `max_seconds` of a 16 kHz mono WAV. Returns the clip and
+/// the whole seconds cut from its end, rounded up, so the reply can say how
+/// much was left out. A clip that fits comes back as it is, with 0 cut.
+/// Frames are counted as integers, so every port cuts at one sample.
+pub fn truncate_wav(wav: &[u8], max_seconds: f64) -> AR<(Vec<u8>, i64)> {
+    let w = open_wave(wav)?;
+    if w.sampwidth != 2 || w.channels != 1 || w.rate <= 0 {
+        return Ok((wav.to_vec(), 0));
+    }
+    let total = (w.frames.len() / 2) as i64;
+    let keep = (max_seconds * w.rate as f64) as i64;
+    if total <= keep {
+        return Ok((wav.to_vec(), 0));
+    }
+    let piece = write_wav_pcm(&w.frames[..2 * keep as usize], w.rate)?;
+    Ok((piece, (total - keep + w.rate - 1) / w.rate))
+}
+
+/// The sample index in `[lo, hi]` at the middle of the quietest 20 ms frame
+/// inside the range. The first of equal frames wins.
+fn quietest_cut(pcm: &[u8], lo: usize, hi: usize) -> usize {
+    let mut best = u64::MAX;
+    let mut best_at = (lo + hi) / 2;
+    let mut start = lo;
+    while start + CUT_FRAME_SAMPLES <= hi {
+        let mut e: u64 = 0;
+        for i in start..start + CUT_FRAME_SAMPLES {
+            let v = i16::from_le_bytes([pcm[2 * i], pcm[2 * i + 1]]) as i64;
+            e += (v * v) as u64;
+        }
+        if e < best {
+            best = e;
+            best_at = start + CUT_FRAME_SAMPLES / 2;
+        }
+        start += CUT_FRAME_SAMPLES / 2;
+    }
+    best_at
+}
+
 /// `audio._resample_linear`: numpy.interp at the target rate's times.
 pub fn resample_linear(samples: &[f64], orig: i64, target: i64) -> AR<Vec<f64>> {
     if orig == target {

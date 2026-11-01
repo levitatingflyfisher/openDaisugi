@@ -1,5 +1,5 @@
 // Package lazyre compiles a package-level regexp on its first use. Every
-// gate call starts two processes of the binary, and each would compile
+// warden call starts two processes of the binary, and each would compile
 // every package's patterns at start, used or not.
 package lazyre
 

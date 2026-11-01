@@ -89,7 +89,7 @@ func TestJSUnitTestsPass(t *testing.T) {
 		// "# fail 0" and a pass count at least as large as the number of
 		// test( calls this one file declares, so a file whose tests
 		// silently stopped registering, or stopped running, fails this
-		// gate even while every other file stays green.
+		// warden even while every other file stays green.
 		if !strings.Contains(string(out), "# fail 0") {
 			t.Fatalf("node --test %s did not report # fail 0:\n%s", f, out)
 		}

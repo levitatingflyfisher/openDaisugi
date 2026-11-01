@@ -1,7 +1,7 @@
 """The ask channel is read and written through no link (GR-R-10).
 
 ``operator.json``, ``asks/`` and ``answers/`` are opened as the rest of the
-gate's state is (GR-R-1): the root and each directory without following a
+warden's state is (GR-R-1): the root and each directory without following a
 symlink, each file by its fd with the owner, link-count and mode checks, the
 mtime from the same fd. A planted link at any of them used to let a
 concurrent workspace write supply ``{"decision": "allow"}``. Each test here
@@ -29,7 +29,7 @@ def _fresh_notes():
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    r = tmp_path / "gate"
+    r = tmp_path / "warden"
     r.mkdir(mode=0o700)
     r.chmod(0o700)
     return r
@@ -164,7 +164,7 @@ def test_a_real_answer_is_still_honored(root):
 def test_the_channel_dirs_and_files_are_private_whatever_the_umask(tmp_path):
     old = os.umask(0o002)
     try:
-        r = tmp_path / "home" / "gate"
+        r = tmp_path / "home" / "warden"
         _post(r)
         ask.answer(r, tool_use_id="t1", decision="deny")
     finally:
@@ -228,19 +228,19 @@ def test_check_allow_reads_an_ask_others_can_write_as_gone(root):
     assert ask.check_allow(root, tool_use_id="t1", name="s1", confirm=None) == "that ask is gone"
 
 
-# ---- the gate: a refused channel leaves the deny standing ------------------------
+# ---- the warden: a refused channel leaves the deny standing ------------------------
 
 
 def _would_deny():
-    from opendaisugi.gate import GateDecision
+    from opendaisugi.warden import WardenDecision
 
-    return GateDecision(
+    return WardenDecision(
         allow=False, would_deny=True, mode="enforce", reason="no", tool_name="Bash", tier="undoable"
     )
 
 
-def test_a_gate_with_a_symlinked_asks_dir_leaves_the_deny_and_posts_nothing(root, tmp_path):
-    from opendaisugi.gate import _maybe_ask
+def test_a_warden_with_a_symlinked_asks_dir_leaves_the_deny_and_posts_nothing(root, tmp_path):
+    from opendaisugi.warden import _maybe_ask
 
     _present(root)
     real = tmp_path / "real-asks"
@@ -252,8 +252,8 @@ def test_a_gate_with_a_symlinked_asks_dir_leaves_the_deny_and_posts_nothing(root
     assert list(real.iterdir()) == []
 
 
-def test_a_gate_with_a_symlinked_answers_dir_does_not_wait_and_honors_nothing(root, tmp_path):
-    from opendaisugi.gate import _maybe_ask
+def test_a_warden_with_a_symlinked_answers_dir_does_not_wait_and_honors_nothing(root, tmp_path):
+    from opendaisugi.warden import _maybe_ask
 
     _present(root)
     real = tmp_path / "real-answers"
@@ -266,8 +266,8 @@ def test_a_gate_with_a_symlinked_answers_dir_does_not_wait_and_honors_nothing(ro
     assert (root / "asks").exists() is False
 
 
-def test_a_gate_with_a_symlinked_operator_file_asks_nobody(root, tmp_path):
-    from opendaisugi.gate import _maybe_ask
+def test_a_warden_with_a_symlinked_operator_file_asks_nobody(root, tmp_path):
+    from opendaisugi.warden import _maybe_ask
 
     real = tmp_path / "op.json"
     real.write_text(json.dumps({"pid": os.getpid(), "at": 0}))
@@ -288,7 +288,7 @@ def test_answer_allow_carries_the_nonce_of_the_ask_it_checked(root, monkeypatch)
     calls = {"n": 0}
 
     def swapping(*a, **k):
-        # After the first read, the gate retires the ask and posts a permanent one.
+        # After the first read, the warden retires the ask and posts a permanent one.
         out = real_read(*a, **k)
         calls["n"] += 1
         if calls["n"] == 1:

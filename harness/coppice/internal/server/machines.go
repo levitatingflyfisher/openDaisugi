@@ -235,7 +235,7 @@ type profileRow struct {
 	KeySet  bool    `json:"key_set"`
 }
 
-// profileRows runs daisugi agent-profiles list --json in the foreman's
+// profileRows runs daisugi agent-profiles list --json in the steward's
 // neutral compactor directory: in a group of its own that dies with the
 // limit, its read capped at 1 MiB and ended with the command. A profile
 // with no base URL (the default, a Claude Code wire) is left out.

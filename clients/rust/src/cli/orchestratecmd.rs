@@ -5,11 +5,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Res, Stop};
 use crate::envgen::{self, GenErr};
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::{any_json, dumps, dumps_indent, Object, Value};
+use crate::warden::py::text::{repr, strip};
+use crate::warden::pyjson::{any_json, dumps, dumps_indent, Object, Value};
 use crate::orchestrate::{self, DecomposeErr, DEFAULT_DECOMPOSE_MODEL};
 use crate::pathways::find::{select_matcher, Cache as FindCache, FindErr};
 use crate::pathways::pmodel::Id;
@@ -35,13 +35,13 @@ impl Env {
         }
     }
 
-    /// `_echo_resolved(data_dir)`: the backend, the gate's state and the
+    /// `_echo_resolved(data_dir)`: the backend, the warden's state and the
     /// data directory, on stderr.
     pub(super) fn echo_resolved_at(&mut self, data_dir: &str) -> Result<(), String> {
-        let gate = self.gate_state_at(data_dir)?;
+        let warden = self.warden_state_at(data_dir)?;
         let backend = self.llm_client().backend();
         let shown = self.tilde(data_dir);
-        self.note(&format!("backend: {backend} · gate: {gate} · data: {shown}"));
+        self.note(&format!("backend: {backend} · warden: {warden} · data: {shown}"));
         Ok(())
     }
 
@@ -110,7 +110,7 @@ impl Env {
         const CMD: &str = "orchestrate";
         let opts = [
             Opt::val(&["--envelope", "-e"], "PATH", "Envelope YAML (authorization boundary). If omitted, one is generated for the prompt."),
-            Opt::val(&["--budget", "-b"], "INTEGER", "Approximate token budget for the run (gates routing during execution). Omit for unbudgeted."),
+            Opt::val(&["--budget", "-b"], "INTEGER", "Approximate token budget for the run (checks routing during execution). Omit for unbudgeted."),
             Opt::flag(&["--strict-budget"], "Stop when the budget is exhausted instead of downgrading to a cheaper model."),
             Opt::flag(&["--deterministic-synthesis"], "Assemble the final answer from step outputs deterministically instead of with an LLM."),
             Opt::val(&["--max-parallel"], "INTEGER", "Run independent steps in the same dependency level concurrently, up to this many at once (1 = sequential, the default)."),
@@ -157,7 +157,7 @@ impl Env {
         }
         let notes = Rc::new(RefCell::new(String::new()));
         let pe = self.potion_env(&notes);
-        let cfg = match super::config::load(&super::gateroot::join(&self.data_home(), "config.yaml")) {
+        let cfg = match super::config::load(&super::wardenroot::join(&self.data_home(), "config.yaml")) {
             Ok(c) => c,
             Err(e) => return self.refuse(CMD, &format!("the config file is not one this binary reads: {e}")),
         };
@@ -204,7 +204,7 @@ impl Env {
                     CMD,
                     &format!(
                         "the pathway store warns of stale embeddings under PYTHONWARNINGS={}, a filter this binary does not read the oracle's way",
-                        crate::gate::py::text::repr(&pw)
+                        crate::warden::py::text::repr(&pw)
                     ),
                 )
             }

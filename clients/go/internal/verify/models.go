@@ -26,15 +26,16 @@ import (
 // unmarshal on top of it (json.Unmarshal only overwrites keys present in the
 // input, so absent keys keep the pre-filled default).
 type Permission struct {
-	FileRead                []string `json:"file_read"`
-	FileWrite               []string `json:"file_write"`
-	Network                 bool     `json:"network"`
-	NetworkHosts            []string `json:"network_hosts"`
-	Shell                   bool     `json:"shell"`
-	ShellAllowlist          []string `json:"shell_allowlist"`
-	ShellAllowDecomposition bool     `json:"shell_allow_decomposition"`
-	McpAllowlist            []string `json:"mcp_allowlist"`
-	CustomStepAllowlist     []string `json:"custom_step_allowlist"`
+	FileRead                []string  `json:"file_read"`
+	FileWrite               []string  `json:"file_write"`
+	Network                 bool      `json:"network"`
+	NetworkHosts            []string  `json:"network_hosts"`
+	Shell                   bool      `json:"shell"`
+	ShellAllowlist          []string  `json:"shell_allowlist"`
+	ShellAllowDecomposition bool      `json:"shell_allow_decomposition"`
+	McpAllowlist            []string  `json:"mcp_allowlist"`
+	McpRules                []McpRule `json:"mcp_rules"`
+	CustomStepAllowlist     []string  `json:"custom_step_allowlist"`
 	// MaxExecutionTimeS is an int of any size, as pydantic reads it.
 	MaxExecutionTimeS *big.Int `json:"max_execution_time_s"`
 	// MaxOutputSizeMB is kept as its text; subsumption reads it as a number.
@@ -56,6 +57,7 @@ func DefaultPermission() Permission {
 		NetworkHosts:        []string{},
 		ShellAllowlist:      []string{},
 		McpAllowlist:        []string{},
+		McpRules:            []McpRule{},
 		CustomStepAllowlist: []string{},
 		MaxExecutionTimeS:   big.NewInt(30),
 		MaxOutputSizeMB:     "10",
@@ -408,6 +410,7 @@ type CaseOptions struct {
 	Z3TimeoutMs *int    `json:"z3_timeout_ms"`
 	DialectPin  *string `json:"dialect_pin"`
 	DialectBase *string `json:"dialect_base"`
+	Fenced      *bool   `json:"fenced"`
 }
 
 func (o CaseOptions) Z3Timeout() int {

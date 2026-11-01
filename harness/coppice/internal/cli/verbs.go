@@ -105,7 +105,7 @@ var verbSpecs = map[string]map[string]verbSpec{
 		"list":        {},
 		"close":       {task: true, flags: map[string]flagSpec{"keep-worktree": {wire: "keep_worktree", kind: "bool", value: true}}},
 		"move":        {task: true, flags: map[string]flagSpec{"parent": {wire: "parent", kind: "string"}}},
-		"set-foreman": {task: true, flags: map[string]flagSpec{"pane": {wire: "pane", kind: "string"}}},
+		"set-steward": {task: true, flags: map[string]flagSpec{"pane": {wire: "pane", kind: "string"}}},
 	},
 	"agent": {
 		// list --ended, forget and resume are the pane verbs of the same
@@ -159,10 +159,11 @@ var verbSpecs = map[string]map[string]verbSpec{
 // name instead of silently starting the wrong thing. start takes only
 // --foreground; the other three take only --json.
 var serverFlags = map[string]map[string]bool{
-	"start":  {"foreground": true, "json": true},
-	"stop":   {"json": true},
-	"status": {"json": true},
-	"token":  {"json": true},
+	"start":   {"foreground": true, "json": true},
+	"stop":    {"json": true},
+	"status":  {"json": true},
+	"token":   {"json": true},
+	"install": {"json": true},
 }
 
 // parseServerFlags checks argv against serverFlags[sub]. errMsg is empty on

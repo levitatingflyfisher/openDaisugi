@@ -280,7 +280,7 @@ class _FakeTensor:
 def test_smolvla_real_load_smoke():
     """Opt-in smoke test against the real lerobot/smolvla_base model.
 
-    Deliberately gated behind OPENDAISUGI_SMOLVLA_SMOKE=1 because the
+    Deliberately checked behind OPENDAISUGI_SMOLVLA_SMOKE=1 because the
     download is ~2GB and the load takes hundreds of MB of RAM. On
     memory-constrained boxes this WILL push the system into swap and
     could OOM. Run only when you've confirmed you have headroom.

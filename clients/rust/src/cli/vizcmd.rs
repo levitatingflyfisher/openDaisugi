@@ -6,10 +6,10 @@
 
 use std::collections::HashMap;
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{dumps, round, Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{dumps, round, Object, Value};
 use crate::orchestrate::sizing::{build_ladder, size_plan};
 use crate::tracejournal::dag::levels;
 
@@ -210,7 +210,7 @@ impl Env {
                 _ => "OSError",
             };
             let text = match e.raw_os_error() {
-                Some(n) => format!("[Errno {n}] {}: {}", crate::gate::paths::strerror(n), repr(&out)),
+                Some(n) => format!("[Errno {n}] {}: {}", crate::warden::paths::strerror(n), repr(&out)),
                 None => e.to_string(),
             };
             self.errf(&format!("Traceback (most recent call last): ...\n{name}: {text}\n"));

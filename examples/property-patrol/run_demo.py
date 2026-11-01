@@ -116,7 +116,7 @@ class MockVLA:
 
 def main():
     print(RULE)
-    print(" PROPERTY-SECURITY PATROL — openDaisugi gating a (mock) VLA swarm, live")
+    print(" PROPERTY-SECURITY PATROL — openDaisugi checking a (mock) VLA swarm, live")
     print(RULE)
 
     # 1. Partition the property into disjoint patrol sectors + prove deconfliction.
@@ -156,7 +156,7 @@ def main():
             env = sectors[did]
             proposed = vlas[did].propose(did, tick, pos[did])
 
-            # (a) SECTOR GATE — verify the proposed move against the drone's envelope.
+            # (a) SECTOR WARDEN — verify the proposed move against the drone's envelope.
             r = verify(_move(did, proposed), env)
             if r.ok:
                 target = proposed

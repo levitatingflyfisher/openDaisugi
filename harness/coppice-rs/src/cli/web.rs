@@ -29,7 +29,7 @@ const WEB_USAGE: &str = "coppice web - the floor in a browser
       box's MagicDNS name.
   coppice web serve [--listen ADDR] [--tls tailscale|localca|files|off]
                     [--cert FILE --key FILE] [--ca-dir DIR] [--ca-listen ADDR]
-                    [--external-url URL] [--gate-root DIR] [--voice-url URL [--voice-token-file FILE]]
+                    [--external-url URL] [--warden-root DIR] [--voice-url URL [--voice-token-file FILE]]
                     [--ntfy URL --ntfy-topic NAME --ntfy-token-env VAR]
                     [--persist|--forget] [--web-push] [--qr]
       Serve the phone client. Mints a token on the first run and prints it.
@@ -156,18 +156,19 @@ fn served_pair(data_dir: &Path, cert_file: &Path, key_file: &Path) -> (PathBuf, 
     (cert_file.to_path_buf(), key_file.to_path_buf())
 }
 
-fn opts_for(cli: &Cli, gate_root: &str, voice_url: &str, voice_token_file: &str) -> serve::Options {
+fn opts_for(cli: &Cli, warden_root: &str, voice_url: &str, voice_token_file: &str) -> serve::Options {
     let (plugins, _) = super::load_plugins_and_config();
     serve::Options {
         dial: web::upstream::Dialer {
             path: cli.socket.clone(),
         },
         tokens: TokenStore::new(config::token_path(&cli.data_dir)),
-        gate_root: PathBuf::from(gate_root),
+        warden_root: PathBuf::from(warden_root),
         push: None,
         voice_url: voice_url.into(),
         voice_token_file: voice_token_file.into(),
         views: serve::views_of(&plugins),
+        extra_data_dirs: vec![crate::steward::log_dir(&cli.data_dir).join("work")],
         events: None,
         listening: None,
         cert_check_every: None,
@@ -457,9 +458,9 @@ impl Cli {
             "name of the environment variable holding the ntfy token",
         );
         fs.string(
-            "gate-root",
-            &path_s(&config::gate_root(&self.data_dir)),
-            "the gate's ask directory",
+            "warden-root",
+            &path_s(&config::warden_root(&self.data_dir)),
+            "the warden's ask directory",
         );
         fs.string(
             "voice-url",
@@ -517,7 +518,7 @@ impl Cli {
             ntfy_topic: fs.str("ntfy-topic"),
             ntfy_token_env: fs.str("ntfy-token-env"),
             external_url: fs.str("external-url"),
-            gate_root: fs.str("gate-root"),
+            warden_root: fs.str("warden-root"),
             voice_url: fs.str("voice-url"),
             voice_token_file: fs.str("voice-token-file"),
         };
@@ -627,7 +628,7 @@ impl Cli {
         if fs.flag("qr") {
             print_sign_in(&tok, &cfg.external_url, &cfg.listen, &tls_source);
         }
-        let mut opts = opts_for(self, &cfg.gate_root, &cfg.voice_url, &cfg.voice_token_file);
+        let mut opts = opts_for(self, &cfg.warden_root, &cfg.voice_url, &cfg.voice_token_file);
         opts.serving_file = path_s(&web::tailscale::serving_path(&self.data_dir));
         if auto {
             // The one line that says what now listens where, once it does.
@@ -804,7 +805,7 @@ impl Cli {
             enabled: true,
             listen: addr.clone(),
             tls: tls::OFF.into(),
-            gate_root: path_s(&config::gate_root(&self.data_dir)),
+            warden_root: path_s(&config::warden_root(&self.data_dir)),
             ..Default::default()
         };
         if let Err(e) = tls::resolve(&tls::Options {
@@ -839,7 +840,7 @@ impl Cli {
                 ));
             }
         }
-        let opts = opts_for(self, &cfg.gate_root, "", "");
+        let opts = opts_for(self, &cfg.warden_root, "", "");
         match serve_until_signal(&cfg, opts) {
             Ok(()) => 0,
             Err(e) => {

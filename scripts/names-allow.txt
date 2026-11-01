@@ -1,0 +1,80 @@
+# Allowlist for scripts/names-check.sh.
+# path <prefix>   a tracked-path prefix; hits and names under it are ignored.
+# phrase <text>   an exact, case-insensitive phrase removed from the hits. End it with "# why".
+# Historical records keep their words: they say what the parts were called when the decision was made.
+path docs/plans/
+path docs/adr/0001-
+path docs/adr/0002-
+path docs/adr/0003-
+path docs/adr/0004-
+path docs/adr/0005-
+path docs/adr/0006-
+path docs/adr/0007-
+path docs/adr/0008-
+path docs/adr/0009-
+path docs/adr/0010-
+path docs/adr/0011-
+path docs/adr/0012-
+path docs/adr/0013-
+path docs/adr/0014-
+path docs/adr/0015-
+path docs/adr/0016-
+path docs/adr/0017-
+path docs/adr/0018-
+path docs/adr/0019-
+path docs/adr/0020-
+path docs/adr/0021-
+path docs/adr/0022-
+path docs/adr/0023-
+path docs/adr/0024-
+path docs/adr/0025-
+path docs/start-here.md
+path site/start-here.html
+path docs/adr/0026-
+path docs/adr/README.md
+path docs/research/
+path docs/exploration/
+path docs/correspondence.md
+path CHANGELOG.md
+path clients/ADJUDICATIONS.md
+path clients/PORTING-NOTES.md
+path gateway-spike-log/
+path examples/gateway-spike/
+path opendaisugi-session2summary.md
+path decks/
+path bench/corpus/gate-paths.jsonl
+path scripts/names-allow.txt
+path scripts/names-check.sh
+phrase gate-paths.jsonl # the recorded corpus keeps its file name
+phrase names-ok # a line that reads an old name on purpose, for the one-time move of the owner's own data
+phrase 0007-call-time-gate.md # link target: the ADR file keeps its name
+phrase 0012-gateway-reuse-and-answer-store.md # link target: the ADR file keeps its name
+phrase 0017-lazy-init-and-resident-gate.md # link target: the ADR file keeps its name
+phrase gateway-spike-log/ # the ignored spike log directory keeps its name
+phrase bad gateway # HTTP status text 502 and the error text providers send
+phrase gateway timeout # HTTP status text 504
+phrase AgentCore Gateway # a third-party product name
+phrase Docker MCP Gateway # a third-party product name
+phrase MCP gateway # a third-party term
+phrase AWS gateway # a third-party product
+phrase Policy engines and gateways # the heading names the category of other tools
+phrase docker-mcp-gateway # a third-party URL
+phrase docker/mcp/gateway # a third-party URL
+phrase open-source gateway for mcp servers # the description of a third-party product
+phrase /(steward|foreman) # the steward log dir name on disk until ADR-0023 (a generated pattern)
+phrase StatusBadGateway # Go net/http constant
+phrase {DATA}/foreman # the steward log dir name on disk until ADR-0023 (compare cases)
+phrase opendaisugi/foreman # the steward log dir name on disk until ADR-0023 (fixtures)
+phrase /srv/oh/foreman # the same, under a custom data home (fixtures)
+phrase /srv/cdata/foreman # the same, under COPPICE_DATA_DIR (fixtures)
+phrase "gated": false # the Hugging Face API field (fixtures)
+phrase \"gated\": false # the same, JSON-escaped (fixtures)
+phrase other/delegate # a tool named delegate on another MCP server (cases)
+phrase pi/delegate # the same (cases)
+phrase $OPENDAISUGI_HOME/foreman # the steward log dir name on disk until ADR-0023 (fixtures)
+phrase $COPPICE_DATA_DIR/foreman # the same (fixtures)
+phrase named `foreman` on disk until ADR-0023 moves the store # the docs say what the log directory is called today
+phrase /.opendaisugi/gate from before the rename # warden status names the old dir (fixtures)
+phrase config: unknown key gate # warden status names an old key (fixtures)
+phrase .opendaisugi/gate/ # the old dir in a stale-state case (fixtures)
+phrase gate                 (hidden)  Refused: this verb is now warden. # the old verb refuses in help --all

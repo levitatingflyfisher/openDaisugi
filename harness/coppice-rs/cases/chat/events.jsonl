@@ -6,7 +6,7 @@
 # in its own look.
 #!config default = "fake"
 #!config [harness.fake]
-#!config command = "{FIXTURES}/fake-foreman.sh"
+#!config command = "{FIXTURES}/fake-steward.sh"
 #!config [harness.claude]
 #!config command = "/usr/bin/python3"
 #!config args = ["{FIXTURES}/transcripts/report.py"]

@@ -61,7 +61,7 @@ func TestSpawnNamesAMissingDirectory(t *testing.T) {
 }
 
 // send-keys reaches every control key, ctrl-space among them, so a script
-// or a foreman can leave a tile the way a person does.
+// or a steward can leave a tile the way a person does.
 func TestNamedKeysCoverEveryControlKey(t *testing.T) {
 	for c := 'a'; c <= 'z'; c++ {
 		name := "ctrl+" + string(c)

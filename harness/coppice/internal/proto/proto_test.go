@@ -113,15 +113,15 @@ func TestDecoderRejectsAnOverlongLine(t *testing.T) {
 
 func TestParseStateEventRoundTrip(t *testing.T) {
 	line := []byte(`{"v":1,"ts":1757300000.123,"session_id":"d41c","harness_session_id":null,` +
-		`"harness":"claude-code","pane":"w1:p3","state":"blocked","source":"gate",` +
+		`"harness":"claude-code","pane":"w1:p3","state":"blocked","source":"warden",` +
 		`"ask":{"id":"toolu_1","tool":"Bash","summary":"rm -rf build/","deadline":1757300090,"tier":"permanent"},` +
 		`"detail":"verdict=deny clause=shell.deny[2]"}`)
 	ev, err := ParseStateEvent(line)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.State != StateBlocked || ev.Source != SrcGate || ev.Ask == nil || ev.Ask.Tool != "Bash" {
-		t.Fatalf("ParseStateEvent = %+v, want a gate blocked event with a Bash ask", ev)
+	if ev.State != StateBlocked || ev.Source != SrcWarden || ev.Ask == nil || ev.Ask.Tool != "Bash" {
+		t.Fatalf("ParseStateEvent = %+v, want a warden blocked event with a Bash ask", ev)
 	}
 	back, err := json.Marshal(ev)
 	if err != nil {
@@ -149,7 +149,7 @@ func jsonEqual(a, b any) bool {
 
 func TestValidateRejectsAnUnknownState(t *testing.T) {
 	_, err := ParseStateEvent([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"x",` +
-		`"state":"busy","source":"gate"}`))
+		`"state":"busy","source":"warden"}`))
 	if err == nil {
 		t.Fatal(`ParseStateEvent accepted state "busy", want an error`)
 	}
@@ -178,29 +178,29 @@ func TestAHeadlessBlockedEventKeepsItsAsk(t *testing.T) {
 	}
 }
 
-func TestValidateRequiresAnAskOnBlockedFromTheGate(t *testing.T) {
+func TestValidateRequiresAnAskOnBlockedFromTheWarden(t *testing.T) {
 	_, err := ParseStateEvent([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"x",` +
-		`"state":"blocked","source":"gate"}`))
+		`"state":"blocked","source":"warden"}`))
 	if err == nil {
-		t.Fatal("ParseStateEvent accepted a gate blocked event with no ask, want an error")
+		t.Fatal("ParseStateEvent accepted a warden blocked event with no ask, want an error")
 	}
 }
 
 func TestValidateRejectsADetailOverTwoHundredChars(t *testing.T) {
 	long := strings.Repeat("x", 201)
 	_, err := ParseStateEvent([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"x",` +
-		`"state":"idle","source":"gate","detail":"` + long + `"}`))
+		`"state":"idle","source":"warden","detail":"` + long + `"}`))
 	if err == nil {
 		t.Fatal("ParseStateEvent accepted a 201 char detail, want an error")
 	}
 }
 
 func TestSourceRankFollowsThePrecedenceOrder(t *testing.T) {
-	if !(SourceRank(SrcOperator) > SourceRank(SrcGate) &&
-		SourceRank(SrcGate) > SourceRank(SrcHeadless) &&
+	if !(SourceRank(SrcOperator) > SourceRank(SrcWarden) &&
+		SourceRank(SrcWarden) > SourceRank(SrcHeadless) &&
 		SourceRank(SrcHeadless) > SourceRank(SrcProcess) &&
 		SourceRank(SrcProcess) > SourceRank(SrcManifest) &&
 		SourceRank(SrcManifest) > SourceRank("nonsense")) {
-		t.Fatal("SourceRank does not follow operator > gate > headless > process > manifest")
+		t.Fatal("SourceRank does not follow operator > warden > headless > process > manifest")
 	}
 }

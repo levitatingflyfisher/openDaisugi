@@ -20,7 +20,7 @@ import (
 // Claude Code's ~57-86k rented context. It needs an API key, so it is OFF by
 // default and breaks the exposure freeze by design — you opt in explicitly.
 //
-// The gate is unchanged: sprig's loop still runs every returned call through the
+// The warden is unchanged: sprig's loop still runs every returned call through the
 // in-process Executor, so "own the boundary" holds exactly as in A/B.
 type APIModel struct {
 	APIKey    string
@@ -58,7 +58,7 @@ const apiSystemPrompt = "You are sprig, a minimal coding agent. Use the tools " 
 // NewAPIModel reads ANTHROPIC_API_KEY and refuses to start without it — E is opt-in.
 // ANTHROPIC_BASE_URL (the standard SDK env var) overrides the endpoint, so the same
 // binary can drive a local mock, an Anthropic-compatible proxy, or the openDaisugi
-// gateway — not only api.anthropic.com.
+// router — not only api.anthropic.com.
 func NewAPIModel() (*APIModel, error) { return NewAPIModelFor("", false, "") }
 
 // DefaultAnthropicBase is the anthropic wire's base URL when neither
@@ -409,12 +409,14 @@ func apiTools() []map[string]any {
 		{"name": "bash", "description": "Run a shell command.", "input_schema": obj([]string{"cmd"}, "cmd")},
 		{"name": "spawn", "description": "Start a child agent on a task inside a narrower envelope, wait, and return its answer.",
 			"input_schema": spawnSchema()},
+		{"name": "help", "description": HelpDescription, "input_schema": helpSchema()},
 	}
 }
 
 // spawnSchema is the spawn tool's input: the task and the child's
 // envelope, and optionally the agent profile, the model, the child's
-// tools, its token and turn reservation and its turn limit.
+// tools, its token and turn reservation and its turn limit, and attempts
+// (2 to 8, with why) to start that many children on one task.
 func spawnSchema() map[string]any {
 	str := map[string]any{"type": "string"}
 	num := map[string]any{"type": "integer"}
@@ -424,8 +426,21 @@ func spawnSchema() map[string]any {
 			"task": str, "envelope": map[string]any{"type": "object"}, "profile": str, "model": str,
 			"tools":  map[string]any{"type": "array", "items": str},
 			"tokens": num, "turns": num, "max_turns": num,
+			"attempts": num, "why": str,
 		},
 		"required": []string{"task", "envelope"},
+	}
+}
+
+// helpSchema is the help tool's input: kind, one of three, and the text.
+func helpSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"kind": map[string]any{"type": "string", "enum": HelpKinds},
+			"text": map[string]any{"type": "string"},
+		},
+		"required": []string{"kind", "text"},
 	}
 }
 

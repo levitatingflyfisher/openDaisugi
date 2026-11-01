@@ -1,9 +1,9 @@
 //! weave: runs a workflow file, a small JSON graph of steps, each a sprig
-//! task behind the gate. Results to stdout, logs to stderr, real exit
+//! task behind the warden. Results to stdout, logs to stderr, real exit
 //! codes, --json for scripts.
 
 use sprig::agent::Agent;
-use sprig::gate::{AllowAll, DaisugiGate, Executor, Gate, DEFAULT_GATE_CMD};
+use sprig::warden::{AllowAll, DaisugiWarden, Executor, Warden, DEFAULT_WARDEN_CMD};
 use sprig::gostr::fields;
 use sprig::model_claude::ClaudeCodeModel;
 use sprig::osx::out;
@@ -14,16 +14,17 @@ use std::time::Duration;
 fn usage() {
     let _ = out(
         2,
-        b"usage: weave run <workflow.json> [--gate] [--json]\n\
-run a JSON graph of gated agent steps in dependency order.\n",
+        b"usage: weave run <workflow.json> [--warden=false] [--warden-cmd \"<cmd>\"] [--json]\n\
+run a JSON graph of checked agent steps in dependency order.\n\
+the warden checks every tool call by default; --warden=false turns it off.\n",
     );
 }
 
-/// One gate shared by every step, as the Go binary shares its value.
-struct Shared(Rc<dyn Gate>);
+/// One warden shared by every step, as the Go binary shares its value.
+struct Shared(Rc<dyn Warden>);
 
-impl Gate for Shared {
-    fn check(&self, call: &sprig::gate::ToolCall) -> sprig::gate::Verdict {
+impl Warden for Shared {
+    fn check(&self, call: &sprig::warden::ToolCall) -> sprig::warden::Verdict {
         self.0.check(call)
     }
 }
@@ -33,8 +34,8 @@ fn main() {
         .skip(1)
         .map(|a| a.as_bytes().to_vec())
         .collect();
-    let mut gate_on = false;
-    let mut gate_cmd = DEFAULT_GATE_CMD.as_bytes().to_vec();
+    let mut warden_on = true;
+    let mut warden_cmd = DEFAULT_WARDEN_CMD.as_bytes().to_vec();
     let mut json_out = false;
     let mut file: Vec<u8> = Vec::new();
     let mut i = 0;
@@ -42,10 +43,12 @@ fn main() {
         let a = args[i].as_slice();
         if a == b"run" {
             // the optional verb
-        } else if a == b"--gate" {
-            gate_on = true;
-        } else if a == b"--gate-cmd" && i + 1 < args.len() {
-            gate_cmd = args[i + 1].clone();
+        } else if a == b"--warden" || a == b"--warden=true" {
+            warden_on = true;
+        } else if a == b"--warden=false" {
+            warden_on = false;
+        } else if a == b"--warden-cmd" && i + 1 < args.len() {
+            warden_cmd = args[i + 1].clone();
             i += 1;
         } else if a == b"--json" {
             json_out = true;
@@ -75,13 +78,14 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let gate: Rc<dyn Gate> = if gate_on {
-        Rc::new(DaisugiGate {
-            command: fields(&gate_cmd),
+    let warden: Rc<dyn Warden> = if warden_on {
+        Rc::new(DaisugiWarden {
+            command: fields(&warden_cmd),
             timeout: Duration::from_secs(10),
             session_id: Vec::new(),
         })
     } else {
+        let _ = out(2, sprig::warden::warden_off_notice("weave").as_bytes());
         Rc::new(AllowAll)
     };
     let line = format!(
@@ -93,7 +97,7 @@ fn main() {
     let results = wf.run(&mut |_| {
         let exec = Executor::new(
             sprig::tools::default_tools(),
-            Box::new(Shared(gate.clone())),
+            Box::new(Shared(warden.clone())),
         );
         Agent::new(Box::new(ClaudeCodeModel::new()), exec, 20)
     });

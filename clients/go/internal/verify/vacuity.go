@@ -275,6 +275,9 @@ func (c *smtCompiler) compileScalar(expr Expression) (string, error) {
 			c.decls = append(c.decls, fmt.Sprintf("(declare-const %s Bool)", nonempty))
 		}
 		return fmt.Sprintf("(=> %s %s)", nonempty, inner), nil
+	case PathIn:
+		// No permissions in a vacuity scope: false (predicate_z3._compile_path_in).
+		return "false", nil
 	case AliasRef:
 		return "", fmt.Errorf("unresolved alias reference '%s'; resolve aliases before compilation", e.Name)
 	default:

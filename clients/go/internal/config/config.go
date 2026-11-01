@@ -40,17 +40,17 @@ var Fields = []struct {
 	{"z3_timeout_ms", tInt},
 	{"data_dir", tPath},
 	{"auto_tend", tOptBool},
-	{"gateway_local_model", tOptStr},
-	{"gateway_router", tStr},
-	{"gateway_router_model", tOptStr},
-	{"gateway_grader", tOptStr},
+	{"router_local_model", tOptStr},
+	{"routing_mode", tStr},
+	{"routing_model", tOptStr},
+	{"router_grader", tOptStr},
 	{"switchyard_route_id", tStr},
 	{"switchyard_capable_model", tStr},
 	{"switchyard_efficient_model", tOptStr},
 	{"switchyard_api_key_env", tOptStr},
 	{"shell_allow_decomposition", tBool},
-	{"gate_mode", tStr},
-	{"gate_ask", tBool},
+	{"warden_mode", tStr},
+	{"warden_ask", tBool},
 	{"dialect_enforce", tOptStr},
 	{"verifier_client", tStr},
 	{"matcher_model", tStr},
@@ -85,9 +85,9 @@ var FloorFields = []struct {
 	{"coppice_socket", tOptStr},
 }
 
-// Config holds the fields the gate commands read.
+// Config holds the fields the warden commands read.
 type Config struct {
-	GateMode                string
+	WardenMode              string
 	ShellAllowDecomposition bool
 	VerifierClient          string
 	MatcherModel            string
@@ -95,11 +95,11 @@ type Config struct {
 	LLMBackend *string
 	// AutoTend is auto_tend, nil when unset or null.
 	AutoTend *bool
-	// The gateway's fields; an optional one is nil when unset or null.
-	GatewayLocalModel        *string
-	GatewayRouter            string
-	GatewayRouterModel       *string
-	GatewayGrader            *string
+	// The router's fields; an optional one is nil when unset or null.
+	RouterLocalModel         *string
+	RoutingMode              string
+	RoutingModel             *string
+	RouterGrader             *string
 	SwitchyardRouteID        string
 	SwitchyardCapableModel   string
 	SwitchyardEfficientModel *string
@@ -127,8 +127,8 @@ type Config struct {
 
 // Default is Config() with every default.
 func Default() Config {
-	return Config{GateMode: "audit", VerifierClient: "python", MatcherModel: "lexical",
-		GatewayRouter: "rules", SwitchyardRouteID: "daisugi", SwitchyardCapableModel: "claude-sonnet-5",
+	return Config{WardenMode: "audit", VerifierClient: "python", MatcherModel: "lexical",
+		RoutingMode: "rules", SwitchyardRouteID: "daisugi", SwitchyardCapableModel: "claude-sonnet-5",
 		VoiceEngine: "faster-whisper", VoiceModel: "tiny.en", VoiceServerURL: "http://127.0.0.1:7477",
 		FloorBackend: "auto"}
 }
@@ -305,8 +305,8 @@ func FromDoc(doc *Doc) (Config, error) {
 	if anyUnsure {
 		return Config{}, ErrUnsupported
 	}
-	if v, present := doc.Vals["gate_mode"]; present {
-		cfg.GateMode = v.Text
+	if v, present := doc.Vals["warden_mode"]; present {
+		cfg.WardenMode = v.Text
 	}
 	if v, present := doc.Vals["verifier_client"]; present {
 		cfg.VerifierClient = v.Text
@@ -321,14 +321,14 @@ func FromDoc(doc *Doc) (Config, error) {
 		s := v.Text
 		cfg.LLMBackend = &s
 	}
-	for name, dst := range map[string]*string{"gateway_router": &cfg.GatewayRouter,
+	for name, dst := range map[string]*string{"routing_mode": &cfg.RoutingMode,
 		"switchyard_route_id": &cfg.SwitchyardRouteID, "switchyard_capable_model": &cfg.SwitchyardCapableModel} {
 		if v, present := doc.Vals[name]; present {
 			*dst = v.Text
 		}
 	}
-	for name, dst := range map[string]**string{"gateway_local_model": &cfg.GatewayLocalModel,
-		"gateway_router_model": &cfg.GatewayRouterModel, "gateway_grader": &cfg.GatewayGrader,
+	for name, dst := range map[string]**string{"router_local_model": &cfg.RouterLocalModel,
+		"routing_model": &cfg.RoutingModel, "router_grader": &cfg.RouterGrader,
 		"switchyard_efficient_model": &cfg.SwitchyardEfficientModel, "switchyard_api_key_env": &cfg.SwitchyardAPIKeyEnv,
 		"llm_base_url": &cfg.LLMBaseURL, "llm_host_kind": &cfg.LLMHostKind, "llm_host_model": &cfg.LLMHostModel,
 		"dialect_enforce": &cfg.DialectEnforce} {
@@ -409,8 +409,8 @@ func Load(path string) (Config, error) {
 	return FromDoc(doc)
 }
 
-// DialectPin is gate._configured_dialect_pin: the dialect_enforce of the
-// config.yaml beside the gate root, or nil when it names none or the file
+// DialectPin is warden._configured_dialect_pin: the dialect_enforce of the
+// config.yaml beside the warden root, or nil when it names none or the file
 // does not validate. err is ErrUnsupported only.
 func DialectPin(configPath string) (*string, error) {
 	cfg, err := Load(configPath)
@@ -426,10 +426,10 @@ func DialectPin(configPath string) (*string, error) {
 	return cfg.DialectEnforce, nil
 }
 
-// GateMode is gate.resolve_gate_mode(None, root=...): the gate_mode of
-// the config.yaml beside the gate root, or audit when that file does
+// WardenMode is warden.resolve_warden_mode(None, root=...): the warden_mode of
+// the config.yaml beside the warden root, or audit when that file does
 // not validate or names another mode. err is ErrUnsupported only.
-func GateMode(configPath string) (string, error) {
+func WardenMode(configPath string) (string, error) {
 	cfg, err := Load(configPath)
 	if errors.Is(err, ErrInvalid) {
 		return "audit", nil
@@ -437,8 +437,8 @@ func GateMode(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if cfg.GateMode == "audit" || cfg.GateMode == "enforce" {
-		return cfg.GateMode, nil
+	if cfg.WardenMode == "audit" || cfg.WardenMode == "enforce" {
+		return cfg.WardenMode, nil
 	}
 	return "audit", nil
 }

@@ -27,9 +27,9 @@ func TestSessionFlagsReadEverySpellingSprigTakes(t *testing.T) {
 			t.Fatalf("%v: resume %q, want %q", tc.argv, v, tc.res)
 		}
 	}
-	got := stripSessionFlags([]string{"-session-dir", "/v", "--gate", "-resume=r", "--session", "s",
+	got := stripSessionFlags([]string{"-session-dir", "/v", "--warden", "-resume=r", "--session", "s",
 		"-session-dir=/w", "--", "-resume", "x"})
-	want := []string{"--gate", "--", "-resume", "x"}
+	want := []string{"--warden", "--", "-resume", "x"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("stripped %v, want %v", got, want)
 	}

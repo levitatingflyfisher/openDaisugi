@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"daisugi-verify/pando"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +23,9 @@ import (
 	"github.com/opendaisugi/coppice/internal/attach"
 	"github.com/opendaisugi/coppice/internal/broken"
 	"github.com/opendaisugi/coppice/internal/config"
-	"github.com/opendaisugi/coppice/internal/foreman"
 	"github.com/opendaisugi/coppice/internal/plugins"
 	"github.com/opendaisugi/coppice/internal/server"
+	"github.com/opendaisugi/coppice/internal/steward"
 	"github.com/opendaisugi/coppice/internal/tmuxmirror"
 	"github.com/opendaisugi/coppice/internal/tui"
 	"github.com/opendaisugi/coppice/internal/web"
@@ -37,7 +38,7 @@ const usage = `coppice: panes, agents and their state, on one machine.
   coppice                                  open the floor
   coppice claude [ARGS...]                 open that harness here and attach
   coppice open HARNESS [ARGS...]           the long form
-  coppice server start|stop|status|token
+  coppice server start|stop|status|token|install
   coppice workspace create [--cwd DIR] [--label TEXT]
   coppice workspace list
   coppice tab create [--label TEXT] [--workspace ID]
@@ -58,21 +59,23 @@ const usage = `coppice: panes, agents and their state, on one machine.
   coppice new [PROJECT] [--no-attach]     the default harness, in a project by name or
                                            path, or here; attaches, unless --no-attach
   coppice project add|list|rm [DIR]       pin, list or unpin a working directory
+  coppice envelope propose PROJECT FILE   a steward proposes a project envelope; the owner approves it
+  coppice envelope list|approve|decline [PROJECT]   the owner answers (a pane cannot)
   coppice agent list|get|prompt|wait|read
-  coppice agent allow|deny PANE ASK [--reason TEXT]   answer a gate ask; a pane cannot,
-                                           but a foreman may deny an ask it holds
+  coppice agent allow|deny PANE ASK [--reason TEXT]   answer a warden ask; a pane cannot,
+                                           but a steward may deny an ask it holds
   coppice agent allow PANE ASK --confirm NAME  allow a permanent ask by its pane name
   coppice agent allow PANE ASK --scope task    allow an undoable ask for the task
   coppice floor note TEXT                  print one line on the floor
-  coppice floor talk TEXT                  say TEXT to the floor's foreman; starts one if none runs
-  coppice skill foreman                    print the page that makes a pane the foreman
-  coppice backup [FILE]                    foreman log and memory, layout and config in one .tgz
+  coppice floor talk TEXT                  say TEXT to the floor's steward; starts one if none runs
+  coppice skill steward                    print the page that makes a pane the steward
+  coppice backup [FILE]                    Pando R2 log, layout and config in one .tgz
   coppice restore FILE [--force]           put it back; stop the server first
   coppice task create --label NAME [--parent ID] [--cwd DIR] [--worktree] [--model NAME]
   coppice task list [--tree]
   coppice task close ID [--keep-worktree]
   coppice task move ID --parent ID
-  coppice task set-foreman ID --pane PANE  name the pane that hears the task's asks first
+  coppice task set-steward ID --pane PANE  name the pane that hears the task's asks first
   coppice attach [PANE]
   coppice tmux-mirror [--session NAME] [--tmux-socket PATH]
                                            one tmux window per pane, each attached
@@ -127,12 +130,12 @@ func (c *CLI) stdinIsTerminal() bool {
 }
 
 // Run returns the process exit code: 0 success, 1 user error, 3 unreachable.
-// A gate deny is 2, which only the harness paths can produce; the CLI never
+// A warden deny is 2, which only the harness paths can produce; the CLI never
 // does.
 func (c *CLI) Run(argv []string) int {
 	remote := ""
 	// dataDirFlag is --data-dir when given here; c.DataDir also holds the
-	// default, which coppice foreman must not mistake for a choice.
+	// default, which coppice steward must not mistake for a choice.
 	dataDirFlag := ""
 	for len(argv) > 0 && strings.HasPrefix(argv[0], "--") {
 		switch argv[0] {
@@ -179,19 +182,19 @@ func (c *CLI) Run(argv []string) int {
 	}
 
 	switch argv[0] {
-	case "foreman":
-		// Hidden: it reads the foreman's chat files and dials no socket.
+	case "steward":
+		// Hidden: it reads the steward's chat files and dials no socket.
 		if remote != "" {
-			fmt.Fprintln(c.Err, "coppice foreman reads local files; it is not wired for --remote.")
+			fmt.Fprintln(c.Err, "coppice steward reads local files; it is not wired for --remote.")
 			return 1
 		}
 		if len(argv) > 1 && argv[1] == "tools" {
-			return foreman.ToolsMainIn(dataDirFlag, argv[2:], c.In, c.Out, c.Err)
+			return steward.ToolsMainIn(dataDirFlag, argv[2:], c.In, c.Out, c.Err)
 		}
 		if len(argv) > 1 && argv[1] == "hook" {
-			return foreman.HookMain(c.In, c.Err)
+			return steward.HookMain(c.In, c.Err)
 		}
-		return foreman.Main(argv[1:], dataDirFlag, c.Out, c.Err)
+		return steward.Main(argv[1:], dataDirFlag, c.Out, c.Err)
 	case "server":
 		return c.runServer(remote, argv[1:])
 	case "attach":
@@ -224,6 +227,8 @@ func (c *CLI) Run(argv []string) int {
 		return c.runNew(remote, argv[1:])
 	case "project":
 		return c.runProject(remote, argv[1:])
+	case "envelope":
+		return c.runEnvelope(remote, argv[1:])
 	default:
 		// A word that is not a verb is a harness name to open, or an
 		// unknown command. open decides, and prints the usage after its
@@ -334,6 +339,9 @@ func (c *CLI) openAt(remote string, argv []string, bare bool, cwdOverride string
 					name, strings.Join(names, ", "))
 			}
 			return 1
+		}
+		for _, n := range config.FoundNotes(disc) {
+			fmt.Fprintln(c.Err, n)
 		}
 		fresh := config.FromFound(disc, name)
 		save = &fresh
@@ -605,14 +613,14 @@ func (c *CLI) printHuman(group, verb string, res map[string]any) {
 
 func (c *CLI) runServer(remote string, argv []string) int {
 	if len(argv) == 0 {
-		fmt.Fprintln(c.Err, "coppice server needs start, stop, status or token")
+		fmt.Fprintln(c.Err, "coppice server needs start, stop, status, token or install")
 		return 1
 	}
 	sub, rest := argv[0], argv[1:]
 	switch sub {
-	case "start", "stop", "status", "token":
+	case "start", "stop", "status", "token", "install":
 	default:
-		fmt.Fprintf(c.Err, "unknown server command %q. Try start, stop, status or token\n", sub)
+		fmt.Fprintf(c.Err, "unknown server command %q. Try start, stop, status, token or install\n", sub)
 		return 1
 	}
 	foreground, asJSON, errMsg := parseServerFlags(sub, rest)
@@ -632,6 +640,8 @@ func (c *CLI) runServer(remote string, argv []string) int {
 		return c.serverStop(remote, asJSON)
 	case "status":
 		return c.serverStatus(remote, asJSON)
+	case "install":
+		return c.serverInstall(asJSON)
 	default: // "token"
 		return c.serverToken(asJSON)
 	}
@@ -698,7 +708,8 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 	if !c.fenceConfigOK() {
 		return 1
 	}
-	s, err := server.New(server.Config{SocketPath: c.Socket, DataDir: c.DataDir, Voice: voiceConfig(), Foreman: foremanConfig(), LayoutSaveSettle: applyStateSettings(), Fence: fenceSetting()})
+	c.warnPath()
+	s, err := server.New(server.Config{SocketPath: c.Socket, DataDir: c.DataDir, Voice: voiceConfig(), Steward: stewardConfig(), LayoutSaveSettle: applyStateSettings(), Fence: fenceSetting()})
 	if err != nil {
 		fmt.Fprintln(c.Err, err)
 		return 1
@@ -719,6 +730,10 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 	// also why the function returns here, on any error below, rather than
 	// falling through to Serve on a Server that never bound a listener.
 	defer s.Close()
+	// Once at server start: the warden is on and no fence runs.
+	if line := s.UnconfinedNotice(); line != "" {
+		fmt.Fprintln(c.Err, line)
+	}
 
 	if err := registerAll(s); err != nil {
 		fmt.Fprintln(c.Err, err)
@@ -728,7 +743,7 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 		fmt.Fprintln(c.Err, err)
 		return 1
 	}
-	// Restore runs after Listen, not before: a resumed pane's gate hook
+	// Restore runs after Listen, not before: a resumed pane's warden hook
 	// dials COPPICE_SOCK, and Listen's own backlog is what makes that
 	// connection queue instead of refuse while Restore is still running.
 	if err := s.Restore(); err != nil {
@@ -739,8 +754,8 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 	// whatever it just found ended. This is the hourly half, for as long
 	// as this process keeps running.
 	s.StartEndedSweep()
-	// In chat mode the foreman's log opens now, and its compactor starts.
-	s.StartForeman()
+	// In chat mode the steward's log opens now, and its compactor starts.
+	s.StartSteward()
 	// Voice starts on its own goroutine, so a model that loads slowly never
 	// holds up the socket or the started line.
 	s.StartVoice()
@@ -757,8 +772,10 @@ func (c *CLI) serverStart(foreground, asJSON bool) int {
 	stopWeb, err := web.AutoStart(context.Background(), web.ConfigPath(c.DataDir), web.Options{
 		Dial:   web.UnixDialer{Path: c.Socket},
 		Tokens: web.TokenStore{Path: web.TokenPath(c.DataDir)},
-		Gate:   web.AskChannel{Root: web.GateRoot(c.DataDir)},
-		Views:  plugins.ViewsOf(enabled),
+		Warden: web.AskChannel{Root: web.WardenRoot(c.DataDir)},
+		// The steward's branching spawns open their cards in its work dir.
+		ExtraDataDirs: []string{filepath.Join(steward.LogDir(c.DataDir), "work")},
+		Views:         plugins.ViewsOf(enabled),
 		// The library the views import ships with the binary.
 		ViewLib: plugins.SharedLib(),
 	})
@@ -1435,5 +1452,7 @@ func fenceSetting() string {
 func applyStateSettings() time.Duration {
 	cfg, _, _ := config.Load()
 	broken.SetKeep(cfg.BrokenKeepN())
+	// The Pando store keeps its own count; the owner's one setting sets both.
+	pando.SetBrokenKeep(cfg.BrokenKeepN())
 	return cfg.LayoutSettle()
 }

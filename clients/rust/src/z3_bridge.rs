@@ -292,13 +292,13 @@ pub enum Vacuity {
     NonTrivial,
 }
 
-/// `vacuity.check_vacuity` of a raw expr dict, exactly: the gate's
+/// `vacuity.check_vacuity` of a raw expr dict, exactly: the warden's
 /// tagged-union parse, the regex_to_z3 translation over the port of
 /// Python's re, and the linked Z3. An error names a pattern the port does
-/// not decide (see gate::predicate).
+/// not decide (see warden::predicate).
 pub fn check_vacuity_exact(raw: &Value) -> Result<Vacuity, String> {
-    use crate::gate::predicate::{vacuity_of, Vac};
-    let v = crate::gate::pyjson::from_serde(raw);
+    use crate::warden::predicate::{vacuity_of, Vac};
+    let v = crate::warden::pyjson::from_serde(raw);
     match vacuity_of(&v) {
         Ok(Vac::Contradiction) => Ok(Vacuity::Contradiction),
         Ok(Vac::Tautology) => Ok(Vacuity::Tautology),

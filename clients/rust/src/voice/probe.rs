@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use num_bigint::BigInt;
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
 use crate::signing::{b64decode, b64encode};
 
 use super::arm;
@@ -333,7 +333,8 @@ struct PClient {
 fn take(list: &mut Vec<Value>) -> Result<Value, ClientErr> {
     let Value::Obj(a) = list.remove(0) else { return Err(ClientErr::Other("bad script".into())) };
     if let Some(e) = a.get("error") {
-        return Err(ClientErr::Server(super::coppice::py_str(e)));
+        let msg = super::coppice::py_str(e);
+        return Err(if a.get("busy").is_some_and(|b| b.truthy()) { ClientErr::Busy(msg) } else { ClientErr::Server(msg) });
     }
     Ok(a.get("reply").cloned().unwrap_or(Value::Null))
 }
@@ -635,7 +636,7 @@ fn answer(q: &Q) -> Result<Value, String> {
             let now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
             let r = cleanup::clean_transcript(&q.str("text"), &cfg, &mut tr, now_secs)?;
             let mut journal = vec![];
-            if let Ok(raw) = std::fs::read_to_string(format!("{}/gateway/turns.jsonl", cfg.data_dir)) {
+            if let Ok(raw) = std::fs::read_to_string(format!("{}/router/turns.jsonl", cfg.data_dir)) {
                 for ln in text::splitlines(&raw) {
                     let mut v = pyjson::loads_py(ln, 900)?;
                     if let Value::Obj(ob) = &mut v {
@@ -665,7 +666,7 @@ fn answer(q: &Q) -> Result<Value, String> {
             });
             match res {
                 Ok(v) => o(&[("reply", v)]),
-                Err(ClientErr::Server(m)) => err("VoiceServerError", &m),
+                Err(ClientErr::Server(m) | ClientErr::Busy(m)) => err("VoiceServerError", &m),
                 Err(ClientErr::Other(m)) => return Err(m),
             }
         }

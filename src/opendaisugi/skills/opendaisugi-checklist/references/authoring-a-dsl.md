@@ -28,13 +28,13 @@ class DraftEmail(StepBase):
 ```
 
 - `@step_type` registers the class so the verifier, supervisor, parser, and dynamic-loader can all find it by its `type` discriminator.
-- `type: Literal["draft_email"] = "draft_email"` is the Pydantic discriminator — keep the default and the literal matching.
+- `type: Literal["draft_email"] = "draft_email"` — the `type` field is the discriminator in every port: the Python package reads it through Pydantic, and the Go and Rust binaries read the same field. Keep the default and the literal matching.
 - The `postcondition` here says "after this step executes, the receipt's evidence must contain the key `draft_hash`." The supervisor checks this as part of writing the Receipt.
 
 ## Cross-domain examples
 
 - **Software.** `ParseTranscript`, `ExtractEpisodes`, `ClusterByEmbedding`, `GeneralizeTemplate`, `ValidateAgainstHeldOut` — the shapes of a transcript-ingest pipeline.
-- **Email.** `DraftEmail`, `ReviewDraft`, `SendEmail`, `RecordInJournal` — the shapes of an approval-gated outbound flow.
+- **Email.** `DraftEmail`, `ReviewDraft`, `SendEmail`, `RecordInJournal` — the shapes of an approval-checked outbound flow.
 - **Council.** `SubmitContribution`, `AgentReview`, `AggregateVotes`, `CommitOrReject` — the shapes of multi-agent approval.
 - **Robotic (v0.19+).** `ApproachDish`, `LocateRim`, `BeginScrub`, `RinseWithHose`, `ReturnToDock` — the shapes of a dish-washing primitive that composes into a dishwashing pathway.
 

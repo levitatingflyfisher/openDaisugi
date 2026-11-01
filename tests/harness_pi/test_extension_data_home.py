@@ -75,7 +75,7 @@ def _oc(env: dict, cwd: Path) -> dict:
 def test_a_leading_tilde_is_expanded(tmp_path, var):
     home = tmp_path / "home"
     data = home / "moved" if var == "OPENDAISUGI_HOME" else home / "moved" / "opendaisugi"
-    _serve(data / "gate" / "gate.sock")
+    _serve(data / "warden" / "warden.sock")
     env = {"HOME": str(home), var: "~/moved"}
     assert _pi(env, PI) == {"allow": True, "reason": ""}
     assert _oc(env, OC) == {"threw": False}
@@ -89,7 +89,7 @@ def test_a_relative_value_is_ignored(tmp_path, var):
     home.mkdir()
     work = tmp_path / "work"
     planted = work / "rel" if var == "OPENDAISUGI_HOME" else work / "rel" / "opendaisugi"
-    _serve(planted / "gate" / "gate.sock")
+    _serve(planted / "warden" / "warden.sock")
     env = {"HOME": str(home), var: "rel"}
     assert _pi(env, work)["allow"] is False
     assert _oc(env, work)["threw"] is True
@@ -97,7 +97,7 @@ def test_a_relative_value_is_ignored(tmp_path, var):
 
 def test_pi_with_no_home_looks_nowhere(tmp_path):
     """With no HOME and no data home variable, the pi extension does not look
-    for .opendaisugi/gate/gate.sock under the cwd."""
+    for .opendaisugi/warden/warden.sock under the cwd."""
     work = tmp_path / "work"
-    _serve(work / ".opendaisugi" / "gate" / "gate.sock")
+    _serve(work / ".opendaisugi" / "warden" / "warden.sock")
     assert _pi({}, work)["allow"] is False

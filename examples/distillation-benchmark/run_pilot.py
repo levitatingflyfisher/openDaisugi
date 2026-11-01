@@ -22,7 +22,7 @@ the box's torch/CUDA build mismatches its GPU (a common local-box state):
 
 **Known open finding (2026-07-25 first real run).** The mechanism validates end
 to end — a cold run succeeds, `tend` distills a pathway, and a warm run *reuses*
-it (`reused_pathway=True`, gate 1 fires). But warm reuse executes the template
+it (`reused_pathway=True`, warden 1 fires). But warm reuse executes the template
 *directly* (no `adapt_plan`, so 0 LLM tokens) and, on a plan with a dependent
 `task` step, runs the leading `file_read` yet **silently skips the dependent
 task step** (no receipt → integrity fail → run fails). Reuse fires, costs zero,
@@ -32,7 +32,7 @@ launching until that reuse-execution gap (a dependency/id-preservation issue in
 generalized template reuse) is understood: warm would score 0% success and the
 cost delta would be undefined. This is itself a Stage-4 finding, not a null one.
 
-The pilot's job is to clear two gates before any full run is worth it:
+The pilot's job is to clear two checks before any full run is worth it:
   (1) reuse actually fires on warm runs (else warm == cold, measuring nothing);
   (2) cold clears decompose+verify a real fraction of the time (else there is
       an outcome story but no cost story).
@@ -87,7 +87,7 @@ def _resident_model() -> str | None:
 
 
 # --- the task corpus + a permissive-but-real envelope -----------------------
-# Phrased to avoid compound shell commands (the metachar gate would reject a
+# Phrased to avoid compound shell commands (the metachar check would reject a
 # fresh `a && b`), and paired with an envelope broad enough that a competent
 # small model's natural plan verifies a real fraction of the time.
 
@@ -274,14 +274,14 @@ def main() -> int:
     results = run_paired_benchmark(tasks, runner, repeats=repeats)
     s = summarize(results)
 
-    print("\n=== gates ===")
+    print("\n=== checks ===")
     reuse_rate = (stats["warm_reused"] / stats["warm_total"]) if stats["warm_total"] else 0.0
     print(
-        f"gate 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
+        f"warden 1 — reuse fires on warm: {stats['warm_reused']}/{stats['warm_total']} "
         f"({reuse_rate:.0%})  {'PASS' if reuse_rate > 0.5 else 'FAIL — warm≈cold, void'}"
     )
     print(
-        f"gate 2 — cold success rate: {s['cold_success_rate']:.0%}  "
+        f"warden 2 — cold success rate: {s['cold_success_rate']:.0%}  "
         f"{'PASS' if s['cold_success_rate'] > 0 else 'FAIL — no cost story, outcome only'}"
     )
 

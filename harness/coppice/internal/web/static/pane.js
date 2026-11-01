@@ -1,11 +1,11 @@
-import { applyFrame, gridToText, drawGrid, measureAdvance } from './grid.js';
+import { applyFrame, gridToText, drawGrid, measureAdvance, lastContentRow } from './grid.js';
 import { stateChip } from './chips.js';
 import { mountRecord } from './record.js';
 import { cellFor, scrollFollow, fitFor } from './windows.js';
 import { READING_FIRST } from './dock.js';
 import { mountChat, CHAT_LIMIT, READING_WHO } from './chat.js';
 import { createQueue } from './attachq.js';
-import { segments, gateMark, light, details, stackBarEl, gateMarkEls, detailsBox, modeDone, modelDone, routerDone, moveLine, moveDone } from './stackbar.js';
+import { segments, wardenMark, light, details, stackBarEl, wardenMarkEls, detailsBox, modeDone, modelDone, routeDone, moveLine, moveDone } from './stackbar.js';
 
 // One agent on its own: on a phone, the sheet that slides in over the
 // overview; on a wider page, the screen a link to a pane opens.
@@ -202,9 +202,38 @@ export function isQuestionRefusal(e) {
 }
 
 // needsYou is true for a pane the operator must answer now: a blocked
-// pane whose ask no foreman holds.
+// pane whose ask no steward holds.
 export function needsYou(row) {
-  return Boolean(row) && stateOf(row).state === 'blocked' && !row.held;
+  if (!row) return false;
+  const st = stateOf(row).state;
+  if (st === 'blocked') return !row.held;
+  return st === 'idle' && askOpen(row);
+}
+
+// answeredAsks holds the questions the owner answered from a card, as
+// "pane|line". A card for one is gone until the agent asks something else.
+const answeredAsks = new Set();
+
+// askKey names one question of one agent.
+const askKey = (row) => String(row.id) + '|' + String(row.last_ask !== undefined ? row.last_ask : row.lastAsk);
+
+// askOpen is true for a row whose agent is idle on a question the owner has
+// not answered. It reads a pane.list row (last_ask) or a roster row (lastAsk).
+export function askOpen(row) {
+  const line = row.last_ask !== undefined ? row.last_ask : row.lastAsk;
+  return typeof line === 'string' && line !== '' && !answeredAsks.has(askKey(row));
+}
+
+// forgetAnswered lets an agent's answered questions count again: it went to
+// work, so the next question it asks is a new one even in the same words.
+export function forgetAnswered(id) {
+  const prefix = String(id) + '|';
+  for (const k of Array.from(answeredAsks)) if (k.startsWith(prefix)) answeredAsks.delete(k);
+}
+
+// markAnswered takes the question of row out of the owner's queue.
+export function markAnswered(row) {
+  answeredAsks.add(askKey(row));
 }
 
 // waitedText is how long a hold has lasted, in the coarsest unit that is
@@ -216,11 +245,11 @@ function waitedText(seconds) {
   return Math.floor(s / 3600) + 'h';
 }
 
-// heldLine is the line a held ask shows: the task whose foreman hears it,
+// heldLine is the line a held ask shows: the task whose steward hears it,
 // and how long it has waited there when the hold says when it began.
 export function heldLine(held, nowSeconds) {
   const task = (held && (held.task_label || held.task)) || 'a task';
-  const line = 'waiting on ' + task + "'s foreman";
+  const line = 'waiting on ' + task + "'s steward";
   if (!held || typeof held.since !== 'number') return line;
   return line + ' · ' + waitedText(nowSeconds - held.since);
 }
@@ -240,7 +269,7 @@ export function askFor(st) {
 }
 
 // HELD_BY_HARNESS is what an ask a harness holds itself says above Deny
-// and Allow. The gate has no file for such an ask, so the page answers it
+// and Allow. The warden has no file for such an ask, so the page answers it
 // through coppice-server with agent.allow or agent.deny, as the operator.
 export const HELD_BY_HARNESS = 'The harness holds this ask itself. Deny or allow here, and coppice-server answers it.';
 
@@ -278,12 +307,12 @@ export function tierLine(tier, name) {
 }
 
 // verdictLine is what the ask bar says under the summary when the ask
-// carries the gate's own verdict. It is '' when there is none.
+// carries the warden's own verdict. It is '' when there is none.
 export function verdictLine(ask) {
-  const gate = ask && ask.gate;
-  if (!gate || typeof gate !== 'object') return '';
-  if (gate.verdict === 'deny') return gate.rule === undefined || gate.rule === null ? 'The gate says no' : 'The gate says no, rule ' + gate.rule;
-  if (gate.verdict === 'allow') return 'The gate says yes';
+  const warden = ask && ask.warden;
+  if (!warden || typeof warden !== 'object') return '';
+  if (warden.verdict === 'deny') return warden.rule === undefined || warden.rule === null ? 'The warden says no' : 'The warden says no, rule ' + warden.rule;
+  if (warden.verdict === 'allow') return 'The warden says yes';
   return '';
 }
 
@@ -396,7 +425,7 @@ function repaint() {
   if (!wrap) return;
   const at = scrollFollow({
     shownW: Number(wrap.clientWidth) || 0, shownH: Number(wrap.clientHeight) || 0,
-    cols: grid.cols, rows: grid.rows, cellW: cell.w, cellH: cell.h, cursor: grid.cursor,
+    cols: grid.cols, rows: grid.rows, cellW: cell.w, cellH: cell.h, cursor: grid.cursor, contentRow: lastContentRow(grid),
     top: wrap.scrollTop, left: wrap.scrollLeft, autoTop: follow.autoTop, lastX: follow.lastX,
   });
   if (at.top !== (Number(wrap.scrollTop) || 0)) wrap.scrollTop = at.top;
@@ -485,13 +514,13 @@ async function setMode(row, mode) {
   }
 }
 
-// swapAsking is the route the router details ask about: '' for none.
+// swapAsking is the route the route details ask about: '' for none.
 let swapAsking = '';
 // swapLine is the replay cost line the loop details ask with.
 let swapLine = '';
 
-// swap sends the model or router swap for the pane on screen and says
-// when it lands. A router swap resumes the agent as a new pane, so the
+// swap sends the model or route swap for the pane on screen and says
+// when it lands. A route swap resumes the agent as a new pane, so the
 // page follows the floor's own events to it.
 async function swap(row, kind, value) {
   const pane = row && row.id;
@@ -505,8 +534,8 @@ async function swap(row, kind, value) {
       const res = await window.coppice.rpc('agent.move', { pane, harness: value });
       say(moveDone(label, value, res));
     } else {
-      await window.coppice.rpc('agent.set_router', { pane, router: value });
-      say(routerDone(label, value));
+      await window.coppice.rpc('agent.set_route', { pane, route: value });
+      say(routeDone(label, value));
     }
   } catch (e) {
     say(e);
@@ -528,13 +557,13 @@ async function previewMove(row, to) {
   }
 }
 
-// paintStack draws the stack bar, the gate mark and an open segment's
+// paintStack draws the stack bar, the warden mark and an open segment's
 // details from the pane's row, the way a window's header does.
 function paintStack(row) {
   const line = document.getElementById('pane-stack');
-  const gate = document.getElementById('pane-gate');
+  const warden = document.getElementById('pane-warden');
   const box = document.getElementById('pane-details');
-  if (!line || !gate || !box) return;
+  if (!line || !warden || !box) return;
   const facts = typeof window.coppice.facts === 'function' ? window.coppice.facts() : null;
   const segs = segments(row, facts);
   if (!segs.some((s) => s.key === openSeg)) openSeg = '';
@@ -558,8 +587,8 @@ function paintStack(row) {
   cwd.textContent = lastPart(row && row.cwd);
   parts.push(cwd);
   line.replaceChildren(...parts);
-  const mark = gateMark(row && row.gate);
-  gate.replaceChildren(...(mark ? gateMarkEls(mark, () => toggle('daisugi')) : []));
+  const mark = wardenMark(row && row.warden);
+  warden.replaceChildren(...(mark ? wardenMarkEls(mark, () => toggle('daisugi')) : []));
   const pane = current ? current.id : '';
   const journal = typeof window.coppice.journal === 'function' && pane ? () => window.coppice.journal(pane) : null;
   const mode = {
@@ -584,7 +613,7 @@ function paintStack(row) {
 }
 
 // GONE is what a link to an ask the pane no longer shows says.
-export const GONE = 'That ask is gone. The gate timed out, or another client answered it.';
+export const GONE = 'That ask is gone. The warden timed out, or another client answered it.';
 
 // askMark says what a link to ask wanted finds on a pane whose ask box
 // holds shown: 'here' when it is that ask, 'gone' when the pane is known
@@ -772,6 +801,7 @@ export function runOnPane(pane, fn) {
 // settles once the queue has answered every request for the agent. The
 // reading view holds no attach, so there is nothing to detach for it.
 export function close() {
+  if (reading) reading.stopListening();
   if (!current) return Promise.resolve();
   const sheet = current;
   current = null;
@@ -867,6 +897,8 @@ function readingList() {
       chips: false,
       empty: 'No messages yet.',
       scroller: () => byId('reading'),
+      speech: () => (window.coppice && window.coppice.speech) || null,
+      tag: 'reading',
     });
   }
   return reading;
@@ -942,6 +974,9 @@ function toReading() {
   fitted = null;
   grid = null;
   setView('reading');
+  // A list hidden and shown again starts at the top. The old lines show at
+  // the bottom at once, so the read that follows finds the reader there.
+  readingList().paint(true);
   readingList().read();
   queueFor().leave(sheet.id);
 }
@@ -1136,7 +1171,7 @@ export function mountPane() {
     }
   });
   // The roster merges a state event into its row after this file saw it,
-  // so the stack bar and the gate mark draw from the merged row here.
+  // so the stack bar and the warden mark draw from the merged row here.
   window.addEventListener('coppice:state', (e) => {
     const msg = e && e.detail;
     if (!current || !msg || msg.pane !== current.id) return;

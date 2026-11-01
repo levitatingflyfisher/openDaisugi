@@ -4,8 +4,8 @@
 //!
 //! Two rule sets, since the oracle has two kinds of client:
 //!
-//! - `Httpx`: httpx 0.28 with `trust_env`, as the gateway's upstream client
-//!   and the model client (`llm_client.py`, the gate's llm_check) use it.
+//! - `Httpx`: httpx 0.28 with `trust_env`, as the router's upstream client
+//!   and the model client (`llm_client.py`, the warden's llm_check) use it.
 //!   `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY`, and `NO_PROXY` as httpx
 //!   turns each entry into a URL pattern. There is no bypass for loopback:
 //!   a request to 127.0.0.1 goes through the proxy unless `NO_PROXY` names
@@ -389,7 +389,7 @@ impl Httpx {
                     }
                     let auth = u.userinfo.as_ref().and_then(|ui| {
                         let (user, pass) = ui.split_once(':').unwrap_or((ui, ""));
-                        let (user, pass) = (crate::gateway::http::unquote(user), crate::gateway::http::unquote(pass));
+                        let (user, pass) = (crate::router::http::unquote(user), crate::router::http::unquote(pass));
                         if user.is_empty() && pass.is_empty() {
                             None
                         } else {
@@ -548,7 +548,7 @@ impl Urllib {
         }
         let unported = || Refusal::Unported(format!("the proxy {scheme}_proxy={value:?}"));
         let (pscheme, user, pass, hostport) = parse_proxy(value).ok_or_else(unported)?;
-        let hostport = crate::gateway::http::unquote(&hostport);
+        let hostport = crate::router::http::unquote(&hostport);
         if !o.host.is_ascii() || !hostport.is_ascii() {
             return Err(unported());
         }
@@ -572,7 +572,7 @@ impl Urllib {
         }
         let auth = match (&user, &pass) {
             (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => {
-                Some(basic(&format!("{}:{}", crate::gateway::http::unquote(u), crate::gateway::http::unquote(p))))
+                Some(basic(&format!("{}:{}", crate::router::http::unquote(u), crate::router::http::unquote(p))))
             }
             _ => None,
         };
@@ -758,7 +758,7 @@ pub fn tls_config(roots: Option<Arc<rustls::RootCertStore>>) -> io::Result<Arc<r
     }
     static C: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
     C.get_or_init(|| {
-        let roots = crate::gate::llm::system_roots().map_err(|_| "no root certificates on this system".to_string())?;
+        let roots = crate::warden::llm::system_roots().map_err(|_| "no root certificates on this system".to_string())?;
         build(roots)
     })
     .clone()
@@ -1009,7 +1009,7 @@ fn parse_httpx(s: &str) -> Result<HttpxUrl, UrlErr> {
     if let Some((i, c)) = s.chars().enumerate().find(|&(_, c)| (c as u32) < 0x20 || c as u32 == 0x7f) {
         return Err(UrlErr::Invalid(format!(
             "Invalid non-printable ASCII character in URL, {} at position {i}.",
-            crate::gate::py::text::repr(&c.to_string())
+            crate::warden::py::text::repr(&c.to_string())
         )));
     }
     let [url_re, auth_re, ipv4_re, _, port_re] = url_res();
@@ -1035,7 +1035,7 @@ fn parse_httpx(s: &str) -> Result<HttpxUrl, UrlErr> {
             return Err(UrlErr::Unported(format!("the port {port_text:?}")));
         }
         if !port_re.is_match(&digits) {
-            return Err(UrlErr::Invalid(format!("Invalid port: {}", crate::gate::py::text::repr(&port_text))));
+            return Err(UrlErr::Invalid(format!("Invalid port: {}", crate::warden::py::text::repr(&port_text))));
         }
         let n: i64 = digits.trim().replace('_', "").parse().map_err(|_| UrlErr::Unported(format!("the port {port_text:?}")))?;
         if n <= 0 || n > 65535 {
@@ -1081,7 +1081,7 @@ fn parse_httpx(s: &str) -> Result<HttpxUrl, UrlErr> {
 
 /// `httpx._urlparse.encode_host`.
 fn encode_host(host: &str, ipv4_re: &regex::Regex) -> Result<String, UrlErr> {
-    let r = crate::gate::py::text::repr;
+    let r = crate::warden::py::text::repr;
     if host.is_empty() {
         return Ok(String::new());
     }
@@ -1177,8 +1177,8 @@ fn quote_url(s: &str, safe: &str) -> String {
 /// ASCII letters, digits and hyphens, and the lower-case Latin-1 letters
 /// (all PVALID).
 fn idna_encode(host: &str) -> Result<String, UrlErr> {
-    let bad = || UrlErr::Invalid(format!("Invalid IDNA hostname: {}", crate::gate::py::text::repr(host)));
-    let s = crate::gate::py::text::lower(host);
+    let bad = || UrlErr::Invalid(format!("Invalid IDNA hostname: {}", crate::warden::py::text::repr(host)));
+    let s = crate::warden::py::text::lower(host);
     let mut labels: Vec<&str> = s.split('.').collect();
     if labels.len() > 1 && labels.last() == Some(&"") {
         labels.pop();

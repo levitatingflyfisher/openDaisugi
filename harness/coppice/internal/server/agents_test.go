@@ -27,18 +27,18 @@ func newAgentServer(t *testing.T) *Server {
 const paneCreate = `{"id":"1","cmd":"pane.create","cwd":"%s","cmd_argv":["sh","-c","exec sleep 600"],` +
 	`"kind":"pty","label":"auth fix","cols":40,"rows":10}`
 
-func gateBlockedLine(pane string) string {
+func wardenBlockedLine(pane string) string {
 	return `{"id":"9","cmd":"pane.report_state","pane":"` + pane + `","event":` +
 		`{"v":1,"ts":1757300000.0,"session_id":"d41c","harness":"claude-code","pane":"` + pane +
-		`","state":"blocked","source":"gate","ask":{"id":"toolu_1","tool":"Bash",` +
+		`","state":"blocked","source":"warden","ask":{"id":"toolu_1","tool":"Bash",` +
 		`"summary":"rm -rf build/","deadline":9999999999.0},"detail":"verdict=deny"}}`
 }
 
-func TestReportStateFromTheGateSetsTheMergedState(t *testing.T) {
+func TestReportStateFromTheWardenSetsTheMergedState(t *testing.T) {
 	s := newAgentServer(t)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		gateBlockedLine("w1:p1"),
+		wardenBlockedLine("w1:p1"),
 		`{"id":"3","cmd":"pane.list"}`)
 	if !got[1].OK {
 		t.Fatalf("pane.report_state failed: %+v", got[1].Error)
@@ -46,8 +46,8 @@ func TestReportStateFromTheGateSetsTheMergedState(t *testing.T) {
 	m := result(t, got[2])
 	panes, _ := m["panes"].([]any)
 	p, _ := panes[0].(map[string]any)
-	if p["state"] != "blocked" || p["source"] != "gate" {
-		t.Fatalf("after a gate report: state=%v source=%v, want blocked / gate", p["state"], p["source"])
+	if p["state"] != "blocked" || p["source"] != "warden" {
+		t.Fatalf("after a warden report: state=%v source=%v, want blocked / warden", p["state"], p["source"])
 	}
 	ask, _ := p["ask"].(map[string]any)
 	if ask == nil || ask["tool"] != "Bash" {
@@ -56,7 +56,7 @@ func TestReportStateFromTheGateSetsTheMergedState(t *testing.T) {
 }
 
 // Only a client attached to the pane may speak as the operator. A detached
-// client claiming operator is downgraded to gate, never trusted at face value.
+// client claiming operator is downgraded to warden, never trusted at face value.
 func TestOperatorSourceIsDowngradedForADetachedClient(t *testing.T) {
 	s := newAgentServer(t)
 	line := `{"id":"2","cmd":"pane.report_state","pane":"w1:p1","event":` +
@@ -72,11 +72,11 @@ func TestOperatorSourceIsDowngradedForADetachedClient(t *testing.T) {
 	m := result(t, got[2])
 	panes, _ := m["panes"].([]any)
 	p, _ := panes[0].(map[string]any)
-	if p["source"] != "gate" {
-		t.Fatalf("a detached client kept source=%v, want it downgraded to gate", p["source"])
+	if p["source"] != "warden" {
+		t.Fatalf("a detached client kept source=%v, want it downgraded to warden", p["source"])
 	}
 	b, _ := json.Marshal(got[1].Result)
-	if !strings.Contains(string(b), "gate") {
+	if !strings.Contains(string(b), "warden") {
 		t.Fatalf("the response %s does not tell the caller its source was changed", b)
 	}
 }
@@ -113,20 +113,20 @@ func TestReportStateWithAMalformedEventIsBadRequest(t *testing.T) {
 	s := newAgentServer(t)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		`{"id":"2","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"state":"vibing","source":"gate"}}`)
+		`{"id":"2","cmd":"pane.report_state","pane":"w1:p1","event":{"v":1,"state":"vibing","source":"warden"}}`)
 	if got[1].OK || got[1].Error.Code != proto.ErrBadRequest {
 		t.Fatalf("got %+v, want bad_request", got[1])
 	}
 }
 
-func TestAgentWaitResolvesImmediatelyOnAGateBlocked(t *testing.T) {
+func TestAgentWaitResolvesImmediatelyOnAWardenBlocked(t *testing.T) {
 	s := newAgentServer(t)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		gateBlockedLine("w1:p1"),
+		wardenBlockedLine("w1:p1"),
 		`{"id":"3","cmd":"agent.wait","pane":"w1:p1","until":"blocked","timeout_ms":2000}`)
 	if !got[2].OK {
-		t.Fatalf("agent.wait did not resolve on the gate report: %+v", got[2].Error)
+		t.Fatalf("agent.wait did not resolve on the warden report: %+v", got[2].Error)
 	}
 	m := result(t, got[2])
 	if m["state"] != "blocked" {
@@ -153,7 +153,7 @@ func TestAgentListShowsEveryPaneWithItsMergedState(t *testing.T) {
 	s := newAgentServer(t)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
-		gateBlockedLine("w1:p1"),
+		wardenBlockedLine("w1:p1"),
 		`{"id":"3","cmd":"agent.list"}`)
 	m := result(t, got[2])
 	agents, _ := m["agents"].([]any)
@@ -566,7 +566,7 @@ func TestTwoConcurrentWaitersOnTheSamePaneEachGetTheirOwnOutcome(t *testing.T) {
 	deadline := nowSeconds() + 9999
 	s.ApplyState(id, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: id, Harness: "claude-code", Pane: &id,
-		State: proto.StateBlocked, Source: proto.SrcGate,
+		State: proto.StateBlocked, Source: proto.SrcWarden,
 		Ask: &proto.Ask{ID: "a1", Tool: "Bash", Summary: "rm -rf x", Deadline: deadline},
 	})
 
@@ -738,10 +738,10 @@ func TestAgentReadAfterCloseIsNoSuchPane(t *testing.T) {
 
 // ApplyState's return value, not the request's own event,
 // is what a handler must reply with. An attached client (a real operator, no
-// downgrade in play) reports "working" while the pane sits under a gate
+// downgrade in play) reports "working" while the pane sits under a warden
 // blocked hold with an ask far from expiring - master spec 3.1's rule 4 says
 // that hold outranks every other source, including operator, so Merge keeps
-// cur unchanged. The reply must show blocked/gate, the fact that actually
+// cur unchanged. The reply must show blocked/warden, the fact that actually
 // landed, not the operator's working claim echoed back as if it had.
 func TestReportStateReplyReflectsWhatWasActuallyStoredNotWhatWasSent(t *testing.T) {
 	s := newAgentServer(t)
@@ -774,9 +774,9 @@ func TestReportStateReplyReflectsWhatWasActuallyStoredNotWhatWasSent(t *testing.
 		return nil
 	}
 
-	send(gateBlockedLine("w1:p1"))
+	send(wardenBlockedLine("w1:p1"))
 	if m := nextResponse("9"); m["ok"] != true {
-		t.Fatalf("the gate's own report failed: %v", m)
+		t.Fatalf("the warden's own report failed: %v", m)
 	}
 	send(`{"id":"4","cmd":"pane.report_state","pane":"w1:p1","event":` +
 		`{"v":1,"ts":1757300001.0,"session_id":"d41c","harness":"claude-code","pane":"w1:p1",` +
@@ -786,8 +786,8 @@ func TestReportStateReplyReflectsWhatWasActuallyStoredNotWhatWasSent(t *testing.
 		t.Fatalf("the operator's report failed outright: %v", m)
 	}
 	res, _ := m["result"].(map[string]any)
-	if res["state"] != "blocked" || res["source"] != "gate" {
-		t.Fatalf("reply = %v, want it to show the gate hold that actually won, not the operator's "+
+	if res["state"] != "blocked" || res["source"] != "warden" {
+		t.Fatalf("reply = %v, want it to show the warden hold that actually won, not the operator's "+
 			"echoed claim (working/operator)", res)
 	}
 }
@@ -813,8 +813,8 @@ func TestApplyStateReturnsTheMergedStoredEvent(t *testing.T) {
 
 // A blocked claim with no ask is valid as operator (a
 // human needs no ask to say "I'm blocked"), but the same claim becomes
-// invalid the moment a detached client's claim is downgraded to gate (a
-// gate's blocked claim always carries the ask it is holding). The report
+// invalid the moment a detached client's claim is downgraded to warden (a
+// warden's blocked claim always carries the ask it is holding). The report
 // must be refused outright, by name, and never even reach ApplyState - not
 // silently applied and stored as a rejected "unknown".
 func TestReportStateOperatorBlockedWithoutAskIsBadRequestAfterDowngrade(t *testing.T) {
@@ -826,10 +826,10 @@ func TestReportStateOperatorBlockedWithoutAskIsBadRequestAfterDowngrade(t *testi
 			`"state":"blocked","source":"operator","detail":"stuck"}}`)
 	if got[1].OK || got[1].Error.Code != proto.ErrBadRequest {
 		t.Fatalf("got %+v, want bad_request: a detached client's blocked claim with no ask "+
-			"becomes invalid once downgraded to gate", got[1])
+			"becomes invalid once downgraded to warden", got[1])
 	}
 	if !strings.Contains(got[1].Error.Message, "ask") {
-		t.Fatalf("error message %q does not name the rule (a gate blocked report needs an ask)",
+		t.Fatalf("error message %q does not name the rule (a warden blocked report needs an ask)",
 			got[1].Error.Message)
 	}
 	// The only stored event is still the process fact the pane started
@@ -976,7 +976,7 @@ func TestNotifyWaitersUsesThePassedNowNotItsOwn(t *testing.T) {
 
 	ev := proto.PaneStateEvent{
 		V: 1, TS: stale, SessionID: paneID, Harness: "claude-code", Pane: &paneID,
-		State: proto.StateBlocked, Source: proto.SrcGate,
+		State: proto.StateBlocked, Source: proto.SrcWarden,
 		Ask: &proto.Ask{ID: "a1", Tool: "Bash", Summary: "rm -rf x", Deadline: deadline},
 	}
 	s.notifyWaiters(paneID, ev, stale)

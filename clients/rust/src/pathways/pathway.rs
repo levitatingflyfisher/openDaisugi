@@ -7,8 +7,8 @@ use super::pmodel::{self, take, Id, Mode, Schema};
 use super::scan::{parse_embedding, scan_embedding};
 use super::store::{sql_err, text, Col, Row, Store};
 use super::PwErr;
-use crate::gate::py::text::{as_surrogate, has_surrogate};
-use crate::gate::pyjson::{dumps, dumps_indent_with, float_repr, loads, Object, Value};
+use crate::warden::py::text::{as_surrogate, has_surrogate};
+use crate::warden::pyjson::{dumps, dumps_indent_with, float_repr, loads, Object, Value};
 
 /// A validated CompiledPathway: its `model_dump()`, fields in order.
 /// `task_embedding` is Null until a command needs its floats (`full`).
@@ -317,7 +317,7 @@ pub fn dump_json_indent(v: &Value, n: usize) -> String {
 /// `model_dump(mode="json")`: the same values, with NaN and the
 /// infinities as None.
 pub fn json_mode(v: &Value) -> Value {
-    crate::gate::pyjson::any_json(v)
+    crate::warden::pyjson::any_json(v)
 }
 
 /// `json.dumps(v)` with its default ensure_ascii.

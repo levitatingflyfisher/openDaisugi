@@ -129,7 +129,7 @@ pub fn open(identity: &str, e: &Env) -> Result<Model, NotAvailable> {
     let mut data = vec![];
     for f in PINNED {
         let b = std::fs::read(format!("{dir}/{}", f.name)).map_err(|err| NotAvailable(err.to_string()))?;
-        if crate::gate::sha256::hexdigest(&b) != f.sha256 {
+        if crate::warden::sha256::hexdigest(&b) != f.sha256 {
             return Err(NotAvailable(format!("{} changed after it was checked", f.name)));
         }
         data.push(b);
@@ -146,7 +146,7 @@ fn go_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::{loads, Value};
+    use crate::warden::pyjson::{loads, Value};
 
     fn fixtures() -> String {
         concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/pathways").to_string()

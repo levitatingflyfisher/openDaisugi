@@ -11,13 +11,13 @@ import (
 
 // GR-R-7 to GR-R-10: a refusal is a third answer beside opened and missing;
 // the note ends with the fix; a writer works from a directory fd, so a link
-// planted at a name is replaced (the gate's own files) or refused (the
+// planted at a name is replaced (the warden's own files) or refused (the
 // operator's), never written through. The Python twin is
-// tests/test_gate_state_writers.py.
+// tests/test_warden_state_writers.py.
 
 func TestTheNoteEndsWithTheFix(t *testing.T) {
 	notes := captureRaw(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	f := filepath.Join(root, "DISARMED")
 	write(t, f, 0o666)
 	fd, refusal := Probe(root, nil, "DISARMED", -1)
@@ -28,14 +28,14 @@ func TestTheNoteEndsWithTheFix(t *testing.T) {
 	if refusal != want {
 		t.Fatalf("refusal %q, want %q", refusal, want)
 	}
-	if got := notes(); got != "daisugi gate: not reading "+want+"\n" {
+	if got := notes(); got != "daisugi warden: not reading "+want+"\n" {
 		t.Fatalf("note %q", got)
 	}
 }
 
 func TestTheFixForADirectoryAndALink(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	if err := os.Chmod(root, 0o775); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestAQuoteInAPathIsQuotedLikeThePythonOne(t *testing.T) {
 
 func TestMissingIsNotRefused(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	if fd, refusal := Probe(root, nil, "DISARMED", -1); fd >= 0 || refusal != "" {
 		t.Fatal("missing file")
 	}
@@ -79,9 +79,9 @@ func TestMissingIsNotRefused(t *testing.T) {
 	}
 }
 
-func TestTheGatesOwnWriterReplacesALinkAndWritesNothingThroughIt(t *testing.T) {
+func TestTheWardensOwnWriterReplacesALinkAndWritesNothingThroughIt(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	victim := filepath.Join(t.TempDir(), "victim")
 	os.WriteFile(victim, []byte("keep"), 0o600)
 	d := filepath.Join(root, "checkpoint-state")
@@ -107,7 +107,7 @@ func TestTheGatesOwnWriterReplacesALinkAndWritesNothingThroughIt(t *testing.T) {
 
 func TestAnOperatorWriterRefusesALinkAtTheName(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	victim := filepath.Join(t.TempDir(), "victim")
 	os.WriteFile(victim, []byte("keep"), 0o600)
 	os.Symlink(victim, filepath.Join(root, "DISARMED"))
@@ -127,7 +127,7 @@ func TestAnOperatorWriterRefusesALinkAtTheName(t *testing.T) {
 
 func TestAWriterRefusesASymlinkedDirectory(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	os.Remove(filepath.Join(root, "envelopes"))
 	elsewhere := t.TempDir()
 	os.Symlink(elsewhere, filepath.Join(root, "envelopes"))
@@ -145,7 +145,7 @@ func TestAWriterMakesThingsPrivateWhateverTheUmask(t *testing.T) {
 	capture(t)
 	old := syscall.Umask(0o002)
 	defer syscall.Umask(old)
-	r := filepath.Join(t.TempDir(), "home", "gate")
+	r := filepath.Join(t.TempDir(), "home", "warden")
 	if _, err := WriteFile(r, []string{"envelopes"}, "default.json", "{}", false); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestAWriterMakesThingsPrivateWhateverTheUmask(t *testing.T) {
 
 func TestVerifyWrittenRaisesForARefusedFile(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	f := filepath.Join(root, "DISARMED")
 	write(t, f, 0o666)
 	if err := VerifyWritten(root, nil, "DISARMED"); err == nil {
@@ -177,7 +177,7 @@ func TestVerifyWrittenRaisesForARefusedFile(t *testing.T) {
 
 func TestRefusedPathsListsEachRefusedFile(t *testing.T) {
 	capture(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	write(t, filepath.Join(root, "DISARMED"), 0o666)
 	write(t, filepath.Join(root, "envelopes", "default.json"), 0o600)
 	write(t, filepath.Join(root, "envelopes", "s1.json"), 0o664)
@@ -195,11 +195,11 @@ func TestRefusedPathsListsEachRefusedFile(t *testing.T) {
 	}
 }
 
-// GR r1 M2: the gate's own writers never repair a root the reader refuses.
+// GR r1 M2: the warden's own writers never repair a root the reader refuses.
 // An operator command repairs the mode and says so.
 
-func TestTheGatesOwnWriterRefusesAGroupWritableRootAndKeepsItsMode(t *testing.T) {
-	root := gateRoot(t)
+func TestTheWardensOwnWriterRefusesAGroupWritableRootAndKeepsItsMode(t *testing.T) {
+	root := wardenRoot(t)
 	if err := os.Chmod(root, 0o775); err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +219,8 @@ func TestTheGatesOwnWriterRefusesAGroupWritableRootAndKeepsItsMode(t *testing.T)
 	}
 }
 
-func TestTheGatesOwnWriterRefusesAGroupWritableSubdirectory(t *testing.T) {
-	root := gateRoot(t)
+func TestTheWardensOwnWriterRefusesAGroupWritableSubdirectory(t *testing.T) {
+	root := wardenRoot(t)
 	d := filepath.Join(root, "asks")
 	os.Mkdir(d, 0o700)
 	os.Chmod(d, 0o770)
@@ -236,7 +236,7 @@ func TestTheGatesOwnWriterRefusesAGroupWritableSubdirectory(t *testing.T) {
 
 func TestAnOperatorWriterRepairsTheModeAndSaysSo(t *testing.T) {
 	notes := captureRaw(t)
-	root := gateRoot(t)
+	root := wardenRoot(t)
 	os.Chmod(root, 0o775)
 	if _, err := WriteFile(root, nil, "DISARMED", "x\n", false); err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestAnOperatorWriterRepairsTheModeAndSaysSo(t *testing.T) {
 	if st, _ := os.Stat(root); st.Mode().Perm() != 0o700 {
 		t.Fatalf("mode %o", st.Mode().Perm())
 	}
-	if got, want := notes(), "daisugi gate: repaired "+root+": it was writable by group or others; now 700\n"; got != want {
+	if got, want := notes(), "daisugi warden: repaired "+root+": it was writable by group or others; now 700\n"; got != want {
 		t.Fatalf("%q", got)
 	}
 }

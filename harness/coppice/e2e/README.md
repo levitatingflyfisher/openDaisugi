@@ -7,11 +7,11 @@ checks that the parts still fit together.
 
 No real agent, model or upstream is involved. Each harness is `bash`,
 `fake-trust.sh`, which draws claude's recorded folder trust screen from
-`testdata/screens/claude/blocked-10.txt`, or `fake-foreman.sh`, which
-stands in for a claude foreman: it writes an invented transcript under a
+`testdata/screens/claude/blocked-10.txt`, or `fake-steward.sh`, which
+stands in for a claude steward: it writes an invented transcript under a
 scratch `CLAUDE_CONFIG_DIR`, names it from inside its pane, and answers
-each line typed into it with a reply that names `e2e shell`. Gate facts
-come from `rpc.mjs`, which speaks the socket protocol the way a gate hook
+each line typed into it with a reply that names `e2e shell`. Warden facts
+come from `rpc.mjs`, which speaks the socket protocol the way a warden hook
 does.
 
 ## Run it
@@ -45,8 +45,8 @@ set, and `HOME` and the XDG directories point into `E2E_DIR`.
 
 `run.sh` starts the server and makes three panes: `e2e shell` and `e2e ask`
 run bash, and `e2e trust` runs `fake-trust.sh` as a `claude` pane. The
-`claude` table itself runs `fake-foreman.sh`.
-Then `rpc.mjs` holds an undoable gate ask for `git push origin main` on
+`claude` table itself runs `fake-steward.sh`.
+Then `rpc.mjs` holds an undoable warden ask for `git push origin main` on
 `e2e ask`. So the floor has two panes that need you.
 
 `tui.sh` runs first. It starts the coppice TUI inside a coppice pane, so the
@@ -73,14 +73,14 @@ change the port), and `web.mjs` checks it in a 1440x900 window:
 | the floor loads and signs in | the page opens with the token in `#t=` and draws the roster |
 | the roster lists every pane | all three labels show in `#roster` |
 | a tile shows the pane live and takes typed keys | typing `echo typed-in-a-tile` and Enter into the shell's window shows the command and its output there |
-| a gate ask shows its ask bar | the `e2e ask` window shows the summary, Deny and Allow |
+| a warden ask shows its ask bar | the `e2e ask` window shows the summary, Deny and Allow |
 | the trust screen shows both answers | the `e2e trust` window shows Trust this folder and Not now. A click on Trust this folder makes coppice move the cursor to yes and press Enter; the fake then draws a prompt box, the bar goes, and the pane does not end |
 | at 1440 the chat bar sits at the foot of the rail | the bar is in the rail, and no chat and no agents fold show on the desk |
-| the floor starts the fake foreman | `floor.foreman` with the `claude` harness, and no sentence: the chat holds the tracked foreman's replies |
+| the floor starts the fake steward | `floor.steward` with the `claude` harness, and no sentence: the chat holds the tracked steward's replies |
 | a phone-sized page shows the roster in its fold | at 390x844 a tap on the agents fold shows the roster, and the page does not scroll sideways |
-| the phone chat shows the fake foreman's reply | the reply that names `e2e shell` shows in the chat |
+| the phone chat shows the fake steward's reply | the reply that names `e2e shell` shows in the chat |
 | home reads from the top | the facts line, the cards that need you, the fold, then the chat; the chat bar ends at the bottom of the screen |
-| a sentence shows as sent, then read | a sentence sent from the bar shows as `sent`, then as `read` once the fake foreman's reply comes |
+| a sentence shows as sent, then read | a sentence sent from the bar shows as `sent`, then as `read` once the fake steward's reply comes |
 | a chip opens the agent's sheet | a tap on the `e2e shell` chip slides its sheet in; `echo typed-in-a-sheet` and Enter show there; a swipe right goes back with no reload, and the page never scrolls sideways |
 | the page raised no script errors | no uncaught error and no `console.error` |
 

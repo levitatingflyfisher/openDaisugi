@@ -59,7 +59,21 @@ if [ "$1 $2" = "tree root" ]; then
   echo "tree root env COPPICE_DATA_DIR=$COPPICE_DATA_DIR" >> "$FAKE_LOG"
   exit 0
 fi
+if [ "$1 $2" = "tree status" ] && [ -n "$FAKE_TREE_STATUS_DOC" ]; then
+  printf '%s\n' "$FAKE_TREE_STATUS_DOC"
+  exit 0
+fi
+if [ "$1 $2" = "rank queue" ] && [ -n "$FAKE_RANK_QUEUE" ]; then
+  printf '%s\n' "$FAKE_RANK_QUEUE"
+  exit 0
+fi
+if [ "$1 $2" = "rank show" ] && [ -n "$FAKE_RANK_SHOW" ]; then
+  echo "rank show argv: $*" >> "$FAKE_LOG"
+  printf '%s\n' "$FAKE_RANK_SHOW"
+  exit 0
+fi
 if [ "$1 $2" = "tree run" ]; then
+  echo "tree run argv: $*" >> "$FAKE_LOG"
   echo "tree run pwd: $(pwd)" >> "$FAKE_LOG"
   in=$(cat)
   echo "stdin: $in" >> "$FAKE_LOG"
@@ -77,11 +91,14 @@ if [ "$1 $2" = "tree run" ]; then
   trap 'echo "tree run got TERM $$" >> "$FAKE_INFLIGHT"; exit 143' TERM
   echo "tree run start $$" >> "$FAKE_INFLIGHT"
   echo "tree run env COPPICE_DATA_DIR=$COPPICE_DATA_DIR" >> "$FAKE_LOG"
+  echo "tree run env DAISUGI_PANDO_SKIP=$DAISUGI_PANDO_SKIP" >> "$FAKE_LOG"
+  echo "tree run env DAISUGI_PANDO_SKIPLIST=$DAISUGI_PANDO_SKIPLIST" >> "$FAKE_LOG"
   if [ -n "$DAISUGI_SPRIG_FENCE" ]; then echo "tree run env DAISUGI_SPRIG_FENCE=$DAISUGI_SPRIG_FENCE" >> "$FAKE_LOG"; fi
   if [ -n "$FAKE_TREE_GRANDCHILD" ]; then setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $! > "$FAKE_TREE_GRANDCHILD"; fi
   if [ -n "$FAKE_TREE_MS" ]; then sleep "$(awk "BEGIN{print $FAKE_TREE_MS/1000}")" & wait $!; fi
   echo "tree run end $$" >> "$FAKE_INFLIGHT"
   if [ -n "$FAKE_TREE_ERR_IF" ]; then case "$in" in *"$FAKE_TREE_ERR_IF"*) ;; *) FAKE_TREE_ERR=; FAKE_TREE_EXIT=0 ;; esac; fi
+  case "$in" in *'"resume"'*) if [ -n "$FAKE_TREE_RESUME_STATUS" ]; then FAKE_TREE_STATUS="$FAKE_TREE_RESUME_STATUS"; fi ;; esac
   if [ -n "$FAKE_TREE_STATUS" ]; then printf '%s\n' "$FAKE_TREE_STATUS"; fi
   if [ -n "$FAKE_TREE_ERR" ]; then echo "$FAKE_TREE_ERR" >&2; fi
   exit "${FAKE_TREE_EXIT:-0}"
@@ -102,9 +119,9 @@ func setSentinel(t *testing.T, key string) {
 
 func init() {
 	// The fakes read their script from FAKE_* variables and the helper mode
-	// from COPPICE_FOREMAN_HELPER; the key itself never goes on.
+	// from COPPICE_STEWARD_HELPER; the key itself never goes on.
 	sprigEnvKeep = func(name string) bool {
-		return name != "FAKE_SENTINEL" && strings.HasPrefix(name, "FAKE_") || name == "COPPICE_FOREMAN_HELPER"
+		return name != "FAKE_SENTINEL" && strings.HasPrefix(name, "FAKE_") || name == "COPPICE_STEWARD_HELPER"
 	}
 }
 
@@ -256,7 +273,7 @@ func grepTree(roots []string, needle string) []string {
 // its --mcp-config names, runs the calls in FAKE_TURN_SCRIPT through it,
 // and prints a json result with usage and a thinking block. FAKE_TURN_MODE:
 // ok (default), exit1, hang (sleeps 60 s), builtin (also runs the hook for
-// the Bash tool and for a foreman tool, and logs the exit codes).
+// the Bash tool and for a steward tool, and logs the exit codes).
 const fakeClaudeScript = `#!/usr/bin/python3
 import json, os, subprocess, sys, time
 argv = sys.argv[1:]
@@ -273,6 +290,7 @@ log = open(os.environ["FAKE_LOG"], "a")
 def say(*a):
     print(*a, file=log, flush=True)
 say("claude argv:", json.dumps(shown))
+say("claude env DAISUGI_PANDO_SKIP=%s" % os.environ.get("DAISUGI_PANDO_SKIP", ""))
 stdin = sys.stdin.buffer.read()
 d = os.environ.get("FAKE_STDIN_DIR")
 if d:
@@ -287,14 +305,14 @@ if mode == "hang":
     time.sleep(60)
 if os.environ.get("FAKE_MS"):
     time.sleep(int(os.environ["FAKE_MS"]) / 1000.0)
-cfg = json.loads(argv[argv.index("--mcp-config") + 1])["mcpServers"]["foreman"]
+cfg = json.loads(argv[argv.index("--mcp-config") + 1])["mcpServers"]["steward"]
 if mode == "builtin":
     settings = json.loads(argv[argv.index("--settings") + 1])
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    for tool in ("Bash", "mcp__foreman__zoom", "SomeNewBuiltIn"):
+    for tool in ("Bash", "mcp__steward__zoom", "SomeNewBuiltIn"):
         r = subprocess.run(cmd, shell=True, input=json.dumps({"tool_name": tool}).encode(), capture_output=True)
         say("hook %s: exit %d" % (tool, r.returncode))
-reply = os.environ.get("FAKE_TURN_REPLY") or "the foreman says hi"
+reply = os.environ.get("FAKE_TURN_REPLY") or "the steward says hi"
 calls = json.loads(os.environ.get("FAKE_TURN_SCRIPT") or "[]")
 srv = subprocess.Popen([cfg["command"]] + cfg["args"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 def rpc(i, method, params=None):

@@ -1,24 +1,24 @@
-"""The gate's rules that keep the owner's verbs for the owner.
+"""The warden's rules that keep the owner's verbs for the owner.
 
-Some ``daisugi`` verbs change what the gate checks or how it enforces. An
+Some ``daisugi`` verbs change what the warden checks or how it enforces. An
 agent that could run one could widen its own authority:
 
 - ``daisugi rank record`` writes a ranking vote as the owner
   (``rank_rule``);
-- ``daisugi gate register`` and ``gate init``, ``daisugi start``, and
+- ``daisugi warden register`` and ``warden init``, ``daisugi start``, and
   ``daisugi tree root``, ``spawn``, ``end`` and ``answer`` register an
   envelope or write the delegation tree (``tree_rule``);
-- ``daisugi gate disarm`` turns the gate off; ``gate arm`` turns it on
-  again; ``gate serve`` starts the resident gate, the process the hooks
+- ``daisugi warden disarm`` turns the warden off; ``warden arm`` turns it on
+  again; ``warden serve`` starts the resident warden, the process the hooks
   trust for a verdict; ``daisugi install`` writes, changes the mode of, or
-  removes the gate hook; ``daisugi graft install`` and ``graft remove``
+  removes the warden hook; ``daisugi graft install`` and ``graft remove``
   write and remove the graft rules (this module, ``REFUSAL``);
 - ``daisugi router label`` records a task's outcome, which decides a graft
   trial (this module, ``LABEL_REFUSAL``);
 - ``daisugi pack install``, ``remove`` and ``bundle`` fetch code or change
   the Python the binaries run as a worker (this module, ``PACK_REFUSAL``).
 
-The gate denies an agent's shell line that runs one of them, before any
+The warden denies an agent's shell line that runs one of them, before any
 envelope check, in every mode, and no operator ask can turn that deny.
 
 The line is read as the shell runs it. ``shell_decompose`` splits it into
@@ -37,7 +37,7 @@ more. The line is a hit when the command, or the command and its
 subcommand, is one of the verbs.
 
 So ``daisugi status && npm start`` is not a hit: ``start`` is npm's. And
-``echo daisugi gate disarm`` is a hit: the rule does not know what echo
+``echo daisugi warden disarm`` is a hit: the rule does not know what echo
 does with its words.
 
 Four fallbacks read words in order, as the rules did before they parsed:
@@ -48,7 +48,7 @@ character outside ``_WORD`` (the payload of ``sh -c``, ``bash -lc`` or
 ``eval``, or a quoted message). Line continuations are joined, backslashes
 and quotes are dropped, a word is a run of ``_WORD`` characters, and the
 text is a hit when a head word comes before the command word, which comes
-before the subcommand word. So ``sh -c 'daisugi gate disarm'`` is a hit, and so is a
+before the subcommand word. So ``sh -c 'daisugi warden disarm'`` is a hit, and so is a
 commit message that names the three words in that order.
 
 Words the shell builds at run time (a variable, a command substitution
@@ -62,7 +62,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-REFUSAL = "only the operator changes how the gate enforces. Run it yourself."
+REFUSAL = "only the operator changes how the warden enforces. Run it yourself."
 
 # Every top-level command of the daisugi CLI, hidden ones included.
 COMMANDS = frozenset(
@@ -76,9 +76,8 @@ COMMANDS = frozenset(
         "dashboard",
         "distill-repeats",
         "gardener",
-        "gate",
-        "gateway",
-        "gateway-report",
+        "warden",
+        "router",
         "generate-envelope",
         "graft",
         "help",
@@ -93,12 +92,13 @@ COMMANDS = frozenset(
         "onboard",
         "orchestrate",
         "pack",
+        "pando",
         "pathways",
         "rank",
+        "recipe",
         "registry",
         "release",
         "route",
-        "router",
         "run",
         "setup",
         "start",
@@ -115,7 +115,7 @@ COMMANDS = frozenset(
 
 # The subcommands of each group that holds an owner's verb.
 SUBCOMMANDS: dict[str, frozenset[str]] = {
-    "gate": frozenset(
+    "warden": frozenset(
         {
             "arm",
             "audit",
@@ -126,6 +126,7 @@ SUBCOMMANDS: dict[str, frozenset[str]] = {
             "register",
             "replay",
             "report",
+            "schemas",
             "serve",
             "settings",
             "status",
@@ -133,35 +134,46 @@ SUBCOMMANDS: dict[str, frozenset[str]] = {
     ),
     "graft": frozenset({"install", "remove", "status"}),
     "pack": frozenset({"bundle", "install", "list", "remove", "run", "status"}),
-    "router": frozenset({"label", "status", "stop"}),
-    "rank": frozenset({"choose", "fit", "queue", "record"}),
-    "tree": frozenset({"answer", "check", "end", "root", "run", "spawn", "status"}),
+    "router": frozenset({"label", "report", "serve", "status", "stop"}),
+    "rank": frozenset({"choose", "fit", "judge", "judges", "pivot", "queue", "record", "show"}),
+    "tree": frozenset(
+        {"adopt", "answer", "check", "end", "prune-branches", "root", "run", "spawn", "status"}
+    ),
     "agent-profiles": frozenset({"bundle", "list"}),
+    "recipe": frozenset({"apply", "list", "revert", "show"}),
 }
 
 RANK_VERBS = frozenset({("rank", "record")})
+# `rank pivot` shows a plan; with `--apply` it undoes work and applies a patch,
+# which only the owner does (W3K-4). The flag is read in rank_rule.
+PIVOT_VERBS = frozenset({("rank", "pivot")})
 TREE_VERBS = frozenset(
     {
-        ("gate", "register"),
-        ("gate", "init"),
+        ("warden", "register"),
+        ("warden", "init"),
         ("start",),
         ("tree", "root"),
         ("tree", "spawn"),
         ("tree", "run"),
         ("tree", "end"),
         ("tree", "answer"),
+        ("tree", "adopt"),
+        ("tree", "prune-branches"),
         ("agent-profiles", "bundle"),
         ("agent-profiles", "list"),
     }
 )
-GATE_VERBS = frozenset(
+WARDEN_VERBS = frozenset(
     {
-        ("gate", "disarm"),
-        ("gate", "arm"),
-        ("gate", "serve"),
+        ("warden", "disarm"),
+        ("warden", "arm"),
+        ("warden", "serve"),
         ("install",),
         ("graft", "install"),
         ("graft", "remove"),
+        # A recipe installs the warden hook, and a revert removes it.
+        ("recipe", "apply"),
+        ("recipe", "revert"),
     }
 )
 
@@ -287,9 +299,9 @@ def runs_verb(command: str, verbs: frozenset[tuple[str, ...]]) -> bool:
     return False
 
 
-def names_gate_change(text: str) -> bool:
-    """True when ``text`` runs a verb that changes how the gate enforces."""
-    return runs_verb(text, GATE_VERBS)
+def names_warden_change(text: str) -> bool:
+    """True when ``text`` runs a verb that changes how the warden enforces."""
+    return runs_verb(text, WARDEN_VERBS)
 
 
 def shell_hit(record: dict[str, Any] | None, verbs: frozenset[tuple[str, ...]]) -> bool:
@@ -304,10 +316,10 @@ def shell_hit(record: dict[str, Any] | None, verbs: frozenset[tuple[str, ...]]) 
         return True
 
 
-def gate_change_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> bool:
-    """True when a shell call runs a verb that changes how the gate
+def warden_change_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> bool:
+    """True when a shell call runs a verb that changes how the warden
     enforces."""
-    return shell_hit(record, GATE_VERBS)
+    return shell_hit(record, WARDEN_VERBS)
 
 
 def label_hit(payload: dict[str, Any], record: dict[str, Any] | None) -> bool:

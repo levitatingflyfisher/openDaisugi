@@ -4,7 +4,7 @@
     MUJOCO_GL=egl python mujoco_render.py   # headless CPU rendering (mesa/llvmpipe)
 
 This is the SAME openDaisugi verification as run_demo.py — a mock VLA proposes each
-drone's waypoint, openDaisugi gates it against the drone's sector envelope + live
+drone's waypoint, openDaisugi checks it against the drone's sector envelope + live
 swarm deconfliction — but driven onto a MuJoCo scene and recorded. The physics is
 kinematic (mocap bodies positioned directly); the point is to *see* the assurance:
 drones patrol their sectors, an out-of-sector proposal is refused (drone snaps back,
@@ -105,7 +105,7 @@ def _propose(did, tick, sector):
 
 
 def compute_trajectory():
-    """Run the real openDaisugi gate; return per-tick (positions, colors, caption)."""
+    """Run the real openDaisugi warden; return per-tick (positions, colors, caption)."""
     coord = _coordinator(((0, 0, 0), (30, 12, 8)))
     sectors = partition_and_assign(coord, FLEET, axis=0, margin=SECTOR_MARGIN)
     pos = {}

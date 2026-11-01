@@ -932,6 +932,17 @@ fn to_any(doc: &Doc, n: &Node, err: &mut Option<String>) -> Any {
     }
 }
 
+/// Go's json.Unmarshal into an `any`: whatever value the text holds.
+pub fn decode_any(data: &[u8]) -> Result<Any, String> {
+    let doc = parse(data)?;
+    let mut err = None;
+    let v = to_any(&doc, &doc.root, &mut err);
+    match err {
+        Some(e) => Err(e),
+        None => Ok(v),
+    }
+}
+
 /// Go's json.Unmarshal into a map[string]any. A JSON null is a nil map,
 /// which reads as empty.
 pub fn decode_map(data: &[u8]) -> Result<Any, String> {

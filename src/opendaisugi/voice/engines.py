@@ -57,6 +57,16 @@ class Transcript:
     segments: list[dict]
     duration_s: float
     rtf: float  # wall time divided by duration_s. Above 1 means slower than real time.
+    # The text of each window of a long clip, in order. A window the engine
+    # could not read is GAP_MARKER. Empty for a clip of one window.
+    parts: tuple[str, ...] = ()
+    # How many windows the engine could not read.
+    gaps: int = 0
+
+
+# GAP_MARKER stands in the text for a window the engine could not read, so
+# the owner sees where words are missing.
+GAP_MARKER = "[gap in the recording]"
 
 
 class Engine(Protocol):
@@ -189,6 +199,18 @@ def whisper_cpp_args(binary: str, model: Path, wav_path: str, language: str | No
     ]
 
 
+def whisper_cpp_batch_args(
+    binary: str, model: Path, wav_paths: list[str], language: str | None
+) -> list[str]:
+    """whisper_cpp_args for many windows in one run: the model loads once, and
+    each window's text is written beside its file as <file>.txt."""
+    lang = language or pins.WHISPER_CPP_AUTO_LANGUAGE
+    args = [binary, "-m", str(model)]
+    for p in wav_paths:
+        args += ["-f", p]
+    return args + ["-l", lang, "-nt", "-np", "-otxt"]
+
+
 def whisper_cpp_text(stdout: str) -> str:
     """The transcript in whisper-cli's stdout: each non-blank line stripped, joined by a space."""
     return " ".join(line.strip() for line in stdout.splitlines() if line.strip())
@@ -211,6 +233,12 @@ class WhisperCppEngine(_InProcess):
             )
         self.binary = binary
         self.model = model
+
+    def transcribe_batch(
+        self, pieces: list[bytes], language: str | None
+    ) -> tuple[list[str], list[bool], Exception | None]:
+        """All windows of a long clip in one run, so the model loads once."""
+        return _whisper_cpp_batch(self, pieces, language)
 
     def transcribe(self, wav_16k_mono: bytes, *, language: str | None = None) -> Transcript:
         duration_s = wav_duration_s(wav_16k_mono)
@@ -236,6 +264,48 @@ class WhisperCppEngine(_InProcess):
         rtf = elapsed / duration_s if duration_s > 0 else 0.0
         segments = [{"start": 0.0, "end": duration_s, "text": text}]
         return Transcript(text=text, segments=segments, duration_s=duration_s, rtf=rtf)
+
+
+def _whisper_cpp_batch(
+    self: "WhisperCppEngine", pieces: list[bytes], language: str | None
+) -> tuple[list[str], list[bool], Exception | None]:
+    """Run whisper.cpp once over all windows. Each window's text and whether it
+    was read (it has a .txt file). The exception is set when the run failed;
+    windows that finished before the failure keep their text."""
+    with tempfile.TemporaryDirectory(prefix="daisugi-voice-") as tmp:
+        paths = []
+        for i, piece in enumerate(pieces):
+            path = os.path.join(tmp, f"w{i:04d}.wav")
+            with open(path, "wb") as f:
+                f.write(piece)
+            paths.append(path)
+        failure: Exception | None = None
+        try:
+            proc = subprocess.run(
+                whisper_cpp_batch_args(self.binary, self.model, paths, language),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=pins.WHISPER_CPP_TIMEOUT_S * len(pieces),
+            )
+            if proc.returncode != 0:
+                lines = proc.stderr.decode("utf-8", errors="replace").strip().splitlines()
+                last = lines[-1].strip()[:200] if lines else ""
+                failure = RuntimeError(
+                    f"{pins.WHISPER_CPP_BINARY} exited {proc.returncode}: {last}"
+                )
+        except subprocess.TimeoutExpired as exc:
+            failure = exc
+        texts: list[str] = []
+        read: list[bool] = []
+        for path in paths:
+            try:
+                with open(path + ".txt", "rb") as f:
+                    texts.append(whisper_cpp_text(f.read().decode("utf-8", errors="replace")))
+                read.append(True)
+            except OSError:
+                texts.append("")
+                read.append(False)
+        return texts, read, failure
 
 
 def moonshine_args(binary: str, model: Path, arch: str) -> list[str]:

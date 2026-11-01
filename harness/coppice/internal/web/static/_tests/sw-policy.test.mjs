@@ -6,7 +6,7 @@ test('SHELL is the exact list the shell needs offline', () => {
   assert.deepEqual(SHELL, [
     '/', '/app.css', '/app.js', '/grid.js', '/chips.js', '/roster.js', '/pane.js', '/attachq.js',
     '/tiles.js', '/floor.js', '/windows.js', '/keys.js', '/rail.js', '/dock.js',
-    '/newpane.js', '/chat.js', '/settings.js', '/views.js', '/watch.js', '/record.js', '/messages.js', '/stackbar.js', '/overlay.js', '/garden.js', '/machines.js', '/speech.js', '/sw-policy.js', '/manifest.webmanifest',
+    '/newpane.js', '/chat.js', '/settings.js', '/views.js', '/watch.js', '/record.js', '/messages.js', '/reconcile.js', '/envcard.js', '/stackbar.js', '/overlay.js', '/garden.js', '/machines.js', '/speech.js', '/sw-policy.js', '/manifest.webmanifest',
     '/icons/icon-192.png', '/icons/icon-512.png',
   ]);
 });

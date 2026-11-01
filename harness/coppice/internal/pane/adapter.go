@@ -108,7 +108,7 @@ type Proc interface {
 // write, so they do not each invent an answer:
 //
 //  1. Set cmd.Env = BuildEnv(os.Environ(), o.Env, o.Sock, o.PaneID, o.DataDir).
-//     That is the only path by which a headless harness's gate hook finds
+//     That is the only path by which a headless harness's warden hook finds
 //     COPPICE_SOCK, COPPICE_PANE and COPPICE_DATA_DIR.
 //  2. The SERVER owns rendering. g is passed for an adapter that wants to write
 //     raw VT bytes itself; claude, codex and sprig all ignore it, because
@@ -163,7 +163,7 @@ type ModelSetter interface {
 
 // Answerer is a Proc whose harness holds asks of its own, such as
 // OpenCode's permission prompts. agent.allow and agent.deny answer such an
-// ask through Answer, after the same role checks as a gate ask, and a typed
+// ask through Answer, after the same role checks as a warden ask, and a typed
 // prompt never does. OwnsAsk reports whether id is one of the Proc's open
 // asks now.
 type Answerer interface {

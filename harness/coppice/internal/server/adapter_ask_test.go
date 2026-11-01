@@ -151,7 +151,7 @@ func TestAPromptSaysWhetherTheOperatorTypedIt(t *testing.T) {
 }
 
 // An ask a harness holds itself is marked, so the phone can say where to
-// answer it instead of offering an Allow the gate cannot take.
+// answer it instead of offering an Allow the warden cannot take.
 func TestAHarnessHeldAskIsMarkedInTheAgentList(t *testing.T) {
 	s, _, id := startAskingPane(t, "fake-asking-mark")
 	got := roundTrip(t, s, `{"id":"1","cmd":"agent.list"}`)
@@ -173,7 +173,7 @@ func TestAHarnessHeldAskIsMarkedInTheAgentList(t *testing.T) {
 // Only the server marks an ask as harness-held. A report cannot claim it.
 func TestAReportCannotClaimAHarnessHeldAsk(t *testing.T) {
 	s := newAgentServer(t)
-	line := strings.Replace(gateBlockedLine("w1:p1"), `"deadline":9999999999.0}`, `"deadline":9999999999.0,"holder":"harness"}`, 1)
+	line := strings.Replace(wardenBlockedLine("w1:p1"), `"deadline":9999999999.0}`, `"deadline":9999999999.0,"holder":"harness"}`, 1)
 	got := roundTrip(t, s, strings.Replace(paneCreate, "%s", t.TempDir(), 1), line,
 		`{"id":"3","cmd":"agent.list"}`)
 	agents, _ := result(t, got[2])["agents"].([]any)
@@ -184,9 +184,9 @@ func TestAReportCannotClaimAHarnessHeldAsk(t *testing.T) {
 	}
 }
 
-// The gate plugin reports the same ask through the gate after the
+// The warden plugin reports the same ask through the warden after the
 // adapter's own event. The mark must survive it, or the phone offers an
-// Allow the gate cannot take.
+// Allow the warden cannot take.
 func TestThePluginsReportOfAHarnessHeldAskKeepsTheMark(t *testing.T) {
 	s, _, id := startAskingPane(t, "fake-asking-plugin")
 	report := func(ask string) {

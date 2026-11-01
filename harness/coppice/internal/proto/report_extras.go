@@ -6,17 +6,17 @@ import (
 	"path/filepath"
 )
 
-// The modes a gate hook reports. The daisugi config value audit is
+// The modes a warden hook reports. The daisugi config value audit is
 // reported as watching, and enforce as enforcing.
 const (
 	ModeEnforcing = "enforcing"
 	ModeWatching  = "watching"
 )
 
-// Verdict is the gate's decision on one tool call, as the gate hook
+// Verdict is the warden's decision on one tool call, as the warden hook
 // reports it. Decision is allow, deny or ask. In watching mode the
 // decision is what the harness was told, allow, and Clause names what an
-// enforcing gate would have denied.
+// enforcing warden would have denied.
 type Verdict struct {
 	Decision string `json:"decision"`
 	Tool     string `json:"tool"`
@@ -25,7 +25,7 @@ type Verdict struct {
 
 var validDecisions = map[string]bool{"allow": true, "deny": true, "ask": true}
 
-// ReportExtras are the optional fields a gate hook sends inside the event
+// ReportExtras are the optional fields a warden hook sends inside the event
 // of pane.report_state, beside the PaneStateEvent fields. They are kept
 // apart from PaneStateEvent on purpose: the event is stored and sent to
 // every client, and a transcript path must never reach a client.

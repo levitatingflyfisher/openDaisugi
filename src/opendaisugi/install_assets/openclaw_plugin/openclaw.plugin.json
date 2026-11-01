@@ -1,7 +1,7 @@
 {
   "id": "opendaisugi",
   "name": "openDaisugi capture",
-  "description": "Passive capture of tool calls for openDaisugi distillation; runtime-assurance gate seam.",
+  "description": "Passive capture of tool calls for openDaisugi distillation; runtime-assurance warden seam.",
   "contracts": { "hooks": ["before_tool_call"] },
   "activation": { "onStartup": true },
   "configSchema": { "type": "object", "additionalProperties": false }

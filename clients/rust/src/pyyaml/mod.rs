@@ -11,7 +11,7 @@
 //! deep enough to reach Python's recursion limit). The caller must not
 //! guess at an unsupported text.
 
-use crate::gate::py::text::{lower, repr, splitlines};
+use crate::warden::py::text::{lower, repr, splitlines};
 use num_bigint::BigInt;
 use regex::Regex;
 use std::cell::Cell;
@@ -130,8 +130,8 @@ pub fn truthy(v: &Val) -> bool {
 }
 
 /// The value as JSON holds it, or None when it is not `plain`.
-pub fn to_json(v: &Val) -> Option<crate::gate::pyjson::Value> {
-    use crate::gate::pyjson::{Object, Value};
+pub fn to_json(v: &Val) -> Option<crate::warden::pyjson::Value> {
+    use crate::warden::pyjson::{Object, Value};
     Some(match v {
         Val::Null => Value::Null,
         Val::Bool(b) => Value::Bool(*b),
@@ -3029,7 +3029,7 @@ fn dict_key(k: &CVal) -> R<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::py_float_repr;
+    use crate::warden::pyjson::py_float_repr;
     use serde_json::{json, Value as J};
 
     /// clients/yaml_cases.py's typed dump.

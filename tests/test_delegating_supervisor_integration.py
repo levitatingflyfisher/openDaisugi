@@ -16,7 +16,9 @@ def _env() -> Envelope:
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 
@@ -63,7 +65,7 @@ async def test_supervisor_leaves_model_id_none_for_non_delegating_executor(tmp_p
 
 async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
     # EB-7 coverage: the recompute path is hard to reach statically (whole-plan
-    # verify() gates first), so patch verify_step to fail per-step while the
+    # verify() checks first), so patch verify_step to fail per-step while the
     # whole-plan verify still passes. A recompute fallback returns a replacement;
     # the EB-7 re-verify must reject it and HALT — never execute it.
     from opendaisugi.executor import ExecutorResult
@@ -89,7 +91,11 @@ async def test_eb7_recomputed_step_is_reverified_and_halts_when_out_of_policy():
             )
 
     env = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="x", steps=[ShellStep(id="s1", command="echo hi")])
     bad = VerificationResult(

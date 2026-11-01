@@ -1,6 +1,6 @@
 # A move to a terminal agent that has a screen ready rule (F12b). codex reads
 # idle when its terminal title is set (the osc_title_idle rule). Here the
-# fake codex shows no title until the case opens a gate file. The move
+# fake codex shows no title until the case opens a warden file. The move
 # answers at once with when "queued"; the brief stays in the ready queue
 # while the pane shows no title; after the title shows it goes exactly once.
 #!config [harness.claude]

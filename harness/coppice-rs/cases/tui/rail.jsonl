@@ -27,8 +27,8 @@
 {"id": "$id", "ok": true, "result": {"pane": "$kid"}}
 {"id": "p4", "cmd": "pane.create", "harness": "claude", "cwd": "{START}", "args": ["{FIXTURES}/screens/claude/blocked-10.raw"], "label": "e2e trust", "cols": 160, "rows": 16}
 {"id": "$id", "ok": true, "result": {"pane": "$trust"}}
-{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "gate", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
-{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "gate"}}
+{"id": "r1", "cmd": "pane.report_state", "pane": "$ask", "event": {"v": 1, "ts": 1, "session_id": "s", "harness": "claude-code", "pane": "$ask", "state": "blocked", "source": "warden", "ask": {"id": "toolu_02", "tool": "Write", "summary": "src/main.py", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$ask", "state": "blocked", "source": "warden"}}
 #!retry 8000
 {"id": "x4", "cmd": "pane.explain", "pane": "$trust"}
 {"id": "$id", "ok": true, "result": {"pane": "$trust", "rule_id": "coppice_first_run_trust"}}
@@ -135,13 +135,13 @@
 # The words on the prompt line.
 {"id": "k21", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
-{"id": "k22", "cli": ["pane", "send-text", "w1:p1", "foreman", "--no-enter"], "alt": true}
+{"id": "k22", "cli": ["pane", "send-text", "w1:p1", "steward", "--no-enter"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
-{"id": "typed", "screen": "w1:p1", "alt": true, "until": "\u203a foreman"}
+{"id": "typed", "screen": "w1:p1", "alt": true, "until": "\u203a steward"}
 {"id": "$id", "ok": true, "result": {"rows": "*"}}
 {"id": "k23", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
-{"id": "foreman", "screen": "w1:p1", "alt": true, "until": "no foreman yet."}
+{"id": "steward", "screen": "w1:p1", "alt": true, "until": "no steward yet."}
 {"id": "$id", "ok": true, "result": {"rows": "*"}}
 {"id": "k24", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
@@ -215,11 +215,11 @@
 {"id": "$id", "ok": true, "result": {"rows": "*"}}
 {"id": "k52", "cli": ["pane", "send-keys", "w1:p1", "ctrl+t"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
-{"id": "k53", "cli": ["pane", "send-text", "w1:p1", "foreman", "--no-enter"], "alt": true}
+{"id": "k53", "cli": ["pane", "send-text", "w1:p1", "steward", "--no-enter"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
 {"id": "k54", "cli": ["pane", "send-keys", "w1:p1", "enter"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}
-{"id": "task-foreman", "screen": "w1:p1", "alt": true, "until": "no foreman for build"}
+{"id": "task-steward", "screen": "w1:p1", "alt": true, "until": "no steward for build"}
 {"id": "$id", "ok": true, "result": {"rows": "*"}}
 {"id": "k55", "cli": ["pane", "send-keys", "w1:p1", "esc"], "alt": true}
 {"id": "$id", "ok": true, "result": {"code": 0}}

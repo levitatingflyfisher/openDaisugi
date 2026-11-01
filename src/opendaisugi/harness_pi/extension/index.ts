@@ -1,4 +1,4 @@
-// The daisugi gate extension for pi. Every tool_call asks the resident gate
+// The daisugi warden extension for pi. Every tool_call asks the resident warden
 // over its Unix socket, fail-closed. Facts about pi's wire formats are
 // recorded in PINS.md next to this file. Re-read PINS.md, or re-fetch the two
 // sources it names, before changing anything here.
@@ -12,9 +12,9 @@ interface Verdict {
   reason: string;
 }
 
-const GATE_TIMEOUT_MS = 5000;
+const WARDEN_TIMEOUT_MS = 5000;
 const REPORT_TIMEOUT_MS = 1000;
-const UNREACHABLE_REASON = "openDaisugi gate unreachable: run `daisugi start`, or `daisugi gate serve`";
+const UNREACHABLE_REASON = "openDaisugi warden unreachable: run `daisugi start`, or `daisugi warden serve`";
 
 // A data home variable as opendaisugi.datahome reads it: a leading ~ or ~/
 // is the home directory, and a value that is still not absolute is
@@ -29,7 +29,7 @@ function usable(v: string | undefined, home: string): string {
 
 // The data home, as opendaisugi.datahome picks it: OPENDAISUGI_HOME, else
 // $XDG_DATA_HOME/opendaisugi when ~/.opendaisugi does not exist, else
-// ~/.opendaisugi. The gate's socket sits under it, in gate/. "" when
+// ~/.opendaisugi. The warden's socket sits under it, in warden/. "" when
 // neither variable is usable and HOME is not absolute.
 function dataHome(env: NodeJS.ProcessEnv): string {
   const home = env.HOME && path.isAbsolute(env.HOME) ? env.HOME : "";
@@ -42,18 +42,18 @@ function dataHome(env: NodeJS.ProcessEnv): string {
   return dot;
 }
 
-function gateSocketPath(env: NodeJS.ProcessEnv): string {
-  if (env.OPENDAISUGI_GATE_SOCK) return env.OPENDAISUGI_GATE_SOCK;
+function wardenSocketPath(env: NodeJS.ProcessEnv): string {
+  if (env.OPENDAISUGI_WARDEN_SOCK) return env.OPENDAISUGI_WARDEN_SOCK;
   const home = dataHome(env);
   if (!home) return "";
-  return path.join(home, "gate", "gate.sock");
+  return path.join(home, "warden", "warden.sock");
 }
 
 // This process's own coppice/Herdr pane identity, read from ITS OWN
 // environment: pi runs as the actual pane process (or a descendant of it),
 // so its environment IS the caller's identity. Sent as explicit request
-// fields on every call to the resident gate, mirroring gate_client.py's
-// caller_pane_fields: the resident gate is a separate long-lived process
+// fields on every call to the resident warden, mirroring warden_client.py's
+// caller_pane_fields: the resident warden is a separate long-lived process
 // with no pane environment of its own, so these are the only way a report
 // it makes on this call's behalf reaches THIS pane rather than nobody's.
 function callerPaneFields(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -65,19 +65,19 @@ function callerPaneFields(env: NodeJS.ProcessEnv): Record<string, string> {
   const herdrPane = env.HERDR_PANE_ID || env.HERDR_PANE;
   if (herdrPane) fields.herdr_pane = herdrPane;
   // The coppice data directory this pane's server keeps its secrets in.
-  // The resident gate guards it as it guards the default one. Only an
+  // The resident warden guards it as it guards the default one. Only an
   // absolute path is sent, since coppice always sets one.
   const dataDir = env.COPPICE_DATA_DIR;
   if (dataDir && path.isAbsolute(dataDir)) fields.coppice_data_dir = dataDir;
   return fields;
 }
 
-// Mirrors gate_client.py's _socket_is_trustworthy: the path entry must be a
+// Mirrors warden_client.py's _socket_is_trustworthy: the path entry must be a
 // real socket, owned by this uid, mode 0600. lstat, never stat: stat follows
 // symlinks, so a rogue process could plant a symlink to a socket it controls
 // and have this trust it. Without this check any local process that wins the
 // path answers {"exit_code":0} and every tool call is allowed.
-function gateSocketTrustworthy(p: string): boolean {
+function wardenSocketTrustworthy(p: string): boolean {
   try {
     const st = fs.lstatSync(p);
     return st.isSocket() && st.uid === process.getuid!() && (st.mode & 0o777) === 0o600;
@@ -86,25 +86,25 @@ function gateSocketTrustworthy(p: string): boolean {
   }
 }
 
-interface GateReply {
+interface WardenReply {
   exitCode: number;
   stderr: string;
 }
 
-function sendGateRequest(
+function sendWardenRequest(
   sockPath: string,
   argv: string[],
   payload: unknown,
   timeoutMs: number,
   extraFields: Record<string, unknown> = {}
-): Promise<GateReply | null> {
+): Promise<WardenReply | null> {
   return new Promise((resolve) => {
-    if (!gateSocketTrustworthy(sockPath)) {
+    if (!wardenSocketTrustworthy(sockPath)) {
       resolve(null);
       return;
     }
     let settled = false;
-    const finish = (v: GateReply | null) => {
+    const finish = (v: WardenReply | null) => {
       if (settled) return;
       settled = true;
       resolve(v);
@@ -162,31 +162,31 @@ function sendGateRequest(
   });
 }
 
-// Connects to the same resident-gate socket gate_client.py uses and sends the
-// bare-flags argv that opendaisugi.gate's own parser reads (run_argv in
-// gate.py). It is not a `daisugi` CLI subcommand line. This is the one path
+// Connects to the same resident-warden socket warden_client.py uses and sends the
+// bare-flags argv that opendaisugi.warden's own parser reads (run_argv in
+// warden.py). It is not a `daisugi` CLI subcommand line. This is the one path
 // that reaches evaluate_call and returns a real allow or deny.
 //
 // No --mode on the wire. A mode baked into this argv would let a file in this
 // extension's own directory, which the agent can write, outrank the one flag
 // an installed hook command carries and the agent cannot rewrite. With the
-// flag absent the gate resolves the mode server-side from config.yaml, the
+// flag absent the warden resolves the mode server-side from config.yaml, the
 // same trust level every other unset-mode caller gets.
 //
 // No --root either: the server's root is fixed when it starts, and it
 // denies a request that names one (FN-R-21).
 //
-// --verify-timeout 4 keeps the gate's inner verify budget under this
+// --verify-timeout 4 keeps the warden's inner verify budget under this
 // client's own 5 s socket timeout, so a slow verify returns its verdict
-// instead of reading as an unreachable gate.
-async function askGate(
+// instead of reading as an unreachable warden.
+async function askWarden(
   event: { toolName: string; input?: unknown },
   ctx: { cwd?: string },
   opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}
 ): Promise<Verdict> {
   const env = opts.env || process.env;
-  const timeoutMs = opts.timeoutMs ?? GATE_TIMEOUT_MS;
-  // session_id names the envelope. Without it the gate consults the
+  const timeoutMs = opts.timeoutMs ?? WARDEN_TIMEOUT_MS;
+  // session_id names the envelope. Without it the warden consults the
   // default envelope, which is a deny when none is registered.
   const payload: Record<string, unknown> = {
     tool_name: event.toolName,
@@ -194,25 +194,25 @@ async function askGate(
     cwd: ctx.cwd || "",
   };
   if (env.OPENDAISUGI_SESSION_ID) payload.session_id = env.OPENDAISUGI_SESSION_ID;
-  const sockPath = gateSocketPath(env);
+  const sockPath = wardenSocketPath(env);
   const argv = ["--format", "pi", "--verify-timeout", "4"];
-  const reply = await sendGateRequest(sockPath, argv, payload, timeoutMs, callerPaneFields(env));
+  const reply = await sendWardenRequest(sockPath, argv, payload, timeoutMs, callerPaneFields(env));
   if (reply === null) return { allow: false, reason: UNREACHABLE_REASON };
   if (reply.exitCode === 0) return { allow: true, reason: "" };
   if (reply.exitCode === 2) return { allow: false, reason: reply.stderr || "denied" };
   // Any other exit code is not a verdict this extension recognizes. A
-  // crashed gate or a bug fails closed rather than leaning either way.
+  // crashed warden or a bug fails closed rather than leaning either way.
   return { allow: false, reason: UNREACHABLE_REASON };
 }
 
 // Fire-and-forget: reaches `daisugi hook report` over the same socket, the
-// {"argv":["hook","report"],...} dispatch gate_server.py serves. Never blocks
+// {"argv":["hook","report"],...} dispatch warden_server.py serves. Never blocks
 // the agent. Errors are swallowed, the same as the Python state report. When
-// the gate answers something this code cannot parse, or nothing at all, this
+// the warden answers something this code cannot parse, or nothing at all, this
 // function still returns without throwing, and the floor shows no state for
 // this pane. That is an honest unknown, never a guessed idle.
 function reportState(sessionState: string, env: NodeJS.ProcessEnv = process.env): void {
-  const sockPath = gateSocketPath(env);
+  const sockPath = wardenSocketPath(env);
   // session_id is the daisugi session id. The pane id is a separate field.
   // COPPICE_PANE names the pane, not the session, so it must not leak into
   // session_id.
@@ -227,7 +227,7 @@ function reportState(sessionState: string, env: NodeJS.ProcessEnv = process.env)
     detail: "",
   };
   if (env.COPPICE_PANE) event.pane = env.COPPICE_PANE;
-  if (!gateSocketTrustworthy(sockPath)) return;
+  if (!wardenSocketTrustworthy(sockPath)) return;
   try {
     const sock = net.createConnection(sockPath);
     const timer = setTimeout(() => sock.destroy(), REPORT_TIMEOUT_MS);
@@ -249,7 +249,7 @@ function reportState(sessionState: string, env: NodeJS.ProcessEnv = process.env)
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event: any, ctx: any) => {
-    const verdict = await askGate(event, ctx);
+    const verdict = await askWarden(event, ctx);
     if (!verdict.allow) return { block: true, reason: verdict.reason };
     return undefined;
   });
@@ -259,4 +259,4 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_settled", () => reportState("idle"));
 }
 
-export { askGate, reportState, gateSocketPath, gateSocketTrustworthy };
+export { askWarden, reportState, wardenSocketPath, wardenSocketTrustworthy };

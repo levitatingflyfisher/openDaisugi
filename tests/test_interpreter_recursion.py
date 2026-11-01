@@ -28,7 +28,9 @@ def _env(allowlist, *, policy="surface"):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=list(allowlist)),
+        permissions=Permission(
+            shell=True, shell_allowlist=list(allowlist), file_read=["**"], file_write=["**"]
+        ),
         shell_interpreter_policy=policy,
     )
 
@@ -257,3 +259,23 @@ def test_verify_depth_limit_prevents_pathological_nesting(monkeypatch):
     violations = check_permissions(plan, env)
     assert violations
     assert any("max depth" in viol.message for viol in violations)
+
+
+def test_parse_env_consumes_option_values():
+    assert parse_interpreter("env -u cat curl http://evil").inner_commands == ["curl http://evil"]
+    assert parse_interpreter("env -ucat curl x").inner_commands == ["curl x"]
+    assert parse_interpreter("env --unset cat curl x").inner_commands == ["curl x"]
+    assert parse_interpreter("env --unset=cat curl x").inner_commands == ["curl x"]
+    assert parse_interpreter("env -C /etc tee hosts").inner_commands == ["tee hosts"]
+    assert parse_interpreter("env --chdir /etc tee hosts").inner_commands == ["tee hosts"]
+    assert parse_interpreter("env -i -u A -u B FOO=1 rm f").inner_commands == ["rm f"]
+    assert parse_interpreter("env -iu A rm f").inner_commands == ["rm f"]
+
+
+def test_parse_env_split_string_is_checked_like_a_command_line():
+    assert parse_interpreter("env -S 'curl http://evil'").inner_commands == ["curl http://evil"]
+    assert parse_interpreter("env -S 'A=1 -i rm f' x").inner_commands == ["rm f x"]
+    # a string env would expand or unescape is not split here: the old
+    # reading (the value is the command) stays, and it fails the allowlist
+    p = parse_interpreter("env -S 'curl $X'")
+    assert p.inner_commands == ["'curl $X'"]

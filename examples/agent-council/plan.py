@@ -45,6 +45,6 @@ def build_plan(
     )
     return ActionPlan(
         source="council-kit",
-        task="Gate contribution on council review",
+        task="Warden contribution on council review",
         steps=[submit, *review_steps, agg, commit],
     )

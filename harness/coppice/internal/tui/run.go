@@ -139,10 +139,18 @@ func callWithin(socket, cmd string, params map[string]any, deadline time.Duratio
 
 // listPanes fetches pane.list as a list of rows.
 func listPanes(socket string) ([]map[string]any, error) {
+	rows, _, err := listPanesNote(socket)
+	return rows, err
+}
+
+// listPanesNote is listPanes and the floor's unconfined line: the server
+// adds it to pane.list while the warden is on and no fence runs.
+func listPanesNote(socket string) ([]map[string]any, string, error) {
 	res, err := call(socket, "pane.list", nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	note, _ := res["unconfined"].(string)
 	raw, _ := res["panes"].([]any)
 	rows := make([]map[string]any, 0, len(raw))
 	for _, r := range raw {
@@ -150,7 +158,7 @@ func listPanes(socket string) ([]map[string]any, error) {
 			rows = append(rows, m)
 		}
 	}
-	return rows, nil
+	return rows, note, nil
 }
 
 // listTasks fetches task.list as a list of rows.
@@ -366,7 +374,7 @@ type lineRes struct {
 // connections the loop drives. conn and enc are the event connection. The
 // loop is the only goroutine that sends on it.
 type floor struct {
-	// act is the act id of the sentence last sent to the foreman (act.go).
+	// act is the act id of the sentence last sent to the steward (act.go).
 	act   struct{ line, id string }
 	o     Options
 	m     *Model
@@ -918,12 +926,12 @@ func (f *floor) sendHeadlessLine(id string) error {
 	if text == "" {
 		return nil
 	}
-	if id == f.m.ForemanID && !f.m.chatWindow(id) && !f.m.isHeadless(id) {
-		// The foreman's terminal takes keys, never a line.
+	if id == f.m.StewardID && !f.m.chatWindow(id) && !f.m.isHeadless(id) {
+		// The steward's terminal takes keys, never a line.
 		return nil
 	}
 	if f.m.chatWindow(id) {
-		// The foreman's chat line sends the words to the foreman, not
+		// The steward's chat line sends the words to the steward, not
 		// keys to its terminal.
 		if _, err := call(f.o.Socket, "floor.talk", map[string]any{"text": text, "act": f.actFor(text)}); err != nil {
 			return f.fail(err)
@@ -1232,8 +1240,8 @@ func Run(o Options) error {
 	// before the terminal is given back.
 	defer f.stopVoice()
 	f.seedNotes()
-	// The foreman and its chat are read first, so the first fill puts the
-	// foreman after the agents that need you.
+	// The steward and its chat are read first, so the first fill puts the
+	// steward after the agents that need you.
 	f.readFacts()
 	f.readChat()
 	if err := f.refresh(); err != nil {
@@ -1539,10 +1547,11 @@ func (f *floor) fail(err error) error {
 // applied, so a server that lacks the verb still gives the floor its
 // panes.
 func (f *floor) refresh() error {
-	list, err := listPanes(f.o.Socket)
+	list, note, err := listPanesNote(f.o.Socket)
 	if err != nil {
 		return f.fail(err)
 	}
+	f.m.Unconfined = note
 	was := map[string]bool{}
 	for _, r := range f.m.Rows {
 		if r.Parent == "" {
@@ -1640,7 +1649,7 @@ func (f *floor) render() error {
 
 // answerPeek is y, t or n on a peek that shows an ask. n denies on either
 // tier. On an undoable ask, y allows once and t allows for the task, which
-// the gate records as a proposed envelope edit. On a permanent ask, y and t
+// the warden records as a proposed envelope edit. On a permanent ask, y and t
 // only say to type the pane name.
 func (f *floor) answerPeek(b byte) error {
 	p := f.m.Peek
@@ -1654,7 +1663,7 @@ func (f *floor) answerPeek(b byte) error {
 		return f.sendAnswer("agent.allow", nil, "Allowed once.")
 	default:
 		return f.sendAnswer("agent.allow", map[string]any{"scope": "task"},
-			"Allowed for this task. The gate records it as a proposal.")
+			"Allowed for this task. The warden records it as a proposal.")
 	}
 }
 
@@ -1888,7 +1897,7 @@ func (f *floor) peek() error {
 }
 
 // seedNotes fills the notes from floor.notes, so the floor opens with the
-// last lines the foreman ran. A server that has no floor.notes leaves them
+// last lines the steward ran. A server that has no floor.notes leaves them
 // empty.
 func (f *floor) seedNotes() {
 	res, err := call(f.o.Socket, "floor.notes", nil)
@@ -1903,10 +1912,10 @@ func (f *floor) seedNotes() {
 	}
 }
 
-// talk sends one sentence to the floor's foreman through floor.talk. The
-// server starts a foreman when none runs and keeps the words in order, so
+// talk sends one sentence to the floor's steward through floor.talk. The
+// server starts a steward when none runs and keeps the words in order, so
 // this floor, the web page and a voice tool never start two. When tiles
-// show, the foreman's pane fills a tile, so its reply shows there.
+// show, the steward's pane fills a tile, so its reply shows there.
 func (f *floor) talk(line string) error {
 	m := f.m
 	res, err := call(f.o.Socket, "floor.talk", map[string]any{"text": line, "act": f.actFor(line)})
@@ -1919,9 +1928,9 @@ func (f *floor) talk(line string) error {
 	if err := f.refresh(); err != nil {
 		return err
 	}
-	// The pane floor.talk names is the foreman: its window draws the chat.
-	if id != "" && id != m.ForemanID {
-		f.setForeman(id)
+	// The pane floor.talk names is the steward: its window draws the chat.
+	if id != "" && id != m.StewardID {
+		f.setSteward(id)
 	}
 	f.readChat()
 	cols, _ := f.o.Size()
@@ -1938,7 +1947,7 @@ func (f *floor) talk(line string) error {
 func talkMessage(res map[string]any) string {
 	label := str(res, "label")
 	if label == "" {
-		label = "the foreman"
+		label = "the steward"
 	}
 	if note := str(res, "note"); note != "" {
 		return note
@@ -1953,7 +1962,7 @@ func talkMessage(res map[string]any) string {
 }
 
 // runPrompt runs one prompt line. Plumbing runs here. Talk goes to the
-// foreman.
+// steward.
 func (f *floor) runPrompt(line string) error {
 	m := f.m
 	if ClassifyWith(line, Harnesses, f.o.Views) == TalkLine {
@@ -2037,8 +2046,8 @@ func (f *floor) runPrompt(line string) error {
 			return nil
 		}
 		return f.attachTo(id)
-	case "foreman":
-		return f.foremanWord(words[1:])
+	case "steward":
+		return f.stewardWord(words[1:])
 	case "tree":
 		if err := f.refresh(); err != nil {
 			return err
@@ -2080,29 +2089,29 @@ func (f *floor) viewWord(words []string) bool {
 	return false
 }
 
-// foremanWord is the prompt word foreman. Alone it names the foreman, or
+// stewardWord is the prompt word steward. Alone it names the steward, or
 // says there is none. With a harness name it asks the server to start the
-// floor's foreman with that harness through floor.foreman. The server
-// pages it before any sentence reaches it, and refuses while a foreman
+// floor's steward with that harness through floor.steward. The server
+// pages it before any sentence reaches it, and refuses while a steward
 // runs, so talk never has two places to go.
-func (f *floor) foremanWord(args []string) error {
+func (f *floor) stewardWord(args []string) error {
 	m := f.m
 	if len(m.Path) > 0 {
-		return f.taskForemanWord(args)
+		return f.taskStewardWord(args)
 	}
 	if len(args) == 0 {
-		return f.nameForeman()
+		return f.nameSteward()
 	}
 	if len(args) > 1 {
-		m.Message = "foreman takes one harness name, as in foreman claude"
+		m.Message = "steward takes one harness name, as in steward claude"
 		return nil
 	}
-	res, err := call(f.o.Socket, "floor.foreman", map[string]any{"harness": args[0]})
+	res, err := call(f.o.Socket, "floor.steward", map[string]any{"harness": args[0]})
 	if err != nil {
 		return f.fail(err)
 	}
 	id := str(res, "pane")
-	m.Message = ForemanLabel + " opens. It gets the page once it is idle, and then your sentences."
+	m.Message = StewardLabel + " opens. It gets the page once it is idle, and then your sentences."
 	if err := f.refresh(); err != nil {
 		return err
 	}
@@ -2115,28 +2124,28 @@ func (f *floor) foremanWord(args []string) error {
 	return nil
 }
 
-// nameForeman says which pane is the floor's foreman: the one the server
+// nameSteward says which pane is the floor's steward: the one the server
 // tracks and runs now, as floor.facts names it, or that there is none.
-func (f *floor) nameForeman() error {
+func (f *floor) nameSteward() error {
 	res, err := call(f.o.Socket, "floor.facts", nil)
 	if err != nil {
 		return f.fail(err)
 	}
-	fm, _ := res["foreman"].(map[string]any)
+	fm, _ := res["steward"].(map[string]any)
 	if id := str(fm, "pane"); id != "" {
-		f.m.Message = "foreman: " + str(fm, "label") + " (" + id + ")"
+		f.m.Message = "steward: " + str(fm, "label") + " (" + id + ")"
 		return nil
 	}
-	f.m.Message = noForemanAnswer
+	f.m.Message = noStewardAnswer
 	return nil
 }
 
-// taskForemanWord is the prompt word foreman while the roster is pushed
-// into a task. Alone it names that task's foreman. With a harness name it
+// taskStewardWord is the prompt word steward while the roster is pushed
+// into a task. Alone it names that task's steward. With a harness name it
 // opens that harness in a pane of the task, labelled for the task, names
-// it the task's foreman, and sends it TaskPromotionLine. The floor's own
-// foreman in the config file does not change.
-func (f *floor) taskForemanWord(args []string) error {
+// it the task's steward, and sends it TaskPromotionLine. The floor's own
+// steward in the config file does not change.
+func (f *floor) taskStewardWord(args []string) error {
 	m := f.m
 	sc := m.scope()
 	tk, ok := m.task(sc)
@@ -2149,18 +2158,18 @@ func (f *floor) taskForemanWord(args []string) error {
 		label = tk.ID
 	}
 	if len(args) == 0 {
-		if tk.Foreman == "" {
-			m.Message = "no foreman for " + label + ". Type: foreman " + m.defaultHarness()
+		if tk.Steward == "" {
+			m.Message = "no steward for " + label + ". Type: steward " + m.defaultHarness()
 			return nil
 		}
-		m.Message = "foreman of " + label + ": " + m.labelOf(tk.Foreman)
+		m.Message = "steward of " + label + ": " + m.labelOf(tk.Steward)
 		return nil
 	}
 	if len(args) > 1 {
-		m.Message = "foreman takes one harness name, as in foreman claude"
+		m.Message = "steward takes one harness name, as in steward claude"
 		return nil
 	}
-	name := label + "-foreman"
+	name := label + "-steward"
 	if err := f.refresh(); err != nil {
 		return err
 	}
@@ -2170,7 +2179,7 @@ func (f *floor) taskForemanWord(args []string) error {
 			return nil
 		}
 	}
-	// The foreman runs where the task works: its worktree, or its own
+	// The steward runs where the task works: its worktree, or its own
 	// directory, or where the floor opened when the task has neither.
 	params := map[string]any{"harness": args[0], "label": name, "task": sc}
 	switch {
@@ -2183,7 +2192,7 @@ func (f *floor) taskForemanWord(args []string) error {
 	if err != nil {
 		return f.fail(err)
 	}
-	if _, err := call(f.o.Socket, "task.set_foreman", map[string]any{"task": sc, "pane": id}); err != nil {
+	if _, err := call(f.o.Socket, "task.set_steward", map[string]any{"task": sc, "pane": id}); err != nil {
 		_ = f.fail(err)
 		return f.refresh()
 	}
@@ -2192,7 +2201,7 @@ func (f *floor) taskForemanWord(args []string) error {
 	return f.refresh()
 }
 
-// promoteWait is how long promote waits for the new foreman pane to go
+// promoteWait is how long promote waits for the new steward pane to go
 // idle. A var so a test can shrink it.
 var promoteWait = 30 * time.Second
 
@@ -2235,13 +2244,13 @@ func promote(socket, id, label, line, finished string, done chan<- string) {
 }
 
 // promotedMessage is what the floor says once pane label has the page.
-// The floor's foreman takes the operator's sentences. A task's foreman
+// The floor's steward takes the operator's sentences. A task's steward
 // does not: it hears the task's undoable asks first.
 func promotedMessage(label, task string) string {
 	if task == "" {
 		return label + " has its page. Type a sentence and it goes there."
 	}
-	return label + " is the foreman of " + task + ". The task's undoable asks go to it first."
+	return label + " is the steward of " + task + ". The task's undoable asks go to it first."
 }
 
 // setLayout rebuilds the tiles with the named layout. The panes in the
@@ -2310,7 +2319,7 @@ func (f *floor) attachTo(id string) error {
 	if f.m.isHeadless(id) {
 		return f.attachHeadless(id)
 	}
-	// The foreman's chat is a window: Enter on its row types there. Only
+	// The steward's chat is a window: Enter on its row types there. Only
 	// a screen with no window for it, or its Screen view, attaches.
 	if f.m.chatWindow(id) && f.typeInTile(id) {
 		return nil

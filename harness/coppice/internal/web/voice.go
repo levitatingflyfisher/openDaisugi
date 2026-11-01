@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,15 +16,28 @@ import (
 )
 
 // MaxVoiceClipBytes bounds one uploaded clip before it is forwarded to the
-// voice server. A phone recording runs a few seconds to a minute, so this
-// leaves room for that while still refusing a runaway upload before it
-// reaches the voice server at all.
-const MaxVoiceClipBytes = 8 << 20
+// voice server. The owner dictates long prompts, and the voice server takes
+// 20 minutes of audio, so this leaves room for 20 minutes as an
+// uncompressed 16 kHz wav (about 38 MB) while still refusing a runaway
+// upload before it reaches the voice server at all.
+const MaxVoiceClipBytes = 64 << 20
 
 // voiceClient talks to daisugi voice serve. One clip transcribes in one
-// call; the timeout leaves room for a slow CPU-only model on a full-length
-// clip without letting a dead server hang the request forever.
-var voiceClient = &http.Client{Timeout: 120 * time.Second}
+// call, and a long clip is cut into windows that the engine takes one at a
+// time. The wait is as long as the voice server can run: whisper.cpp takes
+// up to 120 s for each of 40 windows of a 20 minute clip (80 minutes), and
+// cleanup adds a few minutes. A shorter wait threw the finished text away
+// and left the server busy for the next clip. A dead server still cannot
+// hang the request forever.
+const voiceWait = 90 * time.Minute
+
+var voiceClient = &http.Client{Timeout: voiceWait}
+
+// isTimeout is true when err is the client's wait running out.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
 
 // voiceRetry is the words every voice message ends with, beside the page's
 // Retry button.
@@ -51,6 +65,84 @@ type voiceState struct {
 	// Fetch is {done, total} in bytes while voice, starting, gets its
 	// speech model.
 	Fetch map[string]any `json:"fetch,omitempty"`
+	// MaxSeconds is the longest clip the voice server takes. The page reads
+	// its cap from here, so it keeps no second number.
+	MaxSeconds float64 `json:"max_seconds"`
+	// Partial is true when the voice server shows the text while the owner
+	// talks (it answers /partial), and PartialEngine names the engine that
+	// reads it.
+	Partial       bool   `json:"partial"`
+	PartialEngine string `json:"partial_engine,omitempty"`
+	// PartialKnown is true when the voice server answered the probe, so
+	// Partial false means a server with no live text, not one that could
+	// not be asked.
+	PartialKnown bool `json:"partial_known,omitempty"`
+}
+
+// VoiceMaxClipSeconds is the cap used until the voice server says its own
+// (a voice server built before /health named it). The voice server owns the
+// number: askVoiceCap reads it from /health.
+const VoiceMaxClipSeconds = 1200.0
+
+// voiceInfo is what the voice server at target says about itself.
+type voiceInfo struct {
+	MaxSeconds    float64 `json:"max_seconds"`
+	Partial       bool    `json:"partial"`
+	PartialEngine string  `json:"partial_engine"`
+	// Known is true when /status or /health answered.
+	Known bool `json:"-"`
+}
+
+// askVoiceInfo reads the voice server's /status, and falls back to /health for a voice server built before /status. The cap
+// falls back to VoiceMaxClipSeconds when neither names one, and live text
+// is off unless /status says it is on.
+func askVoiceInfo(ctx context.Context, target *voiceTarget) voiceInfo {
+	off := voiceInfo{MaxSeconds: VoiceMaxClipSeconds}
+	if target == nil {
+		return off
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	// Neither probe sends the token: a wrong one would count toward the
+	// voice server's ban, and the clip after it would meet "wait 60
+	// seconds" instead of the sentence that names the fix.
+	get := func(path string) (voiceInfo, bool) {
+		var info voiceInfo
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(target.url, "/")+path, nil)
+		if err != nil {
+			return info, false
+		}
+		resp, err := voiceClient.Do(req)
+		if err != nil {
+			return info, false
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return info, false
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&info) != nil || info.MaxSeconds <= 0 {
+			return info, false
+		}
+		return info, true
+	}
+	if info, ok := get("/status"); ok {
+		if !info.Partial {
+			info.PartialEngine = ""
+		}
+		info.Known = true
+		return info
+	}
+	if info, ok := get("/health"); ok {
+		return voiceInfo{MaxSeconds: info.MaxSeconds, Known: true}
+	}
+	return off
+}
+
+// withInfo copies what the voice server says about itself into st.
+func withInfo(st voiceState, info voiceInfo) voiceState {
+	st.MaxSeconds, st.Partial, st.PartialEngine = info.MaxSeconds, info.Partial, info.PartialEngine
+	st.PartialKnown = info.Known
+	return st
 }
 
 // offBox is what voice says when --voice-url names another machine and
@@ -156,15 +248,15 @@ func (s *Server) askVoice(r *http.Request, verb string) (voiceState, *voiceTarge
 // handleVoiceStatus tells the page whether the mic can work, and if not,
 // why and how to fix it.
 func (s *Server) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
-	st, _, _ := s.voiceNow(r, "voice.status")
-	writeJSON(w, http.StatusOK, st)
+	st, target, _ := s.voiceNow(r, "voice.status")
+	writeJSON(w, http.StatusOK, withInfo(st, askVoiceInfo(r.Context(), target)))
 }
 
 // handleVoiceRetry is the page's Retry: it asks the coppice server to
 // start voice, and answers what voice is now.
 func (s *Server) handleVoiceRetry(w http.ResponseWriter, r *http.Request) {
-	st, _, _ := s.voiceNow(r, "voice.start")
-	writeJSON(w, http.StatusOK, st)
+	st, target, _ := s.voiceNow(r, "voice.start")
+	writeJSON(w, http.StatusOK, withInfo(st, askVoiceInfo(r.Context(), target)))
 }
 
 // handleVoiceTranscribe forwards a recorded clip to the voice server and
@@ -176,6 +268,26 @@ func (s *Server) handleVoiceRetry(w http.ResponseWriter, r *http.Request) {
 // request is trusted; the bearer this handler sends onward never comes
 // from whatever the phone happened to send.
 func (s *Server) handleVoiceTranscribe(w http.ResponseWriter, r *http.Request) {
+	s.forwardVoice(w, r, "/transcribe")
+}
+
+// voicePartialClient waits a short time: a partial is the text so far,
+// worth showing only while the owner still talks. The page sends a newer
+// one soon after.
+var voicePartialClient = &http.Client{Timeout: 15 * time.Second}
+
+// handleVoicePartial forwards the recording so far to the voice server's
+// /partial and relays the text so far. Unlike a clip, it follows the
+// page: a page that goes away frees the voice server at once. An older
+// voice server answers 404, which reaches the page as it is.
+func (s *Server) handleVoicePartial(w http.ResponseWriter, r *http.Request) {
+	s.forwardVoice(w, r, "/partial")
+}
+
+// forwardVoice sends the clip in r to the voice server's path, /transcribe
+// or /partial, and relays the reply.
+func (s *Server) forwardVoice(w http.ResponseWriter, r *http.Request, path string) {
+	partial := path == "/partial"
 	st, target, tokErr := s.voiceNow(r, "voice.status")
 	if tokErr != nil {
 		io.Copy(io.Discard, io.LimitReader(r.Body, MaxVoiceClipBytes))
@@ -221,11 +333,21 @@ func (s *Server) handleVoiceTranscribe(w http.ResponseWriter, r *http.Request) {
 	// owner's to start.
 	managed := s.opts.VoiceURL == ""
 
-	dest := strings.TrimRight(target.url, "/") + "/transcribe"
+	dest := strings.TrimRight(target.url, "/") + path
 	if r.URL.RawQuery != "" {
 		dest += "?" + r.URL.RawQuery
 	}
-	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, dest, bytes.NewReader(body))
+	// The upstream call for a clip does not follow the page. A page that
+	// reloads or loses its connection drops this request, but the voice
+	// server keeps its job and answers 409 to a second clip until it ends.
+	// Waiting for its answer here, as the Rust server does, keeps both
+	// servers the same. A partial follows the page.
+	ctx := context.WithoutCancel(r.Context())
+	client := voiceClient
+	if partial {
+		ctx, client = r.Context(), voicePartialClient
+	}
+	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, dest, bytes.NewReader(body))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError,
 			fmt.Sprintf("The request to the voice server at %s could not be built.", target.url))
@@ -236,8 +358,23 @@ func (s *Server) handleVoiceTranscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	upReq.Header.Set("Authorization", "Bearer "+target.token)
 
-	resp, err := voiceClient.Do(upReq)
+	// Whether a job is already running is the voice server's to say: it
+	// answers 409, and relayVoiceReply passes that on.
+	resp, err := client.Do(upReq)
 	if err != nil {
+		if partial && isTimeout(err) {
+			writeErr(w, http.StatusGatewayTimeout, "The text so far did not come back in time. The next one is on its way.")
+			return
+		}
+		if isTimeout(err) {
+			// The voice server did not see the cancel and may still be
+			// working. Say that this was a wait that ran out, not a dead
+			// server, so the owner does not start the same job twice.
+			writeErr(w, http.StatusGatewayTimeout, fmt.Sprintf(
+				"The clip took longer than %d minutes to turn into text. The voice server may still be working on it. Wait a few minutes before sending it again.",
+				int(voiceClient.Timeout/time.Minute)))
+			return
+		}
 		if managed {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"state": "down", "action": "retry",
 				"error": voiceMessage(fmt.Sprintf("Could not reach the voice server at %s.", target.url), "")})

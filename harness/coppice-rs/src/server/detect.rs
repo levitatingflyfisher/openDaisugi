@@ -1,6 +1,6 @@
 //! The manifest tick and pane.explain: what the floor reads on a harness
 //! pane's screen. The tick is the source of last resort. A pane held back
-//! by a fresher source, a gate ask or done is not read at all.
+//! by a fresher source, a warden ask or done is not read at all.
 
 use std::sync::Arc;
 use std::thread;
@@ -22,7 +22,7 @@ pub const MANIFEST_TICK: Duration = Duration::from_millis(500);
 
 /// How long an ordinary higher source holds the tick back, on the
 /// server's receive clock.
-pub const GATE_QUIET: f64 = 2.0;
+pub const WARDEN_QUIET: f64 = 2.0;
 
 /// The rule that sees Claude Code's folder trust screen.
 pub const TRUST_RULE: &str = "coppice_first_run_trust";
@@ -109,11 +109,11 @@ impl Server {
         if ev.state == state::STATE_DONE {
             return "skipped: done".into();
         }
-        if ev.state == state::STATE_BLOCKED && ev.source == state::SRC_GATE {
+        if ev.state == state::STATE_BLOCKED && ev.source == state::SRC_WARDEN {
             if let Some(a) = &ev.ask {
                 if now < a.deadline {
                     return format!(
-                        "skipped: gate blocked on an ask until {}",
+                        "skipped: warden blocked on an ask until {}",
                         rfc3339_utc(a.deadline as i64)
                     );
                 }
@@ -121,7 +121,7 @@ impl Server {
         }
         if ev.source != state::SRC_MANIFEST {
             if let Some(received) = self.states.received(pane) {
-                if now - received < GATE_QUIET {
+                if now - received < WARDEN_QUIET {
                     return format!(
                         "skipped: {} spoke {}s ago",
                         ev.source,

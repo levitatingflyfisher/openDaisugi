@@ -30,6 +30,9 @@ var (
 // records the schema it is actually using instead of writing "v": 0 forever.
 const schemaVersion = 1
 
+// MadeByAgent is the MadeBy of a pane another pane's connection created.
+const MadeByAgent = "agent"
+
 type PaneKind string
 
 const (
@@ -69,10 +72,14 @@ type Pane struct {
 	// A pane keeps it after the parent closes. It is a fact about how the
 	// pane began, not a live link.
 	ParentPane string `json:"parent_pane,omitempty"`
+	// MadeBy is "agent" for a pane another pane's connection created (the
+	// steward, or any agent), and empty for a pane the operator made. The
+	// floor answers a routine prompt only in an agent-made pane.
+	MadeBy string `json:"made_by,omitempty"`
 	// Fence is the pane's own fence setting: "on", "off" or empty. Empty
 	// follows the config's fence setting ("off" unless the config turns it
 	// on; under "auto" the harness starts under `daisugi fence` while the
-	// gate is on). It is never wrapped into
+	// warden is on). It is never wrapped into
 	// Argv: the server builds the command at start.
 	Fence string `json:"fence,omitempty"`
 	// WorkspaceChanged lists the watched workspace files (git hooks, git
@@ -91,6 +98,19 @@ type Pane struct {
 	// so a resume or a restart of the pane keeps it. Empty means the
 	// harness's own.
 	Model string `json:"model,omitempty"`
+	// StartedAt is the unix second the record was made. Two panes that
+	// share one Hermes session compare it: the newer pane owns the
+	// session. Records from before this field have none.
+	StartedAt int64 `json:"started_at,omitempty"`
+	// HermesSession is the Hermes session id this pane showed first. It
+	// stays: a closed pane reads that session and never the newest one.
+	HermesSession string `json:"hermes_session,omitempty"`
+	// HermesPrompt is the first prompt a Hermes pane without -c or -r was
+	// sent, and HermesPromptAt the moment, in unix milliseconds. Hermes
+	// writes its session at the first prompt, so the session whose first
+	// user message is this text, written then, is the pane's own.
+	HermesPrompt   string `json:"hermes_prompt,omitempty"`
+	HermesPromptAt int64  `json:"hermes_prompt_at,omitempty"`
 }
 
 // Task is the unit of work above the pane. A task with Parent set is a
@@ -104,10 +124,17 @@ type Task struct {
 	Worktree string `json:"worktree,omitempty"`
 	Parent   string `json:"parent,omitempty"`
 	Model    string `json:"model,omitempty"`
-	// Foreman is the id of the pane that hears this task's asks first, or
+	// Steward is the id of the pane that hears this task's asks first, or
 	// empty. Only the operator sets it.
-	Foreman  string   `json:"foreman,omitempty"`
-	Children []string `json:"children"`
+	Steward string `json:"steward,omitempty"`
+	// Envelope is the task's own safety envelope, the whole JSON object
+	// daisugi reads. A task that has one is proved against its parent's and
+	// every pane in it is pinned to it. Session is the daisugi tree session
+	// the server minted and registered the envelope under, set when the
+	// first pane starts.
+	Envelope json.RawMessage `json:"envelope,omitempty"`
+	Session  string          `json:"session,omitempty"`
+	Children []string        `json:"children"`
 }
 
 type Tab struct {
@@ -696,27 +723,40 @@ func (t *Tree) dropChild(parentID, id string) {
 	p.Children = kept
 }
 
-// SetForeman names the pane that hears task id's asks first. An empty
+// SetSteward names the pane that hears task id's asks first. An empty
 // pane clears it.
-func (t *Tree) SetForeman(id, pane string) error {
+func (t *Tree) SetSteward(id, pane string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	tk, ok := t.snap.Tasks[id]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrNoTask, id)
 	}
-	tk.Foreman = pane
+	tk.Steward = pane
 	return nil
 }
 
-// DropForeman clears Foreman on every task that names pane, for a pane
+// SetTaskSession records the daisugi session a task's envelope is
+// registered under.
+func (t *Tree) SetTaskSession(id, session string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	tk, ok := t.snap.Tasks[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrNoTask, id)
+	}
+	tk.Session = session
+	return nil
+}
+
+// DropSteward clears Steward on every task that names pane, for a pane
 // that closed.
-func (t *Tree) DropForeman(pane string) {
+func (t *Tree) DropSteward(pane string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, tk := range t.snap.Tasks {
-		if tk.Foreman == pane {
-			tk.Foreman = ""
+		if tk.Steward == pane {
+			tk.Steward = ""
 		}
 	}
 }

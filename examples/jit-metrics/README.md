@@ -1,7 +1,7 @@
 # jit-metrics — measuring the "JIT compiler for AI inference" claim
 
 openDaisugi is, structurally, a JIT compiler for agent inference: an interpreter
-(full decompose→execute→synthesize), a hotness gate (`min_traces`), a compile
+(full decompose→execute→synthesize), a hotness warden (`min_traces`), a compile
 step (the distiller), a code cache (the pathway store), a guard (Z3 `verify`),
 and deopt (fall-through to a fresh decompose). This directory is the **ruler**
 for the two claims that framing makes measurable — deterministic, no LLM, no

@@ -1,17 +1,17 @@
-//! `daisugi gate replay CAPTURES --envelope ENV [--json]`: a captured
-//! session through the gate, offline, in audit terms
-//! (`gate.replay_captures`). Nothing runs and nothing is written. The Go
+//! `daisugi warden replay CAPTURES --envelope ENV [--json]`: a captured
+//! session through the warden, offline, in audit terms
+//! (`warden.replay_captures`). Nothing runs and nothing is written. The Go
 //! client's `cli/replaycmd.go` is the twin.
 
 use super::journal::{from_records, JournalErr};
 use super::runcmd::load_yaml;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{canonical_json, py_str, py_type_name, Object, Value};
-use crate::gate::replay::{replay, ReplayErr};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{canonical_json, py_str, py_type_name, Object, Value};
+use crate::warden::replay::{replay, ReplayErr};
 use crate::pathways::pmodel::{validate_model, Id, Mode};
 
-const CMD: &str = "gate replay";
+const CMD: &str = "warden replay";
 const ARG: &str = "CAPTURES_JSONL";
 
 /// How the envelope file read when it gave no envelope.
@@ -57,7 +57,7 @@ fn replay_envelope(path: &str) -> Result<Object, EnvErr> {
 }
 
 impl Env {
-    pub(super) fn gate_replay(&mut self, args: &[String]) -> Res {
+    pub(super) fn warden_replay(&mut self, args: &[String]) -> Res {
         let opts = [
             Opt::val(&["--envelope"], "PATH", "Envelope to evaluate against (JSON/YAML)."),
             Opt::flag(&["--json"], "Emit the full report as JSON."),
@@ -70,7 +70,7 @@ impl Env {
             return self.cmd_help(
                 CMD,
                 &format!(" {ARG}"),
-                "Replay a captured session through the gate offline (nothing executes).",
+                "Replay a captured session through the warden offline (nothing executes).",
                 &opts,
             );
         }
@@ -116,11 +116,11 @@ impl Env {
         for r in &rep.denied {
             // `r in rep["false_positive_candidates"]`: equality, not identity.
             let mark = if fp.contains(&canonical_json(&Value::Obj(r.clone()))) { " [FP-candidate]" } else { "" };
-            let line = (|| -> crate::gate::R<String> {
+            let line = (|| -> crate::warden::R<String> {
                 let tool = py_str(r.value("tool_name"))?;
                 let detail = match r.get("detail") {
                     Some(Value::Str(s)) => repr(s),
-                    Some(other) => crate::gate::pyjson::py_repr(other)?,
+                    Some(other) => crate::warden::pyjson::py_repr(other)?,
                     None => repr(""),
                 };
                 let reason = py_str(r.value("reason"))?;

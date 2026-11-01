@@ -42,7 +42,7 @@ def base(**kw: Any) -> dict[str, Any]:
         "env": {},
         "path_dirs": ["/usr/bin", "/home/user/.cargo/bin", "/home/user/.local/bin"],
         "exe_dirs": [],
-        "gate_root": "",
+        "warden_root": "",
         "envelope": {"file_read": [], "file_write": []},
         "allow": [],
         "workdirs": [],
@@ -61,12 +61,14 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ("pi", base(harness="pi")),
     ("opencode", base(harness="opencode")),
     ("sprig", base(harness="sprig")),
+    ("hermes", base(harness="hermes")),
+    ("hermes in a project", base(harness="hermes", workspace=HOME + "/code/app")),
     ("unknown harness", base(harness="")),
     ("tmpdir elsewhere", base(tmpdir="/srv/m/tera/.tt/tmp")),
     ("workspace is home", base(workspace=HOME)),
     ("workspace is ssh", base(workspace=HOME + "/.ssh")),
     ("workspace above home", base(workspace="/home")),
-    ("workspace in gate state", base(workspace=HOME + "/.opendaisugi/gate/x")),
+    ("workspace in warden state", base(workspace=HOME + "/.opendaisugi/warden/x")),
     ("workspace is root", base(workspace="/")),
     ("path dir is home", base(path_dirs=["/usr/bin", HOME])),
     ("path dir in ssh", base(path_dirs=[HOME + "/.ssh/bin", "/usr/bin"])),
@@ -82,19 +84,21 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ("allow names ssh", base(allow=["~/.ssh"])),
     ("allow inside ssh", base(allow=["~/.ssh/config"])),
     ("allow home", base(allow=["~"])),
-    ("allow gate state rw", base(allow=["~/.opendaisugi/gate:rw"])),
-    ("allow gate state ro", base(allow=["~/.opendaisugi/gate"])),
+    ("allow warden state rw", base(allow=["~/.opendaisugi/warden:rw"])),
+    ("allow warden state ro", base(allow=["~/.opendaisugi/warden"])),
     ("allow data dir rw", base(allow=["~/.opendaisugi:rw"])),
     ("allow coppice dir", base(allow=["~/.config/coppice"])),
     ("env data dirs", base(env={"OPENDAISUGI_HOME": "/srv/od", "XDG_DATA_HOME": "/home/user/xdg"})),
     ("env data dir tilde", base(env={"OPENDAISUGI_HOME": "~/od"})),
     ("env data dir relative", base(env={"OPENDAISUGI_HOME": "od"})),
     ("coppice data dir", base(env={"COPPICE_DATA_DIR": "/srv/m/c"}, allow=["/srv/m/c:rw"])),
-    ("gate root", base(gate_root="/srv/gate")),
-    ("workspace in gate root", base(gate_root="/srv/gate", workspace="/srv/gate/w")),
+    ("warden root", base(warden_root="/srv/warden")),
+    ("workspace in warden root", base(warden_root="/srv/warden", workspace="/srv/warden/w")),
     (
         "envelope literal",
-        base(envelope={"file_read": ["/srv/m/ref/**"], "file_write": ["out/**", "/srv/m/out/*.txt"]}),
+        base(
+            envelope={"file_read": ["/srv/m/ref/**"], "file_write": ["out/**", "/srv/m/out/*.txt"]}
+        ),
     ),
     (
         "envelope inside workspace",
@@ -106,21 +110,28 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ),
     (
         "envelope secret",
-        base(envelope={"file_read": ["/home/user/.ssh/**", "~/.aws"], "file_write": ["~/.gnupg/*"]}),
+        base(
+            envelope={"file_read": ["/home/user/.ssh/**", "~/.aws"], "file_write": ["~/.gnupg/*"]}
+        ),
     ),
     (
         "envelope above secret",
         base(envelope={"file_read": ["/home/user/.config/**"], "file_write": []}),
     ),
     (
-        "envelope gate state",
+        "envelope warden state",
         base(
-            envelope={"file_read": [], "file_write": ["~/.opendaisugi/**", "~/.opendaisugi/gate/x"]}
+            envelope={
+                "file_read": [],
+                "file_write": ["~/.opendaisugi/**", "~/.opendaisugi/warden/x"],
+            }
         ),
     ),
     (
         "envelope plain file and brace",
-        base(envelope={"file_read": ["/etc/hosts", "/srv/m/{a,b}/x"], "file_write": ["/srv/m/w?/f"]}),
+        base(
+            envelope={"file_read": ["/etc/hosts", "/srv/m/{a,b}/x"], "file_write": ["/srv/m/w?/f"]}
+        ),
     ),
     ("state extra", base(state_extra=["/srv/m/x/od"], workspace="/srv/m/x/od/w")),
     ("never extra", base(never_extra=["/srv/m/real/ssh"], allow=["/srv/m/real"])),
@@ -160,12 +171,12 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ),
     ("workdir ok", base(workdirs=["/srv/m/sess"])),
     ("workdir secret", base(workdirs=["~/.aws"])),
-    ("workdir gate state", base(workdirs=["~/.opendaisugi/sessions"])),
+    ("workdir warden state", base(workdirs=["~/.opendaisugi/sessions"])),
     (
         "workspace inside allowed coppice dir",
         base(
-            workspace=HOME + "/.local/share/coppice/foreman/f1",
-            allow=[HOME + "/.local/share/coppice/foreman/f1:rw"],
+            workspace=HOME + "/.local/share/coppice/steward/f1",
+            allow=[HOME + "/.local/share/coppice/steward/f1:rw"],
         ),
     ),
     (
@@ -211,6 +222,20 @@ CASES: list[tuple[str, dict[str, Any]]] = [
     ("claude project name odd chars", base(harness="claude", workspace=HOME + "/a_b.c d")),
     ("claude project name too long", base(harness="claude", workspace="/w/" + "x" * 200)),
     ("claude project name not ascii", base(harness="claude", workspace="/w/caf\u00e9")),
+    # Pando fix 2: a long workspace is refused unless --allow names projects/,
+    # and a linked worktree gets its gitdir and the common dir read and write.
+    (
+        "claude project name too long allowed",
+        base(harness="claude", workspace="/w/" + "x" * 200, allow=["~/.claude/projects:rw"]),
+    ),
+    (
+        "git worktree dirs",
+        base(
+            workspace="/home/user/proj-worktrees/lead-trellis",
+            git_dirs=["/home/user/proj/.git/worktrees/lead-trellis", "/home/user/proj/.git"],
+        ),
+    ),
+    ("git dirs reach a secret", base(git_dirs=["/home/user/.ssh/repo.git"])),
     (
         "claude project dir resolved",
         base(harness="claude", real={HOME + "/.claude/projects": "/data/cp"}),
@@ -219,13 +244,87 @@ CASES: list[tuple[str, dict[str, Any]]] = [
         "opencode snapshot allow",
         base(harness="opencode", allow=["~/.local/share/opencode/snapshot:rw"]),
     ),
+    # Plan task 5: the memory stores are shut like a secret, read and write.
+    (
+        "envelope data dir read",
+        base(envelope={"file_read": ["~/.opendaisugi/**"], "file_write": []}),
+    ),
+    (
+        "envelope pando store",
+        base(
+            envelope={
+                "file_read": ["~/.opendaisugi/pando/**", "~/.opendaisugi/foreman/*.jsonl"],
+                "file_write": ["~/.opendaisugi/pando/work/x"],
+            }
+        ),
+    ),
+    (
+        "envelope xdg pando",
+        base(
+            env={"XDG_DATA_HOME": HOME + "/.local/share"},
+            envelope={"file_read": [HOME + "/.local/share/opendaisugi/**"], "file_write": []},
+        ),
+    ),
+    (
+        "envelope opendaisugi home pando",
+        base(
+            env={"OPENDAISUGI_HOME": "/srv/od"},
+            envelope={"file_read": ["/srv/od/pando/work/**"], "file_write": []},
+        ),
+    ),
+    # Review F3: a data dir that is a link (state_extra, as the caller
+    # resolved it) closes its stores under the resolved spelling; a store that
+    # is a link comes in as a never_extra spelling.
+    (
+        "envelope linked data dir",
+        base(
+            real={HOME + "/.opendaisugi": "/r/ods", HOME + "/.opendaisugi/pando": "/r/ods/pando"},
+            state_extra=["/r/ods"],
+            envelope={
+                "file_read": ["~/.opendaisugi/pando/**", "~/.opendaisugi/**", "/r/**"],
+                "file_write": [],
+            },
+        ),
+    ),
+    (
+        "envelope linked store",
+        base(
+            real={HOME + "/.opendaisugi/pando": "/elsewhere/p"},
+            never_extra=["/elsewhere/p"],
+            envelope={"file_read": ["~/.opendaisugi/pando/**", "/elsewhere/**"], "file_write": []},
+        ),
+    ),
+    ("workspace in linked store", base(workspace="/r/ods/pando/work", state_extra=["/r/ods"])),
+    ("allow data dir ro", base(allow=["~/.opendaisugi"])),
+    ("allow pando named", base(allow=["~/.opendaisugi/pando"])),
+    ("workspace in pando", base(workspace=HOME + "/.opendaisugi/pando/work")),
+    ("workspace is data dir", base(workspace=HOME + "/.opendaisugi")),
 ]
+
+
+def _go_only(inp: dict[str, Any], want: dict[str, Any]) -> bool:
+    """The Rust port is frozen (owner ruling, Pando round 8b fix 3): its
+    Claude table still grants ~/.claude/backups. A case whose answer would
+    differ with that grant is the Go build's only, and the Rust runners skip
+    it."""
+    if inp.get("harness") != "claude":
+        return False
+    from opendaisugi import fence
+
+    table = fence.HARNESS["claude"]
+    fence.HARNESS["claude"] = (*table, (".claude/backups", "ro"))
+    try:
+        return plan(inp) != want
+    finally:
+        fence.HARNESS["claude"] = table
 
 
 def render() -> tuple[str, int]:
     rows = []
     for name, inp in CASES:
         body = {"name": name, "input": inp, "expect": plan(inp)}
+        if _go_only(inp, body["expect"]):
+            body["go_only"] = True
         canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
         rows.append({"id": hashlib.sha256(canon.encode()).hexdigest()[:16], **body})
     rows.sort(key=lambda r: r["id"])

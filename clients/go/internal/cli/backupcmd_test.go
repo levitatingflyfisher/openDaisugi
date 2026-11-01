@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"net"
 	"os"
 	"path/filepath"
@@ -70,11 +74,11 @@ func TestBackupThenRestoreIntoAFreshHome(t *testing.T) {
 	seedDB(t, data, "journal/index.db", "idx")
 	seed(t, data, "journal/index.db-wal", "torn")
 	seed(t, data, "pathways.db-shm", "torn")
-	seed(t, data, "gate/envelopes/s.json", "{}")
-	seed(t, data, "gate/audit/2026.jsonl", "{}\n")
-	seed(t, data, "gate/disarmed", "")
+	seed(t, data, "warden/envelopes/s.json", "{}")
+	seed(t, data, "warden/audit/2026.jsonl", "{}\n")
+	seed(t, data, "warden/disarmed", "")
 	seed(t, data, "sessions/a.json", "private")
-	seed(t, data, "gate/api-token", "SECRET")
+	seed(t, data, "warden/api-token", "SECRET")
 
 	code, out, errs := runIn(t, home, work, "backup")
 	if code != 0 || !strings.Contains(out, "5 files") {
@@ -98,7 +102,7 @@ func TestBackupThenRestoreIntoAFreshHome(t *testing.T) {
 	if v := readDB(t, nd+"/pathways.db"); v != "p1" {
 		t.Fatalf("pathways: %q", v)
 	}
-	for _, p := range []string{"sessions", "gate/api-token", "gate/disarmed", "journal/index.db-wal", "pathways.db-shm"} {
+	for _, p := range []string{"sessions", "warden/api-token", "warden/disarmed", "journal/index.db-wal", "pathways.db-shm"} {
 		if _, err := os.Stat(filepath.Join(nd, p)); err == nil {
 			t.Errorf("restored %s", p)
 		}
@@ -132,7 +136,7 @@ func TestBackupUsageErrors(t *testing.T) {
 	}
 }
 
-func TestRestoreRefusesWhileAGateAnswers(t *testing.T) {
+func TestRestoreStopsForALiveWarden(t *testing.T) {
 	home, work := t.TempDir(), t.TempDir()
 	data := filepath.Join(home, ".opendaisugi")
 	seed(t, data, "config.yaml", "a: 1\n")
@@ -141,7 +145,7 @@ func TestRestoreRefusesWhileAGateAnswers(t *testing.T) {
 		t.Fatal(errs)
 	}
 	fresh := t.TempDir()
-	sock := filepath.Join(fresh, ".opendaisugi", "gate", "gate.sock")
+	sock := filepath.Join(fresh, ".opendaisugi", "warden", "warden.sock")
 	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -160,11 +164,11 @@ func TestRestoreRefusesWhileAGateAnswers(t *testing.T) {
 		}
 	}()
 	code, _, errs := run(t, fresh, "", "restore", file)
-	if code != 1 || !strings.Contains(errs, "Stop agent sessions or run `daisugi gate disarm` first") {
+	if code != 1 || !strings.Contains(errs, "Stop agent sessions or run `daisugi warden disarm` first") {
 		t.Fatalf("want refusal: %d %q", code, errs)
 	}
 	if _, err := os.Stat(filepath.Join(fresh, ".opendaisugi", "config.yaml")); err == nil {
-		t.Fatal("restored under a live gate")
+		t.Fatal("restored under a live warden")
 	}
 }
 
@@ -202,15 +206,15 @@ func TestBackupHelpDoesNotOverclaim(t *testing.T) {
 func TestAFailedRestorePutsTheOldFilesBackAndSaysSo(t *testing.T) {
 	home, work, target := t.TempDir(), t.TempDir(), t.TempDir()
 	seed(t, filepath.Join(home, ".opendaisugi"), "config.yaml", "new\n")
-	seed(t, filepath.Join(home, ".opendaisugi"), "gate/envelopes/s.json", "{}")
+	seed(t, filepath.Join(home, ".opendaisugi"), "warden/envelopes/s.json", "{}")
 	file := filepath.Join(work, "b.tgz")
 	if code, _, errs := run(t, home, "", "backup", file); code != 0 {
 		t.Fatal(errs)
 	}
 	nd := filepath.Join(target, ".opendaisugi")
 	seed(t, nd, "config.yaml", "old\n")
-	// "gate" is a file, so gate/envelopes cannot be put in place.
-	seed(t, nd, "gate", "a file")
+	// "warden" is a file, so warden/envelopes cannot be put in place.
+	seed(t, nd, "warden", "a file")
 	code, out, errs := run(t, target, "", "restore", file, "--force")
 	if code != 1 || !strings.Contains(errs, "The old data is back in place") || !strings.Contains(errs, ".restore-") || strings.Contains(out, "Moved aside") {
 		t.Fatalf("%d %q %q", code, out, errs)
@@ -244,6 +248,74 @@ func TestRestoreMovesAStaleWalAsideAndTheDatabaseOpens(t *testing.T) {
 		}
 		if !strings.Contains(out, n+".broken-") {
 			t.Errorf("%s not in the aside list: %q", n, out)
+		}
+	}
+}
+
+// The conversation memory (ADR-0023) is in the backup: every store, its
+// children, its view and its import queue, never a lock.
+func TestBackupHoldsEveryPandoStoreAndItsChildren(t *testing.T) {
+	home, work := t.TempDir(), t.TempDir()
+	data := filepath.Join(home, ".opendaisugi")
+	seed(t, data, "config.yaml", "a: 1\n")
+	for _, s := range []string{"work", "notes"} {
+		seed(t, data, "pando/"+s+"/main/2026-10-24.jsonl", "{\"id\":0}\n")
+		seed(t, data, "pando/"+s+"/tree/2026-10-24.jsonl", "{}\n")
+		seed(t, data, "pando/"+s+"/view.json", "{}")
+		seed(t, data, "pando/"+s+"/lock", "")
+	}
+	seed(t, data, "pando/work/import.json", "{\"sessions\":[]}")
+	seed(t, data, "pando/work/children/w1/main/2026-10-24.jsonl", "{\"id\":0}\n")
+	seed(t, data, "pando/work/children/w1/lock", "")
+	file := filepath.Join(work, "b.tgz")
+	code, out, errs := run(t, home, "", "backup", file)
+	if code != 0 || !strings.Contains(out, "9 files") {
+		t.Fatalf("backup: %d %q %q", code, out, errs)
+	}
+	fresh := t.TempDir()
+	code, out, errs = run(t, fresh, "", "restore", file)
+	if code != 0 || !strings.Contains(out, "9 files") {
+		t.Fatalf("restore: %d %q %q", code, out, errs)
+	}
+	nd := filepath.Join(fresh, ".opendaisugi")
+	for _, p := range []string{
+		"pando/work/main/2026-10-24.jsonl", "pando/notes/main/2026-10-24.jsonl", "pando/notes/view.json",
+		"pando/work/import.json", "pando/work/children/w1/main/2026-10-24.jsonl",
+	} {
+		if _, err := os.Stat(filepath.Join(nd, p)); err != nil {
+			t.Errorf("not restored: %s", p)
+		}
+	}
+	for _, p := range []string{"pando/work/lock", "pando/notes/lock", "pando/work/children/w1/lock"} {
+		if _, err := os.Stat(filepath.Join(nd, p)); err == nil {
+			t.Errorf("restored a lock: %s", p)
+		}
+	}
+}
+
+// A restore puts back only the parts of a store; any other path under the
+// pando dir is refused, and nothing is written.
+func TestRestoreRefusesAPathOutsideAStore(t *testing.T) {
+	for _, name := range []string{"data/pando/Bad/main/x", "data/pando/work/other", "data/pando/.work.migrating-x/main/a", "data/pando/work"} {
+		p := filepath.Join(t.TempDir(), "e.tgz")
+		f, _ := os.Create(p)
+		gz := gzip.NewWriter(f)
+		tw := tar.NewWriter(gz)
+		sum := sha256.Sum256([]byte("x"))
+		man := `{"format":1,"tool":"daisugi","version":"1","created":"x","roots":{},"files":[{"path":"` + name + `","size":1,"sha256":"` + hex.EncodeToString(sum[:]) + `"}]}`
+		tw.WriteHeader(&tar.Header{Name: "MANIFEST.json", Size: int64(len(man)), Mode: 0o600, Typeflag: tar.TypeReg})
+		tw.Write([]byte(man))
+		tw.WriteHeader(&tar.Header{Name: name, Size: 1, Mode: 0o600, Typeflag: tar.TypeReg})
+		tw.Write([]byte("x"))
+		tw.Close()
+		gz.Close()
+		f.Close()
+		fresh := t.TempDir()
+		if code, _, _ := run(t, fresh, "", "restore", p); code == 0 {
+			t.Errorf("%s restored", name)
+		}
+		if _, err := os.Stat(filepath.Join(fresh, ".opendaisugi", "pando")); err == nil {
+			t.Errorf("%s wrote the pando dir", name)
 		}
 	}
 }

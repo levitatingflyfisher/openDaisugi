@@ -56,7 +56,7 @@ fn a_read_after_output_sees_the_output_at_once() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let mut c = Conn::new(&s);
     let cwd = dir.to_string_lossy().to_string();
@@ -105,7 +105,7 @@ impl Drop for CloseOnDrop {
     }
 }
 
-fn gate_idle(s: &Server, id: &str) {
+fn warden_idle(s: &Server, id: &str) {
     s.apply_state(
         id,
         crate::state::Event {
@@ -114,18 +114,18 @@ fn gate_idle(s: &Server, id: &str) {
             session_id: id.into(),
             pane: Some(id.into()),
             state: crate::state::STATE_IDLE.into(),
-            source: crate::state::SRC_GATE.into(),
+            source: crate::state::SRC_WARDEN.into(),
             ..Default::default()
         },
     );
 }
 
-/// A gate idle stands against a short redraw of a quiet pane (CP-R-56): a
+/// A warden idle stands against a short redraw of a quiet pane (CP-R-56): a
 /// clock or a status line ticking on an idle harness is no work. Output
 /// that goes on for a second more is work. The Go twin is
-/// TestAShortRedrawDoesNotOutrankAStandingGateIdle.
+/// TestAShortRedrawDoesNotOutrankAStandingWardenIdle.
 #[test]
-fn a_short_redraw_does_not_outrank_a_standing_gate_idle() {
+fn a_short_redraw_does_not_outrank_a_standing_warden_idle() {
     let dir = crate::testhome::guard(std::env::temp_dir().join(format!("coppice-rs-redraw-{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -134,7 +134,7 @@ fn a_short_redraw_does_not_outrank_a_standing_gate_idle() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let mut c = Conn::new(&s);
@@ -152,12 +152,12 @@ fn a_short_redraw_does_not_outrank_a_standing_gate_idle() {
         s.clock_skew
             .store(secs * 1_000_000_000, std::sync::atomic::Ordering::SeqCst)
     };
-    // A turn drew the screen, the gate said idle, and 6 s later the process
+    // A turn drew the screen, the warden said idle, and 6 s later the process
     // source called the quiet screen idle too. That idle replaces the
-    // gate's in the merged state, so the pane must remember the gate's.
+    // warden's in the merged state, so the pane must remember the warden's.
     lp.grid.write(b"turn output").unwrap();
     s.process_tick(&id, &lp);
-    gate_idle(&s, &id);
+    warden_idle(&s, &id);
     skew(6);
     s.process_tick(&id, &lp);
     let st = s.effective_state(&id).unwrap();
@@ -233,22 +233,22 @@ fn the_stamp_follows_the_hook_idle_as_the_hook_sends_it() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
     s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_PROCESS));
-    assert_eq!(lp.gate_idle_since.load(SeqCst), 0, "a process idle set the stamp");
+    assert_eq!(lp.warden_idle_since.load(SeqCst), 0, "a process idle set the stamp");
     s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_HEADLESS));
-    let first = lp.gate_idle_since.load(SeqCst);
+    let first = lp.warden_idle_since.load(SeqCst);
     assert_ne!(first, 0, "the Stop hook idle (source headless) did not set the stamp");
-    s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_GATE));
-    assert_eq!(lp.gate_idle_since.load(SeqCst), first, "a second idle moved the stamp");
-    s.apply_state(&id, stamp_ev(&id, STATE_WORKING, SRC_GATE));
-    assert_eq!(lp.gate_idle_since.load(SeqCst), 0, "a gate working did not clear it");
+    s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_WARDEN));
+    assert_eq!(lp.warden_idle_since.load(SeqCst), first, "a second idle moved the stamp");
+    s.apply_state(&id, stamp_ev(&id, STATE_WORKING, SRC_WARDEN));
+    assert_eq!(lp.warden_idle_since.load(SeqCst), 0, "a warden working did not clear it");
     s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_HEADLESS));
     s.apply_state(&id, stamp_ev(&id, STATE_WORKING, SRC_HEADLESS));
-    assert_eq!(lp.gate_idle_since.load(SeqCst), 0, "a headless working did not clear it");
+    assert_eq!(lp.warden_idle_since.load(SeqCst), 0, "a headless working did not clear it");
 }
 
 /// The 3 s boundary runs on the server clock, and a submitted line clears
@@ -266,25 +266,25 @@ fn a_stamp_stands_after_three_seconds_and_a_submitted_line_clears_it() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
     s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_HEADLESS));
     let working = stamp_ev(&id, STATE_WORKING, SRC_PROCESS);
     s.clock_skew.store(2_900_000_000, SeqCst);
-    assert!(!s.gate_idle_stands(&lp, &working), "a 2.9 s stamp stands");
+    assert!(!s.warden_idle_stands(&lp, &working), "a 2.9 s stamp stands");
     s.clock_skew.store(10_000_000_000, SeqCst);
-    assert!(s.gate_idle_stands(&lp, &working), "a 10 s stamp does not stand");
-    assert!(!s.gate_idle_stands(&lp, &stamp_ev(&id, STATE_WORKING, SRC_GATE)));
+    assert!(s.warden_idle_stands(&lp, &working), "a 10 s stamp does not stand");
+    assert!(!s.warden_idle_stands(&lp, &stamp_ev(&id, STATE_WORKING, SRC_WARDEN)));
     s.mark_input(&id, false);
-    assert_ne!(lp.gate_idle_since.load(SeqCst), 0, "a half line cleared the stamp");
+    assert_ne!(lp.warden_idle_since.load(SeqCst), 0, "a half line cleared the stamp");
     s.mark_input(&id, true);
-    assert!(!s.gate_idle_stands(&lp, &working), "a stale stamp stands after a line");
+    assert!(!s.warden_idle_stands(&lp, &working), "a stale stamp stands after a line");
 }
 
 /// An idle the merge held back changes nothing (CP-R-57): the pane stays
-/// blocked behind a gate hold, so a headless idle there is no stamp. The Go
+/// blocked behind a warden hold, so a headless idle there is no stamp. The Go
 /// twin is TestAHeldBackHookIdleSetsNoStamp.
 #[test]
 fn a_held_back_hook_idle_sets_no_stamp() {
@@ -298,11 +298,11 @@ fn a_held_back_hook_idle_sets_no_stamp() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
-    let mut ask = stamp_ev(&id, STATE_BLOCKED, SRC_GATE);
+    let mut ask = stamp_ev(&id, STATE_BLOCKED, SRC_WARDEN);
     ask.ask = Some(Ask {
         id: "a".into(),
         tool: "Bash".into(),
@@ -312,7 +312,7 @@ fn a_held_back_hook_idle_sets_no_stamp() {
     });
     s.apply_state(&id, ask);
     s.apply_state(&id, stamp_ev(&id, STATE_IDLE, SRC_HEADLESS));
-    assert_eq!(lp.gate_idle_since.load(SeqCst), 0, "an idle the gate hold discarded set the stamp");
+    assert_eq!(lp.warden_idle_since.load(SeqCst), 0, "an idle the warden hold discarded set the stamp");
 }
 
 /// A hook idle older than a fresh pane's first draw does not stand
@@ -329,14 +329,14 @@ fn a_stamp_older_than_the_first_draw_does_not_settle_a_fresh_pane() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
     lp.grid.write(b"drawn").unwrap();
     s.process_tick(&id, &lp);
     let first = lp.grid.first_write().unwrap();
-    lp.gate_idle_since.store(first - 10_000_000_000, SeqCst);
+    lp.warden_idle_since.store(first - 10_000_000_000, SeqCst);
     let run = |fresh: bool| {
         let (tx, rx) = std::sync::mpsc::channel();
         let s2 = s.clone();
@@ -368,11 +368,11 @@ fn a_stale_hook_idle_does_not_keep_a_quiet_fresh_pane_from_settling() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
-    let mut old = stamp_ev(&id, STATE_IDLE, SRC_GATE);
+    let mut old = stamp_ev(&id, STATE_IDLE, SRC_WARDEN);
     old.ts = 1.0;
     s.apply_state(&id, old);
     lp.grid.write(b"REPORT ok").unwrap();
@@ -404,11 +404,11 @@ fn a_burst_after_a_gap_is_new_even_if_no_look_saw_the_gap() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
-    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_GATE);
+    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_WARDEN);
     idle.ts = 1.0;
     s.apply_state(&id, idle);
     lp.grid.write(b"turn").unwrap();
@@ -419,7 +419,7 @@ fn a_burst_after_a_gap_is_new_even_if_no_look_saw_the_gap() {
         .store(7_500_000_000, std::sync::atomic::Ordering::SeqCst);
     s.process_tick(&id, &lp);
     let eff = s.effective_state(&id).unwrap();
-    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "gate"), "{eff:?}");
+    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "warden"), "{eff:?}");
 }
 
 /// A hook idle that stands is not replaced by the first look's "no output
@@ -435,17 +435,17 @@ fn the_first_look_does_not_replace_a_standing_hook_idle() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
     lp.proc_state.lock().unwrap().state = String::new();
-    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_GATE);
+    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_WARDEN);
     idle.ts = 1.0;
     s.apply_state(&id, idle);
     s.process_tick(&id, &lp);
     let eff = s.effective_state(&id).unwrap();
-    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "gate"), "{eff:?}");
+    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "warden"), "{eff:?}");
 }
 
 /// The same holds when a draw was held first. The Go twin is
@@ -461,12 +461,12 @@ fn a_quiet_idle_after_a_held_draw_does_not_replace_a_standing_hook_idle() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let _guard = CloseOnDrop(s.clone(), dir.clone());
     let (id, lp) = stamp_pane(&s, &dir);
     lp.proc_state.lock().unwrap().state = String::new();
-    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_GATE);
+    let mut idle = stamp_ev(&id, STATE_IDLE, SRC_WARDEN);
     idle.ts = 1.0;
     s.apply_state(&id, idle);
     lp.grid.write(b"turn").unwrap();
@@ -475,5 +475,5 @@ fn a_quiet_idle_after_a_held_draw_does_not_replace_a_standing_hook_idle() {
         .store(6_000_000_000, std::sync::atomic::Ordering::SeqCst);
     s.process_tick(&id, &lp);
     let eff = s.effective_state(&id).unwrap();
-    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "gate"), "{eff:?}");
+    assert_eq!((eff.state.as_str(), eff.source.as_str()), ("idle", "warden"), "{eff:?}");
 }

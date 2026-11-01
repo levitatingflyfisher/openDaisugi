@@ -102,7 +102,7 @@ def verify_completed_step(
     predicate evaluator's quantifiers (forall_steps, exists_step) work
     uniformly over the Stage 1 and Stage 2 evaluation points.
 
-    Stage 2 is the last gate before an effect commits externally. Under strict
+    Stage 2 is the last warden before an effect commits externally. Under strict
     mode — default-on for high/physical stakes (v0.27.0) — an opaque enforced
     postcondition (no verifiable ``expr``) is a loud rejection rather than a
     silent pass: nothing discharges it here, so it cannot be trusted on faith.

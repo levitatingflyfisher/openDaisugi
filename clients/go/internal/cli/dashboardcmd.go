@@ -13,9 +13,9 @@ import (
 	"time"
 	"unsafe"
 
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/router"
 	"daisugi-verify/internal/tracejournal"
 )
 
@@ -76,16 +76,16 @@ type rawMetrics struct {
 	journalTotal, journalPassed, journalFailed *int64
 	pathwayCount                               *int64
 	pathwayHits                                *big.Int
-	gateway                                    *gateway.Summary
+	router                                     *router.Summary
 }
 
-// loadGatewayRecords reads the gateway's turn journal. A record of
+// loadRouterRecords reads the router's turn journal. A record of
 // other types (GW-8) is an error; a file that cannot be read or decoded
 // is no records, as the oracle's read_raw swallows the error.
-func loadGatewayRecords(dataDir string) ([]gateway.JRecord, error) {
-	recs, err := gateway.LoadJournal(filepath.Join(dataDir, "gateway", "turns.jsonl"))
+func loadRouterRecords(dataDir string) ([]router.JRecord, error) {
+	recs, err := router.LoadJournal(filepath.Join(dataDir, "router", "turns.jsonl"))
 	if err != nil {
-		if errors.Is(err, gateway.ErrUnreadable) || !errors.Is(err, gateway.ErrJournal) {
+		if errors.Is(err, router.ErrUnreadable) || !errors.Is(err, router.ErrJournal) {
 			return nil, nil
 		}
 		return nil, err
@@ -93,18 +93,18 @@ func loadGatewayRecords(dataDir string) ([]gateway.JRecord, error) {
 	return recs, nil
 }
 
-// gatewayRecords is loadGatewayRecords before anything is written: a
+// routerRecords is loadRouterRecords before anything is written: a
 // record of other types is refused, as the report commands refuse it.
-func (e *Env) gatewayRecords(cmd, dataDir string) ([]gateway.JRecord, error) {
-	recs, err := loadGatewayRecords(dataDir)
+func (e *Env) routerRecords(cmd, dataDir string) ([]router.JRecord, error) {
+	recs, err := loadRouterRecords(dataDir)
 	if err != nil {
 		return nil, e.refuse(cmd, err)
 	}
 	return recs, nil
 }
 
-// readRaw is dashboard.read_raw, given the gateway records read first.
-func (e *Env) readRaw(dataDir string, recs []gateway.JRecord) rawMetrics {
+// readRaw is dashboard.read_raw, given the router records read first.
+func (e *Env) readRaw(dataDir string, recs []router.JRecord) rawMetrics {
 	var raw rawMetrics
 	if exists(filepath.Join(dataDir, "journal", "index.db")) {
 		if j, err := tracejournal.OpenReadOnly(dataDir); err == nil {
@@ -121,8 +121,8 @@ func (e *Env) readRaw(dataDir string, recs []gateway.JRecord) rawMetrics {
 		}
 	}
 	if len(recs) > 0 {
-		s := gateway.Summarize(recs)
-		raw.gateway = &s
+		s := router.Summarize(recs)
+		raw.router = &s
 	}
 	return raw
 }
@@ -210,8 +210,8 @@ func collectMetrics(raw rawMetrics) (map[string][]gaugeT, error) {
 		distill = gaugeT{"pathways", commas64(*raw.pathwayCount), commas(raw.pathwayHits) + " lifetime reuse hit(s)", nil}
 	}
 	var router gaugeT
-	if g := raw.gateway; g == nil {
-		router = blankGauge("tokens saved", "no gateway turns recorded yet")
+	if g := raw.router; g == nil {
+		router = blankGauge("tokens saved", "no router turns recorded yet")
 	} else {
 		router = gaugeT{"tokens saved", commas(g.FrontierSaved),
 			fmt.Sprintf("$%s · %sx · cache %s · %d/%d downgraded", groupedFixed(g.DollarsSaved, 2),
@@ -220,7 +220,7 @@ func collectMetrics(raw rawMetrics) (map[string][]gaugeT, error) {
 	}
 	return map[string][]gaugeT{
 		"harness":  {{"detected", "see map", "active harnesses marked ● above", nil}},
-		"gate":     {blankGauge("throughput", "no passive counter yet")},
+		"warden":   {blankGauge("throughput", "no passive counter yet")},
 		"verifier": {blankGauge("latency", "benchmark-only — run `daisugi guard-cost`")},
 		"matcher":  {matcher},
 		"distill":  {distill},
@@ -284,7 +284,7 @@ func dashboardJSON(stages []wStage, metrics map[string][]gaugeT) string {
 // dashboardFrame reads the stores and draws one frame, in the oracle's
 // order: the map first (which makes the journal), then the gauges.
 func (e *Env) dashboardFrame(cmd, dataDir string) (string, error) {
-	recs, err := e.gatewayRecords(cmd, dataDir)
+	recs, err := e.routerRecords(cmd, dataDir)
 	if err != nil {
 		return "", err
 	}
@@ -315,7 +315,7 @@ func (e *Env) runLive(cmd, dataDir string, interval float64, interrupted func() 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	defer signal.Stop(sig)
-	recs, err := e.gatewayRecords(cmd, dataDir)
+	recs, err := e.routerRecords(cmd, dataDir)
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (e *Env) runLive(cmd, dataDir string, interval float64, interrupted func() 
 	g := e.glyphs()
 	for i := 0; ; i++ {
 		if i > 0 {
-			if recs, err = e.gatewayRecords(cmd, dataDir); err != nil {
+			if recs, err = e.routerRecords(cmd, dataDir); err != nil {
 				return err
 			}
 		}
@@ -379,7 +379,7 @@ func (e *Env) dashboardCmd(args []string) error {
 	}
 	dataDir := e.dataDir(p)
 	if p.flag("--json") {
-		recs, err := e.gatewayRecords(cmd, dataDir)
+		recs, err := e.routerRecords(cmd, dataDir)
 		if err != nil {
 			return err
 		}

@@ -28,7 +28,7 @@ func TestAllRegistersEveryAdapter(t *testing.T) {
 
 // Every built headless adapter names the pids of the processes it starts,
 // so the server can place a tool call inside its pane. An adapter without
-// that would have its own gate hook refused every state report, with no
+// that would have its own warden hook refused every state report, with no
 // word said, so this test fails on it instead.
 func TestEveryBuiltAdapterNamesItsPids(t *testing.T) {
 	for _, name := range adapters.Names() {

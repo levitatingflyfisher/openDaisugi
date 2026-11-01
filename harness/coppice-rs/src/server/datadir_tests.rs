@@ -27,7 +27,7 @@ fn close_waits_for_a_data_write_in_flight_and_allows_none_after() {
         data_dir: dir.clone(),
         start_dir: dir.clone(),
         voice: Default::default(),
-        foreman: Default::default(),
+        steward: Default::default(),
     });
     let armed = Arc::new(AtomicBool::new(true));
     let (entered_tx, entered_rx) = channel::<()>();

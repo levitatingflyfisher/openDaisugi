@@ -407,7 +407,7 @@ func TestSubscribeRejectsDegeneratePanesValues(t *testing.T) {
 }
 
 // One wedged client must not stall ApplyState for every pane. A PWA on a
-// stalled tailnet is the realistic case, and the gate hook is blocking on a
+// stalled tailnet is the realistic case, and the warden hook is blocking on a
 // pane.report_state response while it happens.
 func TestAWedgedClientIsDroppedRatherThanStallingTheServer(t *testing.T) {
 	s := newTestServer(t)

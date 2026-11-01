@@ -1,10 +1,10 @@
 //! The model over the OpenAI chat-completions wire, with native function
-//! calling: OpenAI, Ollama, llama.cpp, vLLM, and gateways in front of
-//! other providers. The gate is unchanged: every returned call still goes
+//! calling: OpenAI, Ollama, llama.cpp, vLLM, and routers in front of
+//! other providers. The warden is unchanged: every returned call still goes
 //! through the executor.
 
 use crate::agent::{Message, Model};
-use crate::gate::ToolCall;
+use crate::warden::ToolCall;
 use crate::json::{jmap, jmap_any, Map, Node, J, V};
 use crate::session::Usage;
 use std::os::unix::ffi::OsStrExt;
@@ -253,7 +253,7 @@ fn str_of(n: Option<&Node>) -> String {
     }
 }
 
-/// The wire's usage on sprig's four counts, as the gateway maps it.
+/// The wire's usage on sprig's four counts, as the router maps it.
 fn openai_usage(u: Option<&Node>) -> Usage {
     let mut out = Usage::default();
     let cached = json_int(field(field(u, "prompt_tokens_details"), "cached_tokens")).unwrap_or(0);

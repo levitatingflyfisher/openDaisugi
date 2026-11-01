@@ -1,8 +1,8 @@
 """The smart end of the router slot: a model that picks, and a model that grades.
 
-Both go through the gateway's own upstream path (the same client, URL and headers
+Both go through the router's own upstream path (the same client, URL and headers
 as the user's turn), so they add no client and no dependency. Both prompts are
-fixed text: the Go and Rust gateways send the same bytes, and the fake upstream of
+fixed text: the Go and Rust routers send the same bytes, and the fake upstream of
 the compare cases is keyed on them.
 """
 
@@ -24,13 +24,13 @@ def _body(model: str, prompt: str, max_tokens: int) -> bytes:
     return json.dumps(body).encode("utf-8")
 
 
-def picker_body(router_model: str, task: str, candidates: Sequence[str]) -> bytes:
+def picker_body(routing_model: str, task: str, candidates: Sequence[str]) -> bytes:
     prompt = (
         f"Pick the model for this task. Allowed models: {', '.join(candidates)}.\n"
         f"Reply with one name from the list and nothing else.\n\n"
         f"Task:\n{task[:TEXT_LIMIT]}"
     )
-    return _body(router_model, prompt, 20)
+    return _body(routing_model, prompt, 20)
 
 
 def parse_pick(text: str | None, candidates: Sequence[str]) -> str | None:

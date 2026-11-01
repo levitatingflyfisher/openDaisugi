@@ -1,6 +1,6 @@
 """One format, two implementations, one fixture set.
 
-The phone answers a gate ask by writing the file ask.py reads. If Go's
+The phone answers a warden ask by writing the file ask.py reads. If Go's
 SafeID and Python's _safe ever disagree about the file stem, the phone
 writes an answer nobody ever looks at, and the operator sees a button that
 silently does nothing. This is the conformance pattern the verifier clients

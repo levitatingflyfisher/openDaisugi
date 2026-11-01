@@ -50,7 +50,7 @@ def _env(allowlist: list[str]) -> Envelope:
     return Envelope(
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=allowlist),
+        permissions=Permission(shell=True, shell_allowlist=allowlist, file_read=["**"]),
     )
 
 

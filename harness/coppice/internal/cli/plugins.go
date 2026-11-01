@@ -66,20 +66,20 @@ func viewIDs(ps []plugins.Plugin) []string {
 // voiceConfig is what coppice.toml's [voice] table asks of the server. A
 // file that does not read might have said enabled = false, so voice stays
 // off, and voice.status says why.
-// foremanConfig is what coppice.toml's [foreman] table asks of the server.
+// stewardConfig is what coppice.toml's [steward] table asks of the server.
 // A file that does not read, or a value that is not allowed, leaves the
-// foreman in pane mode and says why in a note: the floor always starts.
-func foremanConfig() server.ForemanConfig {
+// steward in pane mode and says why in a note: the floor always starts.
+func stewardConfig() server.StewardConfig {
 	cfg, _, err := config.Load()
 	if err != nil {
-		return server.ForemanConfig{Problem: fmt.Sprintf(
-			"The foreman stays in pane mode: %s does not read (%v). Fix the file, then start the coppice server again.", config.Path(), err)}
+		return server.StewardConfig{Problem: fmt.Sprintf(
+			"The steward stays in pane mode: %s does not read (%v). Fix the file, then start the coppice server again.", config.Path(), err)}
 	}
-	s, err := cfg.ForemanSettings()
+	s, err := cfg.StewardSettings()
 	if err != nil {
-		return server.ForemanConfig{Problem: fmt.Sprintf("The foreman stays in pane mode: %v.", err)}
+		return server.StewardConfig{Problem: fmt.Sprintf("The steward stays in pane mode: %v.", err)}
 	}
-	return server.ForemanConfigOf(s)
+	return server.StewardConfigOf(s)
 }
 
 func voiceConfig() server.VoiceConfig {

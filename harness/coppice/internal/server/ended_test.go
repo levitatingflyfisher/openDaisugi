@@ -361,6 +361,25 @@ func TestPaneResumeStartsAPtyFreshWithNoResumeArgs(t *testing.T) {
 	waitDone(t, s, newID)
 }
 
+// A resumed pane keeps made_by, so an agent-made pane that stops at the trust
+// screen again is still answered for a trusted folder.
+func TestPaneResumeKeepsMadeBy(t *testing.T) {
+	s := newEndedServer(t)
+	id := createShellPane(t, s, "sh", "-c", "exit 0")
+	waitDone(t, s, id)
+	if err := s.updatePane(id, func(r *layout.Pane) { r.MadeBy = layout.MadeByAgent }); err != nil {
+		t.Fatal(err)
+	}
+	got := roundTrip(t, s, `{"id":"2","cmd":"pane.resume","pane":"`+id+`"}`)
+	if !got[0].OK {
+		t.Fatalf("pane.resume failed: %+v", got[0].Error)
+	}
+	newID, _ := result(t, got[0])["pane"].(string)
+	if rec, ok := s.tree.Pane(newID); !ok || rec.MadeBy != layout.MadeByAgent {
+		t.Fatalf("resumed pane MadeBy = %q", rec.MadeBy)
+	}
+}
+
 // pane.resume takes an optional size, so a client can start the new pane
 // at the size of the window it will show in. With none, the ended
 // record's own size is kept. A size that is not positive is refused.
@@ -701,7 +720,7 @@ func TestPaneListReportsDoneForAPaneThatEndedBeforeARestart(t *testing.T) {
 }
 
 // A resumed pane keeps the env its ended record was started with, so a
-// resumed agent still talks to the gateway it was pointed at.
+// resumed agent still talks to the router it was pointed at.
 func TestPaneResumeKeepsTheRecordsEnv(t *testing.T) {
 	s := newEndedServer(t)
 	cwd := t.TempDir()

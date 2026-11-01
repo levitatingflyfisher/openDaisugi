@@ -9,8 +9,8 @@ package orchestrate
 import (
 	"math"
 
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/router"
 )
 
 // Rung is model_sizer.ModelRung.
@@ -31,8 +31,8 @@ func BuildLadder(local string) Ladder {
 	if local != "" {
 		l = append(l, Rung{"local", local, 0.35, 1200})
 	}
-	return append(l, Rung{"cheap", gateway.DefaultCheapModel, 0.65, 2000},
-		Rung{"frontier", gateway.DefaultFrontierModel, 1.0, 4500})
+	return append(l, Rung{"cheap", router.DefaultCheapModel, 0.65, 2000},
+		Rung{"frontier", router.DefaultFrontierModel, 1.0, 4500})
 }
 
 func (l Ladder) forDifficulty(d float64) Rung {
@@ -107,7 +107,7 @@ func StepDifficulty(step *pyjson.Object) float64 {
 	}
 	if kind == "task" {
 		p, _ := step.Value("prompt").(string)
-		base = pyMax(base, gateway.EstimateDifficulty(p))
+		base = pyMax(base, router.EstimateDifficulty(p))
 	}
 	deps, _ := step.Value("depends_on").([]any)
 	base += pyMin(float64(len(deps))*0.05, 0.2)

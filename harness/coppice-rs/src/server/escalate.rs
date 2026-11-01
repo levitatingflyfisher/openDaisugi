@@ -1,6 +1,6 @@
-//! Asks held for a foreman. A task can name a foreman pane. An undoable
-//! ask of a pane under that task is held: the foreman hears it first, for
-//! a time, and may deny it. A permanent ask is never held, but the foreman
+//! Asks held for a steward. A task can name a steward pane. An undoable
+//! ask of a pane under that task is held: the steward hears it first, for
+//! a time, and may deny it. A permanent ask is never held, but the steward
 //! still hears of it. When the hold ends the ask goes to the operator.
 
 use std::collections::{HashMap, HashSet};
@@ -16,18 +16,18 @@ use crate::gojson;
 use crate::pane::Flag;
 use crate::state::{self, Event};
 
-/// How long a foreman holds a child's undoable ask.
+/// How long a steward holds a child's undoable ask.
 pub const DEFAULT_HOLD_FOR: f64 = 120.0;
-/// How long before the gate gives up on an ask a hold must end.
+/// How long before the warden gives up on an ask a hold must end.
 const HOLD_MARGIN: f64 = 30.0;
 /// How many surfaced ask ids the server keeps per pane.
 const SURFACED_KEPT: usize = 64;
 
-/// One ask a foreman hears before the operator does.
+/// One ask a steward hears before the operator does.
 struct Hold {
     pane: String,
     ask: String,
-    foreman: String,
+    steward: String,
     task: String,
     since: f64,
     until: f64,
@@ -78,10 +78,10 @@ impl HoldState {
         }
     }
 
-    fn held_by(&self, foreman: &str) -> Vec<(String, String)> {
+    fn held_by(&self, steward: &str) -> Vec<(String, String)> {
         self.holds
             .values()
-            .filter(|h| h.foreman == foreman)
+            .filter(|h| h.steward == steward)
             .map(|h| (h.pane.clone(), h.ask.clone()))
             .collect()
     }
@@ -90,16 +90,16 @@ impl HoldState {
 /// What escalate decided for one event.
 #[derive(Default)]
 pub struct Escalation {
-    /// The held field the broadcast carries, and the foreman that holds.
+    /// The held field the broadcast carries, and the steward that holds.
     pub held: Option<(Value, String)>,
     pub note: String,
-    pub foreman: String,
-    /// The asks the pane held as a foreman, when it is blocked itself.
+    pub steward: String,
+    /// The asks the pane held as a steward, when it is blocked itself.
     pub release: Vec<(String, String)>,
 }
 
 /// Whether an ask id is plain enough to name in the line typed into a
-/// foreman.
+/// steward.
 fn plain_ask(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
@@ -107,9 +107,9 @@ fn plain_ask(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// The one line typed into a foreman for a hold. It never holds the ask's
+/// The one line typed into a steward for a hold. It never holds the ask's
 /// summary: the asking pane wrote that.
-fn foreman_line(h: &Hold, now: f64) -> String {
+fn steward_line(h: &Hold, now: f64) -> String {
     let ask = if plain_ask(&h.ask) {
         format!(" {}", h.ask)
     } else {
@@ -123,11 +123,11 @@ Read it: coppice agent get {}. Refuse it: coppice agent deny {} {}",
     )
 }
 
-/// Whether an idle ends a turn: only the gate and a headless harness know
+/// Whether an idle ends a turn: only the warden and a headless harness know
 /// that.
 pub fn turn_ended(ev: &Event) -> bool {
     ev.state == state::STATE_IDLE
-        && (ev.source == state::SRC_GATE || ev.source == state::SRC_HEADLESS)
+        && (ev.source == state::SRC_WARDEN || ev.source == state::SRC_HEADLESS)
 }
 
 /// Whether input ends with Enter.
@@ -147,8 +147,8 @@ impl Server {
         };
         gojson::obj(vec![
             ("hold", json!(h.id)),
-            ("by", json!(h.foreman)),
-            ("foreman_label", json!(self.label_of(&h.foreman))),
+            ("by", json!(h.steward)),
+            ("steward_label", json!(self.label_of(&h.steward))),
             ("task", json!(h.task)),
             ("task_label", json!(task_label)),
             ("ask", json!(h.ask)),
@@ -157,9 +157,9 @@ impl Server {
         ])
     }
 
-    /// The nearest foreman of pane id: its task's, or the nearest
+    /// The nearest steward of pane id: its task's, or the nearest
     /// ancestor's that has one, with the task that named it.
-    fn foreman_of(&self, id: &str) -> (String, String) {
+    fn steward_of(&self, id: &str) -> (String, String) {
         let Some(p) = self.tree.pane(id) else {
             return (String::new(), String::new());
         };
@@ -169,31 +169,31 @@ impl Server {
             let Some(tk) = self.tree.task(&cur) else {
                 return (String::new(), String::new());
             };
-            if !tk.foreman.is_empty() {
-                return (tk.foreman, tk.id);
+            if !tk.steward.is_empty() {
+                return (tk.steward, tk.id);
             }
             cur = tk.parent;
         }
         (String::new(), String::new())
     }
 
-    /// Whether foreman can take an ask from asker: an open pane, not the
+    /// Whether steward can take an ask from asker: an open pane, not the
     /// asker, and not blocked itself.
-    fn can_answer(&self, foreman: &str, asker: &str) -> bool {
-        if foreman == asker {
+    fn can_answer(&self, steward: &str, asker: &str) -> bool {
+        if steward == asker {
             return false;
         }
-        match self.tree.pane(foreman) {
+        match self.tree.pane(steward) {
             Some(p) if !p.closed => {}
             _ => return false,
         }
         !self
-            .effective_state(foreman)
+            .effective_state(steward)
             .is_some_and(|e| e.state == state::STATE_BLOCKED)
     }
 
     /// Decides, before the event goes out, whether pane id's merged state
-    /// is an ask its foreman hears first.
+    /// is an ask its steward hears first.
     pub fn escalate(&self, id: &str, ev: &Event) -> Escalation {
         let mut g = self.holds_lock();
         let release = if ev.state == state::STATE_BLOCKED {
@@ -217,7 +217,7 @@ impl Server {
         if let Some(cur) = g.holds.get(id) {
             if cur.ask == ask.id {
                 return Escalation {
-                    held: Some((self.held_of(cur), cur.foreman.clone())),
+                    held: Some((self.held_of(cur), cur.steward.clone())),
                     ..Default::default()
                 };
             }
@@ -227,12 +227,12 @@ impl Server {
             return Escalation::default();
         }
         g.mark_surfaced(id, &ask.id);
-        let (foreman, task) = self.foreman_of(id);
-        if foreman.is_empty() || !self.can_answer(&foreman, id) {
+        let (steward, task) = self.steward_of(id);
+        if steward.is_empty() || !self.can_answer(&steward, id) {
             return Escalation::default();
         }
         let mut out = Escalation {
-            foreman: foreman.clone(),
+            steward: steward.clone(),
             ..Default::default()
         };
         let label = self.label_of(id);
@@ -258,7 +258,7 @@ impl Server {
         }
         if until <= now {
             out.note = format!(
-                "{label} asks {}: {summary}. The gate waits too little for a hold, so it goes to the operator now.",
+                "{label} asks {}: {summary}. The warden waits too little for a hold, so it goes to the operator now.",
                 ask.id
             );
             return out;
@@ -269,7 +269,7 @@ impl Server {
         let h = Hold {
             pane: id.to_string(),
             ask: ask.id.clone(),
-            foreman: foreman.clone(),
+            steward: steward.clone(),
             task,
             since: now,
             until,
@@ -287,7 +287,7 @@ impl Server {
                 }
             });
         }
-        out.held = Some((self.held_of(&h), foreman));
+        out.held = Some((self.held_of(&h), steward));
         out.note = format!(
             "{label} asks {}: {summary}. You hear it first. To refuse it, run: coppice agent deny {id} {}. It goes to the operator in {} s.",
             ask.id,
@@ -304,10 +304,10 @@ impl Server {
         g.holds.get(id).map(|h| self.held_of(h))
     }
 
-    /// The foreman that holds ask on pane id, or "".
+    /// The steward that holds ask on pane id, or "".
     pub fn holder(&self, id: &str, ask: &str) -> String {
         match self.holds_lock().holds.get(id) {
-            Some(h) if h.ask == ask => h.foreman.clone(),
+            Some(h) if h.ask == ask => h.steward.clone(),
             _ => String::new(),
         }
     }
@@ -324,7 +324,7 @@ impl Server {
     /// Ends the hold on ask of pane id when it is still the one held, and
     /// sends the pane's state again with no hold.
     pub fn surface(&self, id: &str, ask: &str) {
-        let foreman = {
+        let steward = {
             let mut g = self.holds_lock();
             match g.holds.get(id) {
                 Some(h) if h.ask == ask => {}
@@ -339,7 +339,7 @@ impl Server {
                     self.broadcast("state", id, &super::agents::state_event(&ev, None));
                 }
             }
-            h.foreman
+            h.steward
         };
         self.note_to(
             &format!(
@@ -347,18 +347,18 @@ impl Server {
                 self.label_of(id)
             ),
             id,
-            &foreman,
+            &steward,
         );
     }
 
-    /// Sends to the operator every held ask whose pane's nearest foreman
+    /// Sends to the operator every held ask whose pane's nearest steward
     /// is no longer the one that holds it.
     pub fn recheck_holds(&self) {
         let gone: Vec<(String, String)> = {
             let g = self.holds_lock();
             g.holds
                 .values()
-                .filter(|h| self.foreman_of(&h.pane).0 != h.foreman)
+                .filter(|h| self.steward_of(&h.pane).0 != h.steward)
                 .map(|h| (h.pane.clone(), h.ask.clone()))
                 .collect()
         };
@@ -374,7 +374,7 @@ impl Server {
             // A submitted line starts a turn the hooks may not announce, so
             // a hook idle older than it says nothing (CP-R-57).
             if let Some(lp) = self.live(id) {
-                lp.gate_idle_since
+                lp.warden_idle_since
                     .store(0, std::sync::atomic::Ordering::SeqCst);
             }
         }
@@ -399,20 +399,20 @@ impl Server {
         self.effective_state(id).is_some_and(|e| turn_ended(&e))
     }
 
-    /// Types one line into foreman for each ask it holds and was not told
-    /// of, when foreman is idle and nobody typed into it since.
-    pub fn tell_holds(&self, foreman: &str) {
-        if !self.turn_idle(foreman) {
+    /// Types one line into steward for each ask it holds and was not told
+    /// of, when steward is idle and nobody typed into it since.
+    pub fn tell_holds(&self, steward: &str) {
+        if !self.turn_idle(steward) {
             return;
         }
         let tell: Vec<(String, String)> = {
             let mut g = self.holds_lock();
-            if g.typed.contains(foreman) {
+            if g.typed.contains(steward) {
                 return;
             }
             let mut out = Vec::new();
             for h in g.holds.values_mut() {
-                if h.foreman == foreman && !h.told && !h.sending {
+                if h.steward == steward && !h.told && !h.sending {
                     h.sending = true;
                     out.push((h.pane.clone(), h.id.clone()));
                 }
@@ -424,38 +424,38 @@ impl Server {
         };
         for (pane, hold) in tell {
             let s = me.clone();
-            let f = foreman.to_string();
+            let f = steward.to_string();
             thread::spawn(move || s.tell_one(&f, &pane, &hold));
         }
     }
 
-    /// Writes one hold's line into foreman. The hold is marked told only
+    /// Writes one hold's line into steward. The hold is marked told only
     /// when the write succeeds.
-    pub(super) fn tell_one(&self, foreman: &str, pane: &str, hold: &str) {
+    pub(super) fn tell_one(&self, steward: &str, pane: &str, hold: &str) {
         let mut told = false;
-        if self.turn_idle(foreman) {
+        if self.turn_idle(steward) {
             let line = {
                 let mut g = self.holds_lock();
                 let ok =
-                    !g.typed.contains(foreman) && g.holds.get(pane).is_some_and(|h| h.id == hold);
+                    !g.typed.contains(steward) && g.holds.get(pane).is_some_and(|h| h.id == hold);
                 let line = g
                     .holds
                     .get(pane)
-                    .map(|h| foreman_line(h, Server::now_seconds()));
+                    .map(|h| steward_line(h, Server::now_seconds()));
                 if ok {
-                    g.typed.insert(foreman.to_string());
-                    g.open.insert(foreman.to_string(), false);
+                    g.typed.insert(steward.to_string());
+                    g.open.insert(steward.to_string(), false);
                     line
                 } else {
                     None
                 }
             };
             if let Some(line) = line {
-                told = self.type_into(foreman, &line).is_ok();
+                told = self.type_into(steward, &line).is_ok();
                 if told {
                     // The hold line submits a turn too (CP-R-57): a hook
                     // idle older than it says nothing.
-                    self.mark_input(foreman, true);
+                    self.mark_input(steward, true);
                 }
             }
         }
@@ -472,7 +472,7 @@ impl Server {
     /// PASTE_GAP.
     pub fn type_into(&self, id: &str, line: &str) -> Result<(), String> {
         let Some(lp) = self.live(id) else {
-            return Err("the foreman was not told".into());
+            return Err("the steward was not told".into());
         };
         if let Some(a) = &lp.adapter {
             return a.prompt(line);
@@ -483,7 +483,7 @@ impl Server {
     }
 
     /// For a pane that closed: its own hold ends, and every ask it held as
-    /// a foreman goes to the operator at once.
+    /// a steward goes to the operator at once.
     pub fn end_holds(&self, id: &str) {
         let gone = {
             let mut g = self.holds_lock();
@@ -520,11 +520,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_foreman_line_names_only_plain_asks() {
+    fn the_steward_line_names_only_plain_asks() {
         let h = Hold {
             pane: "w1:p2".into(),
             ask: "toolu_02".into(),
-            foreman: "w1:p1".into(),
+            steward: "w1:p1".into(),
             task: "t1".into(),
             since: 0.0,
             until: 100.0,
@@ -534,7 +534,7 @@ mod tests {
             cancel: Arc::new(Flag::default()),
         };
         assert_eq!(
-            foreman_line(&h, 40.5),
+            steward_line(&h, 40.5),
             "coppice: hold h1: pane w1:p2 waits on ask toolu_02, and you hear it first for 59 s. \
 Read it: coppice agent get w1:p2. Refuse it: coppice agent deny w1:p2 h1"
         );
@@ -542,7 +542,7 @@ Read it: coppice agent get w1:p2. Refuse it: coppice agent deny w1:p2 h1"
             ask: "a b".into(),
             ..h
         };
-        assert!(foreman_line(&h, 200.0).contains("waits on ask, and you hear it first for 0 s"));
+        assert!(steward_line(&h, 200.0).contains("waits on ask, and you hear it first for 0 s"));
     }
 }
 
@@ -564,7 +564,7 @@ mod stamp_tests {
             data_dir: dir.clone(),
             start_dir: dir.clone(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         });
         let _guard = super::super::process_tests::CloseOnDrop(s.clone(), dir.clone());
         let (id, lp) = super::super::process_tests::stamp_pane(&s, &dir);
@@ -572,7 +572,7 @@ mod stamp_tests {
         s.apply_state(&id, ev(STATE_IDLE, SRC_HEADLESS));
         s.clock_skew.store(10_000_000_000, SeqCst);
         let working = ev(STATE_WORKING, SRC_PROCESS);
-        assert!(s.gate_idle_stands(&lp, &working), "a 10 s stamp must stand first");
+        assert!(s.warden_idle_stands(&lp, &working), "a 10 s stamp must stand first");
         {
             let mut g = s.holds_lock();
             g.holds.insert(
@@ -580,7 +580,7 @@ mod stamp_tests {
                 Hold {
                     pane: "p".into(),
                     ask: "a".into(),
-                    foreman: id.clone(),
+                    steward: id.clone(),
                     task: "t".into(),
                     since: 0.0,
                     until: Server::now_seconds() + 60.0,
@@ -594,6 +594,6 @@ mod stamp_tests {
         s.tell_one(&id, "p", "h1");
         let told = s.holds_lock().holds.get("p").is_some_and(|h| h.told);
         assert!(told, "the hold line was not written");
-        assert!(!s.gate_idle_stands(&lp, &working), "a stale stamp stands after the hold line");
+        assert!(!s.warden_idle_stands(&lp, &working), "a stale stamp stands after the hold line");
     }
 }

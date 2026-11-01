@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # clients/go/scripts/native.sh
 # Builds the C and C++ libraries openDaisugi's Go binaries link statically:
-# Z3, the tree-sitter runtime and the tree-sitter-bash grammar for the gate,
+# Z3, the tree-sitter runtime and the tree-sitter-bash grammar for the warden,
 # and libghostty-vt for coppice. No sudo, no /tmp.
 #
 #   clients/go/scripts/native.sh                 # build (once) and link this checkout
@@ -53,7 +53,7 @@
 # stamp is this script's and every file matches the manifest; otherwise the
 # script stops and says how to rebuild. The script then points
 # clients/go/.native at the prefix (a git-ignored symlink), which is where
-# the gate's cgo flags look; coppice finds libghostty-vt through
+# the warden's cgo flags look; coppice finds libghostty-vt through
 # share/pkgconfig (scripts/install.sh sets PKG_CONFIG_PATH).
 set -euo pipefail
 
@@ -614,7 +614,7 @@ cmake --install "$work/z3-build" --prefix "$prefix"
 if [ -f "$prefix/lib64/libz3.a" ]; then
   cp "$prefix/lib64/libz3.a" "$prefix/lib/libz3.a"
 fi
-# zig c++ writes debug info even in Release; the gate does not need it.
+# zig c++ writes debug info even in Release; the warden does not need it.
 strip -g "$prefix/lib/libz3.a"
 # The cmake and pkg-config files name the prefix, and nothing links them.
 rm -rf "$prefix/lib64" "$prefix/lib/cmake" "$prefix/lib/pkgconfig"

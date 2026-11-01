@@ -9,7 +9,7 @@ import {
 // the same way app-connect.test.mjs drives the reconnect logic. Reading the
 // screens' pure functions in isolation, which grid.test.mjs, roster.test.mjs
 // and pane.test.mjs already do, cannot see what only shows up once app.js,
-// roster.js and pane.js run together: what the router fires before the
+// roster.js and pane.js run together: what the route fires before the
 // socket is open, and what a click on a real button actually sends.
 
 const PANES = JSON.parse(
@@ -598,7 +598,7 @@ test('a reconnect() while on the floor attaches every tile again on the new sock
 });
 
 // A harness holds this ask itself, so the pane screen answers it through
-// coppice-server with agent.deny or agent.allow, never through the gate's
+// coppice-server with agent.deny or agent.allow, never through the warden's
 // channel, and a permanent allow still needs the typed name.
 test('the pane screen answers a harness-held ask over the operator connection', async () => {
   reset();
@@ -629,7 +629,7 @@ test('the pane screen answers a harness-held ask over the operator connection', 
   assert.equal(rpcs.length, 0, 'a permanent allow went out with no name');
   element('deny').dispatchEvent({ type: 'click' });
   await new Promise((r) => setImmediate(r));
-  assert.equal(posts.length, 0, 'a held ask posted to the gate channel');
+  assert.equal(posts.length, 0, 'a held ask posted to the warden channel');
   assert.deepEqual(rpcs, [{ cmd: 'agent.deny', pane: 'w1:p2', ask: 'per_1', reason: 'denied from the phone' }]);
 });
 

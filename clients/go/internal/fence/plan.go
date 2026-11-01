@@ -22,7 +22,7 @@ type Rule struct {
 	Mode string `json:"mode"`
 }
 
-// Envelope is the part of the gate's envelope the fence reads.
+// Envelope is the part of the warden's envelope the fence reads.
 type Envelope struct {
 	FileRead  []string `json:"file_read"`
 	FileWrite []string `json:"file_write"`
@@ -38,7 +38,7 @@ type Input struct {
 	Env        map[string]string `json:"env"`
 	PathDirs   []string          `json:"path_dirs"`
 	ExeDirs    []string          `json:"exe_dirs"`
-	GateRoot   string            `json:"gate_root"`
+	WardenRoot string            `json:"warden_root"`
 	Envelope   Envelope          `json:"envelope"`
 	Allow      []string          `json:"allow"`
 	Workdirs   []string          `json:"workdirs"`
@@ -46,6 +46,11 @@ type Input struct {
 	Real       map[string]string `json:"real"`
 	NeverExtra []string          `json:"never_extra"`
 	StateExtra []string          `json:"state_extra"`
+	// GitDirs are a linked worktree's gitdir and the repo's common dir
+	// (Pando fix 2, G2). The Go gatherer no longer fills it (fix 3, H1:
+	// the common dir holds the owner's config and hooks); the plan keeps
+	// the field so it agrees with the oracle's cases.
+	GitDirs []string `json:"git_dirs,omitempty"`
 }
 
 // Output is fence.plan's answer. Any refusal means the harness must not
@@ -57,6 +62,11 @@ type Output struct {
 }
 
 // Secrets are the paths under HOME that hold keys and tokens (fence.SECRETS).
+// Memory is fence.MEMORY: the memory stores under each data dir, Pando R2's
+// store and the steward's old directory. No fenced agent reads or writes
+// them; only --allow opens one.
+var Memory = []string{"pando", "foreman"} // names-ok: the on-disk store name
+
 var Secrets = []string{
 	".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config/gh", ".config/gcloud",
 	".config/rclone", ".config/hub", ".config/doctl", ".config/op", ".config/Bitwarden",
@@ -75,13 +85,13 @@ type homePath struct{ rel, mode string }
 // ~/.claude.json and OpenCode's config, binaries and plugin packages are
 // read only (FN-R-22). OpenCode's snapshot repos are read only, and of
 // Claude's projects dir only this workspace's own project dir is read and
-// write (Plan, FN-R-31).
+// write (Plan, FN-R-31). ~/.claude is granted entry by entry, never whole,
+// so the other projects' transcripts stay shut (Pando fix 1).
 var Harness = map[string][]homePath{
 	"claude": {
-		{".claude", "ro"}, {".claude/todos", "rw"},
-		{".claude/shell-snapshots", "rw"}, {".claude/statsig", "rw"}, {".claude/session-env", "rw"},
-		{".claude/file-history", "rw"}, {".claude/plans", "rw"}, {".claude/debug", "rw"},
-		{".claude/ide", "rw"}, {".claude/.credentials.json", "rw"}, {".claude.json", "ro"},
+		{".claude/settings.json", "ro"}, {".claude/settings.local.json", "ro"}, {".claude/CLAUDE.md", "ro"}, {".claude/agents", "ro"}, {".claude/commands", "ro"}, {".claude/skills", "ro"}, {".claude/hooks", "ro"}, {".claude/output-styles", "ro"}, {".claude/plugins", "ro"}, {".claude/keybindings.json", "ro"}, {".claude/local", "ro"},
+		{".claude/statsig", "rw"},
+		{".claude/.credentials.json", "rw"}, {".claude.json", "ro"},
 		{".config/claude", "ro"}, {".cache/claude", "rw"}, {".local/state/claude", "rw"},
 		{".local/share/claude", "ro"},
 	},
@@ -97,6 +107,11 @@ var Harness = map[string][]homePath{
 		{".local/state/opencode", "rw"}, {".cache/opencode", "ro"},
 	},
 	"sprig": {{".local/share/sprig", "ro"}},
+	"hermes": {
+		{".hermes", "ro"}, {".hermes/sessions", "rw"}, {".hermes/logs", "rw"}, {".hermes/memories", "rw"},
+		{".hermes/auth.json", "rw"}, {".hermes/state.db", "rw"}, {".hermes/state.db-wal", "rw"},
+		{".hermes/state.db-shm", "rw"},
+	},
 }
 
 // ClaudeProjectNameMax is fence.CLAUDE_PROJECT_NAME_MAX: past it Claude
@@ -174,6 +189,11 @@ func merge(a, b string) string {
 }
 
 func norm(p string) string { return path.Clean(p) }
+
+// Norm and Covers are fence.norm and fence.covers (a is b or an ancestor of b).
+func Norm(p string) string { return norm(p) }
+
+func Covers(a, b string) bool { return covers(a, b) }
 
 // Expand is fence.expand: ~ and ~/ to home, a relative path joined to base.
 func Expand(p, home, base string) string { return expand(p, home, base) }
@@ -356,12 +376,24 @@ func Plan(in Input) Output {
 			stateDirs = appendUniq(stateDirs, d)
 		}
 	}
+	// The memory stores hold every conversation: shut like a secret, read
+	// and write (plan task 5).
+	// A data dir that is a link has a second spelling (StateExtra), and its
+	// stores close under that one too. A store that is itself a link comes in
+	// as a NeverExtra spelling.
 	state := append([]string{}, stateDirs...)
-	if in.GateRoot != "" {
-		state = appendUniq(state, norm(in.GateRoot))
+	if in.WardenRoot != "" {
+		state = appendUniq(state, norm(in.WardenRoot))
 	}
+	storeDirs := append([]string{}, stateDirs...)
 	for _, x := range in.StateExtra {
 		state = appendUniq(state, norm(x))
+		storeDirs = appendUniq(storeDirs, norm(x))
+	}
+	for _, d := range storeDirs {
+		for _, m := range Memory {
+			secrets = appendUniq(secrets, d+"/"+m)
+		}
 	}
 	sort.Strings(secrets)
 	sort.Strings(homeSecrets)
@@ -441,7 +473,7 @@ func Plan(in Input) Output {
 		}
 		if mode != "ro" {
 			if s := stateHit(p); s != "" {
-				out.Refusals = append(out.Refusals, who+" "+p+" would let the agent write the gate's state under "+s+
+				out.Refusals = append(out.Refusals, who+" "+p+" would let the agent write the warden's state under "+s+
 					". Name another directory, or run with --no-fence.")
 				return
 			}
@@ -456,7 +488,7 @@ func Plan(in Input) Output {
 		}
 		if mode == "rw" {
 			if s := stateHit(p); s != "" {
-				out.Refusals = append(out.Refusals, "--allow "+p+" would let the agent write the gate's state under "+s+
+				out.Refusals = append(out.Refusals, "--allow "+p+" would let the agent write the warden's state under "+s+
 					". Name another directory, or run with --no-fence.")
 				return
 			}
@@ -501,10 +533,21 @@ func Plan(in Input) Output {
 		projects := resolved(norm(home + "/.claude/projects"))
 		if name, ok := ClaudeProjectName(workspace); ok {
 			strict(projects+"/"+name, "rw", "the harness path")
+		} else if underAllow(projects, "rw") {
+			put(projects, "rw")
 		} else {
-			strict(projects, "rw", "the harness path")
-			out.Notes = append(out.Notes, "the fence cannot name Claude's project dir for this workspace; "+
-				"~/.claude/projects stays writable, the memory of every project with it.")
+			// Granting all of projects/ would open every project's chats
+			// (Pando fix 2, G7): refuse, unless --allow names it.
+			out.Refusals = append(out.Refusals, "the fence cannot name Claude's project dir for this workspace (its path is not ASCII or is "+
+				"longer than 200 bytes), and granting ~/.claude/projects would open the chats of every project. "+
+				"Use a shorter ASCII path, --allow ~/.claude/projects:rw, or --no-fence.")
+		}
+	}
+	// A linked git worktree keeps its index in a gitdir and its objects and
+	// refs in the repo's common dir, both outside the workspace (G2).
+	for _, d := range in.GitDirs {
+		if strings.HasPrefix(d, "/") {
+			strict(norm(d), "rw", "the git dir")
 		}
 	}
 	for _, d := range in.PathDirs {
@@ -518,11 +561,11 @@ func Plan(in Input) Output {
 		}
 	}
 	for _, d := range stateDirs {
-		put(d+"/gate", "sock")
+		put(d+"/warden", "sock")
 		put(d+"/config.yaml", "ro")
 	}
-	if in.GateRoot != "" {
-		put(norm(in.GateRoot), "sock")
+	if in.WardenRoot != "" {
+		put(norm(in.WardenRoot), "sock")
 	}
 
 	wide := append(append([]string{}, socketWide...), homes...)
@@ -572,7 +615,7 @@ sockets:
 			case secretHit(pre) != "":
 				out.Notes = append(out.Notes, "envelope "+kind.key+" "+pat+": would reach a secret directory; dropped.")
 			case kind.mode == "rw" && stateHit(pre) != "":
-				out.Notes = append(out.Notes, "envelope "+kind.key+" "+pat+": would reach the gate's state; dropped.")
+				out.Notes = append(out.Notes, "envelope "+kind.key+" "+pat+": would reach the warden's state; dropped.")
 			default:
 				put(pre, kind.mode)
 				continue pats
@@ -621,21 +664,30 @@ func NewGuard(in Input) *Guard {
 		env = map[string]string{}
 	}
 	g := &Guard{}
+	var dataDirs []string
 	for _, h := range Homes(in.Home, in.OtherHomes) {
 		for _, s := range Secrets {
 			g.secrets = appendUniq(g.secrets, norm(h+"/"+s))
 		}
 		g.secrets = append(g.secrets, CoppiceDirs(env, h)...)
-		g.state = append(g.state, DataDirs(env, h)...)
+		dataDirs = append(dataDirs, DataDirs(env, h)...)
 	}
 	for _, x := range in.NeverExtra {
 		g.secrets = append(g.secrets, norm(x))
 	}
-	if in.GateRoot != "" {
-		g.state = append(g.state, norm(in.GateRoot))
+	g.state = append(g.state, dataDirs...)
+	if in.WardenRoot != "" {
+		g.state = append(g.state, norm(in.WardenRoot))
 	}
 	for _, x := range in.StateExtra {
 		g.state = append(g.state, norm(x))
+		dataDirs = append(dataDirs, norm(x))
+	}
+	// The memory stores, under each data dir as spelled and as resolved.
+	for _, d := range dataDirs {
+		for _, m := range Memory {
+			g.secrets = append(g.secrets, d+"/"+m)
+		}
 	}
 	return g
 }
@@ -652,7 +704,7 @@ func (g *Guard) Check(real, mode, spelled string) string {
 	if mode == "rw" || mode == "rw+unix" {
 		for _, s := range g.state {
 			if covers(real, s) || covers(s, real) {
-				return "the rule " + spelled + " now resolves to " + real + ", inside the gate's state under " + s +
+				return "the rule " + spelled + " now resolves to " + real + ", inside the warden's state under " + s +
 					". Nothing was run."
 			}
 		}

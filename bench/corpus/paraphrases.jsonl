@@ -1,7 +1,7 @@
 {"id":"p01","of":"t01","task":"write a unit test that covers shell decomposition"}
 {"id":"p02","of":"t02","task":"upgrade the base image in the dockerfile to bookworm"}
 {"id":"p03","of":"t03","task":"give me a summary of the ten most recent journal traces"}
-{"id":"p04","of":"t04","task":"repair the intermittent failure in the gateway streaming test"}
+{"id":"p04","of":"t04","task":"repair the intermittent failure in the router streaming test"}
 {"id":"p05","of":"t05","task":"show the files over ten megabytes inside the build directory"}
 {"id":"p06","of":"t06","task":"draft release notes for the 0.44 release"}
 {"id":"p07","of":"t07","task":"replace the registry signing key with a new one"}

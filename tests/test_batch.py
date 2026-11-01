@@ -172,10 +172,10 @@ async def test_prove_footprint_rejects_binding_that_changes_capability_head(tmp_
 
 
 async def test_prove_footprint_uses_concrete_matcher_not_z3_glob(tmp_path):
-    """Soundness crux: the proof must match the runtime gate exactly. A write in
+    """Soundness crux: the proof must match the runtime warden exactly. A write in
     a sub-directory is admitted by subsumption's Z3 glob encoding (single ``*``
     crosses ``/``, no normalization) but *rejected* by the concrete
-    ``_path_matches_any`` the executor gate uses. The batch proof must reject it —
+    ``_path_matches_any`` the executor warden uses. The batch proof must reject it —
     else it would admit-then-reject, a bypass. F is broadened to isolate the
     envelope check from the under-declaration check."""
     out = tmp_path / "out"

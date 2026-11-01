@@ -2,7 +2,7 @@
 // Context Protocol — JSON-RPC 2.0 on stdio. This is Design C, the pi-claude-bridge
 // pattern: the DRIVER does the reasoning and emits native tool calls; sprig
 // executes them. The whole point is the routing — every tools/call runs through
-// the SAME gated Executor, so Claude drives but sprig's boundary still rules.
+// the SAME checked Executor, so Claude drives but sprig's boundary still rules.
 package mcp
 
 import (
@@ -17,13 +17,13 @@ import (
 // protocolVersion is the MCP revision sprig's server speaks in its handshake.
 const protocolVersion = "2024-11-05"
 
-// Server answers MCP requests by running tool calls through a gated Executor.
+// Server answers MCP requests by running tool calls through a checked Executor.
 type Server struct {
 	exec *sprig.Executor
 	name string
 }
 
-// NewServer wraps a gated Executor as an MCP tool server.
+// NewServer wraps a checked Executor as an MCP tool server.
 func NewServer(exec *sprig.Executor) *Server {
 	return &Server{exec: exec, name: "sprig"}
 }
@@ -134,6 +134,9 @@ func objectSchema(required []string, fields ...string) map[string]any {
 	for _, f := range fields {
 		props[f] = map[string]any{"type": "string"}
 	}
+	if required == nil {
+		required = []string{} // never null: MCP wants an array
+	}
 	return map[string]any{"type": "object", "properties": props, "required": required}
 }
 
@@ -168,7 +171,7 @@ func (s *Server) toolsCall(params json.RawMessage) any {
 	isErr := false
 	switch {
 	case !res.Allowed:
-		text, isErr = "REFUSED by the gate: "+res.Reason, true
+		text, isErr = "REFUSED by the warden: "+res.Reason, true
 	case res.Err != nil:
 		text, isErr = "error: "+res.Err.Error(), true
 		if res.Output != "" {

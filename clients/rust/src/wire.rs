@@ -11,7 +11,14 @@ const CONFORMANCE_VERSION: u64 = 1;
 
 #[allow(clippy::large_enum_variant)] // one value per stdin line; not a hot allocation path
 pub enum CaseBody {
-    Verify { plan: ActionPlan, envelope: Envelope, strict: Option<bool>, pin: Option<String>, base: Option<String> },
+    Verify {
+        plan: ActionPlan,
+        envelope: Envelope,
+        strict: Option<bool>,
+        pin: Option<String>,
+        base: Option<String>,
+        fenced: bool,
+    },
     Decompose { command: String },
 }
 
@@ -31,7 +38,8 @@ fn parse_case(v: &Value) -> Result<(String, CaseBody), String> {
             let strict = v.get("options").and_then(|o| o.get("strict")).and_then(|s| s.as_bool());
             let pin = v.get("options").and_then(|o| o.get("dialect_pin")).and_then(|s| s.as_str()).map(String::from);
             let base = v.get("options").and_then(|o| o.get("dialect_base")).and_then(|s| s.as_str()).map(String::from);
-            Ok((id, CaseBody::Verify { plan, envelope, strict, pin, base }))
+            let fenced = v.get("options").and_then(|o| o.get("fenced")).and_then(|s| s.as_bool()).unwrap_or(false);
+            Ok((id, CaseBody::Verify { plan, envelope, strict, pin, base, fenced }))
         }
         "decompose" => {
             let command = v.get("command").and_then(|x| x.as_str()).ok_or("decompose case missing 'command'")?.to_string();
@@ -65,7 +73,15 @@ pub fn handle_line(line: &str, shell_parser: &mut ShellParser) -> Value {
                     json!({"id": id, "ok": false})
                 }
             }
-            CaseBody::Verify { plan, envelope, strict, pin, base } => match verify::verify_pin(&plan, &envelope, strict, pin.as_deref(), base.as_deref(), shell_parser) {
+            CaseBody::Verify { plan, envelope, strict, pin, base, fenced } => match verify::verify_fenced(
+                &plan,
+                &envelope,
+                strict,
+                pin.as_deref(),
+                base.as_deref(),
+                fenced,
+                shell_parser,
+            ) {
                 Ok(outcome) => {
                     let violations: Vec<Value> = outcome
                         .violations

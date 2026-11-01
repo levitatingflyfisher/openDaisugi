@@ -52,28 +52,28 @@ class Config(BaseModel):
     # False = declined. Distillation only ever affects *efficiency* (the guard
     # enforces safety regardless), so it is safe to automate once consented.
     auto_tend: bool | None = None
-    # ADR-0015: a qualified local model for the gateway's local rung — easy
+    # ADR-0015: a qualified local model for the router's local rung — easy
     # turns route here ahead of any cloud downgrade (zero quota; cache
     # stickiness never blocks the local rung). None = no local rung. Set it to
     # the model id `daisugi tiers setup` qualified, and start the proxy with
-    # `daisugi gateway` (the flag --local-model overrides per run).
-    gateway_local_model: str | None = None
-    # Which chooser picks the model for each gateway turn. "rules" is the
+    # `daisugi router serve` (the flag --local-model overrides per run).
+    router_local_model: str | None = None
+    # Which chooser picks the model for each router turn. "rules" is the
     # built-in heuristic with no dependency. "switchyard" hands the choice to
-    # NVIDIA NeMo Switchyard, which `daisugi gateway` starts as a managed
+    # NVIDIA NeMo Switchyard, which `daisugi router serve` starts as a managed
     # child on loopback. "off" forwards every turn unchanged and only meters
-    # it. `daisugi gateway` reads this field once when it starts. A change
-    # here needs a restart of the gateway, unlike gateway_local_model.
-    gateway_router: str = "rules"  # rules | switchyard | knn | model | off
-    # The model that picks for gateway_router: model, from the allowed names.
-    gateway_router_model: str | None = None
+    # it. `daisugi router serve` reads this field once when it starts. A change
+    # here needs a restart of the router, unlike router_local_model.
+    routing_mode: str = "rules"  # rules | switchyard | knn | model | off
+    # The model that picks for routing_mode: model, from the allowed names.
+    routing_model: str | None = None
     # A model that grades each finished turn good or bad ("off" or unset: none).
     # The grade is written to the outcome table, above the automatic labels.
-    gateway_grader: str | None = None
-    # The route id the gateway sends as `model` to select the Switchyard
+    router_grader: str | None = None
+    # The route id the router sends as `model` to select the Switchyard
     # route. Switchyard wants the route id, never a real model name.
     switchyard_route_id: str = "daisugi"
-    # The two target ids of the Switchyard route. The gateway meters a turn
+    # The two target ids of the Switchyard route. The router meters a turn
     # by comparing the served target that Switchyard names against these ids.
     switchyard_capable_model: str = "claude-sonnet-5"
     # None until you name a cheaper model for the efficient tier. A local
@@ -81,7 +81,7 @@ class Config(BaseModel):
     # recorded. A claude-* id runs on the Anthropic API.
     switchyard_efficient_model: str | None = None
     # Every Switchyard cloud tier forwards your own login by default, as the
-    # gateway does without Switchyard. Name an environment variable here to
+    # router does without Switchyard. Name an environment variable here to
     # make every cloud tier use that key instead. That key is billed per token.
     switchyard_api_key_env: str | None = None
     # ADR-0010 compound-shell decomposition, persisted so it also reaches the
@@ -92,32 +92,32 @@ class Config(BaseModel):
 
     # --- module-selection knobs (see opendaisugi.swap / `daisugi modules`) -----
     # These make the pipeline's stages configurable. Two of them the running
-    # code actually reads (shell_allow_decomposition above; gate_mode below when
+    # code actually reads (shell_allow_decomposition above; warden_mode below when
     # the hook does not force --mode); the rest are RECORDED PREFERENCES the hot
     # path does not consume yet — the GUI marks them "not yet enforced". They
     # declare intent and are the wiring seam for the alternative; the current
     # implementation (python / MiniLM / evidence-inferred) runs regardless.
 
-    # Gate verdict mode used ONLY as the fallback when the installed hook command
+    # Warden verdict mode used ONLY as the fallback when the installed hook command
     # does not pass --mode. The hook DOES pass --mode explicitly today (the one
     # thing the agent cannot rewrite), so the flag always wins and this never
     # weakens the authorization boundary; it drives the verdict only for entries
     # invoked without the flag. The import-failure `|| exit 2` backstop is
     # install-time — full enforce still needs `daisugi install --enforce`.
-    gate_mode: str = "audit"  # audit | enforce
+    warden_mode: str = "audit"  # audit | enforce
 
-    # Whether an installed gate hook hands a would-deny to a present operator
+    # Whether an installed warden hook hands a would-deny to a present operator
     # (Task 8, `_maybe_ask`) before letting it stand. Declared here for
-    # completeness, not consulted at hook-evaluation time the way `gate_mode`
+    # completeness, not consulted at hook-evaluation time the way `warden_mode`
     # is: `--ask` is baked into the installed command at `daisugi install
-    # --gate --ask`, a static argv the agent cannot rewrite, and it must stay
-    # that way — unlike `gate_mode`'s narrow, explicitly-documented fallback,
+    # --enforce --ask`, a static argv the agent cannot rewrite, and it must stay
+    # that way — unlike `warden_mode`'s narrow, explicitly-documented fallback,
     # letting a writable config.yaml silently turn on an operator hand-off
     # for an already-installed hook would be the exact authority leak
-    # `gate_mode`'s own precedence rule exists to prevent.
-    gate_ask: bool = False
+    # `warden_mode`'s own precedence rule exists to prevent.
+    warden_ask: bool = False
 
-    # The system dialect hash the gate enforces (`daisugi gate status` shows
+    # The system dialect hash the warden enforces (`daisugi warden status` shows
     # it). None is audit: an invariant whose type names a word (such as
     # file_unchanged) is evaluated, and a would-deny is only recorded. The
     # hash equal to this build's dialect enforces the words. Any other hash
@@ -178,7 +178,7 @@ class Config(BaseModel):
     # Floor-report preference (spec-01/06). Herdr's own liveness is
     # detected from the installed Stop/Notification hooks, not this field
     # — it only matters for coppice, which isn't built yet (spec-02):
-    # `daisugi install --gate --report coppice` records the intent here so
+    # `daisugi install --report coppice` records the intent here so
     # `daisugi modules` can show it honestly ahead of the harness existing.
     floor_report: str | None = None  # None | herdr | coppice
 
@@ -231,6 +231,37 @@ def load_config(path: Path | None = None) -> Config:
     return Config(**filtered)
 
 
+# The six config keys the rename moved. Read once, by `daisugi install` (to
+# rewrite the owner's file) and by `warden status` (to name a stale key). The
+# loader itself does not accept an old key.
+RENAMED_CONFIG_KEYS: tuple[tuple[str, str], ...] = (
+    ("gateway_router_model", "routing_model"),  # names-ok: old key
+    ("gateway_local_model", "router_local_model"),  # names-ok: old key
+    ("gateway_router", "routing_mode"),  # names-ok: old key
+    ("gateway_grader", "router_grader"),  # names-ok: old key
+    ("gate_mode", "warden_mode"),  # names-ok: old key
+    ("gate_ask", "warden_ask"),  # names-ok: old key
+)
+
+
+def stale_config_keys(path: Path | None = None) -> list[tuple[str, str]]:
+    """The (old, new) pairs for each renamed key still in the config file.
+
+    The loader drops an unknown key without a word, so a stale
+    ``warden_mode`` spelled the old way would turn enforce off in silence.
+    This reads the file again to name each such key.
+    """
+    if path is None:
+        path = data_home() / "config.yaml"
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(raw, dict):
+        return []
+    return [(old, new) for old, new in RENAMED_CONFIG_KEYS if old in raw]
+
+
 def save_config(config: Config, path: Path | None = None) -> None:
     """Write ``config`` to ``path`` as YAML, creating parent dirs if needed.
 
@@ -274,27 +305,27 @@ def ensure_auto_tend_consent(
     return decided
 
 
-# A gate hook command is found by its words, never by a substring, so a
-# foreign hook such as `opendaisugi.gateway-watch`, or a `--mode` inside a
+# A warden hook command is found by its words, never by a substring, so a
+# foreign hook such as `opendaisugi.router-watch`, or a `--mode` inside a
 # quoted path, is not taken for ours. The command is split as the shell
 # splits it (quotes, backslashes, `;` `|` `&` runs as their own words), each
-# simple command is read on its own, and these forms are a gate hook:
+# simple command is read on its own, and these forms are a warden hook:
 #
-#   [NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.gate[_client] ARGS
-#   [NAME=val ...] .../daisugi gate check ARGS            (the Go binary)
-#   [NAME=val ...] <any program> gate check ARGS, where the NAME=val words
+#   [NAME=val ...] [env [opts] [NAME=val ...]] [uv run [opts]] python*|py [flags] -m opendaisugi.warden[_client] ARGS
+#   [NAME=val ...] .../daisugi warden check ARGS            (the Go binary)
+#   [NAME=val ...] <any program> warden check ARGS, where the NAME=val words
 #     hold the marker below and ARGS hold each flag the installer always
 #     writes (a binary installed under another file name)
 #   sh|bash|dash|zsh|ksh [opts] -c '<one of the above>'
 #
-# A command whose words hold `opendaisugi.gate[_client]` (alone, or joined
-# to `-m`) in any other form is an unknown gate hook: it may gate, but this
+# A command whose words hold `opendaisugi.warden[_client]` (alone, or joined
+# to `-m`) in any other form is an unknown warden hook: it may warden, but this
 # CLI cannot read its mode, so status says so and uninstall refuses it.
-GATE_HOOK_MARKER = "DAISUGI_GATE_HOOK=opendaisugi.gate"
-_GATE_MODULES = ("opendaisugi.gate", "opendaisugi.gate_client")
+WARDEN_HOOK_MARKER = "DAISUGI_WARDEN_HOOK=opendaisugi.warden"
+_WARDEN_MODULES = ("opendaisugi.warden", "opendaisugi.warden_client")
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _PYTHON = re.compile(r"^(python[0-9.]*|py)$")  # py: the launcher name
-_JOINED_MODULE = re.compile(r"^-[A-Za-z]*m(opendaisugi\.gate(_client)?)$")
+_JOINED_MODULE = re.compile(r"^-[A-Za-z]*m(opendaisugi\.warden(_client)?)$")
 _SHELLS = ("sh", "bash", "dash", "zsh", "ksh")
 _PY_NOARG_FLAGS = "bBdEhiIOPqRsSuvx"
 _ENV_VALUE_OPTS = ("-u", "--unset", "-C", "--chdir")
@@ -403,7 +434,7 @@ def _skip_env(words: list[str]) -> list[str]:
 
 
 def _python_module_args(words: list[str]) -> list[str] | None:
-    """For `python* [flags] -m MODULE ARGS`, the words after a gate MODULE."""
+    """For `python* [flags] -m MODULE ARGS`, the words after a warden MODULE."""
     i = 1
     while i < len(words):
         w = words[i]
@@ -428,24 +459,24 @@ def _python_module_args(words: list[str]) -> list[str] | None:
                 break
             return None  # -c code, or a flag this reader does not model
         if module is not None:
-            return words[i + 1 :] if module in _GATE_MODULES else None
+            return words[i + 1 :] if module in _WARDEN_MODULES else None
         i += 1
     return None
 
 
-def _binary_gate_args(seg: list[str]) -> list[str] | None:
-    """For `[NAME=val ...] PROGRAM gate check ARGS`, the ARGS when the
+def _binary_warden_args(seg: list[str]) -> list[str] | None:
+    """For `[NAME=val ...] PROGRAM warden check ARGS`, the ARGS when the
     program is named daisugi, or when the installer wrote the command: the
     marker is among the leading NAME=val words and ARGS hold each flag the
     installer always writes. None otherwise. A binary may be installed under
     any file name, so the name alone does not decide."""
     words = _skip_env(seg)
-    if len(words) < 3 or words[1:3] != ["gate", "check"]:
+    if len(words) < 3 or words[1:3] != ["warden", "check"]:
         return None
     args = words[3:]
     if _base(words[0]) == "daisugi":
         return args
-    if GATE_HOOK_MARKER not in seg[: len(seg) - len(words)]:
+    if WARDEN_HOOK_MARKER not in seg[: len(seg) - len(words)]:
         return None
     for flag in _INSTALLED_FLAGS:
         if not any(w == flag or w.startswith(flag + "=") for w in args):
@@ -453,9 +484,9 @@ def _binary_gate_args(seg: list[str]) -> list[str] | None:
     return args
 
 
-def _segment_gate_args(words: list[str], depth: int) -> tuple[str | None, list[str] | None]:
-    """("gate", args), ("unknown", None) or (None, None) for one simple command."""
-    binary_args = _binary_gate_args(words)
+def _segment_warden_args(words: list[str], depth: int) -> tuple[str | None, list[str] | None]:
+    """("warden", args), ("unknown", None) or (None, None) for one simple command."""
+    binary_args = _binary_warden_args(words)
     words = _skip_env(words)
     if len(words) >= 2 and _base(words[0]) == "uv" and words[1] == "run":
         words = words[2:]
@@ -468,61 +499,61 @@ def _segment_gate_args(words: list[str], depth: int) -> tuple[str | None, list[s
     if words and _PYTHON.match(_base(words[0])):
         args = _python_module_args(words)
         if args is not None:
-            return "gate", args
-    elif len(words) >= 3 and _base(words[0]) == "daisugi" and words[1:3] == ["gate", "check"]:
-        return "gate", words[3:]
+            return "warden", args
+    elif len(words) >= 3 and _base(words[0]) == "daisugi" and words[1:3] == ["warden", "check"]:
+        return "warden", words[3:]
     elif binary_args is not None:
-        return "gate", binary_args
+        return "warden", binary_args
     elif words and _base(words[0]) in _SHELLS and depth < _MAX_SHELL_DEPTH:
         for i, w in enumerate(words[1:], start=1):
             if not w.startswith("-") or w.startswith("--"):
                 break
             if "c" in w[1:] and i + 1 < len(words):
-                return _gate_hook(words[i + 1], depth + 1)
-    if any(w in _GATE_MODULES or _JOINED_MODULE.match(w) for w in words):
+                return _warden_hook(words[i + 1], depth + 1)
+    if any(w in _WARDEN_MODULES or _JOINED_MODULE.match(w) for w in words):
         return "unknown", None
     return None, None
 
 
-def _gate_hook(command: str, depth: int = 0) -> tuple[str | None, list[str] | None]:
+def _warden_hook(command: str, depth: int = 0) -> tuple[str | None, list[str] | None]:
     tokens = command_tokens(command)
     if tokens is None:
-        return ("unknown", None) if "opendaisugi.gate" in command else (None, None)
+        return ("unknown", None) if "opendaisugi.warden" in command else (None, None)
     unknown = False
     for seg in _segments(tokens):
-        kind, args = _segment_gate_args(seg, depth)
-        if kind == "gate":
+        kind, args = _segment_warden_args(seg, depth)
+        if kind == "warden":
             return kind, args
         unknown = unknown or kind == "unknown"
     return ("unknown", None) if unknown else (None, None)
 
 
-def gate_hook_kind(command: object) -> str | None:
-    """ "gate", "unknown" (holds the gate module in a form not read), or None."""
+def warden_hook_kind(command: object) -> str | None:
+    """ "warden", "unknown" (holds the warden module in a form not read), or None."""
     if not isinstance(command, str):
         return None
-    return _gate_hook(command)[0]
+    return _warden_hook(command)[0]
 
 
-def gate_hook_args(command: object) -> list[str] | None:
-    """The words after the gate entry point, up to the end of its simple
-    command, or None if ``command`` is not a gate hook in a form read."""
+def warden_hook_args(command: object) -> list[str] | None:
+    """The words after the warden entry point, up to the end of its simple
+    command, or None if ``command`` is not a warden hook in a form read."""
     if not isinstance(command, str):
         return None
-    kind, args = _gate_hook(command)
-    return args if kind == "gate" else None
+    kind, args = _warden_hook(command)
+    return args if kind == "warden" else None
 
 
-def gate_hook_mode(command: object) -> str | None:
-    """The ``--mode`` a gate hook passes (argparse: the last one wins), or
-    None if the command is not a gate hook or names no valid mode."""
-    mode = _gate_hook_mode_word(command)
+def warden_hook_mode(command: object) -> str | None:
+    """The ``--mode`` a warden hook passes (argparse: the last one wins), or
+    None if the command is not a warden hook or names no valid mode."""
+    mode = _warden_hook_mode_word(command)
     return mode if mode in ("audit", "enforce") else None
 
 
-def _gate_hook_mode_word(command: object) -> str | None:
-    """The last ``--mode`` word a gate hook passes, valid or not."""
-    args = gate_hook_args(command)
+def _warden_hook_mode_word(command: object) -> str | None:
+    """The last ``--mode`` word a warden hook passes, valid or not."""
+    args = warden_hook_args(command)
     if args is None:
         return None
     mode = None
@@ -535,13 +566,13 @@ def _gate_hook_mode_word(command: object) -> str | None:
 
 
 def is_stale_mode_hook(command: object) -> bool:
-    """True for a gate hook that passes ``--mode shadow``, the old name of
-    audit mode. The gate refuses that word, so the hook denies every call."""
-    return _gate_hook_mode_word(command) == "shadow"
+    """True for a warden hook that passes ``--mode shadow``, the old name of
+    audit mode. The warden refuses that word, so the hook denies every call."""
+    return _warden_hook_mode_word(command) == "shadow"
 
 
 def stale_mode_hooks(settings_path: Path) -> bool:
-    """True when the settings file holds a PreToolUse gate hook that passes
+    """True when the settings file holds a PreToolUse warden hook that passes
     ``--mode shadow``. Anything not in the usual shape is skipped."""
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -559,12 +590,38 @@ def stale_mode_hooks(settings_path: Path) -> bool:
 
 
 def stale_mode_warning(settings_path: Path) -> str:
-    """What `gate status` says about a gate hook that passes --mode shadow."""
+    """What `warden status` says about a warden hook that passes --mode shadow."""
     return (
-        f"warning: the gate hook in {settings_path} passes --mode shadow, which is now "
-        "--mode audit, so the gate refuses every call. Run: daisugi install --gate --uninstall, "
-        "then daisugi install --gate"
+        f"warning: the warden hook in {settings_path} passes --mode shadow, which is now "
+        "--mode audit, so the warden refuses every call. Run: daisugi install --uninstall, "
+        "then daisugi install"
     )
+
+
+#: The names a daisugi entry point goes by. An exact set: a user's own wrapper
+#: such as ``daisugi-local`` is not ours and is never rewritten or removed.
+ENTRY_NAMES = frozenset({"daisugi", "daisugi-py", "daisugi-go", "daisugi-rs"})
+
+
+def is_entry_name(word: object) -> bool:
+    """True when the last path part of ``word`` is one of ENTRY_NAMES."""
+    return isinstance(word, str) and _base(word) in ENTRY_NAMES
+
+
+def record_hook_programs(command: object) -> list[str]:
+    """The program word of each ``daisugi hook record`` segment of a command,
+    after any ``NAME=val`` and ``env`` prefix. Empty for any other command."""
+    if not isinstance(command, str):
+        return []
+    tokens = command_tokens(command)
+    if not tokens:
+        return []
+    out: list[str] = []
+    for seg in _segments(tokens):
+        words = _skip_env(seg)
+        if len(words) >= 3 and is_entry_name(words[0]) and words[1:3] == ["hook", "record"]:
+            out.append(words[0])
+    return out
 
 
 def is_record_hook(command: object, event: str | None = None) -> bool:
@@ -577,7 +634,7 @@ def is_record_hook(command: object, event: str | None = None) -> bool:
         return False
     for seg in _segments(tokens):
         words = _skip_env(seg)
-        if len(words) < 3 or _base(words[0]) != "daisugi" or words[1:3] != ["hook", "record"]:
+        if len(words) < 3 or not is_entry_name(words[0]) or words[1:3] != ["hook", "record"]:
             continue
         if event is None:
             return True
@@ -653,13 +710,13 @@ def unknown_config_keys(path: Path) -> list[str]:
 
 
 def installed_hook_mode(settings_path: Path) -> str | None:
-    """The ``--mode`` the installed Claude Code gate hook passes, or None if no hook.
+    """The ``--mode`` the installed Claude Code warden hook passes, or None if no hook.
 
-    ``"unknown"`` when a gate hook is in a form this CLI does not read and no
+    ``"unknown"`` when a warden hook is in a form this CLI does not read and no
     read hook enforces: it may enforce, so it is never reported as audit.
 
     The hook command is the one thing the agent cannot rewrite, so this is the
-    mode that actually governs verdicts on the Claude path (gate.resolve_gate_mode).
+    mode that actually governs verdicts on the Claude path (warden.resolve_warden_mode).
     """
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -670,22 +727,22 @@ def installed_hook_mode(settings_path: Path) -> str | None:
     for entry in (data.get("hooks") or {}).get("PreToolUse") or []:
         for hook in entry.get("hooks") or []:
             command = hook.get("command")
-            if gate_hook_kind(command) == "unknown" or is_stale_mode_hook(command):
+            if warden_hook_kind(command) == "unknown" or is_stale_mode_hook(command):
                 # A --mode shadow hook denies every call, so it counts as
                 # a hook that may enforce, never as audit.
                 unknown = True
-            mode = gate_hook_mode(command)
+            mode = warden_hook_mode(command)
             if mode and first is None:
                 first = mode
-    # A gate hook in a form not read may enforce: only a read enforce hook
+    # A warden hook in a form not read may enforce: only a read enforce hook
     # outranks it, never a read audit one.
     if first == "enforce":
         return first
     return "unknown" if unknown else first
 
 
-def gate_hook_program(command: object) -> str | None:
-    """The program of a gate hook in the ``daisugi gate check`` form (the
+def warden_hook_program(command: object) -> str | None:
+    """The program of a warden hook in the ``daisugi warden check`` form (the
     form the Go and Rust installs write, under any file name), or None for
     any other command."""
     if not isinstance(command, str):
@@ -694,13 +751,13 @@ def gate_hook_program(command: object) -> str | None:
     if tokens is None:
         return None
     for seg in _segments(tokens):
-        if _binary_gate_args(seg) is not None:
+        if _binary_warden_args(seg) is not None:
             return _skip_env(seg)[0]
     return None
 
 
 def missing_hook_programs(settings_path: Path) -> list[tuple[str, str | None]]:
-    """(program, mode) for each gate hook in the settings file whose program
+    """(program, mode) for each warden hook in the settings file whose program
     is an absolute path that is not there, such as a binary a package
     manager removed on upgrade. That hook fails on every call. Anything the
     file holds that is not the usual shape is skipped, never raised."""
@@ -715,36 +772,36 @@ def missing_hook_programs(settings_path: Path) -> list[tuple[str, str | None]]:
         hs = entry.get("hooks") if isinstance(entry, dict) else None
         for hook in hs if isinstance(hs, list) else []:
             command = hook.get("command") if isinstance(hook, dict) else None
-            prog = gate_hook_program(command)
+            prog = warden_hook_program(command)
             if prog and prog.startswith("/") and not os.path.exists(prog):
-                item = (prog, gate_hook_mode(command))
+                item = (prog, warden_hook_mode(command))
                 if item not in out:
                     out.append(item)
     return out
 
 
 def missing_hook_warning(settings_path: Path, prog: str, mode: str | None) -> str:
-    """What `gate status` says about a gate hook whose program is gone."""
+    """What `warden status` says about a warden hook whose program is gone."""
     if mode == "enforce":
         return (
-            f"warning: the gate hook in {settings_path} runs {prog}, which does not exist, "
-            "so every call is denied. Run: daisugi install --gate --enforce"
+            f"warning: the warden hook in {settings_path} runs {prog}, which does not exist, "
+            "so every call is denied. Run: daisugi install --enforce"
         )
     return (
-        f"warning: the gate hook in {settings_path} runs {prog}, which does not exist, "
-        "so the gate sees no call. Run: daisugi install --gate"
+        f"warning: the warden hook in {settings_path} runs {prog}, which does not exist, "
+        "so the warden sees no call. Run: daisugi install"
     )
 
 
-# "unknown" is a gate hook in a form this CLI does not read: it may enforce.
+# "unknown" is a warden hook in a form this CLI does not read: it may enforce.
 _STRICTNESS = {"enforce": 3, "unknown": 2, "audit": 1}
 
 
 @dataclass(frozen=True)
 class EffectiveHook:
-    """The gate hook mode across the two files a hook can live in.
+    """The warden hook mode across the two files a hook can live in.
 
-    ``daisugi install --gate`` writes a machine-global hook to
+    ``daisugi install`` writes a machine-global hook to
     ``~/.claude/settings.json`` (no ``--session``, so it resolves to the shared
     ``default`` envelope). ``daisugi start`` (plan 5) writes a hook scoped to
     ``<cwd>/.claude/settings.json``. Claude Code fires PreToolUse hooks from
@@ -773,7 +830,7 @@ def effective_hook_mode(*, home: Path, cwd: Path) -> EffectiveHook:
 
 
 def hook_source_label(eff: EffectiveHook) -> str:
-    """The ONE vocabulary every truth surface (`config`, `gate status`, the TUI
+    """The ONE vocabulary every truth surface (`config`, `warden status`, the TUI
     header) uses for where the effective hook mode came from: ``global`` (only
     ``~/.claude/settings.json``), ``project`` (only ``<cwd>/.claude/settings.json``
     — what `daisugi start` writes), ``project+global`` (both — the verdict is
@@ -802,7 +859,7 @@ def resolved_config(
 ) -> list[ResolvedField]:
     """Every Config field with its source, plus the two derived, load-bearing values.
 
-    ``gate_mode (resolved)`` is the EFFECTIVE mode across both a machine-global
+    ``warden_mode (resolved)`` is the EFFECTIVE mode across both a machine-global
     hook (``~/.claude/settings.json``) and a directory-scoped one
     (``<cwd>/.claude/settings.json``, what ``daisugi start`` writes) — never
     just the global one, or the source would silently under-report an active
@@ -875,13 +932,13 @@ def resolved_config(
     )
     eff = effective_hook_mode(home=home, cwd=cwd)
     if eff.mode:
-        out.append(ResolvedField("gate_mode (resolved)", eff.mode, hook_source_label(eff)))
+        out.append(ResolvedField("warden_mode (resolved)", eff.mode, hook_source_label(eff)))
         if eff.cwd_mode and eff.global_mode:
-            out.append(ResolvedField("gate_mode (project)", eff.cwd_mode, "project"))
-            out.append(ResolvedField("gate_mode (global)", eff.global_mode, "global"))
+            out.append(ResolvedField("warden_mode (project)", eff.cwd_mode, "project"))
+            out.append(ResolvedField("warden_mode (global)", eff.global_mode, "global"))
             out.append(
                 ResolvedField(
-                    "gate_mode (coexistence)",
+                    "warden_mode (coexistence)",
                     "both fire; the verdict is the intersection — either one enforcing denies",
                     "info",
                 )
@@ -889,7 +946,9 @@ def resolved_config(
     else:
         out.append(
             ResolvedField(
-                "gate_mode (resolved)", cfg.gate_mode, "file" if "gate_mode" in raw else "default"
+                "warden_mode (resolved)",
+                cfg.warden_mode,
+                "file" if "warden_mode" in raw else "default",
             )
         )
     return out

@@ -31,7 +31,7 @@ jobs:
       # hash differs fails the install, so a run never resolves fresh.
       # [dev] holds every light extra the suite needs. It leaves out
       # [search] (torch and the CUDA wheels) and [lora]/[robotics]; their
-      # tests are importorskip-gated.
+      # tests are importorskip-checked.
       - name: Install
         run: uv sync --locked --extra dev
 
@@ -42,7 +42,7 @@ jobs:
         run: uv run --no-sync ruff format --check .
 
       - name: Test (pytest)
-        # Smoke/calibration tests need a live LLM / `claude` binary and are gated by
+        # Smoke/calibration tests need a live LLM / `claude` binary and are checked by
         # env vars (DAISUGI_SMOKE / ANTHROPIC_API_KEY); they stay skipped in CI.
         # HF_HUB_OFFLINE: no test downloads a model; one that needs a model
         # the runner does not have skips.
@@ -50,11 +50,11 @@ jobs:
           HF_HUB_OFFLINE: "1"
         run: uv run --no-sync pytest -q
 
-      - name: Adversarial merge gate (roadmap Stage 3)
-        # The deterministic gate corpus is exactly reproducible, so any attack
-        # it fails to deny is a bug — this is the merge gate, run explicitly so
+      - name: Adversarial merge check (roadmap Stage 3)
+        # The deterministic warden corpus is exactly reproducible, so any attack
+        # it fails to deny is a bug — this is the merge check, run explicitly so
         # its role is legible in CI output rather than buried in the full suite.
         # Prints the published attack-denial / false-positive rates too.
         run: |
           uv run --no-sync pytest -q tests/test_adversarial.py
-          uv run --no-sync daisugi gate audit
+          uv run --no-sync daisugi warden audit

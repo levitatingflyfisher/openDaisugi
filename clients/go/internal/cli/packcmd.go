@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/catalog"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pack"
+	"daisugi-verify/internal/wardenroot"
 )
 
 var packHelp = `Usage: daisugi pack [OPTIONS] COMMAND [ARGS]...
@@ -68,7 +68,7 @@ func (e *Env) packCtx(dataDir string) (*pack.Ctx, error) {
 }
 
 func (e *Env) packDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	return wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 // packCmd is the `pack` group (cli.pack_app).
@@ -186,7 +186,7 @@ positional:
 	if len(rest) < 2 {
 		return e.usageArgs(cmd, "NAME JOB [ARGS]...", &usageError{"Missing argument 'JOB'."})
 	}
-	c, err := e.packCtx(gateroot.PathStr(dataDir))
+	c, err := e.packCtx(wardenroot.PathStr(dataDir))
 	if err != nil {
 		return e.fail(cmd, err)
 	}
@@ -242,7 +242,7 @@ func (e *Env) loraTrain(args []string) error {
 	if v, ok := flagValue(args, "--data-dir"); ok {
 		dataDir = v
 	}
-	dataDir = gateroot.PathStr(dataDir)
+	dataDir = wardenroot.PathStr(dataDir)
 	if _, ok := flagValue(args, "--base-model"); !ok {
 		base := inUse(dataDir)
 		if base == "" {

@@ -54,7 +54,7 @@ def test_onboard_dry_run_makes_no_llm_split_calls(tmp_path, monkeypatch):
     """--dry-run must make ZERO model calls.
 
     The parser's LLM episode-splitter fires for any episode over --max-tools, and
-    parsing runs before the dry-run gate — so a "discover + report only" run was
+    parsing runs before the dry-run check — so a "discover + report only" run was
     silently billing the user for `claude -p` splitting calls. Dry-run must
     disable the splitter.
     """

@@ -9,7 +9,7 @@ use crate::config::{self, Config, Found};
 /// PATH after every install but has no model of its own.
 fn needs_model_note(name: &str) -> &'static str {
     if name == "sprig" {
-        "  (needs a model: see docs/how-to/foreman-any-model.md)"
+        "  (needs a model: see docs/how-to/steward-any-model.md)"
     } else {
         ""
     }
@@ -27,6 +27,9 @@ pub fn first_run(
     if found.is_empty() {
         let _ = writeln!(out, "{}", config::APP_ONLY_NOTE);
         return Err(config::APP_ONLY_NOTE.into());
+    }
+    for n in config::found_notes(found) {
+        let _ = writeln!(out, "{n}");
     }
     let mut pick = &found[0];
     if found.len() == 1 {
@@ -101,7 +104,7 @@ mod tests {
     /// labels nothing else.
     #[test]
     fn only_sprig_is_labeled_as_needing_a_model() {
-        assert_eq!(needs_model_note("sprig"), "  (needs a model: see docs/how-to/foreman-any-model.md)");
+        assert_eq!(needs_model_note("sprig"), "  (needs a model: see docs/how-to/steward-any-model.md)");
         for name in ["claude", "codex", "pi", "opencode"] {
             assert_eq!(needs_model_note(name), "");
         }

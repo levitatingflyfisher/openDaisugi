@@ -18,16 +18,16 @@ def _mask(row: str) -> str:
 
 
 def test_a_stale_timestamp_age_and_its_cut_tail_are_masked():
-    row = "  › 1 foreman  claude  idle  497954… ×┃  claude"
-    assert _mask(row) == "  › 1 foreman  claude  idle  {AGE}  {CUT} ×┃  claude"
+    row = "  › 1 steward  claude  idle  497954… ×┃  claude"
+    assert _mask(row) == "  › 1 steward  claude  idle  {AGE}  {CUT} ×┃  claude"
 
 
 def test_a_normal_age_and_a_stale_one_mask_to_the_same_row():
-    stale = "  › 1 foreman  claude  idle  497954… ×┃  claude"
-    normal = "  › 1 foreman  claude  idle  3s  some long tail cut short here… ×┃  claude"
+    stale = "  › 1 steward  claude  idle  497954… ×┃  claude"
+    normal = "  › 1 steward  claude  idle  3s  some long tail cut short here… ×┃  claude"
     assert _mask(stale) == _mask(normal)
 
 
 def test_a_short_number_that_is_not_an_age_cell_is_not_masked():
-    row = "  › 1 foreman  claude  idle  1234… ×┃  claude"
+    row = "  › 1 steward  claude  idle  1234… ×┃  claude"
     assert "{AGE}" not in _mask(row)

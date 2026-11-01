@@ -13,6 +13,10 @@ Three files, all from the Python oracle:
   fixed set of globs, and the file-scope matcher's answer for each glob
   against a fixed set of normalized paths. The clients test their ports
   of ``glob_regex`` against it.
+- ``accesses.json``: the reads and writes (``write_paths.shell_accesses``)
+  of the same commands, the readers' own samples and a fixed list of lines
+  for the tar, find, xargs and cwd rules, with no base and with one: each
+  access as ``[path, tree, via]`` and the reason each half is unknown.
 - ``writes.json``: the write paths (``write_paths.step_write_paths``) of
   a fixed set of shell commands, with no base and with one: redirects,
   the operand writes of each command in ``write_paths.WRITERS`` with good
@@ -39,7 +43,7 @@ from opendaisugi.dialect import DIALECT_HASH, UnsupportedGlob, glob_regex
 from opendaisugi.models import ActionPlan, Envelope
 from opendaisugi.shell_decompose import decompose_command
 from opendaisugi.verify import _match_glob, verify
-from opendaisugi.write_paths import WRITERS, step_write_paths
+from opendaisugi.write_paths import READERS, WRITERS, shell_accesses, step_write_paths
 
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "clients" / "fixtures" / "dialect"
@@ -65,7 +69,7 @@ HEADS = [
     "cd",
 ]
 
-# The base a gate call is placed from (its cwd), for the placed cases.
+# The base a warden call is placed from (its cwd), for the placed cases.
 BASE = "/abs/proj"
 
 
@@ -280,7 +284,7 @@ def verify_cases() -> list[dict]:
                 ):
                     continue
                 cases.append(_verify_case(steps, _envelope([inv]), dict(pin)))
-    # Placed from a base, as the gate places a call from its cwd.
+    # Placed from a base, as the warden places a call from its cwd.
     for inv in [*WORD_INVARIANTS, *PLACED_INVARIANTS]:
         for steps in PLANS.values():
             for pin in pins[:2]:
@@ -670,6 +674,18 @@ def _write_samples(rng: random.Random) -> list[str]:
         flags += ["-Q", "--nope"]
         if name == "dd":
             flags = ["if=a", "of=b", "bs=1", "of=/dev/null", "x=1", "-v", "of="]
+        if name == "tar":
+            flags = [
+                "-c",
+                "-x",
+                "-t",
+                "-f a.tgz",
+                "-C out",
+                "-xzf in.tgz",
+                "-czf out.tgz",
+                "-P",
+                "--create",
+            ]
         for _ in range(12):
             parts = [name]
             for _ in range(rng.randint(0, 3)):
@@ -679,6 +695,448 @@ def _write_samples(rng: random.Random) -> list[str]:
                 parts.append(shlex.quote(w) if w else "''")
             out.append(" ".join(parts))
     return out
+
+
+ACCESS_COMMANDS = [
+    "cp /work/a /etc/x",
+    "cp a b",
+    "cp -r src out",
+    "cp -a src out/",
+    "cp -t out a b",
+    "mv a /etc/x",
+    "tee /etc/cron.d/x",
+    "tee -a log -",
+    "sed -i s/a/b/ /etc/hosts",
+    "sed -i.bak s/a/b/ f",
+    "sed -n 1p a",
+    "sed -e s/a/b/ -f script a",
+    "cat /etc/passwd",
+    "cat a b",
+    "cat",
+    "cat -n a",
+    "head -n 5 a",
+    "head -5 a",
+    "tail -f log",
+    "grep -rn foo src",
+    "grep -r foo",
+    "grep foo a b",
+    "grep -e foo -f pats a",
+    "grep -R x .",
+    "rg foo",
+    "rg -e x src",
+    "ls",
+    "ls -R /home/user",
+    "ls -la a b",
+    "find / -name '*.pem'",
+    "find . -name '*.py' -exec cat {} +",
+    "find /work -type f -delete",
+    "find src -name x -fprint /etc/out",
+    "find src -fprintf out %p",
+    "find src -newerXY x",
+    "find -L /x -name y",
+    "find src -exec tee x {} +",
+    "find src -execdir cat ../../x {} ;",
+    "find /work -execdir cat x {} ;",
+    "find /work -exec cat /etc/hosts {} ;",
+    "find src ( -name a -o -name b ) -print",
+    "tar -czf out.tgz src",
+    "tar czf out.tgz src",
+    "tar -xzf in.tgz -C out",
+    "tar -xf /work/evil.tgz",
+    "tar -tf in.tgz",
+    "tar -cf - src",
+    "tar -xPf evil.tgz",
+    "tar -xf evil.tgz -C a -C b",
+    "tar -cf o.tgz x -C src y",
+    "tar -x",
+    "tar --create --file=o.tgz --directory=d src",
+    "tar -xf in.tgz --strip-components=1",
+    "dd if=a of=/dev/sda",
+    "cat a > out.txt",
+    "cat < in > out",
+    "echo x > /dev/null",
+    "cd /work/src && cp a b",
+    "cd /etc && tee hosts",
+    "cd /etc; cd /work && tee hosts",
+    "pushd /etc && tee hosts",
+    "builtin cd /etc && tee hosts",
+    "env --chdir=/etc tee hosts",
+    "env -C /etc tee hosts",
+    "env A=1 cat a",
+    "sh -c 'cp /work/a /etc/x'",
+    "sh -c 'cd src && cat a'",
+    "cd a && sh -c 'cd b && cat c'",
+    "ls /work | xargs echo",
+    "ls | xargs cat",
+    "ls | xargs rm",
+    "find / -name '*.pem' | xargs cat",
+    "xargs -a /etc/hosts echo",
+    "cp a.key /home/user/*",
+    "sort -o out a",
+    "sort a b",
+    "cat ~/x",
+    "cat ~alice/x",
+    "cat $HOME/x",
+    "rm -r build",
+    "rm -f a b",
+    "diff -r a b",
+    "diff a b",
+    "wc -l a",
+    "stat -c %s a",
+    "install -m 644 a /usr/local/bin/a",
+    "install -d out",
+    "rsync -a src host:/x",
+    "rsync -a src dst",
+    "truncate -s 0 f",
+    "cat 'a b' c",
+    "for i in 1 2 3; do cd ..; done; echo x > etc/cron.d/x",
+    "f(){ cd ..; }; f; f; f; echo x > etc/shadow",
+    "(cd ..; tee x)",
+    "{ cd /etc; }; tee hosts",
+    "if cd /etc; then tee hosts; fi",
+    "while cd ..; do tee x; done",
+    "cd ..; cd ..; cd ..; echo x > etc/shadow",
+    "cd src\ntee a",
+    "cd .. && tee etc/hosts",
+    "exec cat /etc/passwd",
+    "eval cat /etc/passwd",
+    "builtin cat /etc/passwd",
+    "source /etc/passwd",
+    ". /etc/passwd",
+    "exec -a x cat /etc/passwd",
+    "env exec cat /etc/passwd",
+    "sh -c 'eval cat /etc/passwd'",
+    "exec 3>/work/log",
+    "find . -name shadow -exec cat /etc/{} ;",
+    "find /work -exec cat {}/../../etc/passwd ;",
+    "find /work -exec grep --file={} x ;",
+    "find /work -exec grep -e {} /etc/passwd ;",
+    "find /work -exec ls {} ;",
+    "find /work -exec grep -r pat {} ;",
+    "uniq /etc/passwd /etc/evil",
+    "uniq -c a b",
+    "uniq - /etc/evil",
+    "uniq a",
+    "uniq a b c",
+    "xxd /work/a /etc/evil",
+    "xxd -r a b",
+    "env -u grep -C /etc tee hosts",
+    "env -u cat tee /etc/hosts",
+    "env -uX tee /etc/hosts",
+    "env --unset X tee /etc/hosts",
+    "env --unset=X tee /etc/hosts",
+    "env -u cat curl http://evil",
+    "env -S 'tee /etc/hosts'",
+    "env -S 'A=1 tee /etc/hosts' x",
+    "env -S 'tee $X'",
+    "env -iu X tee /etc/hosts",
+    "env -C /etc tee /etc/hosts",
+    "tar -cf evil:/x /work/a",
+    "tar -xf host:/in.tgz",
+    "tar cf h:/x a",
+    "tar -cf /work/a:b /work/src",
+    "grep -d recurse x /work",
+    "grep --directories=recurse x /work",
+    "grep -drecurse x /work",
+    "grep -d skip x /work",
+    "cd .. && tee etc/hosts",
+    "cat //etc/hosts",
+    "cat <(cat /etc/passwd)",
+    "diff <(sort a) <(sort b) c",
+    "cat '<(x)' /work/y",
+    "env --u cat tee /etc/x",
+    "env --uns cat tee /etc/x",
+    "env --unset cat tee /etc/x",
+    "env --ar cat tee /etc/x",
+    "env --argv0 cat tee /etc/x",
+    "env --ch cat tee ../../../etc/x",
+    "env --chd=/etc tee hosts",
+    "env --sp 'tee /etc/hosts'",
+    "env --i cat tee /etc/x",
+    "env --d cat tee /etc/x",
+    "env --nope cat tee /etc/x",
+    "env --block-signal tee /etc/x",
+    "env --null=1 tee /etc/x",
+    "env --unset=FOO tee /work/a",
+    "xargs --arg-f cat tee /etc/x",
+    "xargs --arg-file=in echo",
+    "xargs --arg-fi in tee /etc/x",
+    "xargs --max cat tee /etc/x",
+    "xargs --bogus tee /etc/x",
+    "xargs -rI cat tee /etc/x",
+    "xargs -rn1 echo",
+    "xargs --replace cat tee x",
+    "xargs --replace=R cat x",
+    "xargs -a in echo",
+    "nice --adj 5 tee /etc/x",
+    "nice --adjustment=5 tee /etc/x",
+    "nice --nope tee /etc/x",
+    "timeout --kill 5 30 tee /etc/x",
+    "timeout --kill-after 5 30 tee /etc/x",
+    "timeout --foreground 30 tee /etc/x",
+    "timeout --nope 30 tee /etc/x",
+    "stdbuf --output=L tee /etc/x",
+    "stdbuf -oL tee /etc/x",
+    "stdbuf --nope tee /etc/x",
+    "nohup --nope tee /etc/x",
+    "nohup tee /etc/x",
+    "setsid --fork tee /etc/x",
+    "setsid --nope tee /etc/x",
+    "ionice -t tee cat /etc/passwd",
+    "ionice -t tee /etc/x",
+    "ionice -c 2 -n 5 tee /etc/x",
+    "ionice -c2 -n5 tee /etc/x",
+    "ionice --ignore tee /etc/x",
+    "ionice --nope tee /etc/x",
+    "time -o /etc/x ls",
+    "time -o cat tee /etc/x",
+    "time --output=/etc/x ls",
+    "time --output /etc/x ls",
+    "time -a -o /etc/x ls",
+    "time -f %e cat x",
+    "time -p cat x",
+    "time --nope cat x",
+    "sort -o /etc/x in",
+    "sort --output=/etc/x in",
+    "sort -r in",
+    "less -o /etc/x",
+    "less -N f",
+    "file -C -m x",
+    "cat --bogus a",
+    "sed -n 's/a/b/w /etc/x' in",
+    "sed -n 'w /etc/x' in",
+    "sed -n '1W /etc/x' in",
+    "sed 's/a/b/e' in",
+    "sed '1e echo' in",
+    "sed 'r /etc/shadow' in",
+    "sed 'R /etc/shadow' in",
+    "sed -e 's/a/b/' -e 'w /etc/x' in",
+    "sed --expression='w /etc/x' in",
+    "sed -f prog.sed in",
+    "sed --file=prog.sed in",
+    "sed -i 's/a/b/w x' in",
+    "sed -n 's/world/x/g' in",
+    "sed -n '1,5p' in",
+    "sed -n '$!d' in",
+    "sed -n '/x/,/y/{p;d}' in",
+    "sed -n 'y/abc/xyz/' in",
+    "sed -n 'a text; w x' in",
+    "sed -n 's/[/]/x/w f' in",
+    "sed -n 's/a/b/gw f' in",
+    "sed -i 's/a/b/' in",
+    "sed ':a;N;$!ba;s/\\n/ /g' in",
+    "sed -n 'p;p' in",
+    "chroot /jail tee /etc/x",
+    "chroot",
+    "flock /tmp/l tee /etc/x",
+    "flock -c 'tee /etc/x' /tmp/l",
+    "busybox tee /etc/x",
+    "script -c 'tee /etc/x' /dev/null",
+    "parallel tee ::: /etc/x",
+    "coproc tee /etc/x",
+    "trap 'tee /etc/x' EXIT",
+    "trap",
+    "cmd",
+    "sudo tee /etc/x",
+    "sudo -u root tee /etc/x",
+    "doas tee /etc/x",
+    "watch tee /etc/x",
+    "watch -n 1 tee /etc/x",
+    "systemd-run --user tee /etc/x",
+    "systemd-run --user --scope tee /etc/x",
+    "screen -dm tee /etc/x",
+    "unbuffer tee /etc/x",
+    "expect -c 'spawn tee /etc/x'",
+    "runuser -u root -- tee /etc/x",
+    "su -c 'tee /etc/x' root",
+    "su root -c 'tee /etc/x'",
+    "su -lc 'tee /etc/x'",
+    "su --command='tee /etc/x'",
+    "taskset -c 0 tee /etc/x",
+    "chrt -f 10 tee /etc/x",
+    "prlimit --nofile=1024 tee /etc/x",
+    "unshare -r tee /etc/x",
+    "nsenter -t 1 -m tee /etc/x",
+    "batch",
+    "at now",
+    "at -f job.sh now",
+    "crontab -",
+    "crontab cron.txt",
+    "entr tee /etc/x",
+    "ssh host tee /etc/x",
+    "ssh -p 22 host tee /etc/x",
+    "ssh -o ProxyCommand='tee /etc/x' host",
+    "ssh -oLocalCommand=x host",
+    "ssh -F cfg host",
+    "tmux new-session -d 'tee /etc/x'",
+    "tmux new -d 'tee /etc/x'",
+    "tmux new-window 'tee /etc/x'",
+    "tmux split-window 'tee /etc/x'",
+    "tmux send-keys 'tee /etc/x' Enter",
+    "tmux run-shell 'tee /etc/x'",
+    "tmux run 'tee /etc/x'",
+    "tmux respawn-pane -k 'tee /etc/x'",
+    "tmux -f cfg ls",
+    "tmux -L sock send-keys x",
+    "tmux display-popup 'tee /etc/x'",
+    "tmux if-shell true 'run-shell x'",
+    "vim -c 'w /etc/x' a",
+    "nvim -c 'w /etc/x' a",
+    "vi +'w /etc/x' a",
+    "vim +q a",
+    "vim -S s.vim a",
+    "vim --cmd 'w /etc/x' a",
+    "vim -es a",
+    "git -c alias.x='!tee /etc/x' x",
+    "git -c core.pager='tee /etc/x' log",
+    "git -c core.sshCommand=x fetch",
+    "git -C /work -c core.pager=x log",
+    "git --config-env=core.pager=P log",
+    "git --config-env core.pager=P log",
+    "git --exec-path=/work/bin status",
+    "git -c x=y",
+    "git status",
+    "git diff HEAD~1",
+    "git log --oneline -n 5",
+    "git -C /work status",
+    "git -C /work log",
+    "git --no-pager log",
+    "git --git-dir=/work/.git status",
+    "git commit -m 'c flag -c is fine here'",
+    "git log -c",
+    "git config user.name x",
+    "tmux ls",
+    "tmux list-sessions",
+    "tmux capture-pane -p",
+    "tmux display-message hi",
+    "tmux kill-session -t x",
+    "vim a",
+    "vim",
+    "nvim file.txt",
+    "ssh host",
+    "su",
+    "su root",
+    "crontab -l",
+    "at -l",
+    "sudo",
+    "screen",
+    "ssh -V",
+    "diff --color a b",
+    "diff --color=always a b",
+    "diff --color=never -u a b",
+    "diff -c a b",
+    "diff -n a b",
+    "diff --ignore-space-change --ignore-blank-lines a b",
+    "diff --side-by-side --suppress-common-lines a b",
+    "diff --strip-trailing-cr a b",
+    "diff --label x --label y a b",
+    "ls -la --group-directories-first",
+    "ls --group-directories-first src",
+    "ls --full-time --si -l",
+    "ls --file-type --hide-control-chars",
+    "ls --block-size=K -l",
+    "ls --hide='*.pyc'",
+    "ls --inode --size --numeric-uid-gid",
+    "ls --quoting-style=shell",
+    "grep -5 foo a",
+    "grep --line-buffered --byte-offset foo a",
+    "grep --label=x --group-separator=-- foo a",
+    "grep --no-ignore-case --initial-tab foo a",
+    "cat -u a",
+    "sort -c a",
+    "sort -m a b",
+    "sort -S 1G a",
+    "sort --version-sort --human-numeric-sort a",
+    "sort --merge a b",
+    "sort --sort=month a",
+    "uniq -D a",
+    "uniq --zero-terminated a",
+    "tail --max-unchanged-stats=5 -f a",
+    "wc --total=never a",
+    "strings -n 8 a",
+    "strings -a -f a",
+    "nl -p -d '::' a",
+    "rg --no-heading --json foo",
+    "od -w /etc/shadow",
+    "od -w16 /etc/shadow",
+    "od -S 4 a",
+    "hexdump -f /etc/shadow a",
+    "hexdump -C a",
+    "rg --color never secret",
+    "rg --color=never secret src",
+    "md5sum -c sums",
+    "sha256sum --check sums",
+    "sha256sum a b",
+    "expect",
+    "crontab",
+    "at",
+    "ls --color=auto -la",
+    "diff --color=auto a b",
+    "diff -u --color=always a b",
+    "/usr/bin/env tee /etc/x",
+    "/usr/bin/nohup tee /etc/x",
+    "/usr/bin/sh -c 'tee /etc/x'",
+    "./timeout 5 tee /etc/x",
+    "tmux ; send-keys x",
+    "tmux ls ';' run x",
+    "tmux ls \\; run x",
+]
+
+
+def _access_samples(rng: random.Random) -> list[str]:
+    """Commands built from each reader's and writer's own flags, good and bad."""
+    words = ["a", "src/a.py", "out/", "../x", "/abs/y", "-", "--", "b c", ".", "/etc/hosts"]
+    out: list[str] = []
+    for name in sorted(set(READERS) | set(WRITERS)):
+        spec = READERS.get(name, {})
+        if name in WRITERS and name not in ("sed",):
+            spec = WRITERS[name]
+        elif name == "sed":
+            spec = WRITERS["sed"]
+        flags = [f"-{c}" for c in spec.get("short", "")][:12]
+        flags += [f"-{c} v" for c in spec.get("short_value", "")][:6]
+        flags += list(spec.get("long", []))[:6]
+        flags += [f"{f}=v" for f in spec.get("long_value", []) + spec.get("long_optional", [])][:6]
+        flags += ["-Q", "--nope", "-r", "-R", "-e x", "-f pats"]
+        if name == "dd":
+            flags = ["if=a", "of=b", "bs=1", "of=/dev/null", "if=/etc/hosts", "-v"]
+        if name == "find":
+            flags = ["-name x", "-delete", "-type f", "-fprint o", "-exec cat {} ;", "-bogus"]
+        if name == "tar":
+            flags = ["-c", "-x", "-t", "-f a.tgz", "-C out", "-xzf in.tgz", "-czf o.tgz", "-P"]
+        for _ in range(6):
+            parts = [name]
+            for _ in range(rng.randint(0, 3)):
+                parts.append(rng.choice(flags))
+            for _ in range(rng.randint(0, 3)):
+                w = rng.choice(words)
+                parts.append(shlex.quote(w) if w else "''")
+            out.append(" ".join(parts))
+    return out
+
+
+def _access_pairs(accesses) -> list[list]:
+    return [[a.path, a.tree, a.via] for a in accesses]
+
+
+def accesses_fixture() -> dict:
+    rng = random.Random(20261030)
+    commands = list(dict.fromkeys(ACCESS_COMMANDS + WRITE_COMMANDS + _access_samples(rng)))
+    cases = []
+    for command in commands:
+        for base in (None, BASE):
+            acc = shell_accesses(command, base)
+            cases.append(
+                {
+                    "command": command,
+                    "base": base,
+                    "reads": _access_pairs(acc.reads),
+                    "writes": _access_pairs(acc.writes),
+                    "reads_unknown": acc.reads_unknown,
+                    "writes_unknown": acc.writes_unknown,
+                }
+            )
+    return {"v": 1, "base": BASE, "cases": cases}
 
 
 def writes_fixture() -> dict:
@@ -709,9 +1167,12 @@ def main() -> int:
     (args.out / "globs.json").write_text(globs, encoding="utf-8")
     writes = json.dumps(writes_fixture(), indent=1, ensure_ascii=True) + "\n"
     (args.out / "writes.json").write_text(writes, encoding="utf-8")
+    accesses = json.dumps(accesses_fixture(), indent=1, ensure_ascii=True) + "\n"
+    (args.out / "accesses.json").write_text(accesses, encoding="utf-8")
     manifest = {
         "v": 1,
         "count": len(cases),
+        "accesses_sha256": hashlib.sha256(accesses.encode("utf-8")).hexdigest(),
         "cases_sha256": hashlib.sha256(lines.encode("utf-8")).hexdigest(),
         "globs_sha256": hashlib.sha256(globs.encode("utf-8")).hexdigest(),
         "writes_sha256": hashlib.sha256(writes.encode("utf-8")).hexdigest(),

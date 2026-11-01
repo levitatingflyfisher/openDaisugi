@@ -7,7 +7,7 @@
   "sprig": {
     "names": {"write": "Write", "edit": "Edit", "bash": "Bash", "read": "Read", "unknown": "Teleport"},
     "keys": {"path": "file_path", "content": "content", "command": "command"},
-    "note": "names translated by sprig's DaisugiGate before they reach us. See docs/harness/harness-comparison.md"
+    "note": "names translated by sprig's DaisugiWarden before they reach us. See docs/harness/harness-comparison.md"
   },
   "codex": {
     "names": {"write": "apply_patch", "edit": "apply_patch", "bash": "shell", "read": null, "unknown": "Teleport"},

@@ -42,7 +42,7 @@
 {"id":"$id","ok":true,"result":"*"}
 {"id":"14","cmd":"hello","role":"pane","pane":"$agent"}
 {"id":"$id","ok":true,"result":{"role":"pane","pane":"$agent"}}
-{"id":"15","cmd":"pane.report_state","pane":"$agent","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","harness_session_id":"sess-42","pane":"$agent","state":"idle","source":"gate","detail":"Stop"}}
+{"id":"15","cmd":"pane.report_state","pane":"$agent","event":{"v":1,"ts":1,"session_id":"s","harness":"claude-code","harness_session_id":"sess-42","pane":"$agent","state":"idle","source":"warden","detail":"Stop"}}
 {"id":"$id","ok":true,"result":{"pane":"$agent","state":"idle"}}
 #!tree
 #!restart

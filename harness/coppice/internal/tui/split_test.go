@@ -50,7 +50,7 @@ func TestEveryWindowIsAtLeastEightyColumns(t *testing.T) {
 // tiledModel is a roster of two panes with pane a in the one tile slot.
 func tiledModel() *Model {
 	m := &Model{Rows: []Row{
-		{ID: "a", Label: "gate-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"},
+		{ID: "a", Label: "gear-refactor", Harness: "claude", State: "blocked", Line: "wants git push --force"},
 		{ID: "b", Label: "docs", Harness: "pi", State: "working", Line: "editing README"},
 	}, NeedYou: 1, Tiles: tiles.New(tiles.Focus, 1), Screens: map[string]*attach.Screen{}}
 	m.Tiles.Fill("a")
@@ -76,13 +76,13 @@ func TestAWideScreenSplitsAndTheTileCarriesAHeader(t *testing.T) {
 	if len(right) == 0 {
 		t.Fatal("no divider at 140 columns")
 	}
-	if !strings.Contains(strings.Join(right, "\n"), "gate-refactor  claude  blocked") {
+	if !strings.Contains(strings.Join(right, "\n"), "gear-refactor  claude  blocked") {
 		t.Fatalf("tile header missing right of the divider: %q", right)
 	}
 	if strings.Contains(strings.Join(lines[:1], ""), "│") {
 		t.Fatalf("the bar is split: %q", lines[0])
 	}
-	if !strings.Contains(stripSGR(strings.Join(lines, "\n")), "  › 1 gate-refactor") {
+	if !strings.Contains(stripSGR(strings.Join(lines, "\n")), "  › 1 gear-refactor") {
 		t.Fatal("the rail lost its cursor row or its window number")
 	}
 }
@@ -115,7 +115,7 @@ func TestTwoTilesAt200Columns(t *testing.T) {
 	m.Tiles.Fill("b")
 	lines := Render(m, 200, 20)
 	joined := strings.Join(rightOfDivider(lines), "\n")
-	if !strings.Contains(joined, "gate-refactor  claude  blocked") || !strings.Contains(joined, "docs  pi  working") {
+	if !strings.Contains(joined, "gear-refactor  claude  blocked") || !strings.Contains(joined, "docs  pi  working") {
 		t.Fatalf("two tile headers missing: %q", joined)
 	}
 	for _, l := range lines[1:] {

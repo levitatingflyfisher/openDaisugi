@@ -187,7 +187,7 @@ def _render(guard, comp, compile_est, saved_est, breakeven, distinct_sigs, data_
         "## 2. Compilable fraction — how much of the corpus could compile?",
         "",
         "Over **all** interactions (the pessimistic denominator — failures and "
-        "gate-rejections included). A trace is compilable when it lands in a "
+        "warden-rejections included). A trace is compilable when it lands in a "
         f"cluster of ≥{comp.min_traces} similar successes (the distiller's own "
         "hotness precondition) **and** its plan still verifies against its "
         "envelope.",
@@ -206,7 +206,7 @@ def _render(guard, comp, compile_est, saved_est, breakeven, distinct_sigs, data_
         "",
         "The headline is an **upper bound**: it proves each counted interaction is "
         "*authorized* (guard passes) and *structurally distillable* (clears the "
-        "hotness gate), not that a reused plan would be *correct*. A real "
+        "hotness warden), not that a reused plan would be *correct*. A real "
         "correctness oracle is a separate research problem; naming the gap is the "
         "honest move, and the Stage-4 fidelity benchmark is where the correctness "
         "question is attacked empirically.",

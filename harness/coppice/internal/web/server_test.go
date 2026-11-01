@@ -105,7 +105,7 @@ func TestGuardBanLiftsOnceTheWindowPasses(t *testing.T) {
 // "HTTP 401", throwing away the sentence the server wrote. A 401 on an API
 // path must carry the same JSON shape as a 429 from a live ban.
 func TestGuardRefusalsCarryTheJSONErrorShape(t *testing.T) {
-	ts, _, _ := newTestServer(t, Options{Dial: unusedDialer(t), Gate: AskChannel{Root: t.TempDir()}})
+	ts, _, _ := newTestServer(t, Options{Dial: unusedDialer(t), Warden: AskChannel{Root: t.TempDir()}})
 
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/panes", nil)
 	if err != nil {

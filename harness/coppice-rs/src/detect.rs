@@ -19,9 +19,9 @@ use crate::sys;
 pub const ENGINE_VERSION: i64 = 3;
 
 const MAX_RULES: usize = 128;
-const MAX_GATE_DEPTH: usize = 8;
-const MAX_TOTAL_GATES: usize = 512;
-const MAX_MATCHERS_PER_GATE: usize = 32;
+const MAX_CONDITION_DEPTH: usize = 8;
+const MAX_TOTAL_CONDITIONS: usize = 512;
+const MAX_MATCHERS_PER_CONDITION: usize = 32;
 const MAX_TOTAL_MATCHERS: usize = 1024;
 const MAX_MATCHER_CHARS: usize = 512;
 const TOP_REGION_MIN_VER: i64 = 3;
@@ -71,16 +71,16 @@ const BUNDLED: [(&str, &str); 21] = [
 /// A nested matcher table.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Gate {
-    pub all: Vec<Gate>,
-    pub any: Vec<Gate>,
-    pub not: Vec<Gate>,
+pub struct Condition {
+    pub all: Vec<Condition>,
+    pub any: Vec<Condition>,
+    pub not: Vec<Condition>,
     pub contains: Vec<String>,
     pub regex: Vec<String>,
     pub line_regex: Vec<String>,
 }
 
-/// One rule. A rule takes the six matcher keys a gate takes.
+/// One rule. A rule takes the six matcher keys a condition takes.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Rule {
@@ -92,9 +92,9 @@ pub struct Rule {
     pub visible_blocker: bool,
     pub visible_working: bool,
     pub skip_state_update: bool,
-    pub all: Vec<Gate>,
-    pub any: Vec<Gate>,
-    pub not: Vec<Gate>,
+    pub all: Vec<Condition>,
+    pub any: Vec<Condition>,
+    pub not: Vec<Condition>,
     pub contains: Vec<String>,
     pub regex: Vec<String>,
     pub line_regex: Vec<String>,
@@ -106,8 +106,8 @@ impl Rule {
         self.state.as_deref().unwrap_or(STATE_UNKNOWN)
     }
 
-    fn gate(&self) -> Gate {
-        Gate {
+    fn condition(&self) -> Condition {
+        Condition {
             all: self.all.clone(),
             any: self.any.clone(),
             not: self.not.clone(),
@@ -129,12 +129,12 @@ pub struct Manifest {
     pub rules: Vec<Rule>,
 }
 
-/// A gate with its patterns already built.
+/// A condition with its patterns already built.
 #[derive(Debug, Default)]
-struct CompiledGate {
-    all: Vec<CompiledGate>,
-    any: Vec<CompiledGate>,
-    not: Vec<CompiledGate>,
+struct CompiledCondition {
+    all: Vec<CompiledCondition>,
+    any: Vec<CompiledCondition>,
+    not: Vec<CompiledCondition>,
     contains: Vec<String>,
     regex: Vec<Regex>,
     line_regex: Vec<Regex>,
@@ -144,7 +144,7 @@ struct CompiledGate {
 #[derive(Debug)]
 pub struct Compiled {
     pub manifest: Manifest,
-    gates: Vec<CompiledGate>,
+    conditions: Vec<CompiledCondition>,
 }
 
 /// What the evaluator sees: the screen unwrapped, the terminal title, and
@@ -382,22 +382,22 @@ pub fn compile_pattern(p: &str) -> Result<Regex, String> {
 
 #[derive(Default)]
 struct Totals {
-    gates: usize,
+    conditions: usize,
     matchers: usize,
 }
 
-fn compile_gate(g: &Gate, ctx: &str, depth: usize, t: &mut Totals) -> Result<CompiledGate, String> {
-    if depth > MAX_GATE_DEPTH {
-        return Err(format!("{ctx} exceeds max gate depth {MAX_GATE_DEPTH}"));
+fn compile_condition(g: &Condition, ctx: &str, depth: usize, t: &mut Totals) -> Result<CompiledCondition, String> {
+    if depth > MAX_CONDITION_DEPTH {
+        return Err(format!("{ctx} exceeds max condition depth {MAX_CONDITION_DEPTH}"));
     }
-    t.gates += 1;
-    if t.gates > MAX_TOTAL_GATES {
-        return Err(format!("manifest exceeds max gate count {MAX_TOTAL_GATES}"));
+    t.conditions += 1;
+    if t.conditions > MAX_TOTAL_CONDITIONS {
+        return Err(format!("manifest exceeds max condition count {MAX_TOTAL_CONDITIONS}"));
     }
     let direct = g.contains.len() + g.regex.len() + g.line_regex.len();
-    if direct > MAX_MATCHERS_PER_GATE {
+    if direct > MAX_MATCHERS_PER_CONDITION {
         return Err(format!(
-            "{ctx} has {direct} direct matchers, max is {MAX_MATCHERS_PER_GATE}"
+            "{ctx} has {direct} direct matchers, max is {MAX_MATCHERS_PER_CONDITION}"
         ));
     }
     t.matchers += direct;
@@ -409,7 +409,7 @@ fn compile_gate(g: &Gate, ctx: &str, depth: usize, t: &mut Totals) -> Result<Com
     if direct + g.all.len() + g.any.len() == 0 {
         return Err(format!("{ctx} must contain a positive matcher"));
     }
-    let mut out = CompiledGate::default();
+    let mut out = CompiledCondition::default();
     for s in &g.contains {
         if s.chars().count() > MAX_MATCHER_CHARS {
             return Err(format!(
@@ -436,15 +436,15 @@ fn compile_gate(g: &Gate, ctx: &str, depth: usize, t: &mut Totals) -> Result<Com
     out.line_regex = compile_all(&g.line_regex, "line_regex")?;
     for n in &g.all {
         out.all
-            .push(compile_gate(n, &format!("{ctx} > all"), depth + 1, t)?);
+            .push(compile_condition(n, &format!("{ctx} > all"), depth + 1, t)?);
     }
     for n in &g.any {
         out.any
-            .push(compile_gate(n, &format!("{ctx} > any"), depth + 1, t)?);
+            .push(compile_condition(n, &format!("{ctx} > any"), depth + 1, t)?);
     }
     for n in &g.not {
         out.not
-            .push(compile_gate(n, &format!("{ctx} > not"), depth + 1, t)?);
+            .push(compile_condition(n, &format!("{ctx} > not"), depth + 1, t)?);
     }
     Ok(out)
 }
@@ -481,7 +481,7 @@ pub fn parse(name: &str, data: &str) -> Result<Compiled, String> {
         }
     }
     let mut t = Totals::default();
-    let mut gates = Vec::new();
+    let mut conditions = Vec::new();
     for r in &m.rules {
         if r.id.trim().is_empty() {
             return Err(format!("{name}: a rule has an empty id"));
@@ -523,11 +523,11 @@ pub fn parse(name: &str, data: &str) -> Result<Compiled, String> {
                 r.id, m.min_engine_version
             ));
         }
-        let cg = compile_gate(&r.gate(), &format!("rule {}", r.id), 0, &mut t)
+        let cg = compile_condition(&r.condition(), &format!("rule {}", r.id), 0, &mut t)
             .map_err(|e| format!("{name}: {e}"))?;
-        gates.push(cg);
+        conditions.push(cg);
     }
-    Ok(Compiled { manifest: m, gates })
+    Ok(Compiled { manifest: m, conditions })
 }
 
 const FIXED_REGIONS: [&str; 12] = [
@@ -803,7 +803,7 @@ fn preview(s: &str) -> String {
     out
 }
 
-fn gate_matches(g: &CompiledGate, text: &str, lower: &str) -> bool {
+fn condition_matches(g: &CompiledCondition, text: &str, lower: &str) -> bool {
     if !g.contains.iter().all(|n| lower.contains(n.as_str())) {
         return false;
     }
@@ -820,13 +820,13 @@ fn gate_matches(g: &CompiledGate, text: &str, lower: &str) -> bool {
             return false;
         }
     }
-    if !g.all.iter().all(|n| gate_matches(n, text, lower)) {
+    if !g.all.iter().all(|n| condition_matches(n, text, lower)) {
         return false;
     }
-    if !g.any.is_empty() && !g.any.iter().any(|n| gate_matches(n, text, lower)) {
+    if !g.any.is_empty() && !g.any.iter().any(|n| condition_matches(n, text, lower)) {
         return false;
     }
-    !g.not.iter().any(|n| gate_matches(n, text, lower))
+    !g.not.iter().any(|n| condition_matches(n, text, lower))
 }
 
 impl Compiled {
@@ -840,7 +840,7 @@ impl Compiled {
         let mut best: Option<usize> = None;
         for (i, rule) in self.manifest.rules.iter().enumerate() {
             let text = region(input, &rule.region);
-            let matched = gate_matches(&self.gates[i], &text, &go_lower(&text));
+            let matched = condition_matches(&self.conditions[i], &text, &go_lower(&text));
             res.evaluated.push(Evaluated {
                 id: rule.id.clone(),
                 priority: rule.priority,

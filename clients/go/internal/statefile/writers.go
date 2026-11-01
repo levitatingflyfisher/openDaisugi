@@ -15,7 +15,7 @@ import (
 // made by openat (O_CREAT | O_EXCL | O_NOFOLLOW, 0600) under a temp name
 // nobody can predict, then renamed over its name inside the same directory.
 // A link a concurrent write planted at a name is never written through. The
-// gate's own files (checkpoint state, the ask channel) replace whatever
+// warden's own files (checkpoint state, the ask channel) replace whatever
 // stands at their name; the operator's files (DISARMED, an envelope, a graft
 // rule) refuse a link or a non-file there, so the owner is told. Python
 // twin: _state_files.write_state_file.
@@ -32,7 +32,7 @@ func (e *WriteRefused) Error() string { return e.Text }
 // that group or others can write, as the reader refuses it (GR-R-8), unless
 // repair is set, which is the operator's own command: it sets every
 // directory to 0700 and says so on stderr when the mode was loose. The
-// gate's own writers never repair and never chmod.
+// warden's own writers never repair and never chmod.
 func makeDirs(root string, dirs []string, repair bool) ([]int, error) {
 	base, enc, ok := rootBase(root)
 	if !ok {
@@ -93,7 +93,7 @@ func makeDirs(root string, dirs []string, repair bool) ([]int, error) {
 				return nil, err
 			}
 			if loose {
-				fmt.Fprintf(os.Stderr, "daisugi gate: repaired %s: it was writable by group or others; now 700\n", path)
+				fmt.Fprintf(os.Stderr, "daisugi warden: repaired %s: it was writable by group or others; now 700\n", path)
 			}
 		}
 	}
@@ -269,8 +269,8 @@ func UnlinkFile(root string, dirs []string, name string) (removed bool, err erro
 }
 
 // VerifyWritten is _state_files.verify_written: a file the operator just
-// wrote, read back with the gate's reader. A refusal is a *WriteRefused, so
-// a writer never claims success for a file the gate would not read.
+// wrote, read back with the warden's reader. A refusal is a *WriteRefused, so
+// a writer never claims success for a file the warden would not read.
 func VerifyWritten(root string, dirs []string, name string) error {
 	fd, why := Probe(root, dirs, name, -1)
 	if fd < 0 {
@@ -303,8 +303,8 @@ func ListJSON(dirFD int) []string {
 	return out
 }
 
-// RefusedPaths is _state_files.refused_paths: every path under the gate
-// root the gate would refuse to read, each as `<path>: <reason> (fix: ...)`:
+// RefusedPaths is _state_files.refused_paths: every path under the warden
+// root the warden would refuse to read, each as `<path>: <reason> (fix: ...)`:
 // the root; then, if it opens, DISARMED, and each of envelopes/, grafts/ and
 // checkpoint-state/ with every *.json file in it. A refused directory hides
 // what is below it. What is missing is not listed.
@@ -345,7 +345,7 @@ func RefusedPaths(root string) []string {
 	return out
 }
 
-// ChmodPrivate is the tail of gate._mkdir_private: the directory at path set
+// ChmodPrivate is the tail of warden._mkdir_private: the directory at path set
 // to 0700 on its own fd, opened without following a link, and only when this
 // user owns it. A link at path is left alone, so a link planted there is
 // never chmod-ed through (GR-R-9).

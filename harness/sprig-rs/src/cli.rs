@@ -3,7 +3,7 @@
 //! codes. The flags parse as Go's flag package parses them.
 
 use crate::agent::{Agent, Model};
-use crate::gate::{AllowAll, DaisugiGate, Executor, Gate, DEFAULT_GATE_CMD};
+use crate::warden::{AllowAll, DaisugiWarden, Executor, Warden, DEFAULT_WARDEN_CMD};
 use crate::gostr::{fields, trim_space};
 use crate::json::{encode, jmap, J};
 use crate::session::{head_path, history_from_entries, new_id, SessionObserver, SessionWriter};
@@ -23,10 +23,6 @@ pub const USAGE: &str = concat!(
     "flags:\n",
     "  -base-url string\n",
     "    \tthe server for the anthropic or openai wire (default: ANTHROPIC_BASE_URL, else https://api.anthropic.com; https://api.openai.com/v1 for openai)\n",
-    "  -gate\n",
-    "    \tverify each tool call against the envelope, fail-closed\n",
-    "  -gate-cmd string\n",
-    "    \tthe out-of-process envelope gate to call when --gate is set (default \"daisugi gate check --mode enforce\")\n",
     "  -json\n",
     "    \temit the result as JSON (for scripts and jq)\n",
     "  -key-fd int\n",
@@ -42,21 +38,25 @@ pub const USAGE: &str = concat!(
     "  -resume string\n",
     "    \tresume this session id from --session-dir: reopen its file, rebuild history from its head, and append\n",
     "  -scrub-env string\n",
-    "    \ta comma list of more variables no tool, gate or backend process gets\n",
+    "    \ta comma list of more variables no tool, warden or backend process gets\n",
     "  -session string\n",
     "    \tsession id to write under --session-dir (default: a fresh one)\n",
     "  -session-dir string\n",
-    "    \twrite the session tree (JSONL) here \u{2014} the same shape daisugi's gate writes on path D. Empty = off.\n",
+    "    \twrite the session tree (JSONL) here \u{2014} the same shape daisugi's warden writes on path D. Empty = off.\n",
     "  -spawn-keys-fd int\n",
     "    \tread the resolved agent profiles, with keys, from this file descriptor; the spawn tool passes them on (default -1)\n",
     "  -system-file string\n",
     "    \tuse the bytes of this file as the system prompt, in place of sprig's own\n",
     "  -tools string\n",
-    "    \tthe tools the model may call, a comma list of read, write, edit, bash and spawn, or none (default \"read,write,edit,bash\")\n",
+    "    \tthe tools the model may call, a comma list of read, write, edit, bash, spawn and help, or none (default \"read,write,edit,bash\")\n",
     "  -tree-cmd string\n",
     "    \tthe command the spawn tool runs to start a child (daisugi tree run); spawn is offered only with it\n",
     "  -version\n",
     "    \tprint the version and exit\n",
+    "  -warden\n",
+    "    \tcheck each tool call with the warden (daisugi warden check); --warden=false turns it off: nothing is checked or recorded (default true)\n",
+    "  -warden-cmd string\n",
+    "    \tthe warden command (default: daisugi warden check, in the installed mode) (default \"daisugi warden check\")\n",
     "  -wire string\n",
     "    \tthe model wire: claude-code (claude -p), anthropic (the Messages API) or openai (chat completions); default anthropic when SPRIG_BACKEND=api, else claude-code\n",
 );
@@ -126,10 +126,10 @@ pub fn usage_sum(history: &[crate::agent::Message]) -> J {
 pub struct Flags {
     pub version: bool,
     pub json: bool,
-    pub gate: bool,
+    pub warden: bool,
     pub max_turns: i64,
     pub max_tokens: i64,
-    pub gate_cmd: Vec<u8>,
+    pub warden_cmd: Vec<u8>,
     pub session_dir: Vec<u8>,
     pub session: Vec<u8>,
     pub resume: Vec<u8>,
@@ -267,10 +267,10 @@ pub fn parse_flags(args: &[Vec<u8>]) -> Result<Flags, Vec<u8>> {
     let mut f = Flags {
         version: false,
         json: false,
-        gate: false,
+        warden: true,
         max_turns: 20,
         max_tokens: -1,
-        gate_cmd: DEFAULT_GATE_CMD.as_bytes().to_vec(),
+        warden_cmd: DEFAULT_WARDEN_CMD.as_bytes().to_vec(),
         session_dir: Vec::new(),
         session: Vec::new(),
         resume: Vec::new(),
@@ -311,13 +311,13 @@ pub fn parse_flags(args: &[Vec<u8>]) -> Result<Flags, Vec<u8>> {
             name = &name[..eq + 1];
         }
         let dashed = [b"-".as_slice(), name].concat();
-        let is_bool = matches!(name, b"version" | b"json" | b"gate");
+        let is_bool = matches!(name, b"version" | b"json" | b"warden");
         let is_known = is_bool
             || matches!(
                 name,
                 b"max-turns"
                     | b"max-tokens"
-                    | b"gate-cmd"
+                    | b"warden-cmd"
                     | b"session-dir"
                     | b"session"
                     | b"resume"
@@ -356,7 +356,7 @@ pub fn parse_flags(args: &[Vec<u8>]) -> Result<Flags, Vec<u8>> {
             match name {
                 b"version" => f.version = v,
                 b"json" => f.json = v,
-                _ => f.gate = v,
+                _ => f.warden = v,
             }
             continue;
         }
@@ -388,7 +388,7 @@ pub fn parse_flags(args: &[Vec<u8>]) -> Result<Flags, Vec<u8>> {
             b"tree-cmd" => f.tree_cmd = v,
             b"spawn-keys-fd" => f.spawn_keys_fd = int(&v)?,
             b"mcp-config" => f.mcp_config = v,
-            b"gate-cmd" => f.gate_cmd = v,
+            b"warden-cmd" => f.warden_cmd = v,
             b"session-dir" => f.session_dir = v,
             b"session" => f.session = v,
             b"tools" => f.tools = v,
@@ -637,6 +637,11 @@ fn run_inner(
     } else {
         Box::new(crate::env::Redacting { inner: model, key: key.clone() })
     };
+    // The warden is on by default; --warden=false is the only opt-out, and it
+    // says so before the session line, as the Go loop does.
+    if !f.warden {
+        say(stderr, &[crate::warden::warden_off_notice("sprig").as_bytes()]);
+    }
     let mut writer: Option<Rc<SessionWriter>> = None;
     let mut seed = Vec::new();
     let mut sid = Vec::new();
@@ -679,11 +684,17 @@ fn run_inner(
         );
         writer = Some(Rc::new(w));
     }
-    let gate: Box<dyn Gate> = if f.gate {
-        Box::new(DaisugiGate {
-            command: fields(&f.gate_cmd),
+    let warden: Box<dyn Warden> = if f.warden {
+        Box::new(DaisugiWarden {
+            command: fields(&f.warden_cmd),
             timeout: Duration::from_secs(10),
-            session_id: sid,
+            // A resume that names a new session: the history and the file
+            // are the old session's, the warden's envelope is the new one's.
+            session_id: if !f.resume.is_empty() && !f.session.is_empty() {
+                f.session.clone()
+            } else {
+                sid
+            },
         })
     } else {
         Box::new(AllowAll)
@@ -695,10 +706,20 @@ fn run_inner(
             tool_map.insert(name, tool);
         }
     }
+    let help_call: crate::help::HelpCall = Rc::new(std::cell::RefCell::new(None));
+    let help_on = wall.iter().any(|t| t == "help");
+    if help_on {
+        tool_map.insert(
+            "help".into(),
+            Box::new(crate::help::HelpTool {
+                call: help_call.clone(),
+            }),
+        );
+    }
     let own_use = Rc::new(std::cell::Cell::new((0i64, 0i64)));
     let branch = Rc::new(std::cell::Cell::new(0i64));
     if spawn_on {
-        let parent = if f.resume.is_empty() {
+        let parent = if f.resume.is_empty() || !f.session.is_empty() {
             f.session.clone()
         } else {
             f.resume.clone()
@@ -715,7 +736,7 @@ fn run_inner(
             }),
         );
     }
-    let mut exec = Executor::new(tool_map, gate);
+    let mut exec = Executor::new(tool_map, warden);
     exec.session = obs.clone();
     let model_name = model.model_name();
     let mut agent = Agent::new(model, exec, f.max_turns);
@@ -724,6 +745,9 @@ fn run_inner(
     agent.max_tokens = f.max_tokens;
     agent.cap_tokens = f.max_tokens >= 0;
     agent.no_tools = no_tools;
+    if help_on {
+        agent.help = Some(help_call.clone());
+    }
     if spawn_on {
         let b = branch.clone();
         agent.extra_tokens = Some(Box::new(move || b.get()));
@@ -737,13 +761,19 @@ fn run_inner(
         }
     };
     if f.json {
-        let j = jmap(vec![
+        let mut pairs = vec![
             ("answer", J::Str(answer)),
             ("turns", J::Int(agent.history.len() as i64)),
             ("model_turns", J::Int(agent.model_turns())),
             ("model", J::s(&model_name)),
             ("usage", usage_sum(&agent.history)),
-        ]);
+        ];
+        if let Some((kind, text)) = help_call.borrow().as_ref() {
+            pairs.push(("status", J::s("help")));
+            pairs.push(("help_kind", J::s(kind)));
+            pairs.push(("help_text", J::Str(text.clone())));
+        }
+        let j = jmap(pairs);
         say(stdout, &[&encode(&j), b"\n"]);
     } else {
         say(stdout, &[&answer, b"\n"]);
@@ -757,6 +787,26 @@ mod tests {
 
     fn a(xs: &[&str]) -> Vec<Vec<u8>> {
         xs.iter().map(|s| s.as_bytes().to_vec()).collect()
+    }
+
+    #[test]
+    fn warden_on_by_default() {
+        let f = parse_flags(&a(&["task"])).unwrap();
+        assert!(f.warden);
+    }
+
+    #[test]
+    fn warden_off_flag_parses() {
+        let f = parse_flags(&a(&["--warden=false", "task"])).unwrap();
+        assert!(!f.warden);
+        let f = parse_flags(&a(&["--warden=true", "task"])).unwrap();
+        assert!(f.warden);
+    }
+
+    #[test]
+    fn default_warden_cmd_has_no_mode() {
+        assert_eq!(DEFAULT_WARDEN_CMD, "daisugi warden check");
+        assert!(!DEFAULT_WARDEN_CMD.contains("--mode"));
     }
 
     #[test]
@@ -789,15 +839,17 @@ mod tests {
         let f = parse_flags(&a(&[
             "-json",
             "--max-turns=3",
-            "--gate-cmd",
+            "--warden-cmd",
             "x y",
             "task",
-            "--gate",
+            "--warden",
         ]))
         .unwrap();
-        assert!(f.json && !f.gate);
-        assert_eq!((f.max_turns, f.gate_cmd.as_slice()), (3, b"x y".as_slice()));
-        assert_eq!(f.args, a(&["task", "--gate"]));
+        assert!(f.json && f.warden);
+        assert_eq!((f.max_turns, f.warden_cmd.as_slice()), (3, b"x y".as_slice()));
+        assert_eq!(f.args, a(&["task", "--warden"]));
+        let f = parse_flags(&a(&["--warden=false", "task"])).unwrap();
+        assert!(!f.warden);
         let f = parse_flags(&a(&["--", "--version"])).unwrap();
         assert_eq!(f.args, a(&["--version"]));
         let f = parse_flags(&a(&["-", "x"])).unwrap();
@@ -848,7 +900,7 @@ mod tests {
         fn next(&mut self, _: &[crate::agent::Message]) -> Result<crate::agent::Message, Vec<u8>> {
             Ok(crate::agent::Message {
                 role: "assistant",
-                calls: vec![crate::gate::ToolCall {
+                calls: vec![crate::warden::ToolCall {
                     id: "1".into(),
                     name: "sk-SENTINEL/run".into(),
                     input: None,
@@ -918,13 +970,13 @@ mod tests {
             (
                 2,
                 "".into(),
-                "sprig: --tools is empty; name one or more of read, write, edit, bash, spawn\n"
+                "sprig: --tools is empty; name one or more of read, write, edit, bash, spawn, help\n"
                     .into()
             )
         );
         assert_eq!(
             go(&["--tools=read,x", "x"], "").2,
-            "sprig: --tools: unknown tool \"x\"; the tools are read, write, edit, bash, spawn\n"
+            "sprig: --tools: unknown tool \"x\"; the tools are read, write, edit, bash, spawn, help\n"
         );
     }
 
@@ -955,7 +1007,7 @@ mod tests {
                 },
                 ..Default::default()
             };
-            call.calls.push(crate::gate::ToolCall {
+            call.calls.push(crate::warden::ToolCall {
                 name: "bash".into(),
                 ..Default::default()
             });

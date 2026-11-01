@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +146,10 @@ func TestVoiceStatusWhenReadySaysNothing(t *testing.T) {
 	if body["ready"] != true || body["message"] != "" {
 		t.Fatalf("%v", body)
 	}
+	// The page reads the longest clip from here and keeps no number of its own.
+	if body["max_seconds"] != float64(1200) {
+		t.Fatalf("max_seconds: %v", body)
+	}
 	if _, has := body["url"]; has {
 		t.Fatalf("the page does not need the voice server's address: %v", body)
 	}
@@ -266,5 +271,30 @@ func TestVoiceStatusCarriesTheModelFetchWhileStarting(t *testing.T) {
 	f, _ := body["fetch"].(map[string]any)
 	if f["done"] != float64(41000000) || f["total"] != float64(160000000) {
 		t.Fatalf("fetch = %v in %v", body["fetch"], body)
+	}
+}
+
+// The voice server owns the cap: the status reply carries what its /health
+// says, so a voice server of another version cannot disagree with the page.
+func TestVoiceStatusReadsTheCapFromTheVoiceServer(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Write([]byte(`{"ok":true,"max_seconds":600}`))
+		}
+	}))
+	t.Cleanup(up.Close)
+	_, d := newFakeServer(t, voiceReplies(map[string]any{"state": "ready", "ready": true, "url": up.URL}))
+	ts, _, tok := newTestServer(t, Options{Dial: d})
+	req, _ := http.NewRequest("GET", ts.URL+"/api/voice/status", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["max_seconds"] != float64(600) {
+		t.Fatalf("max_seconds: %v", body)
 	}
 }

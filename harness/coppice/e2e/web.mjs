@@ -3,10 +3,10 @@
 //   node web.mjs BASE_URL TOKEN SHOTS_DIR
 //
 // BASE_URL serves the floor and TOKEN signs in, the way a scanned QR does.
-// run.sh has made the panes "e2e shell", "e2e ask" (with a gate ask held on
+// run.sh has made the panes "e2e shell", "e2e ask" (with a warden ask held on
 // it) and "e2e trust" (fake-trust.sh, claude's folder trust screen). Every check
 // that fails saves a screenshot named after it and exits 1. After the desk
-// checks it starts the floor's foreman, fake-foreman.sh, through rpc.mjs
+// checks it starts the floor's steward, fake-steward.sh, through rpc.mjs
 // on the scratch socket that run.sh exports as $sock, for the phone's chat.
 import { chromium } from 'playwright';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -28,7 +28,13 @@ if (!shots) {
 }
 mkdirSync(shots, { recursive: true });
 
-const browser = await chromium.launch();
+// Playwright turns the Chromium sandbox off by default; turn it on. The one
+// exception is a CI runner (CI is set there): its kernel forbids the user
+// namespaces the sandbox needs, and Chromium then does not start at all. The
+// page under test is this repo's own, served on loopback.
+const sandbox = !process.env.CI;
+if (!sandbox) console.log('e2e: CI is set, so the test browser runs with no sandbox');
+const browser = await chromium.launch({ chromiumSandbox: sandbox });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await context.newPage();
 const pageErrors = [];
@@ -78,6 +84,21 @@ await check('the roster lists every pane', async () => {
   await shot('roster');
 });
 
+// The queue is the top of the floor at every width: an agent that waits on the
+// owner has a card with its name, the ask and the way to answer, and every
+// agent is still one compact row below.
+await check('the wide floor lists what needs the owner as cards above the rows', async () => {
+  const needs = page.locator('#needs');
+  await needs.locator('.card', { hasText: 'e2e ask' }).locator('button', { hasText: /deny/i }).first().waitFor({ timeout: 15000 });
+  const trust = needs.locator('.card', { hasText: 'e2e trust' });
+  await trust.locator('button', { hasText: 'Trust this folder' }).waitFor({ timeout: 15000 });
+  await trust.locator('button', { hasText: 'Not now' }).waitFor({ timeout: 5000 });
+  const above = await page.evaluate(() => document.getElementById('needs').getBoundingClientRect().bottom <= document.getElementById('roster').getBoundingClientRect().top + 1);
+  if (!above) throw new Error('the cards are not above the rows');
+  if (await page.locator('#roster .card.ask').count()) throw new Error('a card sits in the rows too');
+  await shot('needs-desk');
+});
+
 await check('a tile shows the pane live and takes typed keys', async () => {
   const t = await openTile('e2e shell');
   await t.click();
@@ -92,7 +113,7 @@ await check('a tile shows the pane live and takes typed keys', async () => {
   await shot('tile');
 });
 
-await check('a gate ask shows its ask bar with Deny and Allow', async () => {
+await check('a warden ask shows its ask bar with Deny and Allow', async () => {
   await openTile('e2e ask');
   const bar = page.locator('.askbar:not(.trustbar)').filter({ hasText: 'git push origin main' }).first();
   await bar.waitFor({ timeout: 15000 });
@@ -243,18 +264,18 @@ await check('the garden opens over the floor, saves a PNG picture, expands, and 
     window.realFacts = window.coppice.facts;
     const row = (id, label, state, extra) => ({ id, label, state, ...extra });
     window.coppice.state.panes = [
-      row('z0', 'foreman', 'working'),
+      row('z0', 'steward', 'working'),
       row('z1', 'auth rewrite', 'working', { parent_pane: 'z0' }),
       row('z2', 'docs', 'idle', { parent_pane: 'z0' }),
       row('z3', 'run tests', 'blocked', { parent_pane: 'z0', ask: { summary: 'git push' } }),
       row('z4', 'build', 'done', { parent_pane: 'z0' }),
-      row('z5', 'deploy', 'idle', { parent_pane: 'z0', gate: { decision: 'deny' } }),
+      row('z5', 'deploy', 'idle', { parent_pane: 'z0', warden: { decision: 'deny' } }),
       row('z6', 'lint', 'working', { parent_pane: 'z1' }),
       row('z7', 'fixtures', 'idle', { parent_pane: 'z1' }),
       row('z8', 'fix flaky test', 'working', { parent_pane: 'z3' }),
       row('z9', 'scratch shell', 'idle'),
     ];
-    window.coppice.facts = () => ({ foreman: { pane: 'z0' } });
+    window.coppice.facts = () => ({ steward: { pane: 'z0' } });
     window.dispatchEvent(new CustomEvent('coppice:panes'));
     return keep;
   });
@@ -308,19 +329,19 @@ for (const height of [760, 820, 900, 1000]) {
   });
 }
 
-// The floor's foreman for the chat: fake-foreman.sh, the claude table. The
+// The floor's steward for the chat: fake-steward.sh, the claude table. The
 // desk checks ran before it, so their windows never held it. No sentence
-// goes in first: floor.chat holds the tracked foreman's replies anyway.
-await check('the floor starts the fake foreman', async () => {
-  rpcCall('floor.foreman', { harness: 'claude' });
+// goes in first: floor.chat holds the tracked steward's replies anyway.
+await check('the floor starts the fake steward', async () => {
+  rpcCall('floor.steward', { harness: 'claude' });
 });
 
 // The chat is a window on the desk, and takes a window the way an agent
-// does: only a free one. The desk is full here, so the foreman's roster row
+// does: only a free one. The desk is full here, so the steward's roster row
 // says it holds a reply, and a click on the row puts the chat in a window
 // with the reply, drawn from floor.chat, and a line of its own. Screen in
-// its header shows the foreman's terminal (its canvas), and Chat returns.
-await check('with no free window the foreman row shows its reply, and its window draws the chat', async () => {
+// its header shows the steward's terminal (its canvas), and Chat returns.
+await check('with no free window the steward row shows its reply, and its window draws the chat', async () => {
   const mark = page.locator('#roster .reply');
   await mark.first().waitFor({ timeout: 40000 });
   if (await page.locator('#tiles .chat-window').count()) throw new Error('the chat took a window that was not free');
@@ -333,7 +354,7 @@ await check('with no free window the foreman row shows its reply, and its window
   await shot('desk-chat');
 });
 
-await check('Screen in the chat window header shows the foreman terminal, and Chat returns', async () => {
+await check('Screen in the chat window header shows the steward terminal, and Chat returns', async () => {
   await page.locator('#tiles .chat-window .screen-toggle').click();
   const term = page.locator('#tiles section:has(.screen-toggle) canvas');
   await term.first().waitFor({ timeout: 5000 });
@@ -372,7 +393,7 @@ await check('a phone-sized page shows the roster in its fold', async () => {
   await p.locator('#agents-fold').click();
 });
 
-await check('the phone chat shows the fake foreman\'s reply', async () => {
+await check('the phone chat shows the fake steward\'s reply', async () => {
   await p.locator('#chat-list .msg-agent', { hasText: 'I can see e2e shell' }).first().waitFor({ timeout: 30000 });
 });
 
@@ -565,9 +586,9 @@ await check('alone, the shell agent is fitted to the phone and draws with no sid
   await closeSheet();
 });
 
-// The fake foreman has a transcript, so its sheet opens on the reading view.
+// The fake steward has a transcript, so its sheet opens on the reading view.
 await check('an agent with a transcript opens on the reading view, and the compose bar types into it', async () => {
-  await openSheetOf('foreman');
+  await openSheetOf('steward');
   await p.locator('#reading').waitFor({ state: 'visible', timeout: 10000 });
   if (await p.locator('#canvas-wrap').isVisible()) throw new Error('the screen shows over the reading view');
   const line = await p.locator('#view-line').textContent();
@@ -613,6 +634,36 @@ await check('the trust agent\'s bar shows over its view on the phone', async () 
   if (!(await p.locator('#canvas-wrap').isVisible())) throw new Error('the trust agent shows no view under its bar');
   await sideways();
   await shot('phone-trust', p);
+});
+
+// An agent that finished and ended on a question is a card with a field to
+// answer in. Sending the answer types it to the agent, and the card goes.
+await check('an idle agent that ends on a question has a card to answer in, on the phone and the desk', async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  rpcCall('pane.create', {
+    cwd: path.join(process.env.E2E_DIR, 'proj', 'beta'), kind: 'pty', harness: 'claude', label: 'e2e asker',
+    cmd_argv: ['bash', path.join(here, 'fake-asker.sh')],
+  });
+  const card = (pg) => pg.locator('#needs .card', { hasText: 'e2e asker' });
+  await card(p).locator('.need-line', { hasText: 'Should I push it to the fake remote?' }).waitFor({ timeout: 30000 });
+  // The desk page was closed after its checks, so a new one shows the same card.
+  const deskCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const desk = await deskCtx.newPage();
+  await desk.goto(`${base}/#t=${token}`, { waitUntil: 'load', timeout: 20000 });
+  await card(desk).locator('.need-line', { hasText: 'Should I push it to the fake remote?' }).waitFor({ timeout: 30000 });
+  await shot('desk-needs-question', desk);
+  await p.evaluate(() => { location.hash = '#/roster'; });
+  await sideways();
+  await card(p).scrollIntoViewIfNeeded();
+  await shot('phone-needs-question', p);
+  const input = card(p).locator('input.need-input');
+  await input.fill('yes, push it');
+  await card(p).locator('button', { hasText: 'Send' }).click();
+  await card(p).waitFor({ state: 'detached', timeout: 15000 });
+  await card(desk).waitFor({ state: 'detached', timeout: 15000 });
+  await deskCtx.close();
+  const said = await p.locator('#status').textContent();
+  if (!/Sent to e2e asker\./.test(said)) throw new Error(`the status line said ${JSON.stringify(said)}`);
 });
 
 await phone.close();

@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 )
 
@@ -28,13 +29,13 @@ var agenticToolCapabilities = map[string]string{
 	"Bash": "shell", "Read": "file_read", "Glob": "file_read", "Grep": "file_read",
 	"Write": "file_write", "Edit": "file_write", "MultiEdit": "file_write",
 	"WebFetch": "network", "WebSearch": "network",
-	// sprig's spawn tool: the gate sees it as mcp__sprig__spawn, which
+	// sprig's spawn tool: the warden sees it as mcp__sprig__spawn, which
 	// the envelope admits only when mcp_allowlist names sprig/spawn.
 	"Spawn": "mcp_allowlist",
 }
 
 // SpawnMCPKey is verify.SPAWN_MCP_KEY: the mcp_allowlist key of the Spawn
-// tool, as the gate keys mcp__sprig__spawn.
+// tool, as the warden keys mcp__sprig__spawn.
 const SpawnMCPKey = "sprig/spawn"
 
 // AgenticToolGranted is verify.agentic_tool_granted: whether the envelope
@@ -68,7 +69,15 @@ type VerifyOptions struct {
 	// DialectBase is verify(dialect_base=...): the directory a word is
 	// placed from; nil, or a path that is not absolute, places nothing.
 	DialectBase *string
+	// Fenced is verify(fenced=...): the call runs under a fence run, so the
+	// shell-access findings are warnings that start with FencePrefix, not
+	// violations (ADR-0028).
+	Fenced bool
 }
+
+// FencePrefix is verify.FENCE_PREFIX: the start of a warning that records a
+// shell file access a fenced call made, which the kernel fence stops.
+const FencePrefix = "fence-enforced: "
 
 // VerifyResultGo is the internal result (violations only — warnings/timing
 // are informative and not part of the wire verdict).
@@ -100,12 +109,23 @@ func Verify(plan ActionPlan, env Envelope, opts VerifyOptions) VerifyResultGo {
 		return result(violations)
 	}
 
-	violations = CheckPermissions(plan, env, strict)
+	var fenceLog *[]string
+	if opts.Fenced {
+		fenceLog = &[]string{}
+	}
+	violations = CheckPermissionsFenced(plan, env, strict, DialectBase(opts.DialectBase), fenceLog)
+	var warnings []string
+	if fenceLog != nil {
+		for _, m := range *fenceLog {
+			warnings = append(warnings, FencePrefix+m)
+		}
+	}
 	if len(violations) > 0 {
-		return result(violations)
+		r := result(violations)
+		r.Warnings = warnings
+		return r
 	}
 
-	var warnings []string
 	var timeouts []string
 	unmodeled := false
 	done := func(vs []Violation) VerifyResultGo {
@@ -179,6 +199,34 @@ func checkDelegationSafety(plan ActionPlan, env Envelope) []Violation {
 // --- permissions stage (verify.check_permissions) -------------------------------
 
 func CheckPermissions(plan ActionPlan, env Envelope, strict bool) []Violation {
+	return CheckPermissionsAt(plan, env, strict, "")
+}
+
+// CheckPermissionsAt is verify.check_permissions with its base: the
+// directory a shell step's relative accesses are placed from ("" for none).
+func CheckPermissionsAt(plan ActionPlan, env Envelope, strict bool, base string) []Violation {
+	return CheckPermissionsFenced(plan, env, strict, base, nil)
+}
+
+// NamesNetDevice is verify._names_net_device on a shell-access message: the
+// finding is for a path under /dev/tcp or /dev/udp. Bash opens those with
+// socket and connect, which the kernel fence never sees, so a fenced call
+// still decides them (ADR-0028). The path is the quoted text before
+// " outside ".
+func NamesNetDevice(message string) bool {
+	head, _, _ := strings.Cut(message, " outside ")
+	for _, dev := range []string{"/dev/tcp", "/dev/udp"} {
+		if strings.Contains(head, "'"+dev+"/") || strings.Contains(head, "'"+dev+"'") {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckPermissionsFenced is check_permissions with its fence_log: when it
+// is not nil, the shell-access findings go into it as messages and are not
+// violations (ADR-0028).
+func CheckPermissionsFenced(plan ActionPlan, env Envelope, strict bool, base string, fenceLog *[]string) []Violation {
 	var violations []Violation
 	perms := env.Permissions
 
@@ -191,7 +239,25 @@ func CheckPermissions(plan ActionPlan, env Envelope, strict bool) []Violation {
 				continue
 			}
 			cmd, _ := step.ShellCommand()
-			violations = append(violations, checkShellCommand(cmd, step.ID, perms, env.ShellInterpreterPolicy, 0)...)
+			shellViolations := checkShellCommand(cmd, step.ID, perms, env.ShellInterpreterPolicy, 0)
+			violations = append(violations, shellViolations...)
+			// A head the allowlist refused already denies the step; naming
+			// its files too would only repeat it.
+			if !hasHeadViolation(shellViolations) {
+				accesses := checkShellAccesses(cmd, step.ID, perms, base)
+				if fenceLog == nil {
+					violations = append(violations, accesses...)
+				} else {
+					for _, a := range accesses {
+						// The fence does not limit the network (ADR-0028).
+						if NamesNetDevice(a.Message) {
+							violations = append(violations, a)
+						} else {
+							*fenceLog = append(*fenceLog, a.Message)
+						}
+					}
+				}
+			}
 		case "network":
 			if !perms.Network {
 				violations = append(violations, VStep("permissions", step.ID,
@@ -238,12 +304,7 @@ func CheckPermissions(plan ActionPlan, env Envelope, strict bool) []Violation {
 		case "mcp":
 			server, _ := step.MCPServer()
 			tool, _ := step.MCPTool()
-			key := server + "/" + tool
-			if !headAllowed(key, perms.McpAllowlist) {
-				violations = append(violations, VStep("permissions", step.ID, fmt.Sprintf(
-					"Step '%s' MCP tool '%s' not in mcp_allowlist %s", step.ID, key, pystr.ReprList(perms.McpAllowlist))).
-					With(kv("step", step.ID, "mcp_tool", key), nil))
-			}
+			violations = append(violations, checkMCPStep(step, server, tool, perms, base)...)
 		case "agentic":
 			violations = append(violations, checkAgenticStep(step, perms)...)
 		default:
@@ -341,13 +402,12 @@ func checkShellCommand(command, stepID string, perms Permission, policy string, 
 			if decomp.OK {
 				// A decomposed piece is guaranteed metachar-free by
 				// construction; call verifySimpleCommand directly (NOT
-				// checkShellCommand) — the raw metachar gate is
+				// checkShellCommand) — the raw metachar warden is
 				// deliberately not re-run on decomposed parts (verify.py
 				// comment), and re-running it here would both diverge
 				// from the oracle on quoted metachars (e.g. `grep -E
 				// "a|b"`) AND recurse forever at a constant depth.
 				var violations []Violation
-				violations = append(violations, checkRedirectScopes(decomp, stepID, perms)...)
 				for _, simple := range decomp.Commands {
 					violations = append(violations, verifySimpleCommand(simple, stepID, perms, policy, depth)...)
 				}
@@ -368,27 +428,118 @@ func checkShellCommand(command, stepID string, perms Permission, policy string, 
 	return verifySimpleCommand(stripped, stepID, perms, policy, depth)
 }
 
-func checkRedirectScopes(decomp Decomposition, stepID string, perms Permission) []Violation {
-	var violations []Violation
-	for _, path := range decomp.Writes {
-		if sanctionedWriteSinks[path] {
-			continue
-		}
-		if !PathMatchesAny(path, perms.FileWrite) {
-			violations = append(violations, VStep("permissions", stepID, fmt.Sprintf(
-				"Step '%s' shell redirect writes '%s' outside file_write scope %s", stepID, path, pystr.ReprList(perms.FileWrite))).
-				With(kv("step", stepID, "redirect_write", path), strp("Add '"+path+"' (or a covering glob) to permissions.file_write")))
+func hasHeadViolation(vs []Violation) bool {
+	for _, v := range vs {
+		if v.Detail != nil {
+			if _, ok := v.Detail.Get("command_head"); ok {
+				return true
+			}
 		}
 	}
-	for _, path := range decomp.Reads {
-		if sanctionedReadSources[path] {
+	return false
+}
+
+// CoversEverything is verify.covers_everything: a scope glob that is exactly
+// ** or /**.
+func CoversEverything(globs []string) bool {
+	for _, g := range globs {
+		if g == "**" || g == "/**" {
+			return true
+		}
+	}
+	return false
+}
+
+// matchGlobSafe is matchGlob where a glob too complex to match matches nothing.
+func matchGlobSafe(norm, glob string) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			if _, is := r.(GlobTooComplex); is {
+				ok = false
+				return
+			}
+			panic(r)
+		}
+	}()
+	return matchGlob(norm, glob)
+}
+
+// CoversTree is verify.covers_tree: dir and everything under it is in scope
+// only under a glob that ends in /** (SG-2).
+func CoversTree(dir string, globs []string) bool {
+	if CoversEverything(globs) {
+		return true
+	}
+	norm := posixNormpath(dir)
+	for _, g := range globs {
+		if !strings.HasSuffix(g, "/**") {
 			continue
 		}
-		if !PathMatchesAny(path, perms.FileRead) {
-			violations = append(violations, VStep("permissions", stepID, fmt.Sprintf(
-				"Step '%s' shell redirect reads '%s' outside file_read scope %s", stepID, path, pystr.ReprList(perms.FileRead))).
-				With(kv("step", stepID, "redirect_read", path), strp("Add '"+path+"' (or a covering glob) to permissions.file_read")))
+		if matchGlobSafe(norm, g) || matchGlobSafe(norm, g[:len(g)-3]) {
+			return true
 		}
+	}
+	return false
+}
+
+// checkShellAccesses is verify._check_shell_accesses: every file a shell
+// line reads or writes faces the envelope's file scopes (SG-1 to SG-6).
+func checkShellAccesses(command, stepID string, perms Permission, base string) []Violation {
+	acc := ShellAccesses(command, base)
+	var violations []Violation
+	for _, side := range []struct {
+		verb, scopeName, noun string
+		accesses              []Access
+		scope                 []string
+	}{
+		{"writes", "file_write", "write", acc.Writes, perms.FileWrite},
+		{"reads", "file_read", "read", acc.Reads, perms.FileRead},
+	} {
+		for _, a := range side.accesses {
+			var msg string
+			var detail *pyjson.Object
+			var remediation string
+			if a.Tree {
+				if CoversTree(a.Path, side.scope) {
+					continue
+				}
+				msg = fmt.Sprintf("Step '%s' shell %s under '%s' (recursive) outside %s scope %s",
+					stepID, side.verb, a.Path, side.scopeName, pystr.ReprList(side.scope))
+				detail = kv("step", stepID, "shell_"+side.noun+"_tree", a.Path)
+				remediation = "Add '" + a.Path + "/**' to permissions." + side.scopeName
+			} else {
+				if PathMatchesAny(a.Path, side.scope) {
+					continue
+				}
+				if a.Via == "redirect" {
+					msg = fmt.Sprintf("Step '%s' shell redirect %s '%s' outside %s scope %s",
+						stepID, side.verb, a.Path, side.scopeName, pystr.ReprList(side.scope))
+					detail = kv("step", stepID, "redirect_"+side.noun, a.Path)
+				} else {
+					msg = fmt.Sprintf("Step '%s' shell %s '%s' outside %s scope %s",
+						stepID, side.verb, a.Path, side.scopeName, pystr.ReprList(side.scope))
+					detail = kv("step", stepID, "shell_"+side.noun, a.Path)
+				}
+				remediation = "Add '" + a.Path + "' (or a covering glob) to permissions." + side.scopeName
+			}
+			violations = append(violations, VStep("permissions", stepID, msg).With(detail, strp(remediation)))
+		}
+	}
+	for _, side := range []struct {
+		noun, scopeName, unknown string
+		scope                    []string
+	}{
+		{"write", "file_write", acc.WritesUnknown, perms.FileWrite},
+		{"read", "file_read", acc.ReadsUnknown, perms.FileRead},
+	} {
+		if side.unknown == "" || CoversEverything(side.scope) {
+			continue
+		}
+		violations = append(violations, VStep("permissions", stepID, fmt.Sprintf(
+			"Step '%s' shell %s targets cannot be placed (%s) and %s scope %s is not everything",
+			stepID, side.noun, side.unknown, side.scopeName, pystr.ReprList(side.scope))).
+			With(kv("step", stepID, "shell_"+side.noun+"s_unknown", side.unknown),
+				strp("Name each file the command "+side.noun+"s, without xargs, globs or variables")))
 	}
 	return violations
 }

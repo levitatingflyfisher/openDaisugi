@@ -50,7 +50,7 @@ func TestSafeIDMatchesEveryPythonFixture(t *testing.T) {
 	}
 }
 
-func TestAnswerWritesTheFileThePythonGateWillHonor(t *testing.T) {
+func TestAnswerWritesTheFileThePythonWardenWillHonor(t *testing.T) {
 	root := t.TempDir()
 	writeAsk(t, root, "toolu_01ABC", "deadbeef")
 	a := AskChannel{Root: root}
@@ -100,7 +100,7 @@ func TestAnswerWritesTheFileThePythonGateWillHonor(t *testing.T) {
 
 // The failure this names: with no ask on disk there is no nonce to echo, and
 // ask.py retires both files the moment it sees any answer. Writing one the
-// gate is going to reject would burn the ask cycle for nothing, so write
+// warden is going to reject would burn the ask cycle for nothing, so write
 // nothing at all.
 func TestAnswerWritesNothingWhenThereIsNoAsk(t *testing.T) {
 	root := t.TempDir()
@@ -114,7 +114,7 @@ func TestAnswerWritesNothingWhenThereIsNoAsk(t *testing.T) {
 }
 
 // The failure this names: only allow and deny are decisions. Anything else
-// must not reach the gate's directory.
+// must not reach the warden's directory.
 func TestAnswerRefusesADecisionThatIsNeitherAllowNorDeny(t *testing.T) {
 	root := t.TempDir()
 	writeAsk(t, root, "toolu_01ABC", "deadbeef")
@@ -139,17 +139,17 @@ func TestAnswerRefusesAnAskWithNoNonce(t *testing.T) {
 	}
 }
 
-// The failure this names: a server built with no gate root must not read
+// The failure this names: a server built with no warden root must not read
 // "That ask is gone" over a config mistake. It gets its own distinct error
 // so the operator sees the real fault.
-func TestAnswerFailsWithNoGateRoot(t *testing.T) {
+func TestAnswerFailsWithNoWardenRoot(t *testing.T) {
 	a := AskChannel{}
 	err := a.Answer(Reply{ToolUseID: "toolu_01ABC", Decision: "allow"})
 	if err == nil {
-		t.Fatal("Answer with no gate root returned nil")
+		t.Fatal("Answer with no warden root returned nil")
 	}
 	if errors.Is(err, ErrNoAsk) || errors.Is(err, ErrBadDecision) {
-		t.Fatalf("Answer with no gate root returned %v, want a distinct error", err)
+		t.Fatalf("Answer with no warden root returned %v, want a distinct error", err)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestAnswerNeverWritesOutsideTheAnswersDirectory(t *testing.T) {
 	}
 }
 
-// writeTieredAsk is writeAsk with the tier the gate writes in the ask file.
+// writeTieredAsk is writeAsk with the tier the warden writes in the ask file.
 func writeTieredAsk(t *testing.T, root, toolUseID, tier string) {
 	t.Helper()
 	writeAsk(t, root, toolUseID, "deadbeef")
@@ -286,7 +286,7 @@ func TestAnswerDenyIgnoresScope(t *testing.T) {
 }
 
 // GR-R-10: the answer writer checks answers/ with no link followed before
-// it writes, and reads the ask as the gate does. Each test plants one link
+// it writes, and reads the ask as the warden does. Each test plants one link
 // and needs the refusal; before this change each of them wrote through it.
 
 func TestAnswerWritesNothingThroughASymlinkedAnswersDir(t *testing.T) {
@@ -347,7 +347,7 @@ func TestAnswerReadsNoAskThatIsLinkedSharedOrHardLinked(t *testing.T) {
 			t.Fatalf("%s: err = %v, want ErrNoAsk", name, err)
 		}
 		if _, serr := os.Stat(filepath.Join(root, "answers")); serr == nil {
-			t.Fatalf("%s: an answer directory was made for an ask the gate would not read", name)
+			t.Fatalf("%s: an answer directory was made for an ask the warden would not read", name)
 		}
 	}
 }

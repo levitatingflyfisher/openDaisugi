@@ -19,7 +19,7 @@ import (
 type Options struct {
 	Dial     Dialer
 	Tokens   TokenStore
-	Gate     AskChannel
+	Warden   AskChannel
 	Push     *Publisher
 	VoiceURL string
 	// VoiceTokenFile is the token file VoiceURL's server checks. With none,
@@ -27,6 +27,10 @@ type Options struct {
 	VoiceTokenFile string
 	// Views are the view plugins served under /plugins.
 	Views []View
+	// ExtraDataDirs are daisugi data directories beside the configured one
+	// whose cards the floor shows too: the steward's work dir, where its
+	// branching spawns open their cards.
+	ExtraDataDirs []string
 	// ViewLib is the library the views share, served at /plugins/_lib/.
 	// Only its JavaScript files are served.
 	ViewLib fs.FS

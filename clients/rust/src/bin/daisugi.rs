@@ -1,5 +1,5 @@
-//! `daisugi`: the openDaisugi CLI in one Rust binary, the gate commands
-//! and the gate half of install. See `cli`.
+//! `daisugi`: the openDaisugi CLI in one Rust binary, the warden commands
+//! and the warden half of install. See `cli`.
 
 fn main() {
     // `fence` first, before any CLI state: it costs one exec.

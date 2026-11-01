@@ -1,14 +1,14 @@
 // Package claude runs Claude Code headlessly and normalises its stream-json
-// into coppice events. The gate still decides: an event here says working, and
-// a source: gate report saying blocked outranks it.
+// into coppice events. The warden still decides: an event here says working, and
+// a source: warden report saying blocked outranks it.
 //
 // This adapter never emits state "blocked". In -p mode, Claude's own
 // permission decisions do not surface on this stream at all - they go through
-// the gate hook (COPPICE_SOCK/COPPICE_PANE, wired by rule (a) below), which is
-// what reports blocked, with source gate, when it has something to report. No
+// the warden hook (COPPICE_SOCK/COPPICE_PANE, wired by rule (a) below), which is
+// what reports blocked, with source warden, when it has something to report. No
 // recorded fixture this package's tests replay carries a permission message,
 // so no wire shape for one has been invented here; a claude pane's only path
-// to blocked is the gate, not this file.
+// to blocked is the warden, not this file.
 //
 // Model text (Event.Text) is written into the pane's grid raw, unescaped -
 // rule (d) of pane.Adapter requires this file to say which choice it made.
@@ -123,7 +123,7 @@ func (adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pane.
 	name, args := pane.Wrapped(o.Wrap, binary(), argv)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
-	// Rule (a): this is the only path by which the gate hook finds
+	// Rule (a): this is the only path by which the warden hook finds
 	// COPPICE_SOCK and COPPICE_PANE.
 	cmd.Env = pane.BuildEnv(os.Environ(), o.Env, o.Sock, o.PaneID, o.DataDir)
 

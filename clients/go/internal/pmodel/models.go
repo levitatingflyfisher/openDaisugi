@@ -8,7 +8,7 @@ import (
 	"daisugi-verify/internal/pyjson"
 )
 
-// This file holds the oracle's models the gate validates: Envelope and
+// This file holds the oracle's models the warden validates: Envelope and
 // what it holds (opendaisugi/models.py), and the predicate Expression
 // union (opendaisugi/predicate.py).
 
@@ -21,6 +21,13 @@ func emptyDict() any { return pyjson.NewObject() }
 var float3 = Tuple{Items: []Schema{Float{}, Float{}, Float{}}}
 var box = Tuple{Items: []Schema{float3, float3}}
 
+// McpRule is models.McpRule.
+var McpRule = &Model{Name: "McpRule", Fields: []Field{
+	{Name: "tool", Schema: Str{}, Required: true},
+	{Name: "args", Schema: List{Expression}, Default: emptyList},
+	{Name: "known", Schema: Nullable{List{Str{}}}, Default: constant(nil)},
+}}
+
 // Permission is models.Permission.
 var Permission = &Model{Name: "Permission", Fields: []Field{
 	{Name: "file_read", Schema: List{Str{}}, Default: emptyList},
@@ -31,6 +38,7 @@ var Permission = &Model{Name: "Permission", Fields: []Field{
 	{Name: "shell_allowlist", Schema: List{Str{}}, Default: emptyList},
 	{Name: "shell_allow_decomposition", Schema: Bool{}, Default: constant(false)},
 	{Name: "mcp_allowlist", Schema: List{Str{}}, Default: emptyList},
+	{Name: "mcp_rules", Schema: List{McpRule}, Default: emptyList},
 	{Name: "custom_step_allowlist", Schema: List{Str{}}, Default: emptyList},
 	{Name: "max_execution_time_s", Schema: Int{}, Default: constant(pyjson.Int{Text: "30"})},
 	{Name: "max_output_size_mb", Schema: Int{}, Default: constant(pyjson.Int{Text: "10"})},
@@ -138,7 +146,7 @@ var Expression = &Tagged{Key: "op"}
 
 // ExpressionTitle is the title of parse_expression's ValidationError.
 const ExpressionTitle = "tagged-union[Equals,NotEquals,InSet,NotInSet,Matches,NotMatches,NumericRange,LengthRange," +
-	"Exists,IsEmpty,And,Or,Not,Implies,ForallSteps,ExistsStep,ForallOutputs,ForallWrites,DependsOn,Before,AliasRef,LLMCheck]"
+	"Exists,IsEmpty,PathIn,And,Or,Not,Implies,ForallSteps,ExistsStep,ForallOutputs,ForallWrites,DependsOn,Before,AliasRef,LLMCheck]"
 
 func init() {
 	op := func(tag string) Field {
@@ -161,6 +169,7 @@ func init() {
 			{Name: "max", Schema: Nullable{Int{}}, Default: constant(nil)}}},
 		{"exists", "Exists", []Field{path}},
 		{"is_empty", "IsEmpty", []Field{path}},
+		{"path_in", "PathIn", []Field{path, req("scope", Literal{[]string{"file_read", "file_write"}})}},
 		{"and", "And", []Field{req("children", List{Expression})}},
 		{"or", "Or", []Field{req("children", List{Expression})}},
 		{"not", "Not", []Field{req("child", Expression)}},

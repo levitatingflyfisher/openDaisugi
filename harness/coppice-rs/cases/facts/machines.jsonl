@@ -6,7 +6,7 @@
 # points at this box by the name localhost, where a pane listens on 127.0.0.1
 # only (Go and Rust both try ::1 and 127.0.0.1 within one second); cloud and default point at no
 # machine, and hk has no URL. dead names a key variable that is not set. The fake
-# daisugi records its working directory: coppice runs it in the foreman's
+# daisugi records its working directory: coppice runs it in the steward's
 # compactor directory, as Go does. [voice] url names gpu too. answers_ms is a clock value, so it is
 # masked (MA-R-1); the bool answers is compared.
 #!env PATH={FIXTURES}/web/bin:/usr/bin:/bin
@@ -29,4 +29,4 @@
 {"id":"m1","cmd":"floor.machines"}
 {"id":"$id","ok":true,"result":{"tailscale":"ok","machines":[{"name":"box","online":true,"os":"linux","self":true,"profiles":[{"name":"local","address":"localhost:{PORT2}","answers":true,"answers_ms":"*","key_set":true}]},{"name":"gpu","online":true,"os":"linux","self":false,"profiles":[{"name":"desk","address":"gpu.tail1.ts.net:{PORT}","answers":true,"answers_ms":"*","key_set":true}],"voice":{"address":"gpu:{PORT}","answers":true,"answers_ms":"*"}},{"name":"laptop","online":true,"os":"macOS","self":false,"profiles":[]},{"name":"nas","online":false,"os":"windows","self":false,"last_seen":"2026-10-01T10:00:00Z","profiles":[{"name":"dead","address":"127.0.0.5:{PORT2}","answers":false,"answers_ms":null,"key_set":false}]}]}}
 {"id":"f1","file":"{WORK}/daisugi-pwd"}
-{"id":"$id","ok":true,"result":{"text":"{HOME}/.local/state/coppice/foreman/compactor\n","mode":"0o644"}}
+{"id":"$id","ok":true,"result":{"text":"{HOME}/.local/state/coppice-steward/compactor\n","mode":"0o644"}}

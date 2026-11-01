@@ -42,27 +42,27 @@ The analogy fits better now than when it was first used
 | Profile-guided optimizer | the garden, which compiles repeated work into pathways |
 | Type checker | Z3 and the envelope, before anything runs |
 | Deoptimization | fail closed: a failed proof falls back to the frontier or to a human |
-| The runtime's sandbox | the gate |
+| The runtime's sandbox | the warden |
 | Debugger and console | coppice |
 
 The pitch in one breath: *openDaisugi is a JIT compiler for AI agents. The first time, a
 frontier model does the work and a formal proof checks every action before it runs. The tenth
-time, it runs as a verified script for free. One gate, whether the agents write code or fly
+time, it runs as a verified script for free. One warden, whether the agents write code or fly
 drones.*
 
 The bitter lesson argues against hand-tuned specialization, not against efficiency. A pathway is
 a specialization the system earns from its own journal and drops when it stops being true.
 
-The lineage is **runtime assurance** from aerospace control: Simplex (Sha, 1996), verified
+The lineage is **runtime assurance** from aerospace control: Simplex (Sha, 2001, building on early work from 1996), verified
 envelopes, barrier certificates. openDaisugi points it at LLM agents and robot foundation models.
 
 ## Three parts
 
 | Part | What it is | Who owns the code | What must stay true |
 |---|---|---|---|
-| **daisugi** | gate, verifier, journal, garden. `verify(plan ⊆ envelope)`, fail closed. | ours | importable alone; imports nothing above it |
-| **coppice** (the floor) | panes, state, prompt, steer, phone, voice, foreman | ours | every state it shows has a source; `unknown` when none |
-| **the loop** | the harness in a pane: Claude Code, Codex, pi, OpenCode, sprig | rented, except sprig | every tool call passes the gate; an unreachable gate blocks |
+| **daisugi** | warden, verifier, journal, garden. `verify(plan ⊆ envelope)`, fail closed. | ours | importable alone; imports nothing above it |
+| **coppice** (the floor) | panes, state, prompt, steer, phone, voice, steward | ours | every state it shows has a source; `unknown` when none |
+| **the loop** | the harness in a pane: Claude Code, Codex, pi, OpenCode, sprig | rented, except sprig | every tool call passes the warden; an unreachable warden blocks |
 
 A coppice is a stand of trees cut back so each stump sends up straight shoots. Daisugi is a
 coppicing technique. See [ADR-0020](docs/adr/0020-layer-floor-loop.md), and
@@ -107,8 +107,8 @@ ported to both. The map is the [part 2 plan](docs/plans/2026-09-24-omarchy/plan-
 ### Problems, not a feature list
 
 - **Does it help on real work?** Every number so far comes from synthetic cases. They prove
-  correctness, not usefulness. The answer is a dogfood week: the gate's false-deny rate from its
-  audit log, the gateway metered on real traffic, coppice driven across real projects with a
+  correctness, not usefulness. The answer is a dogfood week: the warden's false-deny rate from its
+  audit log, the router metered on real traffic, coppice driven across real projects with a
   friction log, and the top three pains fixed before any new design.
 - **Does reuse stay correct?** A reused pathway must be as correct as fresh work, across many
   tasks, on a local model ([roadmap Stage 4](docs/roadmap.md)).
@@ -128,7 +128,7 @@ See [the North Star](docs/north-star.md) for the far horizon.
 Breaking one is a design regression, not a feature.
 
 1. **Fail closed.** Unprovable means rejected. Undeclared means denied. A Z3 timeout or
-   `unknown` denies at the gate. In a verification library a fail-open is the worst bug.
+   `unknown` denies at the warden. In a verification library a fail-open is the worst bug.
    ([ADR-0001](docs/adr/0001-fail-closed-default.md))
 2. **Verify before execute.** No effect happens before its plan is proven inside its envelope.
    Each step is checked again at run time.
@@ -137,7 +137,7 @@ Breaking one is a design regression, not a feature.
    ([ADR-0003](docs/adr/0003-envelope-as-contract.md))
 4. **Independent provenance.** The "allowed" spec must not come from the same untrusted source as
    the "decided" plan. Envelopes carry a more trusted parent and can only tighten.
-5. **daisugi stays importable alone.** The gate, verifier, journal and garden import nothing
+5. **daisugi stays importable alone.** The warden, verifier, journal and garden import nothing
    above them and run in any harness. ([ADR-0020](docs/adr/0020-layer-floor-loop.md))
 6. **A port is never looser than the oracle.** Go and Rust agree with Python on every case, or
    deny. A slow box may deny more; it may never allow more. Where a port and the oracle must
@@ -156,26 +156,34 @@ gospel. Verify a claim before you rely on it. Numbers are from the reference box
 
 - **The daisugi spine in Python** (package version 0.43.0): envelope, `verify`, subsumption,
   supervisor, journal, distillation into signed pathways, the orchestrator, the token-saving
-  gateway and the Switchyard router client, the MCP server. Measured on a benchmark-generated
+  router and the Switchyard router client, the MCP server. Measured on a benchmark-generated
   journal: the symbolic guard runs a sub-4 ms median with a 0% timeout rate.
-- **Standalone gates in Go and Rust.** No Python at run time. Real Z3 5.1.0 linked statically,
-  tree-sitter-bash for shell. 1,310 gate cases with 0 disagreements in both, measured before the
+- **Standalone checks in Go and Rust.** No Python at run time. Real Z3 5.1.0 linked statically,
+  tree-sitter-bash for shell. 1,310 warden cases with 0 disagreements in both, measured before the
   security queue below. Cold call p50: Go 8.8 ms, Rust 6.1 ms, Python about 430 ms.
+- **Shell file accesses face the file scopes.** The warden places the operands of a closed
+  table of commands (`cp`, `tee`, `sed -i`, `tar`, `cat`, `grep -r`, `find`, `xargs` and
+  more) against `file_read` and `file_write`. A tree needs a covering `/**` glob, a relative
+  path is placed from the call's cwd, and an unknown access is a violation. 273 warden cases
+  and 1,026 access cases in the dialect fixture, 0 disagreements in Go and Rust.
+- **An opaque invariant never passes in silence.** An invariant nothing can check is a
+  violation at every stakes, `warden register` refuses it, and enforce mode enforces the
+  dialect words. 73 warden cases, 0 disagreements in Go and Rust.
 - **Most of daisugi in Go and Rust.** Install, pathways and matchers (lexical and potion),
-  the garden, the gateway and router commands, each with golden cases and fuzz at 0
+  the garden, the router and routing mode commands, each with golden cases and fuzz at 0
   disagreements. Go also has `status`, `config`, `start --no-ui` and `journal` (472 CLI cases).
   A case a port does not carry is refused under a ruling. A refusal is not counted as
   agreement. The record is
   [clients/ADJUDICATIONS.md](clients/ADJUDICATIONS.md).
 - **One-script install.** `scripts/install.sh` from source; `scripts/release.sh` builds a
-  tarball; tarball to the first gate decision took 0.52 s in a scratch home.
-- **coppice, the floor.** TUI, web and phone on one screen; state from the gate hook (verdict,
+  tarball; tarball to the first warden decision took 0.52 s in a scratch home.
+- **coppice, the floor.** TUI, web and phone on one screen; state from the warden hook (verdict,
   clause, mode, model, tokens); ended agents in Recent with Resume; one-click new agent and a
   project picker; ready prompts that wait for a loop to be ready and refuse on a question; voice;
-  a foreman that starts and directs agents. The part 1 tasks are merged. The hand checks in
+  a steward that starts and directs agents. The part 1 tasks are merged. The hand checks in
   [RESUME.md](docs/plans/2026-09-24-omarchy/RESUME.md) wait for a person.
 - **A first security queue, in the Python oracle.** A payload's session id never selects an
-  envelope; an operator's edited call passes the whole gate again; subsumption checks stakes,
+  envelope; an operator's edited call passes the whole warden again; subsumption checks stakes,
   custom steps and budgets; no agent can run `daisugi rank record`; definitions substitute
   structurally and system words cannot be redefined. The Go and Rust mirrors of these fixes are in progress, not committed.
 - **Our own model client** (`llm_client.py`) in place of litellm and instructor: the Anthropic
@@ -185,7 +193,7 @@ gospel. Verify a claim before you rely on it. Numbers are from the reference box
 ### Designed, not built
 
 - The router ([design-router.md](docs/plans/2026-09-24-omarchy/design-router.md)).
-- Grafts, a fourth gate verdict, **rewrite**: "do this cheaper call instead", proved at install
+- Grafts, a fourth warden verdict, **rewrite**: "do this cheaper call instead", proved at install
   ([design-grafts.md](docs/plans/2026-09-24-omarchy/design-grafts.md)).
 - Ranking as a primitive beside verify
   ([design-ranking.md](docs/plans/2026-09-24-omarchy/design-ranking.md)).
@@ -207,9 +215,9 @@ to undo, or that touches sprig or weave, waits for the owner before code depends
   onboarding, model-written envelopes, dashboard), ingest, voice, and coppice and sprig in Rust
   are not ported. Rust lacks `status`, `config`, `start` and `journal`. Until the Go binary has
   the dashboard, the Python `daisugi` stays on the owner's PATH.
-- **sprig and weave are on hold.** grove is retired: coppice replaced it. They run with the gate off unless `--gate` is passed
-  (`harness/sprig/cli.go`). The owner agreed to default-on once the gate runs smoothly; it is not
-  done.
+- **sprig and weave are on hold.** grove is retired: coppice replaced it. The warden is on by
+  default in the installed mode in sprig, weave and sprig-mcp; `--warden=false` turns it off.
+  The owner has not yet resumed work on them.
 - **No published release.** mise and the AUR need a tagged release, and the repo's history
   policy has no tags. The owner decides. Release artifacts are not signed.
 - **Reuse fidelity at scale**, robotics on hardware, papers and revenue: still hopes. The

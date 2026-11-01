@@ -114,7 +114,7 @@
 {"id":"25","cmd":"pane.messages","pane":"$sp"}
 {"id":"$id","ok":false,"error":{"code":"unauthorized","message":"a pane may read only its own messages. The operator reads any pane's."}}
 {"id":"26","cmd":"floor.chat"}
-{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator talks to the floor's foreman."}}
+{"id":"$id","ok":false,"error":{"code":"unauthorized","message":"only the operator talks to the floor's steward."}}
 # A pane may not resume or fork another pane's sprig session, which would
 # make that session's tree its own messages.
 {"id":"26b","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{FIXTURES}","label":"steal","cmd_argv":["--session-dir","{WORK}/sessions","--resume","s1"]}

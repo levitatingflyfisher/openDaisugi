@@ -53,7 +53,7 @@ def _path(wps):
     )
 
 
-def check_gates():
+def check_checks():
     """Independently re-run each scenario's core check → (accept_safe, reject_unsafe)."""
     box = ((0, 0, 0), (30, 12, 8))
     ws = Envelope(
@@ -254,7 +254,7 @@ def check_gates():
             ),
         }
     )
-    print("── gate verification (accept safe / reject unsafe) ──")
+    print("── warden verification (accept safe / reject unsafe) ──")
     allgood = True
     for name, (a, b) in checks.items():
         ok = a and b
@@ -271,7 +271,7 @@ def resample(frames, n):
 def main():
     import imageio.v2 as imageio
 
-    check_gates()
+    check_checks()
     os.makedirs(os.path.join(OUT, "gallery"), exist_ok=True)
     order = [
         "keep_in",

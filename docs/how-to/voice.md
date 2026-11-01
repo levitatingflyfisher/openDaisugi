@@ -15,9 +15,9 @@ coppice web token
 daisugi voice serve
 ```
 
-This binds `127.0.0.1:7477`. It answers `GET /health`, `POST /transcribe`, and
-`POST /deliver`. coppice starts it for you, so on a floor you often need
-neither command.
+This binds `127.0.0.1:7477`. It answers `GET /health`, `GET /status`,
+`POST /transcribe`, `POST /partial`, and `POST /deliver`. coppice starts it
+for you, so on a floor you often need neither command.
 
 With no voice settings in `config.yaml` (or `voice_engine: faster-whisper`
 with `voice_model: tiny.en`, the defaults), the engine follows the box's
@@ -73,6 +73,28 @@ This needs `coppice web serve` started with `--voice-url`, pointed at the
 address `daisugi voice serve` listens on, for example `--voice-url
 http://127.0.0.1:7477`. Without it the phone shows a message naming both
 `daisugi voice serve` and `--voice-url`.
+
+## Text as you speak
+
+On the phone and in `daisugi voice ptt`, the words show while you talk.
+Under the Mic button (on the phone) or on the line under the prompt (in
+the terminal), the text so far grows in a muted colour. When you stop,
+the final text lands in the prompt box as before, and the line clears.
+
+Every 1.5 s the page or `ptt` sends the recording so far to `POST
+/partial`. The server reads it with the same engine as a clip. It reads
+each finished 30 s window once and keeps its text, so a long dictation
+costs one window each time. A partial never cleans up, never delivers and
+never arms. While a clip is being read, a partial is dropped, not
+queued. A clip that comes while a partial runs waits for it.
+
+`GET /status` (no token, like `/health`) says `"partial": true` and names the
+engine in `partial_engine`. An older voice server has no `/partial`: the
+phone then shows "Live text needs a newer voice server." once, and Record
+works as before.
+
+What leaves the box does not change: partials go to the same voice server
+as the clip, over the same address, and nothing else.
 
 ## Grant a pane direct send
 
@@ -149,7 +171,7 @@ A working CPU path beats a broken GPU one.
 | `faster-whisper` | a model name such as `tiny.en` or `base.en` | the `[voice]` extra; the Python build only |
 | `whisper.cpp` | the path of a ggml model file | `whisper-cli` on PATH; it runs once per clip |
 
-On this box (a 4-core 2017 laptop CPU), on real speech, Parakeet v2
+On an older laptop CPU, on real speech, Parakeet v2
 answers a 5 s clip in about 1.1 s with 2.5 to 3.5 times fewer errors than
 `tiny.en`; Moonshine small takes about 1.5 s; `tiny.en` about 0.45 s. See
 docs/research/stt-2026-10.md, "Measured again with the resident engines".
@@ -198,7 +220,7 @@ No audio and no text, by default. The clip is decoded and transcribed on
 this box (in process, or by `parakeet-cli`, `moonshine-cli` or `whisper-cli`), the grant
 files under `<data-dir>/voice/armed` are local, and the token file is
 local. With cleanup on, the transcript is also journaled to
-`<data-dir>/gateway/turns.jsonl`, exactly as a typed prompt is. The first
+`<data-dir>/router/turns.jsonl`, exactly as a typed prompt is. The first
 use of a model fetches it: faster-whisper's and Parakeet's from Hugging
 Face, Moonshine's from download.moonshine.ai. Those requests name the model file and carry
 nothing of yours. The one outbound call that carries your words is the

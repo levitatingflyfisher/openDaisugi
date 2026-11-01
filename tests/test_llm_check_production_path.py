@@ -25,7 +25,9 @@ def _env(stakes="medium"):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes=stakes,
     )
 

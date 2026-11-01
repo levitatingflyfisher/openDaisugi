@@ -1,4 +1,4 @@
-//! The verdict journal: the last gate verdicts the server was told, newest
+//! The verdict journal: the last warden verdicts the server was told, newest
 //! first through floor.journal, kept across a restart in
 //! <data dir>/journal/verdicts.jsonl (0600).
 
@@ -39,7 +39,7 @@ fn journal_push(ring: &mut Vec<Entry>, e: Entry) {
     }
 }
 
-/// One verdict a gate told the server about. at is unix seconds.
+/// One verdict a warden told the server about. at is unix seconds.
 #[derive(Clone, Debug)]
 pub struct Entry {
     at: f64,
@@ -225,7 +225,7 @@ impl Server {
         }
     }
 
-    /// Adds one verdict a gate reported to the journal and its file.
+    /// Adds one verdict a warden reported to the journal and its file.
     pub fn note_verdict(&self, pane: &str, v: &Verdict, mode: &str) {
         if pane.is_empty() || v.decision.is_empty() {
             return;
@@ -242,7 +242,7 @@ impl Server {
         self.append_journal(&mut j, e);
     }
 
-    /// Adds a verdict read from a sprig session tree, which no gate
+    /// Adds a verdict read from a sprig session tree, which no warden
     /// reports. It carries the tree's own time. A verdict with no usable
     /// time (none, or one after the server's clock) is skipped, since the
     /// server cannot place it. It is also skipped when the journal already
@@ -251,7 +251,7 @@ impl Server {
     /// nothing twice. Nor does it add a verdict the quota pruned: when the
     /// pane holds its quota, a verdict older than the pane's oldest entry is
     /// skipped.
-    pub(super) fn note_tree_verdict(&self, pane: &str, v: &super::facts::GateFact, mode: &str) {
+    pub(super) fn note_tree_verdict(&self, pane: &str, v: &super::facts::WardenFact, mode: &str) {
         if pane.is_empty() || v.decision.is_empty() {
             return;
         }
@@ -399,7 +399,7 @@ mod tests {
             data_dir: dir.join("data"),
             start_dir: dir.to_path_buf(),
             voice: Default::default(),
-            foreman: Default::default(),
+            steward: Default::default(),
         })
     }
 
@@ -565,16 +565,16 @@ mod tests {
 
     #[test]
     fn tree_verdicts_are_keyed_on_the_whole_tuple_and_need_a_time() {
-        use crate::server::facts::GateFact;
+        use crate::server::facts::WardenFact;
         let dir = scratch("tree");
         let s = server(&dir);
-        let v = GateFact {
+        let v = WardenFact {
             decision: "deny".into(),
             tool: "bash".into(),
             clause: "no-rm".into(),
             at: 4.0,
         };
-        let with = |f: &dyn Fn(&mut GateFact)| {
+        let with = |f: &dyn Fn(&mut WardenFact)| {
             let mut x = v.clone();
             f(&mut x);
             x
@@ -607,10 +607,10 @@ mod tests {
 
     #[test]
     fn tree_verdicts_the_pane_quota_pruned_stay_out_after_a_restart() {
-        use crate::server::facts::GateFact;
+        use crate::server::facts::WardenFact;
         let dir = scratch("treequota");
         let s = server(&dir);
-        let tree = |i: usize| GateFact {
+        let tree = |i: usize| WardenFact {
             decision: "deny".into(),
             tool: "bash".into(),
             clause: format!("t{i}"),

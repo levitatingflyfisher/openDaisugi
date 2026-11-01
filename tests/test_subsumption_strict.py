@@ -10,7 +10,9 @@ def _env(invs, stakes="high"):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes=stakes,
         invariants=invs,
     )

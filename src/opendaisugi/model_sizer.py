@@ -157,7 +157,7 @@ def size_step(
     """Size one step: cheapest capable model, downgraded if the budget is tight.
 
     ``budget`` is any object exposing ``remaining() -> float`` (a
-    :class:`~opendaisugi.budget.BudgetTracker`); pass the live tracker to gate on
+    :class:`~opendaisugi.budget.BudgetTracker`); pass the live tracker to warden on
     what remains *now*, or ``None`` for pure capability-based sizing.
 
     ``target_model`` honors an explicit choice (e.g. a step's ``preferred_model``)
@@ -203,7 +203,7 @@ def size_plan(
 ) -> list[StepSizing]:
     """Size every step in ``plan`` (static, up-front). One :class:`StepSizing` each.
 
-    Note: static sizing sets each step's initial model. LIVE budget gating during
+    Note: static sizing sets each step's initial model. LIVE budget checking during
     the run happens in the orchestrator's budget-aware executor, which re-sizes
     per step against the tracker's *current* remaining budget.
     """

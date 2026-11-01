@@ -372,7 +372,7 @@ def test_restore_refuses_when_a_nested_git_repo_occupies_a_wanted_file_path(repo
 
 
 def test_restore_refuses_when_a_gitignored_dangling_symlink_blocks_a_wanted_path(repo: Path):
-    """The second sibling: the blocking-prefix walk was gated on
+    """The second sibling: the blocking-prefix walk was checked on
     errno.ENOTDIR only. A gitignored, DANGLING symlink parent makes
     `lstat("a/b.txt")` raise ENOENT — not ENOTDIR (resolving through `a`
     fails because ITS OWN target doesn't exist) — which the old code
@@ -399,7 +399,7 @@ def test_restore_refuses_when_a_gitignored_dangling_symlink_blocks_a_wanted_path
 
 # --- fix round 4: git PATH-NAMESPACE mixing when repo is a git SUBDIRECTORY ---
 #
-# gate.py passes Path(cwd) straight through, and cwd is routinely a monorepo
+# warden.py passes Path(cwd) straight through, and cwd is routinely a monorepo
 # SUBDIRECTORY (is_repo blesses subdirs on purpose). When `repo` is below the
 # git toplevel, restore() mixed two path namespaces:
 #   - `_recoverable_paths` used `git ls-tree --full-tree` -> TOPLEVEL-relative
@@ -408,7 +408,7 @@ def test_restore_refuses_when_a_gitignored_dangling_symlink_blocks_a_wanted_path
 #     (e.g. "victim");
 # and EVERY filesystem join used the subdir as its base. So a toplevel-relative
 # name "sub/victim" in the delete-set resolved to (T/sub / "sub/victim") =
-# T/sub/sub/victim — a path the endangered gate never checked and, if
+# T/sub/sub/victim — a path the endangered warden never checked and, if
 # gitignored, the rollback never captured. The fix normalizes `repo` to the git
 # toplevel at the entry of both snapshot() and restore(), so ONE namespace
 # drives every git command and every filesystem join.
@@ -462,7 +462,7 @@ def test_snapshot_from_a_subdir_covers_the_whole_repo_not_just_the_subtree(repo:
 # --- the WORKSPACE repo's own config must never get to run a program of
 # its choosing during a checkpoint --------------------------------------
 #
-# The gate calls `git add -A` (and friends) in the AGENT's own workspace
+# The warden calls `git add -A` (and friends) in the AGENT's own workspace
 # repo, under `--checkpoints`. That repo's local .git/config,
 # .gitattributes and .git/info/attributes are all agent-controlled, so
 # `git config core.fsmonitor "sh -c '...'"` makes the next checkpoint run a

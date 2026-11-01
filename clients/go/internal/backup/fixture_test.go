@@ -15,7 +15,7 @@ func TestReadsTheArchiveTheRustPortMade(t *testing.T) {
 	if err != nil || r.Files != 3 {
 		t.Fatalf("%v %+v", err, r)
 	}
-	for p, want := range map[string]string{"config.yaml": "from: rust\n", "journal/traces/a.json": "{}\n", "gate/envelopes/s.json": "{\"e\":1}\n"} {
+	for p, want := range map[string]string{"config.yaml": "from: rust\n", "journal/traces/a.json": "{}\n", "warden/envelopes/s.json": "{\"e\":1}\n"} {
 		if b, _ := os.ReadFile(filepath.Join(dst, p)); string(b) != want {
 			t.Errorf("%s = %q", p, b)
 		}
@@ -30,7 +30,7 @@ func TestMakeFixture(t *testing.T) {
 	src := t.TempDir()
 	write(t, src+"/config.yaml", "from: go\n")
 	write(t, src+"/journal/traces/a.json", "{}\n")
-	write(t, src+"/gate/envelopes/s.json", "{\"e\":1}\n")
+	write(t, src+"/warden/envelopes/s.json", "{\"e\":1}\n")
 	if _, err := Create(spec(src), filepath.Join(dir, "go-made.tgz"), t0); err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::py::text::{repr, upper};
-use crate::gate::pyjson::{dumps_indent, loads_strict, Object, Value};
+use crate::warden::py::text::{repr, upper};
+use crate::warden::pyjson::{dumps_indent, loads_strict, Object, Value};
 use crate::llm::http;
 use crate::netproxy;
 
@@ -31,7 +31,7 @@ fn hub_repo_invalid(repo: &str) -> Option<String> {
             "Repo id must be in the form 'repo_name' or 'namespace/repo_name': '{repo}'. Use `repo_type` argument if needed."
         ));
     }
-    let word = |c: char| c == '_' || crate::gate::py::text::is_alnum(c);
+    let word = |c: char| c == '_' || crate::warden::py::text::is_alnum(c);
     let part = |s: &str, max: usize| {
         let cs: Vec<char> = s.chars().collect();
         !cs.is_empty()

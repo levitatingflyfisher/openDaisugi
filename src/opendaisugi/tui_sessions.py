@@ -135,7 +135,7 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
     # --- data ---------------------------------------------------------------
     def _poll(self) -> None:
         idx = SessionIndex(self.app.data_dir / "sessions")
-        asks = self.app.data_dir / "gate" / "asks"
+        asks = self.app.data_dir / "warden" / "asks"
         m = max(idx.mtime(), asks.stat().st_mtime if asks.exists() else 0.0)
         if m != self._last_mtime:
             self._last_mtime = m
@@ -308,7 +308,7 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
         from opendaisugi import ask
 
         ask.propose(
-            self.app.data_dir / "gate",
+            self.app.data_dir / "warden",
             kind="allow-pattern",
             scope=scope,
             expires_at=time.time() + 30 * 86400,
@@ -320,7 +320,7 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
             },
         )
         self.app.set_status(
-            f"proposal written (scope {scope}) · apply it with `daisugi gate proposals`"
+            f"proposal written (scope {scope}) · apply it with `daisugi warden proposals`"
         )
 
     def action_steer(self) -> None:
@@ -350,7 +350,7 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
             # the tree is keyed by a per-cwd pin, not the uuid, so `session_id` is
             # the pin key — a dead `claude --resume` argument. `harness_session_id`
             # carries the uuid; fall back to `session_id` for a uuid-keyed session
-            # (e.g. `daisugi install --gate`, which has no pin).
+            # (e.g. `daisugi install`, which has no pin).
             resume_id = row.harness_session_id or row.session_id
             cmd = f"claude --resume {resume_id}"
             copied = ""
@@ -382,7 +382,7 @@ class SessionsScreen(AskActionsMixin, CockpitScreen):
             # UNVERIFIED (spec §10). Rather than a silent allow of the original,
             # deny with a reason that hands the narrower call back to the agent.
             ask.answer(
-                self.app.data_dir / "gate",
+                self.app.data_dir / "warden",
                 tool_use_id=tid,
                 decision="deny",
                 reason=f"operator asks to narrow {key} to: {value!r} — re-issue it "

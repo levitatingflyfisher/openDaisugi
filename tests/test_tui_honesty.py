@@ -41,7 +41,7 @@ def test_header_shows_enforce_from_the_installed_hook(tmp_path, monkeypatch):
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                    "command": "py -m opendaisugi.warden_client --mode enforce",
                                 }
                             ]
                         }
@@ -60,7 +60,7 @@ def test_header_shows_enforce_from_the_installed_hook(tmp_path, monkeypatch):
             # A machine-global-only hook reads as "global" — plan 5's fix so the
             # header can also distinguish "project" and "project+global" once a
             # daisugi start hook is in the mix, not just "a hook exists somewhere".
-            assert "gate: ENFORCE (global)" in _hdr(app)
+            assert "warden: ENFORCE (global)" in _hdr(app)
 
     _run(scenario)
 
@@ -81,7 +81,7 @@ def test_header_shows_enforce_from_a_cwd_scoped_start_hook(tmp_path, monkeypatch
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": "py -m opendaisugi.gate_client --mode enforce",
+                                    "command": "py -m opendaisugi.warden_client --mode enforce",
                                 }
                             ]
                         }
@@ -97,30 +97,30 @@ def test_header_shows_enforce_from_a_cwd_scoped_start_hook(tmp_path, monkeypatch
         app = DaisugiApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert "gate: ENFORCE (project)" in _hdr(app)
+            assert "warden: ENFORCE (project)" in _hdr(app)
 
     _run(scenario)
 
 
 def test_header_shows_disarmed(tmp_path):
-    (tmp_path / "gate").mkdir()
-    (tmp_path / "gate" / "DISARMED").write_text("")
+    (tmp_path / "warden").mkdir()
+    (tmp_path / "warden" / "DISARMED").write_text("")
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert "gate: DISARMED" in _hdr(app)
+            assert "warden: DISARMED" in _hdr(app)
 
     _run(scenario)
 
 
-def test_header_marks_a_gateway_cache_rate_as_an_estimate(tmp_path):
-    # S5: a gateway-derived (blended) cache rate carries a `?`; a live per-session
-    # rate does not. With no live sessions, the header falls back to the gateway.
-    from opendaisugi.gateway_journal import GatewayJournal, GatewayTurnRecord
+def test_header_marks_a_router_cache_rate_as_an_estimate(tmp_path):
+    # S5: a router-derived (blended) cache rate carries a `?`; a live per-session
+    # rate does not. With no live sessions, the header falls back to the router.
+    from opendaisugi.router_journal import RouterJournal, RouterTurnRecord
 
-    rec = GatewayTurnRecord(
+    rec = RouterTurnRecord(
         created_at="2026-08-27T00:00:00Z",
         signature="",
         task="x",
@@ -138,14 +138,14 @@ def test_header_marks_a_gateway_cache_rate_as_an_estimate(tmp_path):
         cache_read_tokens=900,
         cache_creation_tokens=0,
     )
-    GatewayJournal(path=tmp_path / "gateway" / "turns.jsonl").append(rec)
+    RouterJournal(path=tmp_path / "router" / "turns.jsonl").append(rec)
 
     async def scenario():
         app = DaisugiApp(data_dir=tmp_path, interval=999)
         async with app.run_test() as pilot:
             await pilot.pause()
             h = _hdr(app)
-            assert "gateway" in h and "hit ?" in h  # estimate marked with ?
+            assert "router" in h and "hit ?" in h  # estimate marked with ?
 
     _run(scenario)
 
@@ -257,7 +257,7 @@ def test_wiring_keeps_its_effect_tags(tmp_path):
             await pilot.pause()
             app.switch_screen("wiring")
             await pilot.pause()
-            assert app.screen.query("#effnote-gate"), (
+            assert app.screen.query("#effnote-warden"), (
                 "cfg stages must still say why they are not live"
             )
 

@@ -2,7 +2,7 @@
 #!mask from
 # The guarded routes: the token guard and the ban, the lists, the event
 # ring, the views, push and voice when they are off, and the ask answer
-# over the gate's files.
+# over the warden's files.
 {"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "alpha"}
@@ -49,8 +49,8 @@
 #!retry 5000
 {"id": "e1", "http": "GET", "url": "http://{ADDR}/api/events", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
 {"id": "$id", "ok": true, "result": {"status": 200}}
-{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 4102444800.5, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_w1", "tool": "Bash", "summary": "git push origin main", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
-{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
+{"id": "s1", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 4102444800.5, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "warden", "ask": {"id": "toolu_w1", "tool": "Bash", "summary": "git push origin main", "deadline": 4102444800, "tier": "undoable"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "warden"}}
 #!retry 5000
 {"id": "e2", "http": "GET", "url": "http://{ADDR}/api/events?since=0", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "mask_headers": ["Content-Length"]}
 {"id": "$id", "ok": true, "result": {"status": 200, "body": "*"}}
@@ -62,7 +62,7 @@
 {"id": "$id", "ok": true, "result": {"status": 200}}
 {"id": "e6", "http": "GET", "url": "http://{ADDR}/api/events?since=1e400", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
 {"id": "$id", "ok": true, "result": {"status": 400}}
-# The ask answer, over the gate's own files.
+# The ask answer, over the warden's own files.
 {"id": "a1", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "not json"}
 {"id": "$id", "ok": true, "result": {"status": 400}}
 {"id": "a2", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"maybe\"}"}
@@ -71,20 +71,20 @@
 {"id": "$id", "ok": true, "result": {"status": 409}}
 {"id": "a4", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_gone\",\"decision\":\"allow\"}"}
 {"id": "$id", "ok": true, "result": {"status": 409}}
-{"id": "f1", "write": "{WORK}/gate/asks/toolu_w1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
+{"id": "f1", "write": "{WORK}/warden/asks/toolu_w1.json", "text": "{\"nonce\": \"n-1\", \"tier\": \"undoable\"}"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "a5", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"allow\",\"scope\":\"forever\"}"}
 {"id": "$id", "ok": true, "result": {"status": 400}}
 {"id": "a6", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer kid-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w1\",\"decision\":\"allow\",\"scope\":\"task\"}"}
 {"id": "$id", "ok": true, "result": {"status": 200}}
-{"id": "a7", "file": "{WORK}/gate/answers/toolu_w1.json"}
+{"id": "a7", "file": "{WORK}/warden/answers/toolu_w1.json"}
 {"id": "$id", "ok": true, "result": {"mode": "0o600"}}
-{"id": "a8", "ls": "{WORK}/gate"}
+{"id": "a8", "ls": "{WORK}/warden"}
 {"id": "$id", "ok": true, "result": "*"}
 # A permanent ask needs the pane's name.
-{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "gate", "ask": {"id": "toolu_w2", "tool": "Bash", "summary": "rm -rf /", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
-{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "gate"}}
-{"id": "f2", "write": "{WORK}/gate/asks/toolu_w2.json", "text": "{\"nonce\": \"n-2\", \"tier\": \"undoable\"}"}
+{"id": "s2", "cmd": "pane.report_state", "pane": "$a", "event": {"v": 1, "ts": 2, "session_id": "s", "harness": "claude-code", "pane": "$a", "state": "blocked", "source": "warden", "ask": {"id": "toolu_w2", "tool": "Bash", "summary": "rm -rf /", "deadline": 4102444800, "tier": "permanent"}, "detail": "verdict=ask"}}
+{"id": "$id", "ok": true, "result": {"pane": "$a", "state": "blocked", "source": "warden"}}
+{"id": "f2", "write": "{WORK}/warden/asks/toolu_w2.json", "text": "{\"nonce\": \"n-2\", \"tier\": \"undoable\"}"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "a9", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w2\",\"decision\":\"allow\"}"}
 {"id": "$id", "ok": true, "result": {"status": 403}}
@@ -92,17 +92,17 @@
 {"id": "$id", "ok": true, "result": {"status": 403}}
 {"id": "a11", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w2\",\"decision\":\"allow\",\"confirm\":\" alpha \",\"reason\":\"ok <then>\"}"}
 {"id": "$id", "ok": true, "result": {"status": 200}}
-{"id": "a12", "file": "{WORK}/gate/answers/toolu_w2.json"}
+{"id": "a12", "file": "{WORK}/warden/answers/toolu_w2.json"}
 {"id": "$id", "ok": true, "result": "*"}
-{"id": "f3", "write": "{WORK}/gate/asks/toolu_w3.json", "text": "{\"tier\": \"undoable\"}"}
+{"id": "f3", "write": "{WORK}/warden/asks/toolu_w3.json", "text": "{\"tier\": \"undoable\"}"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "a13", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"toolu_w3\",\"decision\":\"deny\",\"reason\":\"no\"}"}
 {"id": "$id", "ok": true, "result": {"status": 409}}
-{"id": "f4", "write": "{WORK}/gate/asks/odd_id_.json", "text": "{\"nonce\": \"n-4\"}"}
+{"id": "f4", "write": "{WORK}/warden/asks/odd_id_.json", "text": "{\"nonce\": \"n-4\"}"}
 {"id": "$id", "ok": true, "result": {"written": true}}
 {"id": "a14", "http": "POST", "url": "http://{ADDR}/api/ask/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"tool_use_id\":\"..odd/id?\",\"decision\":\"deny\",\"scope\":\"weird\"}"}
 {"id": "$id", "ok": true, "result": {"status": 200}}
-{"id": "a15", "file": "{WORK}/gate/answers/odd_id_.json"}
+{"id": "a15", "file": "{WORK}/warden/answers/odd_id_.json"}
 {"id": "$id", "ok": true, "result": "*"}
 # A list longer than 2048 bytes goes out chunked, as Go frames it.
 {"id": "pp2", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/bin/sh", "-c", "exec sleep 600"], "kind": "pty", "label": "pane number 2"}

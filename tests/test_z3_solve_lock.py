@@ -1,7 +1,7 @@
 """Proves the Z3 solve lock actually serializes concurrent solves.
 
-Plan 2's resident gate server (ADR-0017) runs thread-per-connection so a
-later plan's ~90s operator-ask can't head-of-line-block other gate requests.
+Plan 2's resident warden server (ADR-0017) runs thread-per-connection so a
+later plan's ~90s operator-ask can't head-of-line-block other warden requests.
 But Z3's process-global default context (used by every bare ``z3.Solver()``
 in this codebase) is not safe for concurrent native solving from multiple OS
 threads -- Z3 releases the GIL while it works, so two threads solving at
@@ -50,7 +50,9 @@ def _plan_and_envelope() -> tuple[ActionPlan, Envelope]:
     env = Envelope(
         generated_by="test",
         task="test",
-        permissions=Permission(shell=True, shell_allowlist=["python3"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["python3"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="test",
@@ -134,7 +136,9 @@ def test_envelope_subsumes_blocks_while_lock_is_held(monkeypatch):
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo", "ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo", "ls"], file_read=["**"], file_write=["**"]
+        ),
     )
     _assert_blocks_until_released(monkeypatch, lambda: envelope_subsumes(env, env))
 

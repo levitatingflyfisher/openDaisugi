@@ -55,7 +55,7 @@ pub fn table() -> Vec<Binding> {
 }
 
 /// The footer text on a row with no daisugi mode to set: every binding
-/// but m. On an agent a gate hook reports for, the footer adds m mode.
+/// but m. On an agent a warden hook reports for, the footer adds m mode.
 #[cfg(test)]
 pub fn keys_text() -> String {
     join_keys(&without_mode(table()))

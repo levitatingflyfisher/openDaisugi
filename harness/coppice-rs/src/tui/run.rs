@@ -305,7 +305,7 @@ pub struct Floor<'k> {
     pub await_device: bool,
     pub hearing: i64,
     pub utf8_pending: Vec<u8>,
-    /// The act id of the sentence last sent to the foreman (act.rs).
+    /// The act id of the sentence last sent to the steward (act.rs).
     pub act: (String, String),
 }
 
@@ -523,8 +523,8 @@ impl Floor<'_> {
 
     fn drive(&mut self) -> Result<(), FloorErr> {
         self.seed_notes();
-        // The foreman and its chat are read first, so the first fill puts the
-        // foreman after the agents that need you.
+        // The steward and its chat are read first, so the first fill puts the
+        // steward after the agents that need you.
         self.read_facts();
         self.say_restart();
         self.read_chat();
@@ -1022,12 +1022,12 @@ impl Floor<'_> {
         if text.is_empty() {
             return Ok(());
         }
-        if id == self.m.foreman_id && !self.m.chat_window(id) && !self.m.is_headless(id) {
-            // The foreman's terminal takes keys, never a line.
+        if id == self.m.steward_id && !self.m.chat_window(id) && !self.m.is_headless(id) {
+            // The steward's terminal takes keys, never a line.
             return Ok(());
         }
         if self.m.chat_window(id) {
-            // The foreman's chat line sends the words to the foreman, not
+            // The steward's chat line sends the words to the steward, not
             // keys to its terminal.
             let act = self.act_for(&text);
             if let Err(e) = call(
@@ -1313,7 +1313,10 @@ impl Floor<'_> {
     /// Replaces the rows with a fresh pane.list, then the tasks.
     pub fn refresh(&mut self) -> Result<(), FloorErr> {
         let list = match call(&self.o.socket, "pane.list", None) {
-            Ok(r) => list_of(&r, "panes"),
+            Ok(r) => {
+                self.m.unconfined = r.get("unconfined").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                list_of(&r, "panes")
+            }
             Err(e) => return self.fail(e),
         };
         let was: BTreeSet<String> = self
@@ -1409,13 +1412,13 @@ impl Floor<'_> {
             if let Some(fa) = decode_facts(&res) {
                 self.m.facts = Some(fa);
             }
-            // The tracked foreman's window draws the chat. A foreman that
+            // The tracked steward's window draws the chat. A steward that
             // left takes its chat and its Screen choice with it.
-            let id = super::model::obj(&res, "foreman")
+            let id = super::model::obj(&res, "steward")
                 .map(|f| s(f, "pane"))
                 .unwrap_or_default();
-            if id != self.m.foreman_id {
-                self.set_foreman(&id);
+            if id != self.m.steward_id {
+                self.set_steward(&id);
             }
         }
     }
@@ -1475,7 +1478,7 @@ impl Floor<'_> {
         if self.m.is_headless(id) {
             return self.attach_headless(id);
         }
-        // The foreman's chat is a window: Enter on its row types there.
+        // The steward's chat is a window: Enter on its row types there.
         // Only a screen with no window for it, or its Screen view, attaches.
         if self.m.chat_window(id) && self.type_in_tile(id) {
             return Ok(());

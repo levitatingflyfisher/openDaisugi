@@ -47,7 +47,7 @@ func fenceBin(t *testing.T) string {
 	return fenceBinPath
 }
 
-// world is a fake HOME with a key, a gate root, a workspace, a temp dir and
+// world is a fake HOME with a key, a warden root, a workspace, a temp dir and
 // a directory outside, side by side: none is inside another.
 type world struct {
 	base, home, ws, tmp, outside string
@@ -55,7 +55,7 @@ type world struct {
 
 func newWorld(t *testing.T) world {
 	t.Helper()
-	// A short base: <root>/gate.sock must fit a unix socket path (108
+	// A short base: <root>/warden.sock must fit a unix socket path (108
 	// bytes), and t.TempDir's name carries the test's.
 	tmp, err := os.MkdirTemp("", "fw")
 	if err != nil {
@@ -66,9 +66,11 @@ func newWorld(t *testing.T) world {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Runs before the RemoveAll above (cleanups run last in, first out).
+	t.Cleanup(func() { stopWardensUnder(base) })
 	w := world{base, filepath.Join(base, "home"), filepath.Join(base, "ws"), filepath.Join(base, "tmp"), filepath.Join(base, "outside")}
 	for _, d := range []string{
-		w.home + "/.ssh", w.home + "/.opendaisugi/gate/envelopes", w.home + "/.claude", w.home + "/.local/bin",
+		w.home + "/.ssh", w.home + "/.opendaisugi/warden/envelopes", w.home + "/.claude", w.home + "/.local/bin",
 		w.home + "/other", w.ws, w.tmp, w.outside,
 	} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -76,11 +78,11 @@ func newWorld(t *testing.T) world {
 		}
 	}
 	for p, body := range map[string]string{
-		w.home + "/.ssh/key":                                 "SECRET",
-		w.home + "/other/file":                               "OTHER",
-		w.home + "/.opendaisugi/gate/envelopes/default.json": `{"permissions":{"file_read":[],"file_write":[]}}`,
-		w.outside + "/victim":                                "VICTIM",
-		w.ws + "/ok":                                         "OK",
+		w.home + "/.ssh/key":   "SECRET",
+		w.home + "/other/file": "OTHER",
+		w.home + "/.opendaisugi/warden/envelopes/default.json": `{"permissions":{"file_read":[],"file_write":[]}}`,
+		w.outside + "/victim": "VICTIM",
+		w.ws + "/ok":          "OK",
 	} {
 		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -94,13 +96,61 @@ func (w world) env(extra ...string) []string {
 }
 
 var (
-	startedGate     = regexp.MustCompile(`started the resident gate on \S+ \(pid (\d+)\)`)
-	startedGateLine = regexp.MustCompile(`daisugi fence: started the resident gate on \S+ \(pid \d+\)\n`)
+	startedWarden     = regexp.MustCompile(`started the resident warden on \S+ \(pid (\d+)\)`)
+	startedWardenLine = regexp.MustCompile(`daisugi fence: started the resident warden on \S+ \(pid \d+\)\n`)
 )
 
-// killStarted ends, by pid, each resident gate the fence said it started.
+// stopWardensUnder ends, by pid, each `warden serve` whose arguments name a
+// path under base. A fenced `tree run` starts its resident warden inside
+// a child whose stderr the test never sees, so killStarted cannot learn the
+// pid; without this the server outlives the test (it lived for hours and
+// held the shared build lock). Only a process that names this test's own
+// temporary directory is touched.
+func stopWardensUnder(base string) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 1 || pid == os.Getpid() {
+			continue
+		}
+		raw, err := os.ReadFile("/proc/" + e.Name() + "/cmdline")
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		serve, under := false, false
+		for i, a := range args {
+			if a == "serve" && i > 0 && args[i-1] == "warden" {
+				serve = true
+			}
+			if strings.HasPrefix(a, base+"/") {
+				under = true
+			}
+		}
+		if serve && under {
+			pids = append(pids, pid)
+		}
+	}
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	for _, pid := range pids {
+		for i := 0; i < 100; i++ {
+			if syscall.Kill(pid, 0) != nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+// killStarted ends, by pid, each resident warden the fence said it started.
 func killStarted(t *testing.T, stderr string) {
-	for _, m := range startedGate.FindAllStringSubmatch(stderr, -1) {
+	for _, m := range startedWarden.FindAllStringSubmatch(stderr, -1) {
 		if pid, err := strconv.Atoi(m[1]); err == nil && pid > 1 {
 			t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGTERM) })
 		}
@@ -157,18 +207,18 @@ func probes(w world) string {
 		`t truncate_outside truncate -s 0 ` + o + `/victim`,
 		`t remove_outside rm -rf ` + o,
 		`t read_outside cat ` + o + `/victim`,
-		`t write_gate_disarmed sh -c 'echo x > ` + h + `/.opendaisugi/gate/DISARMED'`,
-		`t write_gate_envelope sh -c 'echo x > ` + h + `/.opendaisugi/gate/envelopes/default.json'`,
-		`t read_gate_envelope cat ` + h + `/.opendaisugi/gate/envelopes/default.json`,
-		`t mkdir_gate mkdir ` + h + `/.opendaisugi/gate/envelopes/x`,
-		`t rename_in_gate mv ` + h + `/.opendaisugi/gate/envelopes/default.json ` + h + `/.opendaisugi/gate/envelopes/d2.json`,
+		`t write_warden_disarmed sh -c 'echo x > ` + h + `/.opendaisugi/warden/DISARMED'`,
+		`t write_warden_envelope sh -c 'echo x > ` + h + `/.opendaisugi/warden/envelopes/default.json'`,
+		`t read_warden_envelope cat ` + h + `/.opendaisugi/warden/envelopes/default.json`,
+		`t mkdir_warden mkdir ` + h + `/.opendaisugi/warden/envelopes/x`,
+		`t rename_in_warden mv ` + h + `/.opendaisugi/warden/envelopes/default.json ` + h + `/.opendaisugi/warden/envelopes/d2.json`,
 		`t hardlink_ssh ln ` + h + `/.ssh/key ` + w.ws + `/k`,
 		`t symlink_ssh_read sh -c 'ln -s ` + h + `/.ssh/key ` + w.ws + `/lnk && cat ` + w.ws + `/lnk'`,
 		`t move_ssh_out mv ` + h + `/.ssh/key ` + w.ws + `/k2`,
 		`t move_ws_to_outside mv ` + w.ws + `/ok ` + o + `/ok`,
 		`t child_reads_ssh sh -c 'sh -c "cat ` + h + `/.ssh/key"'`,
 		`t python_rmtree python3 -c "import shutil; shutil.rmtree('` + o + `')"`,
-		`t python_disarm python3 -c "open('` + h + `/.opendaisugi/gate/DISARMED','w')"`,
+		`t python_disarm python3 -c "open('` + h + `/.opendaisugi/warden/DISARMED','w')"`,
 	}, "\n")
 }
 
@@ -192,11 +242,11 @@ func TestFenceHoldsTheLine(t *testing.T) {
 	want := map[string]string{
 		"read_ws": "ok", "write_ws": "ok", "mkdir_ws": "ok", "write_tmp": "ok", "write_devnull": "ok",
 		"write_shared_tmp": "denied", "read_slash_tmp": "denied",
-		"read_system": "ok", "exec_system": "ok", "read_gate_envelope": "ok",
+		"read_system": "ok", "exec_system": "ok", "read_warden_envelope": "ok",
 		"read_ssh": "denied", "list_ssh": "denied", "read_home_other": "denied", "write_home": "denied",
 		"write_outside": "denied", "clobber_outside": "denied", "truncate_outside": "denied",
-		"remove_outside": "denied", "read_outside": "denied", "write_gate_disarmed": "denied",
-		"write_gate_envelope": "denied", "mkdir_gate": "denied", "rename_in_gate": "denied",
+		"remove_outside": "denied", "read_outside": "denied", "write_warden_disarmed": "denied",
+		"write_warden_envelope": "denied", "mkdir_warden": "denied", "rename_in_warden": "denied",
 		"hardlink_ssh": "denied", "symlink_ssh_read": "denied", "move_ssh_out": "denied",
 		"move_ws_to_outside": "denied", "child_reads_ssh": "denied", "python_rmtree": "denied",
 		"python_disarm": "denied",
@@ -206,7 +256,7 @@ func TestFenceHoldsTheLine(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", name, got[name], w)
 		}
 	}
-	for _, p := range []string{w.home + "/.opendaisugi/gate/DISARMED", w.outside + "/new", w.home + "/newfile", w.ws + "/k"} {
+	for _, p := range []string{w.home + "/.opendaisugi/warden/DISARMED", w.outside + "/new", w.home + "/newfile", w.ws + "/k"} {
 		if _, err := os.Lstat(p); err == nil {
 			t.Errorf("%s exists after the run", p)
 		}
@@ -324,7 +374,7 @@ func TestFN_V8_ARuleRootThatLinksToASecretIsRefused(t *testing.T) {
 
 // FN-V-2: unix sockets outside the granted dirs, abstract sockets and
 // signals to outside processes are all stopped; the coppice socket and the
-// gate socket still connect.
+// warden socket still connect.
 func TestFN_V2_SocketsAndSignalsStayInside(t *testing.T) {
 	w := newWorld(t)
 	listen := func(addr string) {
@@ -485,8 +535,8 @@ func TestFencePrintJSON(t *testing.T) {
 	if _, ok := modes[w.tmp]; ok {
 		t.Errorf("the shared temp dir is granted: %v", modes)
 	}
-	if modes[w.home+"/.opendaisugi/gate"] != "sock" {
-		t.Errorf("gate root is not read only with its socket: %v", modes)
+	if modes[w.home+"/.opendaisugi/warden"] != "sock" {
+		t.Errorf("warden root is not read only with its socket: %v", modes)
 	}
 }
 
@@ -553,12 +603,12 @@ func TestFenceAllowOpensOnlyWhatItNames(t *testing.T) {
 	}
 }
 
-// The gate hook is a child of the harness, so it runs fenced. It must still
+// The warden hook is a child of the harness, so it runs fenced. It must still
 // decide the same, and still log, while the agent cannot touch the marker,
 // the envelope or the answers.
-func TestGateCheckDecidesTheSameInsideTheFence(t *testing.T) {
+func TestWardenCheckDecidesTheSameInsideTheFence(t *testing.T) {
 	w := newWorld(t)
-	root := w.home + "/.opendaisugi/gate"
+	root := w.home + "/.opendaisugi/warden"
 	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["/**"],"file_write":[]}}`
 	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
 		t.Fatal(err)
@@ -576,10 +626,10 @@ func TestGateCheckDecidesTheSameInsideTheFence(t *testing.T) {
 		if err := os.WriteFile(pf, []byte(payload), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		check := bin + " gate check --mode enforce --root " + root + " --format claude < " + pf
+		check := bin + " warden check --mode enforce --root " + root + " --format claude < " + pf
 		plainSO, plainSE, plainCode := runFence(t, w, w.env(), "--no-fence", "--", "/bin/sh", "-c", check)
 		fenceSO, fenceSE, fenceCode := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", check)
-		fenceSE = startedGateLine.ReplaceAllString(fenceSE, "")
+		fenceSE = startedWardenLine.ReplaceAllString(fenceSE, "")
 		if plainSO != fenceSO || plainSE != fenceSE || plainCode != fenceCode {
 			t.Errorf("%s: plain (%d %q %q) differs from fenced (%d %q %q)", name, plainCode, plainSO, plainSE, fenceCode, fenceSO, fenceSE)
 		}
@@ -597,7 +647,7 @@ func TestGateCheckDecidesTheSameInsideTheFence(t *testing.T) {
 	if _, err := os.Stat(w.home + "/.opendaisugi/sessions/s1.jsonl"); err != nil {
 		t.Errorf("the fenced hook wrote no session tree: %v", err)
 	}
-	// What the agent still cannot do under the gate. answers/ exists, so a
+	// What the agent still cannot do under the warden. answers/ exists, so a
 	// refused write is the fence's doing, not a missing directory.
 	script := `t() { n=$1; shift; if "$@" >/dev/null 2>&1; then echo "$n ok"; else echo "$n denied"; fi; }
 t disarm sh -c 'echo x > ` + root + `/DISARMED'
@@ -623,12 +673,12 @@ t write_session sh -c 'echo x >> ` + w.home + `/.opendaisugi/sessions/s1.jsonl'`
 	}
 }
 
-// FN-V-4: inside the fence the hook is a thin client of the resident gate.
+// FN-V-4: inside the fence the hook is a thin client of the resident warden.
 // With the server down it denies; an operator's answer to an ask posted
 // from inside the fence is honoured, and the answer is consumed.
-func TestFN_V4_FencedHookAsksTheResidentGate(t *testing.T) {
+func TestFN_V4_FencedHookAsksTheResidentWarden(t *testing.T) {
 	w := newWorld(t)
-	root := w.home + "/.opendaisugi/gate"
+	root := w.home + "/.opendaisugi/warden"
 	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["/**"],"file_write":[]}}`
 	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
 		t.Fatal(err)
@@ -639,14 +689,14 @@ func TestFN_V4_FencedHookAsksTheResidentGate(t *testing.T) {
 	if err := os.WriteFile(pf, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// No server, gate on: a fenced hook denies.
-	cmd := exec.Command(bin, "gate", "check", "--mode", "enforce", "--root", root, "--format", "claude")
+	// No server, warden on: a fenced hook denies.
+	cmd := exec.Command(bin, "warden", "check", "--mode", "enforce", "--root", root, "--format", "claude")
 	cmd.Env = append(w.env(), "DAISUGI_FENCED=landlock")
 	cmd.Stdin = strings.NewReader(`{"session_id":"s0","tool_name":"Read","tool_input":{"file_path":"/work/a"},"cwd":"/work"}`)
 	var se bytes.Buffer
 	cmd.Stderr = &se
 	err := cmd.Run()
-	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || !strings.Contains(se.String(), "resident gate") {
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || !strings.Contains(se.String(), "resident warden") {
 		t.Fatalf("server down: %v %q", err, se.String())
 	}
 	// The operator: a heartbeat, then an allow for the ask once it shows.
@@ -684,7 +734,7 @@ func TestFN_V4_FencedHookAsksTheResidentGate(t *testing.T) {
 		}
 	}()
 	defer close(done)
-	check := bin + " gate check --mode enforce --root " + root + " --format claude --ask --ask-timeout 20 < " + pf
+	check := bin + " warden check --mode enforce --root " + root + " --format claude --ask --ask-timeout 20 < " + pf
 	so, se2, code := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", check)
 	audit, _ := os.ReadFile(root + "/audit/s9.jsonl")
 	if code != 0 || !strings.Contains(string(audit), "allowed by operator: ok by test") {
@@ -704,13 +754,13 @@ func TestFN_V4_FencedHookAsksTheResidentGate(t *testing.T) {
 // read only. An enforce-mode allow whose audit line cannot land is denied.
 func TestFN_V7_AReadOnlyAuditLogDenies(t *testing.T) {
 	w := newWorld(t)
-	root := w.home + "/.opendaisugi/gate"
+	root := w.home + "/.opendaisugi/warden"
 	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["/**"],"file_write":[]}}`
 	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run := func(mode string) (int, string) {
-		cmd := exec.Command(fenceBin(t), "gate", "check", "--mode", mode, "--root", root, "--format", "claude")
+		cmd := exec.Command(fenceBin(t), "warden", "check", "--mode", mode, "--root", root, "--format", "claude")
 		cmd.Env = w.env()
 		cmd.Stdin = strings.NewReader(`{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/w/a"},"cwd":"/w"}`)
 		var se bytes.Buffer
@@ -736,12 +786,12 @@ func TestFN_V7_AReadOnlyAuditLogDenies(t *testing.T) {
 }
 
 // FN-R-21: the fence, still outside its ruleset, records its run in the
-// gate root, so the resident gate binds the workspace for checkpoints. The
+// warden root, so the resident warden binds the workspace for checkpoints. The
 // record is the harness's own pid, and nothing inside the fence can write
 // it.
 func TestFN_R21_TheFenceRecordsItsRun(t *testing.T) {
 	w := newWorld(t)
-	root := w.home + "/.opendaisugi/gate"
+	root := w.home + "/.opendaisugi/warden"
 	script := `cat ` + root + `/fence-runs/$$.json; echo
 if sh -c 'echo x > ` + root + `/fence-runs/$$.json' 2>/dev/null; then echo wrote; else echo denied; fi
 if sh -c 'echo x > ` + root + `/fence-runs/1.json' 2>/dev/null; then echo wrote; else echo denied; fi`
@@ -755,16 +805,16 @@ if sh -c 'echo x > ` + root + `/fence-runs/1.json' 2>/dev/null; then echo wrote;
 	}
 }
 
-// FN-R-25 (review N-4): a foreman worker's tree run stays outside the
-// fence and only sprig runs under it. sprig cannot write the worker's gate
-// root, writes its own session dir, and its gate calls reach the resident
-// gate the fence starts on that root. The worker's rule list has no write
-// grant over its gate root.
-func TestFN_R25_AWorkersSprigRunsFencedAndCannotWriteItsGateRoot(t *testing.T) {
+// FN-R-25 (review N-4): a steward worker's tree run stays outside the
+// fence and only sprig runs under it. sprig cannot write the worker's warden
+// root, writes its own session dir, and its warden calls reach the resident
+// warden the fence starts on that root. The worker's rule list has no write
+// grant over its warden root.
+func TestFN_R25_AWorkersSprigRunsFencedAndCannotWriteItsWardenRoot(t *testing.T) {
 	w := newWorld(t)
 	bin := fenceBin(t)
 	work := w.base + "/work"
-	root := work + "/gate"
+	root := work + "/warden"
 	envFile := w.base + "/env.json"
 	env := `{"id":"env_w","generated_by":"t","task":"t","permissions":{"file_read":["` + w.ws + `/**"],` +
 		`"file_write":["` + w.ws + `/**"],"network":false,"shell":true,"shell_allowlist":["cat","ls"],` +
@@ -796,17 +846,17 @@ func TestFN_R25_AWorkersSprigRunsFencedAndCannotWriteItsGateRoot(t *testing.T) {
 	// The fake sprig, in the workspace (the fence lets it run there).
 	sprig := w.ws + "/.bin/sprig"
 	script := `#!/bin/sh
-gate= sess=
+warden= sess=
 while [ $# -gt 0 ]; do
-  case "$1" in --gate-cmd) gate=$2; shift;; --session-dir) sess=$2; shift;; esac; shift
+  case "$1" in --warden-cmd) warden=$2; shift;; --session-dir) sess=$2; shift;; esac; shift
 done
 r() { if "$@" >/dev/null 2>&1; then printf ok; else printf denied; fi; }
 envw=$(r sh -c "echo x > ` + root + `/envelopes/x.json")
 disarm=$(r sh -c "echo x > ` + root + `/DISARMED")
 sessw=$(r sh -c "echo x > $sess/probe")
 printf '{"session_id":"s","tool_name":"Read","tool_input":{"file_path":"` + w.ws + `/ok"},"cwd":"` + w.ws + `"}' > ` + w.ws + `/p.json
-if sh -c "$gate --format claude < ` + w.ws + `/p.json" >/dev/null 2>&1; then gatev=allow; else gatev=deny; fi
-printf '{"answer": "env=%s disarm=%s sess=%s gate=%s", "turns": 1}' "$envw" "$disarm" "$sessw" "$gatev"
+if sh -c "$warden --format claude < ` + w.ws + `/p.json" >/dev/null 2>&1; then gatev=allow; else gatev=deny; fi
+printf '{"answer": "env=%s disarm=%s sess=%s warden=%s", "turns": 1}' "$envw" "$disarm" "$sessw" "$gatev"
 `
 	if err := os.MkdirAll(filepath.Dir(sprig), 0o700); err != nil {
 		t.Fatal(err)
@@ -814,16 +864,16 @@ printf '{"answer": "env=%s disarm=%s sess=%s gate=%s", "turns": 1}' "$envw" "$di
 	if err := os.WriteFile(sprig, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fence := `["` + bin + `","fence","--workspace","` + w.ws + `","--gate-root","` + root + `"]`
+	fence := `["` + bin + `","fence","--workspace","` + w.ws + `","--warden-root","` + root + `"]`
 	req := `{"task":"t","envelope":` + env + `,"tools":["Read","Bash"]}`
 	so, se, code := run(req, []string{"DAISUGI_SPRIG=" + sprig, "DAISUGI_SPRIG_FENCE=" + fence},
 		"tree", "run", "--parent", "project-x", "--profile=default", "--data-dir", work, "--root", root, "-")
-	if code != 0 || !strings.Contains(so, `"answer": "env=denied disarm=denied sess=ok gate=allow"`) {
+	if code != 0 || !strings.Contains(so, `"answer": "env=denied disarm=denied sess=ok warden=allow"`) {
 		t.Fatalf("tree run: %d\n%s\n%s", code, so, se)
 	}
-	// The rule list the worker's sprig gets: no write over the gate root,
+	// The rule list the worker's sprig gets: no write over the warden root,
 	// and an --allow that would open it is refused.
-	so, se, code = run("", nil, "fence", "--print", "--json", "--workspace", w.ws, "--gate-root", root,
+	so, se, code = run("", nil, "fence", "--print", "--json", "--workspace", w.ws, "--warden-root", root,
 		"--allow", work+"/sprig-sessions:rw", "--", "/bin/true")
 	if code != 0 {
 		t.Fatalf("print: %d %s", code, se)
@@ -836,20 +886,20 @@ printf '{"answer": "env=%s disarm=%s sess=%s gate=%s", "turns": 1}' "$envw" "$di
 	}
 	for _, r := range p.Rules {
 		if strings.Contains(r.Mode, "rw") && (r.Path == root || strings.HasPrefix(root, r.Path+"/") || strings.HasPrefix(r.Path, root+"/")) {
-			t.Errorf("a write grant over the gate root: %+v", r)
+			t.Errorf("a write grant over the warden root: %+v", r)
 		}
 	}
-	if _, _, code := run("", nil, "fence", "--workspace", w.ws, "--gate-root", root, "--allow", work+":rw", "--", "/bin/true"); code == 0 {
-		t.Error("--allow over the worker's gate root was not refused")
+	if _, _, code := run("", nil, "fence", "--workspace", w.ws, "--warden-root", root, "--allow", work+":rw", "--", "/bin/true"); code == 0 {
+		t.Error("--allow over the worker's warden root was not refused")
 	}
 }
 
-// FN-R-32: the fence starts the resident gate with its captures root fixed
+// FN-R-32: the fence starts the resident warden with its captures root fixed
 // at <root>/captures, so a fenced run's allowed calls land there, written
 // by the server outside the fence.
 func TestFN_R32_AFencedRunsCapturesLand(t *testing.T) {
 	w := newWorld(t)
-	root := w.home + "/.opendaisugi/gate"
+	root := w.home + "/.opendaisugi/warden"
 	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["/**"],"file_write":[]}}`
 	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
 		t.Fatal(err)
@@ -859,7 +909,7 @@ func TestFN_R32_AFencedRunsCapturesLand(t *testing.T) {
 	if err := os.WriteFile(pf, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	check := fenceBin(t) + " gate check --mode enforce --root " + root + " --format claude < " + pf
+	check := fenceBin(t) + " warden check --mode enforce --root " + root + " --format claude < " + pf
 	so, se, code := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", check)
 	if code != 0 {
 		t.Fatalf("exit %d out %q err %q", code, so, se)
@@ -867,5 +917,136 @@ func TestFN_R32_AFencedRunsCapturesLand(t *testing.T) {
 	ents, err := os.ReadDir(root + "/captures")
 	if err != nil || len(ents) == 0 {
 		t.Fatalf("no capture under %s/captures: %v", root, err)
+	}
+}
+
+// Plan task 3 (ADR-0028): a call from inside a fence is allowed and its
+// unplaced shell file access is recorded as fence_enforced; the same call
+// from a process that is not fenced is denied. The kernel stops the write.
+func TestADR28_AFencedCallRecordsAnUnplacedShellAccessAndTheKernelStopsIt(t *testing.T) {
+	w := newWorld(t)
+	root := w.home + "/.opendaisugi/warden"
+	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["` + w.ws + `/**"],"file_write":["` + w.ws +
+		`/**"],"shell":true,"shell_allowlist":["git","sh","echo"]}}`
+	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pf := w.ws + "/call.json"
+	payload := `{"session_id":"s28","tool_name":"Bash","tool_use_id":"tu28","tool_input":{"command":"git -c k=v commit -m x"},"cwd":"` + w.ws + `"}`
+	if err := os.WriteFile(pf, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := fenceBin(t)
+	// Not fenced: enforce denies a line it cannot place.
+	cmd := exec.Command(bin, "warden", "check", "--mode", "enforce", "--root", root, "--format", "claude")
+	cmd.Env = w.env()
+	cmd.Stdin = strings.NewReader(payload)
+	var ue bytes.Buffer
+	cmd.Stderr = &ue
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("an unfenced call was allowed: %s", ue.String())
+	}
+	// Fenced: the hook asks the resident warden, which finds the fence run.
+	script := bin + " warden check --mode enforce --root " + root + " --format claude < " + pf + "\n" +
+		`echo "hook=$?"` + "\n" +
+		`if sh -c 'echo x > ` + w.home + `/outside' 2>/dev/null; then echo wrote; else echo denied; fi`
+	so, se, code := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", script)
+	if code != 0 || !strings.Contains(so, "hook=0") || !strings.HasSuffix(strings.TrimSpace(so), "denied") {
+		t.Fatalf("fenced call: exit %d out %q err %q", code, so, se)
+	}
+	audit, _ := os.ReadFile(root + "/audit/s28.jsonl")
+	if !strings.Contains(string(audit), `"fence_enforced"`) || strings.Contains(string(audit), `"decision": "deny"`) {
+		t.Errorf("audit lacks fence_enforced: %s", audit)
+	}
+	if _, err := os.Stat(w.home + "/outside"); err == nil {
+		t.Errorf("the write got through the kernel")
+	}
+}
+
+// Plan task 5: the fence never opens a data dir's pando or foreman store,
+// whatever the envelope grants above it. cat, a glob and tar all fail at the
+// kernel, while a path the envelope grants elsewhere still reads.
+func TestADR28_TheMemoryStoreStaysClosedToAFencedAgent(t *testing.T) {
+	w := newWorld(t)
+	root := w.home + "/.opendaisugi/warden"
+	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["~/.opendaisugi/**","~/.opendaisugi/pando/**","~/.opendaisugi/foreman/**","~/other/**"],"file_write":[]}}`
+	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := w.home + "/.opendaisugi/pando/work"
+	old := w.home + "/.opendaisugi/foreman/work"
+	for _, d := range []string{store, old, w.home + "/.opendaisugi/notes"} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, body := range map[string]string{store + "/chat.jsonl": "MEMORY", old + "/chat.jsonl": "OLD", w.home + "/.opendaisugi/notes/n": "NOTE"} {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := w.home + "/.opendaisugi"
+	script := strings.Join([]string{
+		`t() { n=$1; shift; if "$@" >/dev/null 2>&1; then echo "$n ok"; else echo "$n denied"; fi; }`,
+		`t read_granted cat ` + w.home + `/other/file`,
+		`t cat_store cat ` + store + `/chat.jsonl`,
+		`t cat_old cat ` + old + `/chat.jsonl`,
+		`t ls_store ls ` + store,
+		`t glob_store sh -c 'cat ` + h + `/pando/*/*'`,
+		`t tar_store tar cf ` + w.ws + `/s.tar -C ` + h + ` pando`,
+		`t tar_old tar cf ` + w.ws + `/o.tar -C ` + h + ` foreman`,
+	}, "\n")
+	so, se, code := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", script)
+	if code != 0 {
+		t.Fatalf("exit %d %s", code, se)
+	}
+	got := parseProbes(so)
+	if got["read_granted"] != "ok" {
+		t.Errorf("the envelope's own grant no longer reads: %v", got)
+	}
+	for _, n := range []string{"cat_store", "cat_old", "ls_store", "glob_store", "tar_store", "tar_old"} {
+		if got[n] != "denied" {
+			t.Errorf("%s = %q, want denied (%v)", n, got[n], got)
+		}
+	}
+}
+
+// Review F3: a hard link from a store into the workspace is refused inside
+// the fence. The store is not readable, so ln cannot even name its source,
+// and Landlock refuses a link across directories without REFER. A symbolic
+// link to the store reads nothing either: the kernel checks the target.
+func TestADR28_AHardLinkOrSymlinkToTheMemoryStoreGivesNothing(t *testing.T) {
+	w := newWorld(t)
+	root := w.home + "/.opendaisugi/warden"
+	env := `{"generated_by":"t","task":"t","permissions":{"file_read":["~/.opendaisugi/**"],"file_write":[]}}`
+	if err := os.WriteFile(root+"/envelopes/default.json", []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := w.home + "/.opendaisugi/pando/work"
+	if err := os.MkdirAll(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store+"/chat.jsonl", []byte("MEMORY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Join([]string{
+		`t() { n=$1; shift; if "$@" >/dev/null 2>&1; then echo "$n ok"; else echo "$n denied"; fi; }`,
+		`t hard ln ` + store + `/chat.jsonl ` + w.ws + `/hard`,
+		`t sym ln -s ` + store + `/chat.jsonl ` + w.ws + `/sym`,
+		`t read_sym cat ` + w.ws + `/sym`,
+		`t read_hard cat ` + w.ws + `/hard`,
+	}, "\n")
+	so, se, code := runFence(t, w, w.env(), "--workspace", w.ws, "--", "/bin/sh", "-c", script)
+	if code != 0 {
+		t.Fatalf("exit %d %s", code, se)
+	}
+	got := parseProbes(so)
+	for _, n := range []string{"hard", "read_sym", "read_hard"} {
+		if got[n] != "denied" {
+			t.Errorf("%s = %q, want denied (%v)", n, got[n], got)
+		}
+	}
+	if _, err := os.Stat(w.ws + "/hard"); err == nil {
+		t.Error("a hard link to the store stands in the workspace")
 	}
 }

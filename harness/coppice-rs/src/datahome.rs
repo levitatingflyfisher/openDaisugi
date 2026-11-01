@@ -11,11 +11,11 @@
 //!    The user keeps the old state, and `legacy_note` says so in one line.
 //!
 //! Before this rule the answer depended on whether `~/.opendaisugi`
-//! existed, and `daisugi install --gate` creates it. Both places are in the
-//! set the gate and the fence guard (`guarded_data_dirs`). Step 2 needs the
+//! existed, and `daisugi install` creates it. Both places are in the
+//! set the warden and the fence guard (`guarded_data_dirs`). Step 2 needs the
 //! variable to be set: when XDG_DATA_HOME is unset, `~/.local/share/opendaisugi`
 //! is in no guard set, so the default stays `~/.opendaisugi`. coppice's data
-//! directory, its fallback socket and the foreman's directory sit under it.
+//! directory, its fallback socket and the steward's directory sit under it.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -62,7 +62,10 @@ pub fn resolve(
     let Some(xdg) = xdg_dir(&get, &home) else {
         return (dot, false);
     };
-    if !has(&xdg.join("coppice")) && has(&dot.join("coppice")) {
+    if !has(&xdg.join("coppice"))
+        && !has(&xdg.join("foreman"))  // names-ok: the on-disk store name
+        && (has(&dot.join("coppice")) || has(&dot.join("foreman")))  // names-ok: the on-disk store name
+    {
         return (dot, true);
     }
     (xdg, false)
@@ -102,9 +105,9 @@ pub fn legacy_note() -> Option<String> {
     }
     let xdg = xdg_dir(&|k| std::env::var_os(k), &home.unwrap_or_default())?;
     Some(format!(
-        "coppice: keeping the data in {}. New installs keep it in {}.",
-        d.join("coppice").display(),
-        xdg.join("coppice").display()
+        "coppice: keeping the data in {} (coppice/ and foreman/). New installs keep it in {}.",  // names-ok: the on-disk store name
+        d.display(),
+        xdg.display()
     ))
 }
 
@@ -136,11 +139,13 @@ mod tests {
             (vec![("OPENDAISUGI_HOME", "/o"), ("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/coppice"], "/o", false),
             (vec![("XDG_DATA_HOME", "/x")], &[], "/x/opendaisugi", false),
             (vec![], &[], "/h/.opendaisugi", false),
-            (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/gate"], "/x/opendaisugi", false),
+            (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/warden"], "/x/opendaisugi", false),
             (vec![("OPENDAISUGI_HOME", ""), ("XDG_DATA_HOME", "")], &[], "/h/.opendaisugi", false),
             (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/coppice"], "/h/.opendaisugi", true),
             (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/coppice", "/x/opendaisugi/coppice"], "/x/opendaisugi", false),
             (vec![], &["/h/.opendaisugi/coppice"], "/h/.opendaisugi", false),
+            (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/foreman"], "/h/.opendaisugi", true),
+            (vec![("XDG_DATA_HOME", "/x")], &["/h/.opendaisugi/foreman", "/x/opendaisugi/foreman"], "/x/opendaisugi", false),
         ];
         for (pairs, present, want, legacy) in cases {
             let (got, was_legacy) = resolve(env(&pairs), h(), holding(present));

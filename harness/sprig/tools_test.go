@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestReadTool(t *testing.T) {
@@ -82,5 +83,48 @@ func TestDefaultToolsAreTheFour(t *testing.T) {
 	}
 	if len(tools) != 4 {
 		t.Fatalf("pi-minimal: want exactly 4 tools, got %d", len(tools))
+	}
+}
+
+// The step cap is per call: three calls of 0.4 s each pass under a 1 s cap,
+// though together they run past it (ledger 2026-11-06: the whole run died
+// at the envelope's 30 s).
+func TestThreeShortStepsUnderTheStepCapPass(t *testing.T) {
+	b := BashTool{StepCap: time.Second}
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		if out, err := b.Run(map[string]any{"cmd": "sleep 0.4; echo ok"}); err != nil || !strings.Contains(out, "ok") {
+			t.Fatalf("step %d: %q, %v", i, out, err)
+		}
+	}
+	if time.Since(start) < time.Second {
+		t.Fatal("the three steps ran in under the cap together; the test proves nothing")
+	}
+}
+
+// One slow call is killed at the cap, with its group, and fails with a line
+// that names the call.
+func TestASlowStepIsKilledAtTheStepCapAndNamed(t *testing.T) {
+	b := BashTool{StepCap: time.Second}
+	start := time.Now()
+	_, err := b.Run(map[string]any{"cmd": "sleep 30 & sleep 30; echo done"})
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("the step ran %s", took)
+	}
+	want := `the step "sleep 30 & sleep 30; echo done" ran past the step cap of 1s and was killed`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTheStepCapComesFromTheEnvironment(t *testing.T) {
+	for v, want := range map[string]int{"": 0, "45": 45, " 7 ": 7, "-3": 0, "x": 0} {
+		t.Setenv(StepCapEnv, v)
+		if got := stepCapFromEnv(); got != want {
+			t.Errorf("%q: %d", v, got)
+		}
+	}
+	if b, ok := ToolsWithStepCap([]string{"bash"}, 3*time.Second)["bash"].(BashTool); !ok || b.StepCap != 3*time.Second {
+		t.Fatalf("bash = %#v", b)
 	}
 }

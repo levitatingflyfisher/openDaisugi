@@ -57,7 +57,7 @@ while [ $# -gt 0 ]; do
     --session) session_id="$2"; shift 2 ;;
     --resume) resume_id="$2"; shift 2 ;;
     --) in_task=true; shift ;;
-    *) shift ;; # an option this fake does not model (--gate, --max-turns, ...): ignore
+    *) shift ;; # an option this fake does not model (--warden, --max-turns, ...): ignore
   esac
 done
 task="${task_parts[*]:-}"

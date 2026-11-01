@@ -68,7 +68,7 @@ func reportTranscript(t *testing.T, s *Server, id, path string) {
 	t.Helper()
 	send, next, stop := ownPane(t, s, id)
 	defer stop()
-	send(gateReportLine("r", id, `"transcript_path":"`+path+`"`))
+	send(wardenReportLine("r", id, `"transcript_path":"`+path+`"`))
 	mustOK(t, next())
 }
 
@@ -192,13 +192,13 @@ func TestPaneMessagesNeverReadAPathNoHookOfThePaneReported(t *testing.T) {
 	}
 	// The operator's report, and a hello that says it is the pane, name no
 	// file: only a process inside the pane does.
-	got = roundTrip(t, s, gateReportLine("x", p2, `"transcript_path":"`+path+`"`))
+	got = roundTrip(t, s, wardenReportLine("x", p2, `"transcript_path":"`+path+`"`))
 	if !got[0].OK || result(t, got[0])["transcript"] != transcriptNotOwnRefusal {
 		t.Fatalf("an operator report of a transcript = %+v", got[0])
 	}
 	got = roundTripFacts(t, s, &peerFacts{checked: true},
 		`{"id":"h","cmd":"hello","role":"pane","pane":"`+p2+`"}`,
-		gateReportLine("x", p2, `"transcript_path":"`+path+`"`))
+		wardenReportLine("x", p2, `"transcript_path":"`+path+`"`))
 	if !got[1].OK || result(t, got[1])["transcript"] != transcriptNotOwnRefusal {
 		t.Fatalf("a hello-placed report of a transcript = %+v", got[1])
 	}
@@ -214,7 +214,7 @@ func refusedReport(t *testing.T, s *Server, id, path string) string {
 	t.Helper()
 	send, next, stop := ownPane(t, s, id)
 	defer stop()
-	send(gateReportLine("r", id, `"transcript_path":"`+path+`"`))
+	send(wardenReportLine("r", id, `"transcript_path":"`+path+`"`))
 	r := next()
 	if r["ok"] != true {
 		t.Fatalf("a report was refused whole: %v", r)
@@ -248,7 +248,7 @@ func TestARefusedTranscriptStillReportsTheState(t *testing.T) {
 	send, next, stop := ownPane(t, s, p2)
 	defer stop()
 	send(`{"id":"r","cmd":"pane.report_state","pane":"` + p2 + `","event":{"v":1,"ts":1757300000.0,` +
-		`"session_id":"s","harness":"claude-code","pane":"` + p2 + `","state":"blocked","source":"gate",` +
+		`"session_id":"s","harness":"claude-code","pane":"` + p2 + `","state":"blocked","source":"warden",` +
 		`"ask":{"id":"toolu_x","tool":"Bash","summary":"ls","deadline":9999999999.0},` +
 		`"transcript_path":"` + path + `"}}`)
 	r := next()
@@ -357,7 +357,7 @@ func newClaudePane(t *testing.T, s *Server) string {
 	return id
 }
 
-// An ended pane's transcript, the ended foreman's included, stays its own.
+// An ended pane's transcript, the ended steward's included, stays its own.
 func TestAPathAnEndedPaneNamedIsNeverTaken(t *testing.T) {
 	s := newFactsServer(t)
 	path := chatFixture(t, s, "claude-chat.jsonl")
@@ -585,9 +585,9 @@ func chatOf(t *testing.T, s *Server, params string) map[string]any {
 }
 
 func TestTalkWritesTheOwnersLineToTheChatFirst(t *testing.T) {
-	fakeForeman(t)
+	fakeSteward(t)
 	s := newTestServer(t)
-	res := talk(t, s, "hello\tforeman\x07")
+	res := talk(t, s, "hello\tsteward\x07")
 	id := res["pane"].(string)
 	b, err := os.ReadFile(chatFile(s))
 	if err != nil {
@@ -597,7 +597,7 @@ func TestTalkWritesTheOwnersLineToTheChatFirst(t *testing.T) {
 	if err := json.Unmarshal(b, &line); err != nil || !strings.HasSuffix(string(b), "}\n") {
 		t.Fatalf("chat file %q: %v", b, err)
 	}
-	if line["kind"] != "user" || line["text"] != "hello foreman" || line["pane"] != id {
+	if line["kind"] != "user" || line["text"] != "hello steward" || line["pane"] != id {
 		t.Fatalf("chat line %v", line)
 	}
 	date, _ := line["date"].(string)
@@ -617,19 +617,19 @@ func TestTalkWritesTheOwnersLineToTheChatFirst(t *testing.T) {
 	}
 	m := msgs[0].(map[string]any)
 	day := time.Now().UTC().Format("2006-01-02")
-	if m["role"] != "owner" || m["text"] != "hello foreman" || m["pane"] != id || m["id"] != "chat/"+day+"/0" {
+	if m["role"] != "owner" || m["text"] != "hello steward" || m["pane"] != id || m["id"] != "chat/"+day+"/0" {
 		t.Fatalf("message %v", m)
 	}
 }
 
-func TestANewForemanAddsANoteToTheChat(t *testing.T) {
-	fakeForeman(t)
+func TestANewStewardAddsANoteToTheChat(t *testing.T) {
+	fakeSteward(t)
 	s := newTestServer(t)
 	first := talk(t, s, "one")["pane"].(string)
 	roundTrip(t, s, `{"id":"x","cmd":"pane.close","pane":"`+first+`"}`)
 	second := talk(t, s, "two")["pane"].(string)
 	if second == first {
-		t.Fatal("no new foreman started")
+		t.Fatal("no new steward started")
 	}
 	c := chatOf(t, s, "")
 	msgs, _ := c["messages"].([]any)
@@ -641,16 +641,16 @@ func TestANewForemanAddsANoteToTheChat(t *testing.T) {
 		panes = append(panes, m["pane"].(string))
 	}
 	if strings.Join(roles, ",") != "owner,note,owner" ||
-		strings.Join(texts, "|") != "one|A new foreman started.|two" ||
+		strings.Join(texts, "|") != "one|A new steward started.|two" ||
 		strings.Join(panes, ",") != first+","+second+","+second {
 		t.Fatalf("chat roles %v texts %v panes %v", roles, texts, panes)
 	}
 }
 
 // The chat holds the owner's lines from the chat file and only the
-// foreman's own messages from its transcript, merged by time.
-func TestFloorChatMergesTheForemansTranscript(t *testing.T) {
-	fakeForeman(t)
+// steward's own messages from its transcript, merged by time.
+func TestFloorChatMergesTheStewardsTranscript(t *testing.T) {
+	fakeSteward(t)
 	s := newTestServer(t)
 	s.factsEvery = 0
 	claudeDir := t.TempDir()
@@ -660,7 +660,7 @@ func TestFloorChatMergesTheForemansTranscript(t *testing.T) {
 		}
 		return ""
 	}
-	id := talk(t, s, "hello foreman")["pane"].(string)
+	id := talk(t, s, "hello steward")["pane"].(string)
 	if err := s.updatePane(id, func(p *layout.Pane) { p.Harness = "claude" }); err != nil {
 		t.Fatal(err)
 	}
@@ -677,17 +677,17 @@ func TestFloorChatMergesTheForemansTranscript(t *testing.T) {
 	// the transcript, dated 2099: the two tool calls an hour behind by
 	// their zone, then the rest.
 	day := time.Now().UTC().Format("2006-01-02")
-	owner := wantMsg{"chat/" + day + "/0", "owner", "hello foreman", ""}
+	owner := wantMsg{"chat/" + day + "/0", "owner", "hello steward", ""}
 	want = []wantMsg{want[5], owner, want[3], want[4], want[0], want[1], want[2]}
 	checkMessages(t, c, want)
 	for _, x := range msgs {
 		if x.(map[string]any)["pane"] != id {
-			t.Fatalf("message %v names no foreman", x)
+			t.Fatalf("message %v names no steward", x)
 		}
 	}
 	c = chatOf(t, s, `,"since":"`+id+`/0/923"`)
 	checkMessages(t, c, want[len(want)-1:])
-	// After a restart the claim names the foreman's transcript, and the
+	// After a restart the claim names the steward's transcript, and the
 	// chat keeps its replies.
 	s2, err := New(Config{SocketPath: filepath.Join(t.TempDir(), "s.sock"), DataDir: s.cfg.DataDir})
 	if err != nil {
@@ -747,7 +747,7 @@ func TestADamagedChatFileMovesAsideAndTheChatStartsFresh(t *testing.T) {
 }
 
 func TestAHalfWrittenChatLineIsLeftOutAndCutBeforeTheNextWrite(t *testing.T) {
-	fakeForeman(t)
+	fakeSteward(t)
 	s := newTestServer(t)
 	day := time.Now().UTC().Format("2006-01-02")
 	p := writeChatDay(t, s, day, `{"kind":"user","date":"2026-01-01T00:00:01.000Z","pane":"w1:p1","text":"whole"}`+"\n"+`{"kind":"us`)
@@ -874,12 +874,12 @@ func TestAMessagesEventComesWhenTheTranscriptGrows(t *testing.T) {
 	_ = f.Close()
 	ev := waitEvent(t, next, "messages", "w1:p1", 5*time.Second)
 	if _, has := ev["chat"]; has {
-		t.Fatalf("event %v, want no chat for a pane that is not the foreman", ev)
+		t.Fatalf("event %v, want no chat for a pane that is not the steward", ev)
 	}
 }
 
 func TestATalkSendsAChatMessagesEvent(t *testing.T) {
-	fakeForeman(t)
+	fakeSteward(t)
 	s := newTestServer(t)
 	send, next, stop := streamFacts(t, s, nil)
 	defer stop()

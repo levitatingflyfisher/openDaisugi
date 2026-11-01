@@ -56,7 +56,7 @@ It prints each fact this file does not name. It never sends a prompt.
 - From the bundle: `parsePatch` trims the patch, unwraps one heredoc, finds
   the first `*** Begin Patch` and `*** End Patch` lines, and reads the
   `*** Add File:`, `*** Update File:`, `*** Move to:` and `*** Delete File:`
-  lines between them. The gate reads every such line in that range.
+  lines between them. The warden reads every such line in that range.
 
 ## Events: `GET /event`
 
@@ -152,7 +152,7 @@ From the bundle, how the server loads and calls a plugin:
 - For a module whose default export is not an object with `server`, the
   server calls every distinct exported value as a plugin function. An
   export that is not a function makes the whole file fail to load. A load
-  error is logged and the server runs on without that plugin. So the gate
+  error is logged and the server runs on without that plugin. So the warden
   plugin exports one value only: its default plugin function.
 - A second loader, the `config-plugin` plugin, globs the same files and
   reads a default export of the form `{id, effect}` or `{id, setup}`. It
@@ -165,6 +165,44 @@ From the bundle, how the server loads and calls a plugin:
   tool, the MCP resource tools, the `task` subagent call and code-mode child
   tools.
 - `--pure` sets `OPENCODE_PURE=1`, and `OPENCODE_PURE` makes `Plugin.state`
-  load no entry of `plugin_origins`. OpenCode then runs with no gate. The
+  load no entry of `plugin_origins`. OpenCode then runs with no warden. The
   adapter refuses `--pure` in a pane's argv and removes `OPENCODE_PURE` from
   the server's environment.
+
+## OpenCode 2 (2.2.6)
+
+Captured on 2026-11-07 against `opencode` `2.2.6` on the GPU box, with HOME
+and every XDG home under a scratch directory, `opencode run --standalone`
+and a probe plugin in `~/.config/opencode/plugins/`.
+
+- Live: OpenCode 2 does not run a v1 plugin. The v1-only warden plugin
+  logged `level=WARN message="failed to load plugin" ... Plugin must export a
+  default definition with an id and an effect or setup function. (cause:
+  SchemaError(Expected object at ["default"]))`, and the turn ran with no
+  warden. Nothing but the log says so.
+- Live: a default export that is a plain object `{id, setup}` loads from
+  `~/.config/opencode/plugins/<name>.ts`. No `@opencode/plugin` import and no
+  `node_modules` are needed.
+- Live: `setup(ctx)` gets `ctx.location.directory` (the run's cwd) and
+  `ctx.tool.hook("execute.before", cb)`. The event is
+  `{tool, sessionID, agent, messageID, id, input}`. `id` is the call id.
+- Live: built-in tool ids are `patch`, `edit`, `glob`, `grep`, `read`,
+  `shell`, `skill`, `subagent`, `webfetch`, `websearch`, `write`,
+  `question`, `experimental_image_generate` and `opencode_*` tools. The bash
+  tool is `shell`, input `{command}`. `read` takes `{path}`.
+- Live: a throw from the `execute.before` callback fails the call before the
+  tool runs (`"status":"error"`, `"executed":false`), and the model sees the
+  error text.
+- Live: `ctx.event.subscribe({signal})` yields `session.*` events with the
+  session in `data.sessionID`. A finished turn is
+  `session.execution.succeeded`. There is no `session.idle`.
+- Not seen yet: `permission.asked` and child sessions (`subagent`). The
+  warden plugin reports neither on OpenCode 2.
+- `opencode models` (and any command without `--standalone`) leaves a
+  background `opencode serve --service` running under that HOME.
+- From the docs (opencode.ai/v2/build/plugins/migrate-v1): one default
+  export may carry `setup()` for OpenCode 2 and `server()` for OpenCode 1
+  (1.18.29 and later). Not checked live on 1.18.32: whether its
+  `config-plugin` loader, which reads `{id, setup}`, also runs `setup`. The
+  warden plugin's `setup` does nothing when the context has no
+  `tool.hook`.

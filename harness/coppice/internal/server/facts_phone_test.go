@@ -55,7 +55,7 @@ func phoneCertFact(t *testing.T, s *Server) (any, bool) {
 // Under 7 days left on the phone's tailscale certificate, floor.facts
 // says how many whole days are left, so the header can warn with Renew.
 func TestFloorFactsCarriesPhoneCertDaysUnderSevenDays(t *testing.T) {
-	s := routerServer(t)
+	s := routeServer(t)
 	certFile := filepath.Join(s.cfg.DataDir, "elsewhere", "phone.crt")
 	if err := web.SaveConfig(web.ConfigPath(s.cfg.DataDir), web.Config{Enabled: true, Listen: ":8443", TLS: "tailscale", CertFile: certFile}); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestFloorFactsCarriesPhoneCertDaysUnderSevenDays(t *testing.T) {
 // A running tailscale serve says which certificate it serves, so the
 // warning follows it to any path, whatever web.json says.
 func TestFloorFactsReadsTheCertificateTheRunningServeNames(t *testing.T) {
-	s := routerServer(t)
+	s := routeServer(t)
 	certFile := filepath.Join(s.cfg.DataDir, "my", "own.crt")
 	writeCertFor(t, certFile, 2*24*time.Hour+time.Hour)
 	if err := web.SaveConfig(web.ConfigPath(s.cfg.DataDir), web.Config{Enabled: true, Listen: ":8443", TLS: "localca"}); err != nil {
@@ -97,7 +97,7 @@ func TestFloorFactsReadsTheCertificateTheRunningServeNames(t *testing.T) {
 // --forget, warns about nothing. A saved setup with no cert_file reads
 // the default pair.
 func TestFloorFactsWarnsOnlyForARunningOrSavedServe(t *testing.T) {
-	s := routerServer(t)
+	s := routeServer(t)
 	certFile, _ := web.TailscalePaths(s.cfg.DataDir)
 	writeCertFor(t, certFile, 24*time.Hour+time.Minute)
 	if v, ok := phoneCertFact(t, s); ok {

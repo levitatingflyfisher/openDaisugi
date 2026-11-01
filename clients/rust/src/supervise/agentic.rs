@@ -1,8 +1,8 @@
 //! `agentic_executor.AgenticExecutor`: an agentic step run as `claude -p`
-//! in its workspace, under the call-time gate in enforce mode. The step's
+//! in its workspace, under the call-time warden in enforce mode. The step's
 //! child envelope (the caller's own when it names none) is proved inside
 //! the caller's envelope before anything starts, registered in a fresh
-//! gate root outside the workspace under a session the executor picks,
+//! warden root outside the workspace under a session the executor picks,
 //! and the sub-agent's tool wall is computed from it. The Go
 //! `supervise.Agentic` is the reference.
 
@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use super::executors::Executor;
 use super::{ms, str_of, ExecResult};
-use crate::gate::py::text::{head, repr};
-use crate::gate::pyjson::{loads_py, py_repr, py_type_name, Object, Value};
+use crate::warden::py::text::{head, repr};
+use crate::warden::pyjson::{loads_py, py_repr, py_type_name, Object, Value};
 use crate::llm::{CallError, Client};
 
 /// `verify._AGENTIC_TOOL_CAPABILITIES`: the permission a host tool needs.
@@ -49,9 +49,9 @@ pub struct Agentic {
     pub model: String,
     /// Runs `claude -p`.
     pub claude: Client,
-    /// This binary: the gate hook runs `<self> gate check`.
+    /// This binary: the warden hook runs `<self> warden check`.
     pub self_path: String,
-    /// Where the gate root is made (`tempfile.gettempdir()`).
+    /// Where the warden root is made (`tempfile.gettempdir()`).
     pub temp_dir: String,
     /// The sub-agent: "claude" (claude -p; "" means it too) or "sprig".
     pub runtime: String,
@@ -196,40 +196,40 @@ impl Executor for Agentic {
                 words.push(&self.self_path);
             }
             if words.iter().any(|w| w.chars().any(char::is_whitespace)) {
-                // sprig splits its gate command at whitespace: the step
+                // sprig splits its warden command at whitespace: the step
                 // fails before anything is made or started.
                 return fail(super::agentic_sprig::SPRIG_SPACE_TEXT.to_string());
             }
         }
         // The tree lives outside the workspace: the sub-agent must not be
         // able to rewrite its hook settings, its envelope or the ledger.
-        // gate/ and tree/ under one directory, so the gate guards both,
+        // warden/ and tree/ under one directory, so the warden guards both,
         // each private.
         let data_dir = mkdtemp(&self.temp_dir, "daisugi-agentic-").map_err(|e| e.to_string())?;
-        let gate_root = format!("{data_dir}/gate");
+        let warden_root = format!("{data_dir}/warden");
         {
             use std::os::unix::fs::DirBuilderExt;
-            for d in [&gate_root, &format!("{data_dir}/tree")] {
+            for d in [&warden_root, &format!("{data_dir}/tree")] {
                 std::fs::DirBuilder::new().mode(0o700).create(d).map_err(|e| e.to_string())?;
             }
         }
         // The executor, not the sub-agent, picks the session the envelope
-        // binds to, and pins the gate to it.
+        // binds to, and pins the warden to it.
         let session = format!(
             "agentic-{}",
-            crate::cli::gateroot::safe_session_id(&str_of(step, "id"))
+            crate::cli::wardenroot::safe_session_id(&str_of(step, "id"))
         );
-        crate::tree::make_root(&data_dir, &gate_root, &self.envelope, super::treerun::ROOT_SESSION, self.tokens.clone(), self.turns.clone())
+        crate::tree::make_root(&data_dir, &warden_root, &self.envelope, super::treerun::ROOT_SESSION, self.tokens.clone(), self.turns.clone())
             .map_err(fail_text)?;
         let res = if runtime == "sprig" {
-            self.run_sprig_node(step, &proposed, &profile_name, &model, &tools, &requested, &workspace, &data_dir, &gate_root, &session, timeout_s, max_output_bytes, started)
+            self.run_sprig_node(step, &proposed, &profile_name, &model, &tools, &requested, &workspace, &data_dir, &warden_root, &session, timeout_s, max_output_bytes, started)
         } else {
-            self.run_claude_node(step, &proposed, &profile_name, &model, &allowed, &workspace, &data_dir, &gate_root, &session, timeout_s, max_output_bytes, started)
+            self.run_claude_node(step, &proposed, &profile_name, &model, &allowed, &workspace, &data_dir, &warden_root, &session, timeout_s, max_output_bytes, started)
         };
-        crate::tree::end_subtree(&data_dir, &gate_root, &session, true);
+        crate::tree::end_subtree(&data_dir, &warden_root, &session, true);
         let _ = crate::tree::end(
             &data_dir,
-            &gate_root,
+            &warden_root,
             super::treerun::ROOT_SESSION,
             Some(num_bigint::BigInt::default()),
             Some(num_bigint::BigInt::default()),
@@ -258,7 +258,7 @@ impl Agentic {
         requested: &str,
         workspace: &str,
         data_dir: &str,
-        gate_root: &str,
+        warden_root: &str,
         session: &str,
         timeout_s: u64,
         max_output_bytes: usize,
@@ -286,7 +286,7 @@ impl Agentic {
         let node = starter
             .run_node(
                 data_dir,
-                gate_root,
+                warden_root,
                 super::treerun::NodeOpts {
                     parent: super::treerun::ROOT_SESSION.into(),
                     session: Some(session.into()),
@@ -306,6 +306,8 @@ impl Agentic {
                     timeout_s,
                     default_model: self.model.clone(),
                     timeout_ms: crate::tree::DEFAULT_TIMEOUT_MS,
+                    reserved: false,
+                    resume: String::new(),
                 },
             )
             .map_err(fail_text)?;
@@ -331,7 +333,7 @@ impl Agentic {
         allowed: &[String],
         workspace: &str,
         data_dir: &str,
-        gate_root: &str,
+        warden_root: &str,
         session: &str,
         timeout_s: u64,
         max_output_bytes: usize,
@@ -348,7 +350,7 @@ impl Agentic {
         let profiled = profile_name.as_deref().is_some_and(|n| n != crate::agentprof::DEFAULT);
         let sp = crate::tree::spawn_opts(
             data_dir,
-            gate_root,
+            warden_root,
             proposed,
             super::treerun::ROOT_SESSION,
             Some(session),
@@ -360,6 +362,7 @@ impl Agentic {
                 model: Some(model.into()),
                 parent_tokens_used: None,
                 parent_turns_used: None,
+                ..Default::default()
             },
         )
         .map_err(fail_text)?;
@@ -370,9 +373,9 @@ impl Agentic {
             &self.self_path,
             &crate::cli::install::HookOptions {
                 mode: "enforce".into(),
-                root: gate_root.into(),
+                root: warden_root.into(),
                 format: "claude".into(),
-                captures_root: Some(format!("{gate_root}/captures")),
+                captures_root: Some(format!("{warden_root}/captures")),
                 session: Some(session.into()),
                 ask: false,
             },
@@ -455,7 +458,7 @@ impl Agentic {
             Value::Int(t) => t.parse().ok().map(super::treerun::clamp_count),
             _ => None,
         };
-        crate::tree::end(data_dir, gate_root, session, own, turns_used).map_err(fail_text)?;
+        crate::tree::end(data_dir, warden_root, session, own, turns_used).map_err(fail_text)?;
         Ok(ExecResult {
             rc: 0,
             stdout: truncate_output(&result, max_output_bytes),
@@ -539,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn runs_under_the_gate() {
+    fn runs_under_the_warden() {
         let (dir, ws, temp) = (tmp("bin"), tmp("ws"), tmp("t"));
         let _gone = Gone(vec![dir.clone(), ws.clone(), temp.clone()]);
         let parent = envelope("env_parent", &[&format!("{ws}/**")], true);
@@ -575,9 +578,9 @@ mod tests {
         assert_eq!(dirs.len(), 1);
         let tree_dir = dirs[0].to_string_lossy().to_string();
         assert!(tree_dir.contains("/daisugi-agentic-"));
-        let root = format!("{tree_dir}/gate");
+        let root = format!("{tree_dir}/warden");
         assert!(args.contains(&format!(
-            "/opt/daisugi gate check --mode enforce --root {root}"
+            "/opt/daisugi warden check --mode enforce --root {root}"
         )));
         assert!(args.contains(&format!(
             "--captures-root {root}/captures --session agentic-g"
@@ -674,20 +677,20 @@ mod tests {
     }
 
     #[test]
-    fn sprig_runs_under_the_pinned_gate() {
+    fn sprig_runs_under_the_pinned_warden() {
         let (dir, ws, temp) = (tmp("bin"), tmp("ws"), tmp("t"));
         let _gone = Gone(vec![dir.clone(), ws.clone(), temp.clone()]);
         let mut a = sprig_agentic(&dir, &ws, &temp, r#"printf '%s' '{"answer": "done", "turns": 2}'"#, true);
         let r = a.run(&step(&ws, &["Read", "Glob", "Bash"], None), 30, 1000).unwrap();
         assert_eq!((r.rc, r.stdout.as_str()), (0, "done"));
         let dirs: Vec<_> = std::fs::read_dir(&temp).unwrap().map(|e| e.unwrap().path()).collect();
-        let root = format!("{}/gate", dirs[0].to_string_lossy());
+        let root = format!("{}/warden", dirs[0].to_string_lossy());
         let args = std::fs::read_to_string(format!("{dir}/args")).unwrap();
         let want = [
             "--json".to_string(),
-            "--gate".into(),
-            "--gate-cmd".into(),
-            format!("/opt/daisugi gate check --mode enforce --root {root} --session agentic-g --captures-root {root}/captures"),
+            "--warden".into(),
+            "--warden-cmd".into(),
+            format!("/opt/daisugi warden check --mode enforce --root {root} --session agentic-g --captures-root {root}/captures"),
             "--tools".into(),
             "read,bash".into(),
             "--model".into(),

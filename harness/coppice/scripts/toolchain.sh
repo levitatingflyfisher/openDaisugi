@@ -8,17 +8,26 @@
 #   toolchain.sh --tools-only   zig and cmake only. scripts/install.sh uses
 #                               this: clients/go/scripts/native.sh builds
 #                               libghostty-vt in its own prefix.
+#   toolchain.sh --ghostty-only libghostty-vt only (step 3); installs no zig
+#                               and no cmake
 #   toolchain.sh --print-path   print the PATH entries (zig dir, cmake dir),
 #                               install nothing
+#
+# Step 3 first asks clients/go/scripts/native.sh --print-prefix. When that
+# prefix holds libghostty-vt and COPPICE_GHOSTTY_PREFIX is unset, the script
+# uses it and builds nothing, so one box holds one libghostty-vt build.
 set -euo pipefail
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tools_only=0
 print_path=0
+ghostty_only=0
 case "${1:-}" in
   "") ;;
   --tools-only) tools_only=1 ;;
+  --ghostty-only) ghostty_only=1 ;;
   --print-path) print_path=1 ;;
-  *) echo "toolchain.sh: unknown option $1 (use --tools-only, --print-path or no option)" >&2; exit 2 ;;
+  *) echo "toolchain.sh: unknown option $1 (use --tools-only, --ghostty-only, --print-path or no option)" >&2; exit 2 ;;
 esac
 
 # Map this host to one of the platform names Zig's own release tarballs use
@@ -116,7 +125,7 @@ mkdir -p "$work"
 # 1. Zig 0.16, checksum-verified, under $data. Nothing goes on the user's
 #    PATH; this script puts it first on its own PATH, so the pinned zig is
 #    the one used even when another zig is installed.
-if [ ! -x "$zig_dir/zig" ]; then
+if [ "$ghostty_only" -eq 0 ] && [ ! -x "$zig_dir/zig" ]; then
   echo "installing zig $ZIG_VERSION ($ZIG_PLATFORM) into $zig_dir"
   curl -fsSL "$ZIG_URL" -o "$work/zig.tar.xz"
   echo "$ZIG_SHA256  $work/zig.tar.xz" | sha256_check
@@ -126,7 +135,7 @@ if [ ! -x "$zig_dir/zig" ]; then
   rm -f "$work/zig.tar.xz"
 fi
 
-if [ ! -x "$cmake_bin/cmake" ]; then
+if [ "$ghostty_only" -eq 0 ] && [ ! -x "$cmake_bin/cmake" ]; then
   echo "installing cmake $CMAKE_VERSION into $cmake_dir"
   curl -fsSL "$CMAKE_URL" -o "$work/cmake.whl"
   echo "$CMAKE_SHA256  $work/cmake.whl" | sha256_check
@@ -139,8 +148,20 @@ fi
 # The steps below use the pinned zig and cmake, whatever else is on PATH.
 export PATH="$zig_dir:$cmake_bin:$PATH"
 
-# 3. libghostty-vt at the commit go-libghostty fetches.
-if [ "$tools_only" -eq 0 ] && [ ! -f "$prefix/share/pkgconfig/libghostty-vt-static.pc" ]; then
+# 3. libghostty-vt at the commit go-libghostty fetches, unless native.sh has
+#    built it already. COPPICE_NATIVE_SH names the native.sh to ask (a test
+#    hook); COPPICE_GHOSTTY_PREFIX, when set, wins.
+reuse=0
+native_sh="${COPPICE_NATIVE_SH:-$here/../../../clients/go/scripts/native.sh}"
+if [ "$tools_only" -eq 0 ] && [ -z "${COPPICE_GHOSTTY_PREFIX:-}" ] && [ -x "$native_sh" ]; then
+  native_prefix="$("$native_sh" --print-prefix 2>/dev/null || true)"
+  if [ -n "$native_prefix" ] && [ -f "$native_prefix/share/pkgconfig/libghostty-vt-static.pc" ]; then
+    prefix="$native_prefix"
+    reuse=1
+    echo "using libghostty-vt from $prefix (built by native.sh)"
+  fi
+fi
+if [ "$tools_only" -eq 0 ] && [ "$reuse" -eq 0 ] && [ ! -f "$prefix/share/pkgconfig/libghostty-vt-static.pc" ]; then
   echo "building libghostty-vt at $GHOSTTY_COMMIT"
   if [ ! -d "$work/ghostty/.git" ]; then
     git clone --filter=blob:none https://github.com/ghostty-org/ghostty.git "$work/ghostty"

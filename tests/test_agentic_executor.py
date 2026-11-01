@@ -4,7 +4,7 @@ parent's envelope (roadmap Stage 2).
 Defense in depth, both walls exercised here:
 - static outer wall: --allowedTools is COMPUTED from the envelope ∩ the
   step's request — a tool the envelope doesn't back never reaches the argv;
-- dynamic inner wall: the sub-agent runs under an enforce-mode gate whose
+- dynamic inner wall: the sub-agent runs under an enforce-mode warden whose
   settings and envelope live in a private root OUTSIDE the workspace —
   supplied from outside anything the sub-agent can write.
 """
@@ -60,7 +60,7 @@ def spy_call(monkeypatch):
             cwd=cwd,
             extra_args=list(extra_args),
         )
-        # What the gate root holds while the sub-agent runs: the tree ends
+        # What the warden root holds while the sub-agent runs: the tree ends
         # the node, and unregisters its envelope, when it returns.
         settings = json.loads(extra_args[extra_args.index("--settings") + 1])
         cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
@@ -99,7 +99,7 @@ def test_runs_in_the_step_workspace(tmp_path, spy_call):
 def test_allowed_tools_are_envelope_intersected(tmp_path, spy_call):
     """Step asks for Bash+Read+Write; envelope grants only file_read →
     only Read survives into --allowedTools. The unbacked tools never
-    reach the argv at all (static wall, independent of the gate)."""
+    reach the argv at all (static wall, independent of the warden)."""
     exe = AgenticExecutor(envelope=_envelope())  # no shell, no file_write
     _run(exe, _step(tmp_path, tools=["Bash", "Read", "Write"]))
     args = spy_call["extra_args"]
@@ -122,7 +122,7 @@ def test_no_backed_tools_fails_without_spawning(tmp_path, monkeypatch):
     assert not called
 
 
-def test_gate_settings_enforce_mode_with_registered_envelope(tmp_path, spy_call):
+def test_warden_settings_enforce_mode_with_registered_envelope(tmp_path, spy_call):
     exe = AgenticExecutor(envelope=_envelope())
     _run(exe, _step(tmp_path))
     args = spy_call["extra_args"]
@@ -131,19 +131,19 @@ def test_gate_settings_enforce_mode_with_registered_envelope(tmp_path, spy_call)
     assert hook["matcher"] == "*"
     cmd = hook["hooks"][0]["command"]
     assert "--mode enforce" in cmd
-    # The gate root named in the command has the envelope registered for the
+    # The warden root named in the command has the envelope registered for the
     # session the executor chose, never as default.
     root = Path(cmd.split("--root ")[1].split(" --")[0])
     assert sorted(spy_call["registered"]) == ["agentic-a1.json", "root.json"]
-    assert exe.last_gate_root == root
+    assert exe.last_warden_root == root
 
 
-def test_gate_root_is_outside_the_workspace(tmp_path, spy_call):
+def test_warden_root_is_outside_the_workspace(tmp_path, spy_call):
     """The hook settings and envelope must be supplied from OUTSIDE anything
     the sub-agent can write — never under its workspace."""
     exe = AgenticExecutor(envelope=_envelope())
     _run(exe, _step(tmp_path))
-    assert not str(exe.last_gate_root).startswith(str(tmp_path))
+    assert not str(exe.last_warden_root).startswith(str(tmp_path))
 
 
 def test_max_turns_forwarded(tmp_path, spy_call):
@@ -185,7 +185,7 @@ def test_wrong_step_kind_raises_type_error(tmp_path):
         _run(exe, TaskStep(id="t", prompt="hi"))
 
 
-def test_capture_true_wires_captures_root_inside_gate_root(tmp_path, spy_call):
+def test_capture_true_wires_captures_root_inside_warden_root(tmp_path, spy_call):
     exe = AgenticExecutor(envelope=_envelope(), capture=True)
     _run(exe, _step(tmp_path))
     args = spy_call["extra_args"]
@@ -193,7 +193,7 @@ def test_capture_true_wires_captures_root_inside_gate_root(tmp_path, spy_call):
     cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "--captures-root" in cmd
     caps = Path(cmd.split("--captures-root ")[1].split(" --")[0].strip())
-    assert str(caps).startswith(str(exe.last_gate_root))
+    assert str(caps).startswith(str(exe.last_warden_root))
 
 
 def test_capture_false_omits_captures_root(tmp_path, spy_call):
@@ -205,9 +205,9 @@ def test_capture_false_omits_captures_root(tmp_path, spy_call):
     assert "--captures-root" not in cmd
 
 
-def test_sub_agent_gate_is_pinned_to_a_session_the_executor_chose(tmp_path, spy_call):
-    """The sub-agent's gate must not honor a session id from the payload —
-    the envelope is pinned from outside, like the gate root itself."""
+def test_sub_agent_warden_is_pinned_to_a_session_the_executor_chose(tmp_path, spy_call):
+    """The sub-agent's warden must not honor a session id from the payload —
+    the envelope is pinned from outside, like the warden root itself."""
     exe = AgenticExecutor(envelope=_envelope())
     _run(exe, _step(tmp_path))
     args = spy_call["extra_args"]

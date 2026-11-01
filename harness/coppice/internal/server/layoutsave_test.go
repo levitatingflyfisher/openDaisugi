@@ -11,7 +11,7 @@ func newSettleServer(t *testing.T, settle time.Duration) (*Server, *atomic.Int64
 	t.Helper()
 	dir := t.TempDir()
 	s, err := New(Config{SocketPath: filepath.Join(dir, "server.sock"), DataDir: dir,
-		ForemanDir: filepath.Join(dir, "state", "coppice", "foreman"), HookHome: dir,
+		StewardDir: filepath.Join(dir, "state", "coppice", "steward"), HookHome: dir,
 		LayoutSaveSettle: settle})
 	if err != nil {
 		t.Fatal(err)

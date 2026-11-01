@@ -22,7 +22,7 @@ func TestDirFollowsTheRule(t *testing.T) {
 		{"opendaisugi home wins", map[string]string{"OPENDAISUGI_HOME": "/o", "XDG_DATA_HOME": "/x"}, []string{"/h/.opendaisugi/coppice"}, "/o", false},
 		{"xdg when it is set", map[string]string{"XDG_DATA_HOME": "/x"}, nil, "/x/opendaisugi", false},
 		{"the dot dir when xdg is unset", map[string]string{}, nil, "/h/.opendaisugi", false},
-		{"a dot dir made by the gate does not move xdg data", map[string]string{"XDG_DATA_HOME": "/x"}, []string{"/h/.opendaisugi/gate"}, "/x/opendaisugi", false},
+		{"a dot dir made by the warden does not move xdg data", map[string]string{"XDG_DATA_HOME": "/x"}, []string{"/h/.opendaisugi/warden"}, "/x/opendaisugi", false},
 		{"empty values count as unset", map[string]string{"OPENDAISUGI_HOME": "", "XDG_DATA_HOME": ""}, nil, "/h/.opendaisugi", false},
 		{"old coppice data is kept beside xdg", map[string]string{"XDG_DATA_HOME": "/x"}, []string{"/h/.opendaisugi/coppice"}, "/h/.opendaisugi", true},
 		{"new data beats old data", map[string]string{"XDG_DATA_HOME": "/x"}, []string{"/h/.opendaisugi/coppice", "/x/opendaisugi/coppice"}, "/x/opendaisugi", false},
@@ -64,8 +64,8 @@ func TestDefaultReadsTheProcessEnvironment(t *testing.T) {
 }
 
 // The same box gets the same place before and after ~/.opendaisugi
-// appears (`daisugi install --gate` makes it), with no note.
-func TestInstallingTheGateDoesNotMoveCoppice(t *testing.T) {
+// appears (`daisugi install` makes it), with no note.
+func TestInstallingTheWardenDoesNotMoveCoppice(t *testing.T) {
 	home := t.TempDir()
 	xdg := filepath.Join(home, "share")
 	t.Setenv("HOME", home)
@@ -75,11 +75,11 @@ func TestInstallingTheGateDoesNotMoveCoppice(t *testing.T) {
 	if got := Default(); got != want {
 		t.Fatalf("before: %q, want %q", got, want)
 	}
-	if err := os.MkdirAll(filepath.Join(home, ".opendaisugi", "gate"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".opendaisugi", "warden"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if got := Default(); got != want {
-		t.Fatalf("after the gate is installed: %q, want %q", got, want)
+		t.Fatalf("after the warden is installed: %q, want %q", got, want)
 	}
 	if Legacy() != "" {
 		t.Fatalf("a note for no reason: %q", Legacy())
@@ -117,9 +117,43 @@ func TestOldCoppiceDirWithDataIsKeptWithOneLineSayingWhere(t *testing.T) {
 		t.Fatalf("old data not kept: %q", got)
 	}
 	note := Legacy()
-	if strings.Contains(note, "\n") || !strings.Contains(note, old) ||
-		!strings.Contains(note, filepath.Join(xdg, "opendaisugi", "coppice")) {
+	if strings.Contains(note, "\n") || !strings.Contains(note, filepath.Join(home, ".opendaisugi")) ||
+		!strings.Contains(note, "coppice/ and foreman/") || // names-ok: the on-disk store name
+		!strings.Contains(note, filepath.Join(xdg, "opendaisugi")) {
 		t.Fatalf("note: %q", note)
+	}
+}
+
+func TestAnOldForemanStoreKeepsTheLegacyDir(t *testing.T) { // names-ok: the on-disk store name
+	home := t.TempDir()
+	xdg := filepath.Join(home, "share")
+	t.Setenv("HOME", home)
+	t.Setenv("OPENDAISUGI_HOME", "")
+	t.Setenv("XDG_DATA_HOME", xdg)
+	// An empty old coppice dir, and the steward's store with data under foreman.  // names-ok: the on-disk store name
+	if err := os.MkdirAll(filepath.Join(home, ".opendaisugi", "coppice"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(home, ".opendaisugi", "foreman", "main") // names-ok: the on-disk store name
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "2026-10-01.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := Default(); got != filepath.Join(home, ".opendaisugi") {
+		t.Fatalf("old foreman data not kept: %q", got) // names-ok: the on-disk store name
+	}
+	// Data under foreman in the XDG dir wins.  // names-ok: the on-disk store name
+	nu := filepath.Join(xdg, "opendaisugi", "foreman", "main") // names-ok: the on-disk store name
+	if err := os.MkdirAll(nu, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nu, "b"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := Default(); got != filepath.Join(xdg, "opendaisugi") {
+		t.Fatalf("xdg foreman data did not win: %q", got) // names-ok: the on-disk store name
 	}
 }
 

@@ -29,7 +29,9 @@ def _caller(stakes):
     return Envelope(
         generated_by="orchestrator",
         task="orchestrate",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
         stakes=stakes,
     )
 

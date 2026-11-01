@@ -11,7 +11,7 @@ import (
 func growRoot(t *testing.T, tokens int64) (string, string) {
 	t.Helper()
 	d := t.TempDir()
-	g := filepath.Join(d, "gate")
+	g := filepath.Join(d, "warden")
 	root := envOf(t, `{"id": "env_root", "generated_by": "t", "task": "t", "permissions": {"shell": true, "shell_allowlist": ["git"]}}`)
 	var tk *big.Int
 	if tokens >= 0 {
@@ -111,10 +111,10 @@ func TestMintedSessionsAndSpawnExtras(t *testing.T) {
 	}
 }
 
-// GR r1 MAJOR-1: the tree reads an envelope as the gate does (GR-R-1,
-// GR-R-7). What the gate refuses to read, the tree cannot read either, so a
+// GR r1 MAJOR-1: the tree reads an envelope as the warden does (GR-R-1,
+// GR-R-7). What the warden refuses to read, the tree cannot read either, so a
 // planted link or a shared file never lends a parent its widened envelope.
-func TestLoadRegisteredRefusesWhatTheGateRefuses(t *testing.T) {
+func TestLoadRegisteredRefusesWhatTheWardenRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		plant func(t *testing.T, g, file string)

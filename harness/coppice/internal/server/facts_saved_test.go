@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// turn is one record of the gateway's turn journal: when, how many
+// turn is one record of the router's turn journal: when, how many
 // frontier tokens it saved, and the pane it names, or "".
 type turn struct {
 	at    string
@@ -19,10 +19,10 @@ type turn struct {
 	pane  string
 }
 
-// writeTurns writes the gateway's turn journal beside the gate root.
+// writeTurns writes the router's turn journal beside the warden root.
 func writeTurns(t *testing.T, s *Server, rows ...turn) {
 	t.Helper()
-	dir := filepath.Join(filepath.Dir(s.cfg.GateRoot), "gateway")
+	dir := filepath.Join(filepath.Dir(s.cfg.WardenRoot), "router")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +46,12 @@ func savedToday(t *testing.T, s *Server) (any, bool) {
 	return v, ok
 }
 
-// No gateway figure, no number. The gateway names no pane on a turn today,
+// No router figure, no number. The router names no pane on a turn today,
 // so a turn file with no pane, an empty one, an old one, or one that names
 // a pane this floor does not have, gives floor.facts no saving.
-func TestFloorFactsNamesNoSavingWithoutAGatewayFigureForAPaneHere(t *testing.T) {
+func TestFloorFactsNamesNoSavingWithoutARouterFigureForAPaneHere(t *testing.T) {
 	s := newFactsServer(t)
-	s.cfg.GateRoot = filepath.Join(t.TempDir(), "gate")
+	s.cfg.WardenRoot = filepath.Join(t.TempDir(), "warden")
 	if v, ok := savedToday(t, s); ok {
 		t.Fatalf("saved_today %v with no turn file", v)
 	}
@@ -75,12 +75,12 @@ func TestFloorFactsNamesNoSavingWithoutAGatewayFigureForAPaneHere(t *testing.T) 
 	}
 }
 
-// The saving is the sum of the gateway's own frontier tokens saved, over
+// The saving is the sum of the router's own frontier tokens saved, over
 // the turns of today, local time, that name a pane of this floor, and no
 // more.
-func TestFloorFactsSumsTheGatewayTokensSavedTodayForThePanesHere(t *testing.T) {
+func TestFloorFactsSumsTheRouterTokensSavedTodayForThePanesHere(t *testing.T) {
 	s := newFactsServer(t)
-	s.cfg.GateRoot = filepath.Join(t.TempDir(), "gate")
+	s.cfg.WardenRoot = filepath.Join(t.TempDir(), "warden")
 	now := s.clock().UTC().Format("2006-01-02T15:04:05.000000+00:00")
 	old := s.clock().AddDate(0, 0, -3).UTC().Format(time.RFC3339Nano)
 	writeTurns(t, s, turn{old, 900, "w1:p1"}, turn{now, 120, "w1:p1"}, turn{now, 30, "w1:p1"}, turn{now, 500, "w7:p7"}, turn{now, 70, ""})

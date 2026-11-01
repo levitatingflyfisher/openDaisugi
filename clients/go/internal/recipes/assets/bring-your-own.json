@@ -1,0 +1,42 @@
+{
+  "name": "bring-your-own",
+  "title": "Bring your own: Switchyard, Hermes Agent, Mem0",
+  "doc": "docs/recipes/bring-your-own.md",
+  "slots": {
+    "harness": "Hermes Agent (theirs)",
+    "router": "daisugi router (ours)",
+    "routing mode": "NVIDIA NeMo Switchyard (theirs)",
+    "knowledge store": "Mem0 (theirs)",
+    "warden": "none"
+  },
+  "params": {
+    "efficient_model": {
+      "help": "the model id of Switchyard's efficient tier",
+      "required": true
+    }
+  },
+  "steps": [
+    {
+      "kind": "note",
+      "text": "Build Switchyard yourself: cargo install --locked --git https://github.com/NVIDIA-NeMo/Switchyard --tag v0.3.0 switchyard-server"
+    },
+    {
+      "kind": "install",
+      "only": [
+        "router"
+      ],
+      "runtime": []
+    },
+    {
+      "kind": "config",
+      "set": {
+        "routing_mode": "switchyard",
+        "switchyard_efficient_model": "{efficient_model}"
+      }
+    },
+    {
+      "kind": "note",
+      "text": "Hermes needs its OpenAI-compatible base URL set to http://127.0.0.1:8787 by hand; install does not write it. Mem0 joins by its own means."
+    }
+  ]
+}

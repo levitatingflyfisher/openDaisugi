@@ -4,20 +4,20 @@
     "coppice/go/version": 9,
     "coppice/rs/help": 7,
     "coppice/rs/version": 7,
-    "daisugi-gate/go/gate-hook": 25,
-    "daisugi-gate/py-client/gate-hook": 775,
-    "daisugi-gate/py/gate-hook": 775,
-    "daisugi-gate/rs/gate-hook": 15,
-    "daisugi/go/gate-check": 30,
-    "daisugi/go/gate-status": 15,
+    "daisugi-warden/go/warden-hook": 25,
+    "daisugi-warden/py-client/warden-hook": 775,
+    "daisugi-warden/py/warden-hook": 775,
+    "daisugi-warden/rs/warden-hook": 15,
+    "daisugi/go/warden-check": 30,
+    "daisugi/go/warden-status": 15,
     "daisugi/go/help": 15,
     "daisugi/go/version": 15,
-    "daisugi/py/gate-check": 1000,
-    "daisugi/py/gate-status": 925,
+    "daisugi/py/warden-check": 1000,
+    "daisugi/py/warden-status": 925,
     "daisugi/py/help": 950,
     "daisugi/py/version": 90,
-    "daisugi/rs/gate-check": 20,
-    "daisugi/rs/gate-status": 9,
+    "daisugi/rs/warden-check": 20,
+    "daisugi/rs/warden-status": 9,
     "daisugi/rs/help": 8,
     "daisugi/rs/version": 8,
     "sprig/go/help": 8,
@@ -29,24 +29,24 @@
   "how": "budget = tidy_up(max(2 x median, median + 5 ms)) of the larger of two 21-run medians; see speed-budgets.md",
   "relative": [
     {
-      "fast": "daisugi-gate/go/gate-hook",
+      "fast": "daisugi-warden/go/warden-hook",
       "max_ratio": 0.1,
-      "slow": "daisugi-gate/py/gate-hook"
+      "slow": "daisugi-warden/py/warden-hook"
     },
     {
-      "fast": "daisugi-gate/rs/gate-hook",
+      "fast": "daisugi-warden/rs/warden-hook",
       "max_ratio": 0.1,
-      "slow": "daisugi-gate/py/gate-hook"
+      "slow": "daisugi-warden/py/warden-hook"
     },
     {
-      "fast": "daisugi/go/gate-check",
+      "fast": "daisugi/go/warden-check",
       "max_ratio": 0.1,
-      "slow": "daisugi/py/gate-check"
+      "slow": "daisugi/py/warden-check"
     },
     {
-      "fast": "daisugi/rs/gate-check",
+      "fast": "daisugi/rs/warden-check",
       "max_ratio": 0.1,
-      "slow": "daisugi/py/gate-check"
+      "slow": "daisugi/py/warden-check"
     }
   ],
   "schema": 1,

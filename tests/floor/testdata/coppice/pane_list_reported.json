@@ -24,7 +24,7 @@
       "quiet_for": 0.002399601,
       "rows": 40,
       "session_id": "s1",
-      "source": "gate",
+      "source": "warden",
       "state": "blocked",
       "tab": "w1:t1",
       "ts": 1234.5,

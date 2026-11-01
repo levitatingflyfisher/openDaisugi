@@ -26,7 +26,9 @@ def _env_referencing_alias():
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls", "rm"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls", "rm"], file_read=["**"], file_write=["**"]
+        ),
         stakes="high",
         invariants=[
             Invariant(type="only_ls", description="via alias", expr=AliasRef(name="only_ls"))

@@ -41,7 +41,7 @@ def test_the_shim_scores_the_lexical_floor_on_a_real_journal_file(tmp_path):
             ("add a pytest test for the shell decomposer",),
             ("bump the docker base image to bookworm",),
             ("summarise the last ten journal traces",),
-            ("fix the flaky gateway streaming test",),
+            ("fix the flaky router streaming test",),
             ("add a pytest test for the shell decomposer",),
             ("x",),
         ],
@@ -70,7 +70,7 @@ def test_the_shim_prints_the_module_thresholds_and_the_module_rates(tmp_path):
         "add a pytest test for the shell decomposer",
         "bump the docker base image to bookworm",
         "summarise the last ten journal traces",
-        "fix the flaky gateway streaming test",
+        "fix the flaky router streaming test",
     ]
     db = tmp_path / "index.db"
     con = sqlite3.connect(str(db))

@@ -1,6 +1,6 @@
 // Package recall is the assured reuse a harness opts into (ADR-0012 §2C,
-// §2D): gateway_recall.recall and gateway_answers.recall_answer. Neither
-// runs inside the proxy: the oracle's gateway only captures answers, and
+// §2D): router_recall.recall and router_answers.recall_answer. Neither
+// runs inside the proxy: the oracle's router only captures answers, and
 // a harness reaches these through its MCP tools. They are here so the Go
 // side has the same library, proven on the oracle's cases.
 //
@@ -16,15 +16,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"daisugi-verify/internal/distill"
 	"daisugi-verify/internal/embed/potion"
 	"daisugi-verify/internal/envgen"
 	"daisugi-verify/internal/garden"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pyjson"
+	"daisugi-verify/internal/router"
 	"daisugi-verify/internal/verify"
 )
 
@@ -49,10 +50,10 @@ type Result struct {
 	Warning string
 }
 
-// DefaultModel is gateway_recall._DEFAULT_MODEL, the model that binds.
+// DefaultModel is router_recall._DEFAULT_MODEL, the model that binds.
 const DefaultModel = "anthropic/claude-sonnet-4-20250514"
 
-// Recall is gateway_recall.recall for a store and the caller's envelope.
+// Recall is router_recall.recall for a store and the caller's envelope.
 // c is the model client that binds a typed pathway (nil: no model).
 func Recall(store *pathways.Store, matcherKey string, pe potion.Env, task string, envelope json.RawMessage, z3ms int,
 	c *llm.Client, model string) (res Result, err error) {
@@ -78,8 +79,8 @@ func Recall(store *pathways.Store, matcherKey string, pe potion.Env, task string
 	if _, err := verify.ParsePlan(json.RawMessage(pathways.DumpJSON(tmpl))); err != nil {
 		return Result{}, fmt.Errorf("%w: %v", pathways.ErrUnreadable, err)
 	}
-	if !envgen.PlanVerifies(tmpl.(*pyjson.Object), env, z3ms) {
-		return Result{Reason: "reuse failed verification against your envelope"}, nil
+	if ok, msgs := envgen.PlanVerdict(tmpl.(*pyjson.Object), env, z3ms); !ok {
+		return Result{Reason: failureReason(msgs)}, nil
 	}
 	srcs, _ := p.Obj.Value("source_trace_ids").([]any)
 	return Result{Hit: true, Plan: tmpl, Provenance: &Provenance{
@@ -90,13 +91,13 @@ func Recall(store *pathways.Store, matcherKey string, pe potion.Env, task string
 // DefaultMaxAge is DEFAULT_ANSWER_MAX_AGE_SECONDS: seven days.
 const DefaultMaxAge = 7 * 24 * 3600.0
 
-// AnswerProvenance is gateway_answers.AnswerProvenance.
+// AnswerProvenance is router_answers.AnswerProvenance.
 type AnswerProvenance struct {
 	Similarity, AgeSeconds float64
 	CreatedAt, GroundHash  any
 }
 
-// AnswerResult is gateway_answers.AnswerResult.
+// AnswerResult is router_answers.AnswerResult.
 type AnswerResult struct {
 	Hit        bool
 	Reason     string
@@ -104,9 +105,9 @@ type AnswerResult struct {
 	Provenance *AnswerProvenance
 }
 
-// ErrAnswers is a store whose values the freshness gates cannot read the
+// ErrAnswers is a store whose values the freshness checks cannot read the
 // way the oracle reads them (a task or time that is not the type the
-// gateway writes).
+// router writes).
 var ErrAnswers = errors.New("the answer store holds an entry this binary does not read")
 
 func floatOf(v any) (float64, bool) {
@@ -125,9 +126,9 @@ func floatOf(v any) (float64, bool) {
 
 // RecallAnswer is recall_answer: the nearest past answer by the ask, served
 // only when it clears confidence, age and ground-shift.
-func RecallAnswer(task string, entries []gateway.AnswerEntry, now float64, emb pathways.Embedder, threshold, maxAge float64,
+func RecallAnswer(task string, entries []router.AnswerEntry, now float64, emb pathways.Embedder, threshold, maxAge float64,
 	ground *string) (AnswerResult, error) {
-	var cands []gateway.AnswerEntry
+	var cands []router.AnswerEntry
 	for _, e := range entries {
 		if pyjson.Truthy(e.Signature) && pyjson.Truthy(e.Answer) {
 			cands = append(cands, e)
@@ -166,4 +167,23 @@ func RecallAnswer(task string, entries []gateway.AnswerEntry, now float64, emb p
 	}
 	return AnswerResult{Hit: true, Answer: e.Answer, Provenance: &AnswerProvenance{Similarity: bestSim, AgeSeconds: age,
 		CreatedAt: e.CreatedAt, GroundHash: e.GroundHash}}, nil
+}
+
+// failureReason is router_recall._failure_reason: a shell step that touches a
+// file no scope covers says which scope is missing and what to do about it.
+func failureReason(messages []string) string {
+	var scopes []string
+	for _, name := range []string{"file_read", "file_write"} {
+		for _, m := range messages {
+			if strings.Contains(m, " shell ") && strings.Contains(m, name+" scope") {
+				scopes = append(scopes, name)
+				break
+			}
+		}
+	}
+	if len(scopes) == 0 {
+		return "reuse failed verification against your envelope"
+	}
+	return "reuse failed verification: your envelope has no " + strings.Join(scopes, " or ") +
+		" scope for a path the pathway's shell step touches. Re-distill the pathway, or remove it."
 }

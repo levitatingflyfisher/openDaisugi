@@ -60,7 +60,7 @@ func TestCLIReadsTaskFromStdinDash(t *testing.T) {
 
 func TestCLIResumeWithoutSessionDirRefusesUpFront(t *testing.T) {
 	// --resume without --session-dir was previously silently ignored (the
-	// whole session-tree block is gated on *sessionDir != "", so --resume
+	// whole session-tree block is checked on *sessionDir != "", so --resume
 	// alone just ran a normal fresh task with no hint anything was wrong).
 	// A user who explicitly asked to resume a session deserves a clear
 	// refusal, not a run that quietly forgot the ask.
@@ -182,5 +182,68 @@ func TestCLIJSONOutputIsMachineReadable(t *testing.T) {
 	}
 	if m["answer"] != "hi" {
 		t.Fatalf("got %v", m)
+	}
+}
+
+// --- the warden is on by default (SG-11) ---
+
+// recordModel returns its turns in order and keeps the history of each call.
+type recordModel struct {
+	turns   []Message
+	i       int
+	history [][]Message
+}
+
+func (m *recordModel) Next(h []Message) (Message, error) {
+	m.history = append(m.history, append([]Message(nil), h...))
+	msg := m.turns[m.i]
+	m.i++
+	return msg, nil
+}
+
+func TestWardenOnByDefaultWithoutDaisugi(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no daisugi anywhere
+	marker := filepath.Join(t.TempDir(), "ran")
+	call := Message{Role: "assistant", Calls: []ToolCall{{ID: "c1", Name: "bash",
+		Input: map[string]any{"cmd": "echo ran > " + marker}}}}
+	model := &recordModel{turns: []Message{call, {Role: "assistant", Text: "done"}}}
+	var out, errb bytes.Buffer
+	(&CLI{Version: "9.9.9", NewModel: func(ModelOptions) (Model, error) { return model, nil }}).Run(
+		[]string{"do it"}, strings.NewReader(""), &out, &errb)
+	if len(model.history) < 2 {
+		t.Fatalf("the model was asked %d times; stderr = %q", len(model.history), errb.String())
+	}
+	last := model.history[1][len(model.history[1])-1]
+	if !strings.Contains(last.Text, "daisugi is not on PATH, so every tool call is denied") {
+		t.Fatalf("the warden must be on by default and fail closed; the tool result was %q", last.Text)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the tool ran unchecked")
+	}
+}
+
+func TestWardenOffFlagSaysSo(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := newCLI("ok").Run([]string{"--warden=false", "say ok"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(errb.String(), "sprig: the warden is off (--warden=false): nothing is checked or recorded") {
+		t.Fatalf("stderr = %q", errb.String())
+	}
+}
+
+func TestWardenDefaultSaysNothing(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := newCLI("ok").Run([]string{"say ok"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatal(code)
+	}
+	if strings.Contains(errb.String(), "the warden is off") {
+		t.Fatalf("stderr = %q", errb.String())
+	}
+}
+
+func TestDefaultWardenCmdHasNoMode(t *testing.T) {
+	if strings.Contains(DefaultWardenCmd(), "--mode") {
+		t.Fatalf("the installed mode decides: %q", DefaultWardenCmd())
 	}
 }

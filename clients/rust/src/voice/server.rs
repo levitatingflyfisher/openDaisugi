@@ -9,22 +9,22 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigInt;
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
-use crate::gateway::pyops;
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
+use crate::router::pyops;
 use crate::llm::Client;
 
 use super::arm::{deliver, extract_multipart_audio, latin1};
 use super::audio::to_wav_16k_mono;
-use super::cleanup::{clean_transcript, CleanupConfig, HttpTransport};
+use super::cleanup::{clean_parts, CleanupConfig, HttpTransport};
 use super::coppice::{send_through_floor, FloorConfig, SendError};
 use super::engine::Engine;
 use super::pynum::py_int;
 use super::ptt::read_token;
-use super::wav::wav_duration_s;
+use super::wav::truncate_wav;
 
-pub const MAX_AUDIO_SECONDS: f64 = 60.0;
-pub const MAX_CONTENT_LENGTH: i64 = 30_000_000;
+pub const MAX_AUDIO_SECONDS: f64 = 1200.0;
+pub const MAX_CONTENT_LENGTH: i64 = 64_000_000;
 pub const MAX_DELIVER_BYTES: i64 = 65536;
 pub const MAX_DELIVER_TEXT_CHARS: usize = 20000;
 const BAN_WINDOW: f64 = 60.0;
@@ -65,6 +65,17 @@ pub struct Server {
     listener: TcpListener,
     tls: Option<Arc<rustls::ServerConfig>>,
     failures: Mutex<HashMap<String, Vec<f64>>>,
+    /// True while a clip is turned into text. Only this server can see a
+    /// job that outlives the request that began it.
+    busy: std::sync::atomic::AtomicBool,
+}
+
+/// Lets go of the one-job flag on every exit, a panic included.
+struct BusyGuard<'a>(&'a std::sync::atomic::AtomicBool);
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 fn now() -> f64 {
@@ -125,7 +136,7 @@ pub fn listen(host: &str, port: u16, cfg: ServerConfig, cert: Option<&str>, key:
         Ok(None) => return Err(refuse_no_token(&bound, &cfg.token_file)),
         Ok(Some(_)) => {}
     }
-    Ok(Server { cfg, listener, tls, failures: Mutex::new(HashMap::new()) })
+    Ok(Server { cfg, listener, tls, failures: Mutex::new(HashMap::new()), busy: std::sync::atomic::AtomicBool::new(false) })
 }
 
 /// A connection, plain or TLS.
@@ -502,7 +513,7 @@ impl Server {
             "GET" => {
                 let (p, _) = url_path(&req.path);
                 if p == "/health" {
-                    rs.json(200, obj(&[("ok", Value::Bool(true))]));
+                    rs.json(200, obj(&[("ok", Value::Bool(true)), ("max_seconds", Value::Float(MAX_AUDIO_SECONDS))]));
                 } else {
                     rs.error(404, "not_found", NOT_FOUND);
                 }
@@ -606,19 +617,16 @@ impl Server {
             }
             Err(_) => return Err(Internal),
         };
-        let duration = wav_duration_s(&wav).map_err(|_| Internal)?;
-        if duration > MAX_AUDIO_SECONDS {
-            rs.json(
-                413,
-                obj(&[
-                    ("error", "audio_too_long".into()),
-                    ("max_seconds", Value::Float(MAX_AUDIO_SECONDS)),
-                    ("message", "The clip is longer than 60 seconds. Send a shorter clip.".into()),
-                ]),
-            );
+        // A clip a little over the cap is read up to the cap, and the reply
+        // says how much was left out. The page stops a few seconds early, but
+        // a clip it recorded must never be refused for a few seconds.
+        let (wav, cut_s) = truncate_wav(&wav, MAX_AUDIO_SECONDS).map_err(|_| Internal)?;
+        if self.busy.compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_err() {
+            rs.error(409, "busy", "The voice server is still turning an earlier clip into text. Wait for it to finish, then send this one again.");
             return Ok(());
         }
-        let t = match self.cfg.engine.transcribe(&wav, None) {
+        let _busy = BusyGuard(&self.busy);
+        let t = match self.cfg.engine.transcribe_long(&wav, None) {
             Ok(t) => t,
             Err(super::engine::TranscribeError::Engine(e)) => {
                 rs.error(503, if e.loading { "engine_loading" } else { "engine_unavailable" }, &e.msg);
@@ -627,19 +635,20 @@ impl Server {
             Err(super::engine::TranscribeError::Other(_)) => return Err(Internal),
         };
         let mut text_ = t.text.clone();
+        let gaps = t.gaps;
         let mut cleaned = false;
         let mut reason = None;
         if want_cleanup {
             let mut tr = HttpTransport { client: &self.cfg.llm, base_url: self.cfg.cleanup.base_url.clone(), timeout: 30.0 };
             let secs = now() as i64;
-            let res = clean_transcript(&text_, &self.cfg.cleanup, &mut tr, secs).map_err(|_| Internal)?;
+            let res = clean_parts(&t, &self.cfg.cleanup, &mut tr, secs).map_err(|_| Internal)?;
             text_ = res.text;
             cleaned = res.cleaned;
             reason = res.reason;
         }
         let mut o = obj(&[
             ("text", Value::Str(text_)),
-            ("raw_text", Value::Str(t.text)),
+            ("raw_text", Value::Str(t.text.clone())),
             ("duration_s", Value::Float(t.duration_s)),
             ("rtf", Value::Float(t.rtf)),
             ("engine", self.cfg.engine.name.into()),
@@ -647,6 +656,12 @@ impl Server {
         ]);
         if let Some(rs_) = reason {
             o.set("reason", rs_);
+        }
+        if gaps > 0 {
+            o.set("gaps", Value::Int(gaps.to_string()));
+        }
+        if cut_s > 0 {
+            o.set("cut_s", Value::Int(cut_s.to_string()));
         }
         rs.json(200, o);
         Ok(())

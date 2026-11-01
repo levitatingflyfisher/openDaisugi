@@ -10,12 +10,12 @@ import (
 	"github.com/opendaisugi/coppice/internal/tiles"
 )
 
-// chatModel is a floor with the foreman in window 1 and a working agent
+// chatModel is a floor with the steward in window 1 and a working agent
 // behind it, and a chat of two lines and a tool use.
 func chatModel() *Model {
 	m := tiledModel()
-	m.Rows = append(m.Rows, Row{ID: "f", Label: "foreman", Harness: "claude", State: "idle"})
-	m.ForemanID = "f"
+	m.Rows = append(m.Rows, Row{ID: "f", Label: "steward", Harness: "claude", State: "idle"})
+	m.StewardID = "f"
 	m.Tiles = tiles.New(tiles.Focus, 1)
 	m.Tiles.Fill("f")
 	m.Chat = []ChatMsg{
@@ -26,10 +26,10 @@ func chatModel() *Model {
 	return m
 }
 
-func TestTheForemanWindowDrawsTheChatAndItsOwnLine(t *testing.T) {
+func TestTheStewardWindowDrawsTheChatAndItsOwnLine(t *testing.T) {
 	m := chatModel()
 	joined := stripSGR(strings.Join(Render(m, 120, 30), "\n"))
-	for _, want := range []string{"you start the import fix", "foreman Started glean-import", "· Bash ls", chatPlaceholder, "Screen"} {
+	for _, want := range []string{"you start the import fix", "steward Started glean-import", "· Bash ls", chatPlaceholder, "Screen"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("the chat window lacks %q:\n%s", want, joined)
 		}
@@ -38,11 +38,11 @@ func TestTheForemanWindowDrawsTheChatAndItsOwnLine(t *testing.T) {
 		t.Fatalf("the chat window says it takes whole messages for an agent:\n%s", joined)
 	}
 	if !m.takesLine("f") || m.takesLine("a") {
-		t.Fatal("only the foreman's window should take whole lines")
+		t.Fatal("only the steward's window should take whole lines")
 	}
 }
 
-func TestScreenInTheHeaderShowsTheForemansTerminal(t *testing.T) {
+func TestScreenInTheHeaderShowsTheStewardsTerminal(t *testing.T) {
 	m := chatModel()
 	m.ChatScreen = true
 	joined := stripSGR(strings.Join(Render(m, 120, 30), "\n"))
@@ -54,7 +54,7 @@ func TestScreenInTheHeaderShowsTheForemansTerminal(t *testing.T) {
 	}
 }
 
-func TestOnlyTheForemanHasAScreenWord(t *testing.T) {
+func TestOnlyTheStewardHasAScreenWord(t *testing.T) {
 	m := chatModel()
 	if m.toggleWord("f") != screenWord || m.toggleWord("a") != "" || m.toggleWord("") != "" {
 		t.Fatalf("toggle words: %q %q", m.toggleWord("f"), m.toggleWord("a"))
@@ -66,7 +66,7 @@ func TestOnlyTheForemanHasAScreenWord(t *testing.T) {
 }
 
 func TestAChatLineIsNeverWiderThanTheWindowAndWrapsWords(t *testing.T) {
-	msgs := []ChatMsg{{ID: "c1", Role: "agent", Text: strings.Repeat("word ", 40)}, {Role: "note", Text: "A new foreman started."}}
+	msgs := []ChatMsg{{ID: "c1", Role: "agent", Text: strings.Repeat("word ", 40)}, {Role: "note", Text: "A new steward started."}}
 	rows := chatRows(msgs, 30)
 	if len(rows) < 6 {
 		t.Fatalf("a long reply did not wrap: %d lines", len(rows))
@@ -118,27 +118,27 @@ func TestDecodeChatKeepsRolesAndToolNames(t *testing.T) {
 	}
 }
 
-// startForemanFloor starts a floor at 140 columns through a recording
-// proxy with the floor's foreman running. The foreman's window draws the
+// startStewardFloor starts a floor at 140 columns through a recording
+// proxy with the floor's steward running. The steward's window draws the
 // chat and has the keys.
-func startForemanFloor(t *testing.T) (string, *recordingProxy, *io.PipeWriter, *signalWriter, chan error) {
+func startStewardFloor(t *testing.T) (string, *recordingProxy, *io.PipeWriter, *signalWriter, chan error) {
 	t.Helper()
 	s := newTestServer(t)
-	foremanConfig(t)
-	res := rawCall(t, s.Socket(), "floor.foreman", map[string]any{"harness": "pi"})
+	stewardConfig(t)
+	res := rawCall(t, s.Socket(), "floor.steward", map[string]any{"harness": "pi"})
 	id, _ := res["pane"].(string)
 	p := newRecordingProxy(t, s.Socket())
 	pw, out, done := startFloor(t, p.sock, 140)
 	if !waitFor(t, 5*time.Second, func() bool {
 		return strings.Contains(stripSGR(lastFrame(out.String())), chatPlaceholder)
 	}) {
-		t.Fatalf("the foreman window did not draw its chat line: %q", stripSGR(lastFrame(out.String())))
+		t.Fatalf("the steward window did not draw its chat line: %q", stripSGR(lastFrame(out.String())))
 	}
 	return id, p, pw, out, done
 }
 
 func TestEnterInTheChatWindowSendsFloorTalkAndNoKeys(t *testing.T) {
-	id, p, pw, out, done := startForemanFloor(t)
+	id, p, pw, out, done := startStewardFloor(t)
 	_, _ = io.WriteString(pw, "check trellis\r")
 	if !waitFor(t, 5*time.Second, func() bool { return len(sentReqs(p, "floor.talk")) == 1 }) {
 		t.Fatalf("floor.talk was not sent once: %v", sentReqs(p, "floor.talk"))
@@ -149,7 +149,7 @@ func TestEnterInTheChatWindowSendsFloorTalkAndNoKeys(t *testing.T) {
 	for _, cmd := range []string{"pane.send_text", "pane.send_keys", "agent.prompt"} {
 		for _, req := range sentReqs(p, cmd) {
 			if req["pane"] == id {
-				t.Fatalf("the foreman got a raw %s: %v", cmd, req)
+				t.Fatalf("the steward got a raw %s: %v", cmd, req)
 			}
 		}
 	}
@@ -162,7 +162,7 @@ func TestEnterInTheChatWindowSendsFloorTalkAndNoKeys(t *testing.T) {
 }
 
 func TestTabInTheChatWindowShowsTheTerminalAndKeysGoThere(t *testing.T) {
-	id, p, pw, out, done := startForemanFloor(t)
+	id, p, pw, out, done := startStewardFloor(t)
 	_, _ = io.WriteString(pw, "\t")
 	if !waitFor(t, 5*time.Second, func() bool {
 		f := stripSGR(lastFrame(out.String()))
@@ -179,19 +179,19 @@ func TestTabInTheChatWindowShowsTheTerminalAndKeysGoThere(t *testing.T) {
 		}
 		return false
 	}) {
-		t.Fatal("a key did not reach the foreman's terminal in the Screen view")
+		t.Fatal("a key did not reach the steward's terminal in the Screen view")
 	}
 	quit(t, pw, done)
 }
 
-func TestTheForemanFillsAfterTheAgentsThatNeedYouAndNeverBefore(t *testing.T) {
+func TestTheStewardFillsAfterTheAgentsThatNeedYouAndNeverBefore(t *testing.T) {
 	m := tiledModel()
-	m.Rows = append(m.Rows, Row{ID: "f", Label: "foreman", Harness: "claude", State: "idle"})
-	m.ForemanID = "f"
+	m.Rows = append(m.Rows, Row{ID: "f", Label: "steward", Harness: "claude", State: "idle"})
+	m.StewardID = "f"
 	m.Chat = []ChatMsg{{ID: "c2", Role: "agent", Text: "Done."}}
 	got := strings.Join(m.startOrder(), ",")
 	if got != "a,f,b" {
-		t.Fatalf("start order with a reply waiting = %s, want a,f,b: needs you, the foreman, the rest", got)
+		t.Fatalf("start order with a reply waiting = %s, want a,f,b: needs you, the steward, the rest", got)
 	}
 	m.ChatSeen = "c2"
 	if got := strings.Join(m.startOrder(), ","); got != "a,b,f" {
@@ -199,21 +199,21 @@ func TestTheForemanFillsAfterTheAgentsThatNeedYouAndNeverBefore(t *testing.T) {
 	}
 }
 
-func TestAReplyWithNoFreeWindowMarksTheForemansRailRowAndMovesNothing(t *testing.T) {
+func TestAReplyWithNoFreeWindowMarksTheStewardsRailRowAndMovesNothing(t *testing.T) {
 	// Focus layout, one window, held by an agent that needs you.
 	m := chatModel()
 	m.Tiles = tiles.New(tiles.Focus, 1)
 	m.Tiles.Fill("a")
 	before := strings.Join(m.Tiles.Slots, ",")
 	if !m.replyWaiting("f") {
-		t.Fatal("the foreman has a reply and no window, but its row is not marked")
+		t.Fatal("the steward has a reply and no window, but its row is not marked")
 	}
 	for _, cols := range []int{100, 140} {
 		joined := stripSGR(strings.Join(Render(m, cols, 30), "\n"))
 		if cols == 140 && !strings.Contains(joined, replyMark) {
-			t.Fatalf("no %q on the foreman's row:\n%s", replyMark, joined)
+			t.Fatalf("no %q on the steward's row:\n%s", replyMark, joined)
 		}
-		if cols == 100 && !strings.Contains(joined, "*f  ") {
+		if cols == 100 && !strings.Contains(joined, "*s  ") {
 			t.Fatalf("the slim row shows no reply mark:\n%s", joined)
 		}
 	}
@@ -229,7 +229,7 @@ func TestAReplyWithNoFreeWindowMarksTheForemansRailRowAndMovesNothing(t *testing
 	// Once a window shows it, the mark goes.
 	m2 := chatModel()
 	if m2.replyWaiting("f") {
-		t.Fatal("the foreman is in a window but its row says reply")
+		t.Fatal("the steward is in a window but its row says reply")
 	}
 }
 
@@ -257,7 +257,7 @@ func TestTheFooterNamesTheWayBackToTheChat(t *testing.T) {
 }
 
 func TestAPastedTabBeforeANewlineIsASpaceInTheChatLine(t *testing.T) {
-	id, p, pw, _, done := startForemanFloor(t)
+	id, p, pw, _, done := startStewardFloor(t)
 	_, _ = io.WriteString(pw, "a\t\r")
 	if !waitFor(t, 5*time.Second, func() bool { return len(sentReqs(p, "floor.talk")) == 1 }) {
 		t.Fatalf("floor.talk was not sent once: %v", sentReqs(p, "floor.talk"))
@@ -267,7 +267,7 @@ func TestAPastedTabBeforeANewlineIsASpaceInTheChatLine(t *testing.T) {
 	}
 	for _, req := range sentReqs(p, "pane.send_text") {
 		if req["pane"] == id {
-			t.Fatalf("a pasted tab or newline reached the foreman's terminal: %v", req)
+			t.Fatalf("a pasted tab or newline reached the steward's terminal: %v", req)
 		}
 	}
 	quit(t, pw, done)

@@ -1,0 +1,13 @@
+# [steward] dir sets the steward's working directory. floor.talk starts the
+# steward there, not in the default place.
+#!config default = "fake"
+#!config [steward]
+#!config dir = "{HOME}/st-custom"
+#!config [harness.fake]
+#!config command = "{FIXTURES}/fake-steward.sh"
+#!watch state,note
+#!settle 300
+{"id":"1","cmd":"floor.talk","text":"hello"}
+{"id":"$id","ok":true,"result":{"pane":"$f","label":"steward","started":true,"queued":1}}
+{"id":"5","cmd":"pane.list"}
+{"id":"$id","ok":true,"result":{"panes":[{"id":"$f","label":"steward","harness":"fake","cwd":"{HOME}/st-custom"}],"path":"*"}}

@@ -2,7 +2,7 @@
 //! cli.lora_train_cmd on its pack path). The Go client's
 //! `cli/packcmd.go` is the other port.
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
 use crate::pack::manage::{self, Ctx, Io};
 use crate::pack::{Catalog, CATALOG_ENV};

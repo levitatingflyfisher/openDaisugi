@@ -33,7 +33,7 @@ func trustScreen(t *testing.T) string {
 const promptBox = `────────────────────\n❯ \n────────────────────\n`
 
 // readyServer is a server with the pane and agent verbs and the manifest
-// tick, which turns the prompt gate on.
+// tick, which turns the prompt warden on.
 func readyServer(t *testing.T) *Server {
 	t.Helper()
 	s, set := newDetectServer(t)
@@ -44,11 +44,11 @@ func readyServer(t *testing.T) *Server {
 
 // startFake starts a pty pane labelled "fake" that runs script under bash,
 // with harness as its harness. It answers the pane id.
-// gate is a file the test makes once the fake may go on to its next
+// warden is a file the test makes once the fake may go on to its next
 // screen. A fake that waits for it, in place of a fixed sleep, never
 // reaches that screen before the test sent what it means to send while
 // the pane is still loading, however slow the run.
-func gate(t *testing.T) (wait string, open func()) {
+func warden(t *testing.T) (wait string, open func()) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "go")
 	return `until [ -e '` + p + `' ]; do sleep 0.05; done; `, func() {
@@ -161,7 +161,7 @@ func TestAPromptWaitsWhileThePaneStartsAndGoesWhenReady(t *testing.T) {
 // agent.prompt to a pty pane goes through the same queue, and says so.
 func TestAgentPromptIsQueuedToo(t *testing.T) {
 	s := readyServer(t)
-	wait, open := gate(t)
+	wait, open := warden(t)
 	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "agent.prompt", "pane": id, "text": "hi there"})
@@ -277,7 +277,7 @@ func TestAnIdlePaneGetsThePromptAtOnceAfterTheSettle(t *testing.T) {
 // Several queued prompts go in the order they came.
 func TestQueuedPromptsGoInOrder(t *testing.T) {
 	s := readyServer(t)
-	wait, open := gate(t)
+	wait, open := warden(t)
 	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`for i in 1 2 3; do clear; printf '`+promptBox+`'; read x; echo "GOT$i $x"; sleep 0.5; done; sleep 10`)
 	for _, w := range []string{"first", "second", "third"} {
@@ -300,7 +300,7 @@ func TestAQuestionWhilePromptsWaitHoldsThem(t *testing.T) {
 	if err := os.WriteFile(f, []byte(trustScreen(t)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	wait, open := gate(t)
+	wait, open := warden(t)
 	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+`clear; cat `+f+`; `+
 		`if read -t 2 early; then echo "EARLY $early"; fi; clear; printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": "held"})
@@ -416,7 +416,7 @@ func TestTheSecondEnterGoesAtMostOnce(t *testing.T) {
 // manifest, the queue holds. It never sends blind.
 func TestAQueueHoldsWhenItCannotReadTheScreen(t *testing.T) {
 	s := readyServer(t)
-	wait, open := gate(t)
+	wait, open := warden(t)
 	id := startFake(t, s, "claude", `stty -echo; echo loading; `+wait+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "p", "cmd": "pane.send_text", "pane": id, "text": "blind"})
@@ -547,18 +547,31 @@ func TestPaneRunFollowsThePromptRules(t *testing.T) {
 			t.Fatalf("pane.run %q on a question = %+v, want the refusal", line, got)
 		}
 	}
-	time.Sleep(300 * time.Millisecond)
-	if text := screenOf(t, s, id); strings.Contains(text, "ANSWERED") {
+	// The fake reads one line and prints it as ANSWERED. A refused line that
+	// had reached the pane would be that line, so answering through the
+	// server's raw-keys verb and reading the answer back shows it did not.
+	ans := call(t, s, map[string]any{"id": "a", "cmd": "pane.send_keys", "pane": id, "keys": []string{"1", "enter"}})
+	if !ans.OK {
+		t.Fatalf("send_keys: %+v", ans.Error)
+	}
+	if text := waitScreen(t, s, id, "ANSWERED 1"); strings.Contains(text, "ANSWERED make test") {
 		t.Fatalf("a refused pane.run reached the pane:\n%s", text)
 	}
 
+	// The fake holds its input box back until the test writes go, then looks
+	// for a line that arrived early.
+	goFile := filepath.Join(t.TempDir(), "go")
 	id2 := startFake(t, s, "claude", `stty -echo; echo loading; `+
-		`if read -t 1.5 early; then echo "EARLY $early"; fi; `+
+		`while [ ! -e `+goFile+` ]; do sleep 0.05; done; `+
+		`if read -t 0.01 early; then echo "EARLY $early"; fi; `+
 		`printf '`+promptBox+`'; read x; echo "GOT $x"; sleep 10`)
 	got := call(t, s, map[string]any{"id": "r", "cmd": "pane.run", "pane": id2, "line": "make test"})
 	res, _ := got.Result.(map[string]any)
 	if !got.OK || res["queued"] != float64(1) || res["note"] != "queued until fake is ready" {
 		t.Fatalf("pane.run while starting = %+v, want queued", got)
+	}
+	if err := os.WriteFile(goFile, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	text := waitScreen(t, s, id2, "GOT make test")
 	if strings.Contains(text, "EARLY") {
@@ -696,7 +709,7 @@ func TestTrustRefusesAnotherScreen(t *testing.T) {
 	}
 }
 
-// A pane connection, such as the foreman, gets the same refusal for a
+// A pane connection, such as the steward, gets the same refusal for a
 // prompt to a pane on a question, and may not answer the trust screen.
 func TestAPaneGetsTheQuestionRefusalAndCannotTrust(t *testing.T) {
 	s := readyServer(t)

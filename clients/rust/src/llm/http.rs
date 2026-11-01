@@ -41,7 +41,7 @@ fn target(url: &str) -> Result<(bool, String, u16, String), Fail> {
     if !(url.starts_with("http://") || url.starts_with("https://")) || url.contains('@') {
         return Err(bad());
     }
-    crate::gateway::http::target(url).map_err(|_| bad())
+    crate::router::http::target(url).map_err(|_| bad())
 }
 
 fn io_fail(e: std::io::Error) -> Fail {
@@ -77,7 +77,7 @@ pub fn post_with(
     roots: Option<Arc<rustls::RootCertStore>>,
 ) -> Result<Answer, Fail> {
     let (status, raw, encoding, _) = exchange("POST", url, headers, Some(body), timeout_s, proxies, roots)?;
-    Ok(Answer { status, text: crate::gate::py::text::decode_utf8_replace(&raw), encoding })
+    Ok(Answer { status, text: crate::warden::py::text::decode_utf8_replace(&raw), encoding })
 }
 
 /// A GET of `url`: the status and the raw body.
@@ -304,7 +304,7 @@ fn exchange_with(
     if method == "HEAD" {
         rest.clear();
     } else if chunked {
-        rest = crate::gate::llm::dechunk(&rest).ok_or_else(|| other("the reply's chunks are broken"))?;
+        rest = crate::warden::llm::dechunk(&rest).ok_or_else(|| other("the reply's chunks are broken"))?;
     } else if let Some(n) = length {
         if rest.len() < n {
             return Err(other("the reply was cut short"));

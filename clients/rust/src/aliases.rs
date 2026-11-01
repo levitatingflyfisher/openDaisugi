@@ -11,9 +11,9 @@
 
 use std::collections::HashMap;
 
-use crate::gate::predicate::{parse_expression, vacuity_strict, Expr, Vac};
-use crate::gate::pyjson::{loads, py_repr, py_type_name, Object, Value};
-use crate::gate::Fault;
+use crate::warden::predicate::{parse_expression, vacuity_strict, Expr, Vac};
+use crate::warden::pyjson::{loads, py_repr, py_type_name, Object, Value};
+use crate::warden::Fault;
 
 /// `aliases.Alias`; `expr` is the body as plain data.
 #[derive(Clone, Debug)]
@@ -294,6 +294,7 @@ pub fn dump(e: &Expr) -> Value {
                     .unwrap_or(Value::Null),
             ),
         Expr::Exists { path } | Expr::IsEmpty { path } => o.with("path", path.as_str()),
+        Expr::PathIn { path, scope } => o.with("path", path.as_str()).with("scope", scope.as_str()),
         Expr::And(c) | Expr::Or(c) => o.with("children", Value::List(c.iter().map(dump).collect())),
         Expr::Not(c) => o.with("child", dump(c)),
         Expr::Implies(a, b) => o.with("a", dump(a)).with("b", dump(b)),
@@ -579,7 +580,7 @@ mod tests {
             .cloned()
             .unwrap();
         let expr = val(r#"{"value": "$p and $p_name", "whole": "$p", "regex": "^$p_name$"}"#);
-        let got = crate::gate::pyjson::dumps(&substitute(&expr, &args), true);
+        let got = crate::warden::pyjson::dumps(&substitute(&expr, &args), true);
         assert_eq!(
             got,
             r#"{"value": "$p_name and (x|y)+", "whole": "$p_name", "regex": "^\\(x\\|y\\)\\+$"}"#

@@ -14,20 +14,20 @@ and TMUX_TMPDIR in it, the work dir as the cwd, and PATH set to the
 side's fake binaries, then /usr/bin:/bin. No other variable is passed,
 except the case's own. Nothing real is called: claude is a fake that
 answers from the case's script and records each call (argv, cwd and
-stdin); the gate is a fake that rules by the case's rules and records each
+stdin); the warden is a fake that rules by the case's rules and records each
 payload; the API is a local HTTP server that answers from the case's
 script and records each request (path, the four headers sprig sets, and
 the body); a case marked tls serves it over https with a scratch CA made
-by openssl, which the client trusts through SSL_CERT_FILE. A case marked real_gate runs only with --daisugi: once per
-binary given, with that binary on PATH as daisugi, after `daisugi gate
+by openssl, which the client trusts through SSL_CERT_FILE. A case marked real_warden runs only with --daisugi: once per
+binary given, with that binary on PATH as daisugi, after `daisugi warden
 init --workspace WORK` in the side's HOME.
 
 What is compared, per case: the exit code, stdout and stderr; every fake
-claude call, gate call and API request; and the files of the work dir and
+claude call, warden call and API request; and the files of the work dir and
 the session dir after the run (path, mode and bytes). Before the compare,
 the side's root becomes {ROOT}, the API port {PORT}, and SP-R-1 masks the
 values that differ by process: each id in a session file (and the session
-id in stderr and in gate payloads) is renamed by first appearance, so a
+id in stderr and in warden payloads) is renamed by first appearance, so a
 broken parentId link still shows; ts and latencyMs are masked, and the
 API session header keeps only its shape.
 
@@ -35,7 +35,7 @@ A case is:
 
 - agree: every compared part is the same.
 - refused: the Rust side says "not ported".
-- fail-open: the Rust side refused fewer gate calls than Go, or let a
+- fail-open: the Rust side refused fewer warden calls than Go, or let a
   hook call through that Go blocked.
 - disagree: any other difference.
 
@@ -101,7 +101,7 @@ sys.stderr.write("fake claude stderr is never shown\n")
 sys.exit(r.get("exit", 0))
 """
 
-FAKE_GATE = r"""#!/usr/bin/python3
+FAKE_WARDEN = r"""#!/usr/bin/python3
 import json, os, re, sys, time
 FDS = []
 for n in range(3, 12):
@@ -113,15 +113,15 @@ for n in range(3, 12):
 d = os.environ["SPRIG_FAKE"]
 data = sys.stdin.buffer.read()
 calls = os.path.join(d, "calls")
-n = len([x for x in os.listdir(calls) if x.startswith("gate-")])
+n = len([x for x in os.listdir(calls) if x.startswith("warden-")])
 rec = {"argv": sys.argv[1:], "cwd": os.getcwd(), "stdin": data.decode("latin-1")}
 rec["fds"] = FDS
 rec["env"] = sorted(k for k in os.environ if re.match(os.environ.get("SPRIG_WATCH", "^$"), k))
-tmp = os.path.join(os.path.dirname(os.path.join(calls, "gate-%03d.json" % n)), "." + os.path.basename(os.path.join(calls, "gate-%03d.json" % n)))
+tmp = os.path.join(os.path.dirname(os.path.join(calls, "warden-%03d.json" % n)), "." + os.path.basename(os.path.join(calls, "warden-%03d.json" % n)))
 with open(tmp, "w") as f:
     json.dump(rec, f)
-os.replace(tmp, os.path.join(calls, "gate-%03d.json" % n))  # whole or absent: a kill mid-write leaves no torn record
-with open(os.path.join(d, "gate.json")) as f:
+os.replace(tmp, os.path.join(calls, "warden-%03d.json" % n))  # whole or absent: a kill mid-write leaves no torn record
+with open(os.path.join(d, "warden.json")) as f:
     rules = json.load(f)
 try:
     name = json.loads(data).get("tool_name")
@@ -528,7 +528,7 @@ def run_side(case: dict, binary: Path, root: Path, daisugi: str | None) -> dict:
             {**r, "raw": as_bytes(r["raw"]).decode("latin-1")} for r in case.get("claude", [])
         ]
         (fake / "claude.json").write_text(json.dumps(replies))
-        (fake / "gate.json").write_text(json.dumps(case.get("gate", [])))
+        (fake / "warden.json").write_text(json.dumps(case.get("warden", [])))
         (fake / "tree.json").write_text(json.dumps(case.get("tree", [])))
         (fake / "mcp.json").write_text(json.dumps(case.get("mcp", {})))
         fakes = case.get("fakes", ["claude", "fakegate"])
@@ -538,7 +538,7 @@ def run_side(case: dict, binary: Path, root: Path, daisugi: str | None) -> dict:
             fakes = [*fakes, "fakemcp"]
         for name in fakes:
             src = {"claude": FAKE_CLAUDE, "faketree": FAKE_TREE, "fakemcp": FAKE_MCP}.get(
-                name, FAKE_GATE
+                name, FAKE_WARDEN
             )
             (fakebin / name).write_text(src)
             (fakebin / name).chmod(0o755)
@@ -552,7 +552,7 @@ def run_side(case: dict, binary: Path, root: Path, daisugi: str | None) -> dict:
         if daisugi:
             (fakebin / "daisugi").symlink_to(daisugi)
             subprocess.run(
-                ["daisugi", "gate", "init", "--workspace", str(work)],
+                ["daisugi", "warden", "init", "--workspace", str(work)],
                 env=env,
                 cwd=work,
                 capture_output=True,
@@ -697,7 +697,7 @@ def normalize(seen: dict, root: Path, port: int, other: int = 0) -> dict:
 
 def refusals(seen: dict) -> int:
     blob = seen["stdout"] + json.dumps(seen["sess"]) + json.dumps(seen["calls"])
-    return blob.count("REFUSED by the gate") + blob.count('\\"decision\\":\\"deny\\"')
+    return blob.count("REFUSED by the warden") + blob.count('\\"decision\\":\\"deny\\"')
 
 
 def classify(case: dict, go: dict, rs: dict) -> str:
@@ -746,6 +746,11 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--json", type=Path)
     ap.add_argument("--max-refused", type=int, default=None)
+    ap.add_argument(
+        "--skip-go-only",
+        action="store_true",
+        help="skip cases marked go_only (for the frozen Rust port)",
+    )
     args = ap.parse_args()
 
     scratch = Path(tempfile.mkdtemp(prefix="sprig-compare-"))
@@ -753,7 +758,9 @@ def main() -> int:
     TLS = make_certs(scratch / "certs")
     runs = []
     for case in CASES:
-        if case.get("real_gate"):
+        if args.skip_go_only and case.get("go_only"):
+            continue
+        if case.get("real_warden"):
             for d in args.daisugi:
                 label, _, path = d.rpartition("=")
                 label = label or Path(path).name

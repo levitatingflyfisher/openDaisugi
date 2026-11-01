@@ -17,7 +17,7 @@ import threading
 import time
 
 from opendaisugi import ask
-from opendaisugi.gate import _maybe_ask, evaluate_call, gate_settings_json, starter_envelope
+from opendaisugi.warden import _maybe_ask, evaluate_call, starter_envelope, warden_settings_json
 
 
 def test_presence_lifecycle(tmp_path):
@@ -227,7 +227,7 @@ def test_ask_reuse_after_a_late_orphaned_answer_still_waits_for_the_real_one(tmp
     }
 
 
-# --- _maybe_ask: the gate-facing wrapper -----------------------------------
+# --- _maybe_ask: the warden-facing wrapper -----------------------------------
 
 
 def _deny_decision(tmp_path):
@@ -323,7 +323,7 @@ def test_maybe_ask_rejects_a_preplanted_answer(tmp_path):
 
 
 def test_maybe_ask_waits_outside_the_z3_solve_lock(tmp_path):
-    """The ask-wait is file-polling I/O in the gate/approval layer, above
+    """The ask-wait is file-polling I/O in the warden/approval layer, above
     z3_checks — never inside Z3_SOLVE_LOCK. Pin it directly: hold the lock in
     this thread for the whole wait and confirm _maybe_ask still completes
     (a 90 s ask must never be able to block another session's Z3 solve, and
@@ -353,14 +353,14 @@ def test_maybe_ask_waits_outside_the_z3_solve_lock(tmp_path):
         holder.join(timeout=5)
 
 
-def test_gate_and_contract_end_to_end_with_a_present_operator(tmp_path):
-    """Not just _maybe_ask in isolation: the ask guard inside gate_and_contract
+def test_warden_and_contract_end_to_end_with_a_present_operator(tmp_path):
+    """Not just _maybe_ask in isolation: the ask guard inside warden_and_contract
     itself fires (ask and mode == "enforce" and would_deny and isinstance(payload, dict)),
     and the operator-allowed decision reaches the audit log — the field
     Tasks 1-7 already wired _log_audit/_log_tree to read from `decision.ask`."""
-    from opendaisugi.gate import gate_and_contract, register_envelope
+    from opendaisugi.warden import register_envelope, warden_and_contract
 
-    root = tmp_path / "gate"
+    root = tmp_path / "warden"
     ws = tmp_path / "ws"
     ws.mkdir()
     register_envelope(starter_envelope(ws), root=root)
@@ -380,7 +380,7 @@ def test_gate_and_contract_end_to_end_with_a_present_operator(tmp_path):
         ask.answer(root, tool_use_id="tu1", decision="allow", reason="I checked")
 
     threading.Thread(target=_answer_soon, daemon=True).start()
-    out = gate_and_contract(
+    out = warden_and_contract(
         payload, root=root, fmt="claude", mode="enforce", ask=True, ask_timeout_s=3
     )
     assert out.exit_code == 0
@@ -397,23 +397,25 @@ def test_gate_and_contract_end_to_end_with_a_present_operator(tmp_path):
 
 
 def test_settings_json_with_ask_widens_the_host_timeout(tmp_path):
-    body = json.loads(gate_settings_json(mode="enforce", root=tmp_path, ask=True, ask_timeout_s=90))
+    body = json.loads(
+        warden_settings_json(mode="enforce", root=tmp_path, ask=True, ask_timeout_s=90)
+    )
     hook = body["hooks"]["PreToolUse"][0]["hooks"][0]
     assert "--ask --ask-timeout 90" in hook["command"]
     assert hook["timeout"] >= 90 + 10 + 5
 
 
 def test_settings_json_without_ask_is_unchanged(tmp_path):
-    body = json.loads(gate_settings_json(mode="enforce", root=tmp_path))
+    body = json.loads(warden_settings_json(mode="enforce", root=tmp_path))
     hook = body["hooks"]["PreToolUse"][0]["hooks"][0]
     assert "--ask" not in hook["command"]
     assert hook["timeout"] == 30
 
 
 def test_updated_input_reaches_stdout(tmp_path):
-    from opendaisugi.gate import GateDecision, _outcome
+    from opendaisugi.warden import WardenDecision, _outcome
 
-    d = GateDecision(
+    d = WardenDecision(
         allow=True,
         would_deny=True,
         reason="allowed by operator",
@@ -429,9 +431,9 @@ def test_updated_input_reaches_stdout(tmp_path):
 
 
 def test_outcome_allow_without_updated_input_is_the_plain_continue_contract():
-    from opendaisugi.gate import GateDecision, _outcome
+    from opendaisugi.warden import WardenDecision, _outcome
 
-    d = GateDecision(allow=True, would_deny=False, reason="verified in envelope", mode="enforce")
+    d = WardenDecision(allow=True, would_deny=False, reason="verified in envelope", mode="enforce")
     out = _outcome(d, "claude")
     assert json.loads(out.stdout) == {"continue": True}
     assert out.exit_code == 0
@@ -442,9 +444,9 @@ def test_outcome_denies_when_an_operator_edit_cannot_be_carried_on_hermes():
     channel. An allow with an unconveyed edit on any other format must NOT
     emit a plain allow — that would run the ORIGINAL (denied) input, not
     what the operator actually approved. It must deny fail-closed instead."""
-    from opendaisugi.gate import GateDecision, _outcome
+    from opendaisugi.warden import WardenDecision, _outcome
 
-    d = GateDecision(
+    d = WardenDecision(
         allow=True,
         would_deny=True,
         reason="allowed by operator: fine",
@@ -460,9 +462,9 @@ def test_outcome_denies_when_an_operator_edit_cannot_be_carried_on_hermes():
 
 
 def test_outcome_denies_when_an_operator_edit_cannot_be_carried_on_openclaw():
-    from opendaisugi.gate import GateDecision, _outcome
+    from opendaisugi.warden import WardenDecision, _outcome
 
-    d = GateDecision(
+    d = WardenDecision(
         allow=True,
         would_deny=True,
         reason="allowed by operator: fine",

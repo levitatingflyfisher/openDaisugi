@@ -1,12 +1,12 @@
 // The garden: an overlay that draws the floor as a daisugi, the cedar that
 // is pruned to one broad, low, gnarled trunk with straight shoots rising
-// from its limbs. The foreman is the trunk. Each agent is a shoot with a
+// from its limbs. The steward is the trunk. Each agent is a shoot with a
 // cedar crown. An agent that another agent started rises from the side of
 // its parent shoot, smaller. A shoot shows what the agent does: the crown
 // sways and sparks drift while it works, a lantern hangs from the crown
 // and glows when it needs you, the crown stands still when it idles, turns
 // autumn amber when it is done, and the stem carries a red notch when the
-// gate denied its last call.
+// warden denied its last call.
 //
 // The art is drawn on one canvas with the page's own colour tokens. The
 // pure parts come first: the layout, the look of one state, the hit test
@@ -31,14 +31,14 @@ export function gardenKey(e, keys) {
 // lookOf is how one pane looks. kind is one of grow, lantern, still, bud
 // and notch. sway says the shoot moves, pulse that its light or sparks
 // move, loud that it is the one thing meant to catch the eye. A blocked
-// pane whose ask a foreman holds reads as working. A notch shows when the
-// last gate verdict was a deny and the agent is not working on.
+// pane whose ask a steward holds reads as working. A notch shows when the
+// last warden verdict was a deny and the agent is not working on.
 export function lookOf(pane) {
   const p = pane || {};
   let state = String(p.state || 'unknown');
   if (state === 'blocked' && p.held) state = 'working';
   if (state === 'blocked') return { kind: 'lantern', token: 'blocked', sway: false, pulse: true, loud: true };
-  const denied = p.gate && p.gate.decision === 'deny';
+  const denied = p.warden && p.warden.decision === 'deny';
   if (denied && state !== 'working') return { kind: 'notch', token: 'bad', sway: false, pulse: false, loud: false };
   if (state === 'working') return { kind: 'grow', token: 'working', sway: true, pulse: true, loud: false };
   if (state === 'done') return { kind: 'bud', token: 'done', sway: false, pulse: false, loud: false };
@@ -66,18 +66,18 @@ function trunkTop(t, x) {
   return t.y - t.h * Math.sqrt(Math.max(0.12, 1 - k * k));
 }
 
-// gardenLayout places the panes on a w by h canvas. foreman is the pane
+// gardenLayout places the panes on a w by h canvas. steward is the pane
 // that is the trunk, or ''. It returns { w, h, ground, trunk, nodes }.
 // trunk is { id, label, x, y, w, h, pill }: x the middle, y the ground, w
-// and h its size. id is '' when no foreman shows, and the trunk stands
+// and h its size. id is '' when no steward shows, and the trunk stands
 // bare. A node is { id, label, look, parent, depth, x, y, r, from, base,
 // stemTop, f, pill, phase }: x and y are the middle of the crown, r its
 // size, base where the stem rises, from where it leaves its parent (the
 // same as base on a shoot that rises from a limb), f the share of the
 // parent's stem where it leaves, and pill the label's box { x, y, w, h,
-// text }. The foreman is not a node. Its children and every agent with no
+// text }. The steward is not a node. Its children and every agent with no
 // parent rise from its limbs.
-export function gardenLayout(panes, w, h, foreman) {
+export function gardenLayout(panes, w, h, steward) {
   const list = (Array.isArray(panes) ? panes : []).filter((p) => p && typeof p.id === 'string');
   const byId = new Map(list.map((p) => [p.id, p]));
   const kids = new Map();
@@ -101,18 +101,18 @@ export function gardenLayout(panes, w, h, foreman) {
     mark(p.id);
   }
 
-  const trunkId = roots.includes(foreman) ? foreman : '';
+  const trunkId = roots.includes(steward) ? steward : '';
   const shoots = [...(kids.get(trunkId) || []), ...roots.filter((r) => r !== trunkId)];
   const weight = (id) => 1 + 0.9 * (kids.get(id) || []).length;
   const total = shoots.reduce((n, id) => n + weight(id), 0);
 
   const ground = Math.round(h * 0.9);
   const trunkW = Math.min(w - 24, Math.max(w * 0.6, Math.min(w - 60, total * 74)));
-  const trunk = { id: trunkId, label: trunkId ? 'foreman' : '', x: w / 2, y: ground, w: trunkW, h: Math.min(h * 0.2, trunkW * 0.24), pill: null };
+  const trunk = { id: trunkId, label: trunkId ? 'steward' : '', x: w / 2, y: ground, w: trunkW, h: Math.min(h * 0.2, trunkW * 0.24), pill: null };
   const obstacles = [];
   if (trunkId) {
-    const sz = pillSize('foreman');
-    trunk.pill = { x: trunk.x, y: ground - trunk.h * 0.3, ...sz, text: 'foreman' };
+    const sz = pillSize('steward');
+    trunk.pill = { x: trunk.x, y: ground - trunk.h * 0.3, ...sz, text: 'steward' };
     obstacles.push(rect(trunk.pill));
   }
 
@@ -220,7 +220,7 @@ export function hitNode(nodes, x, y, radius) {
   return best;
 }
 
-// hitPane is the pane a press at x, y means: a shoot, else the foreman's
+// hitPane is the pane a press at x, y means: a shoot, else the steward's
 // trunk, else ''.
 export function hitPane(model, x, y, radius, pills = true) {
   const id = hitNode(model.nodes, x, y, radius);
@@ -548,7 +548,7 @@ function make(tag, className, text) {
 }
 
 // mountGarden fills root with the canvas and its controls. d carries
-// panes() and foreman(), open(pane) for a press on a shoot, close() for Esc
+// panes() and steward(), open(pane) for a press on a shoot, close() for Esc
 // inside the garden's own controls, expand(on) to make the overlay cover
 // the whole floor or not, and optional colors(), reduced(), now(),
 // raf(fn), caf(id), download(blob, name) and size(). The garden draws only
@@ -568,7 +568,13 @@ export function mountGarden(root, d) {
   words.checked = false;
   wordsLabel.append(words, make('span', '', ' Hide words'));
   wordsLabel.title = 'Leave out every name, in the view and in the picture';
-  bar.append(save, wide, wordsLabel);
+  // The review badge sits at the trunk end of the bar: how many cards wait,
+  // and a tap opens the cards view. It shows only when a card waits.
+  const badge = make('button', 'ghost garden-badge', '');
+  badge.type = 'button';
+  badge.hidden = true;
+  badge.title = 'Open the review cards';
+  bar.append(badge, save, wide, wordsLabel);
   const canvas = make('canvas', 'garden-canvas');
   canvas.setAttribute('aria-label', 'Garden. One shoot for each agent. Press a shoot to open that agent.');
   root.append(bar, canvas);
@@ -593,7 +599,22 @@ export function mountGarden(root, d) {
     const h = Math.max(200, canvas.clientHeight || 400);
     return { w, h, dpr: Math.max(1, (typeof window !== 'undefined' && window.devicePixelRatio) || 1) };
   };
-  const foremanNow = () => (d.foreman ? d.foreman() : '');
+  const stewardNow = () => (d.steward ? d.steward() : '');
+  const cardsNow = () => (d.cards ? Math.max(0, Number(d.cards()) || 0) : 0);
+  const paintBadge = () => {
+    const n = cardsNow();
+    badge.hidden = n === 0;
+    badge.textContent = n + ' to review';
+  };
+  badge.addEventListener('click', () => { if (d.openCards) d.openCards(); });
+  let cardTimer = null;
+  const stopCards = () => { if (cardTimer !== null && d.cancel) d.cancel(cardTimer); cardTimer = null; };
+  const startCards = () => {
+    if (!d.refreshCards) return;
+    d.refreshCards();
+    stopCards();
+    if (d.every) cardTimer = d.every(d.refreshCards, 30000);
+  };
   const paint = (t) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -607,11 +628,12 @@ export function mountGarden(root, d) {
   };
   const key = () => {
     const sz = measure();
-    return JSON.stringify([sz.w, sz.h, words.checked, (d.panes() || []).map((p) => p && [p.id, p.label, p.state, p.parent_pane, p.held, p.gate && p.gate.decision]), foremanNow()]);
+    return JSON.stringify([sz.w, sz.h, words.checked, (d.panes() || []).map((p) => p && [p.id, p.label, p.state, p.parent_pane, p.held, p.warden && p.warden.decision]), stewardNow(), cardsNow()]);
   };
   const relayout = () => {
     const sz = measure();
-    model = gardenLayout(d.panes(), sz.w, sz.h, foremanNow());
+    model = gardenLayout(d.panes(), sz.w, sz.h, stewardNow());
+    paintBadge();
     sig = key();
   };
   const stopLoop = () => { if (frame !== null) caf(frame); frame = null; };
@@ -663,7 +685,7 @@ export function mountGarden(root, d) {
     const ctx = out.getContext('2d');
     if (!ctx) return;
     if (typeof ctx.setTransform === 'function') ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    drawGarden(ctx, gardenLayout(d.panes(), sz.w, sz.h, foremanNow()), { w: sz.w, h: sz.h, t: null, colors: colors(), hideWords: words.checked, mark: true, picture: true });
+    drawGarden(ctx, gardenLayout(d.panes(), sz.w, sz.h, stewardNow()), { w: sz.w, h: sz.h, t: null, colors: colors(), hideWords: words.checked, mark: true, picture: true });
     out.toBlob((blob) => {
       if (!blob) return;
       const name = pictureName(new Date());
@@ -694,10 +716,11 @@ export function mountGarden(root, d) {
   }
 
   return {
-    show: () => { shown = true; start = null; redraw(); },
+    show: () => { shown = true; start = null; redraw(); startCards(); },
     hide: () => {
       shown = false;
       stopLoop();
+      stopCards();
       if (expanded) { expanded = false; wide.textContent = 'Expand'; if (d.expand) d.expand(false); }
     },
     // changed is the page's call when the panes change. It draws again only
@@ -716,5 +739,6 @@ export function mountGarden(root, d) {
     save,
     wide,
     words,
+    badge,
   };
 }

@@ -4,7 +4,7 @@
 //! ```sprig-tool JSON block calls a tool, plain text finishes.
 
 use crate::agent::{Message, Model};
-use crate::gate::ToolCall;
+use crate::warden::ToolCall;
 use crate::gostr::{index, trim_space, truncate_runes};
 use crate::json::Map;
 use crate::osx::Run;
@@ -68,8 +68,12 @@ fn prompt_tool(name: &str) -> (&'static str, &'static str) {
             "{\"tool\":\"edit\",\"input\":{\"path\":\"main.go\",\"old\":\"Run\",\"new\":\"Start\"}}",
         ),
         "spawn" => (
-            "  spawn {\"task\",\"envelope\",\"profile\",\"model\",\"tools\",\"tokens\",\"turns\"}: start a child agent and wait for its answer\n",
+            "  spawn {\"task\",\"envelope\",\"profile\",\"model\",\"tools\",\"tokens\",\"turns\",\"attempts\",\"why\"}: start a child agent and wait for its answer; attempts 2 to 8 with why starts that many in parallel and keeps the best\n",
             "{\"tool\":\"spawn\",\"input\":{\"task\":\"list the TODOs\",\"envelope\":{\"permissions\":{\"file_read\":[\"/w/**\"]}}}}",
+        ),
+        "help" => (
+            "",
+            "{\"tool\":\"help\",\"input\":{\"kind\":\"need_info\",\"text\":\"Which database should the test use?\"}}",
         ),
         _ => (
             "  bash  {\"cmd\"}           \u{2014} run a shell command\n",
@@ -85,6 +89,7 @@ const COUNT_WORDS: &[&str] = &[
     "three tools",
     "four tools",
     "five tools",
+    "six tools",
 ];
 
 /// The prompt's head, offering only the tools of the wall, in sprig's
@@ -95,7 +100,13 @@ fn prompt_head(wall: &[String]) -> String {
         COUNT_WORDS[wall.len()]
     );
     for name in wall {
-        b.push_str(prompt_tool(name).0);
+        if name == "help" {
+            b.push_str("  help {\"kind\",\"text\"}: ");
+            b.push_str(crate::help::HELP_DESCRIPTION);
+            b.push('\n');
+        } else {
+            b.push_str(prompt_tool(name).0);
+        }
     }
     b.push('\n');
     b.push_str("To CALL a tool, reply with ONLY this and nothing else:\n");
@@ -137,7 +148,7 @@ const TOOL_FENCES: &[(&[u8], bool)] = &[
     (b"```json", true),
 ];
 
-const KNOWN_TOOLS: &[&str] = &["read", "write", "edit", "bash", "spawn"];
+const KNOWN_TOOLS: &[&str] = &["read", "write", "edit", "bash", "spawn", "help"];
 
 /// The first fenced block that decodes to a valid call.
 fn parse_fenced_call(text: &[u8]) -> Option<ToolCall> {
@@ -247,7 +258,7 @@ pub fn claude_args(
         b"--output-format".to_vec(),
         b"json".to_vec(),
         // A sprig call is one shot and never resumes, so it leaves no
-        // transcript in ~/.claude/projects. Without this flag the foreman's
+        // transcript in ~/.claude/projects. Without this flag the steward's
         // compactor calls would come back as "past chats" (FM-R-78).
         b"--no-session-persistence".to_vec(),
         b"--allowedTools".to_vec(),

@@ -4,7 +4,7 @@ A cluster whose plans agree in shape but genuinely differ at some positions used
 to distill into a frozen pathway replaying the representative's concrete step —
 wrong for every member that did something else there. Now the divergent
 positions become **delegated leaves**: an `AgenticStep` prompted with the
-observed variants, run under the same envelope through the call-time gate. The
+observed variants, run under the same envelope through the call-time warden. The
 invariant steps stay concrete (zero-token replay), the data-only variance stays
 typed holes, and the parts that truly varied in kind go to the LLM — Dan
 Slimmon's do-nothing script with the model as the human.

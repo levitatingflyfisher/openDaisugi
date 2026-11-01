@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# scripts/install.sh [--link] [--replace-daisugi] [--voice]
-# Builds coppice (the floor), sprig (the loop) and the Go daisugi (the gate
+# scripts/install.sh [--link] [--replace-daisugi] [--voice] [--no-restart]
+# Builds coppice (the floor), sprig (the loop) and the Go daisugi (the warden
 # and its install) from this checkout, and puts all three on PATH in
 # $XDG_BIN_HOME or ~/.local/bin. No sudo.
 #
@@ -11,6 +11,11 @@
 #                      kept, and coppice and sprig are still installed
 #   --voice            also build the voice engines, moonshine-cli and
 #                      parakeet-cli (a long build; most people skip it)
+#   --no-restart       do not restart the user units that run a replaced
+#                      binary (daisugi-pando.service, coppice-server.service);
+#                      by default scripts/restart-units.sh restarts each one
+#                      that is active, and the coppice server only when no
+#                      agent runs in it
 #
 # Steps: scripts/preflight.sh --fetchable names every missing tool that
 # only your distribution can supply (git, a C compiler, pkg-config, go) and
@@ -47,7 +52,7 @@
 # Go stays the default (DAISUGI_PORT=go or unset).
 #
 # After this, a floor of agents is two commands:
-#   daisugi install --gate      # audit by default; --enforce to enforce
+#   daisugi install             # records every call; add --enforce to deny
 #   coppice                     # or: coppice web
 set -euo pipefail
 
@@ -56,11 +61,10 @@ bin="${XDG_BIN_HOME:-$HOME/.local/bin}"
 link=0
 replace_daisugi=0
 voice=0
-# The whole first build, as a person sees it. This is the one place for the
-# figure in this script: docs/start-here.md must say the same. It is a
-# placeholder; measure it again on a clean box (the 37 min on record
-# included the voice builds).
-FIRST_BUILD_HINT="about 45 min on 4 cores"
+restart=1
+# What a person is told about the first build. docs/start-here.md must say
+# the same. It names no time: a time is true of one machine only.
+FIRST_BUILD_HINT="the first build compiles Z3, once"
 ZIG_VERSION="0.16.0"
 GO_MIN_MINOR=26
 for a in "$@"; do
@@ -68,6 +72,7 @@ for a in "$@"; do
     --link) link=1 ;;
     --replace-daisugi) replace_daisugi=1 ;;
     --voice) voice=1 ;;
+    --no-restart) restart=0 ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "install.sh: unknown option $a (see --help)" >&2; exit 2 ;;
   esac
@@ -118,6 +123,7 @@ if [ "${INSTALL_DRY:-}" = 1 ]; then
   echo "plan: voice engines (moonshine, parakeet): $(yesno "$voice")"
   echo "plan: ports: coppice=$port sprig=$sprig_port daisugi=$daisugi_port"
   echo "plan: install into $bin, build log $log"
+  echo "plan: restart the user units that run a replaced binary: $(yesno "$restart")"
   exit 0
 fi
 
@@ -159,7 +165,7 @@ fi
 
 native="$root/clients/go/scripts/native.sh"
 prefix="$("$native" --print-prefix)"
-stage "Building Z3, tree-sitter and libghostty-vt: the slowest step (the whole first build takes $FIRST_BUILD_HINT), skipped when built before" "$native" || exit 1
+stage "Building Z3, tree-sitter and libghostty-vt: the slowest step ($FIRST_BUILD_HINT), skipped when built before" "$native" || exit 1
 moonshine=""
 parakeet=""
 if [ "$voice" -eq 1 ]; then
@@ -222,18 +228,19 @@ if [ "$daisugi_port" = rust ]; then
     . tools/z3-build-env.sh
     DAISUGI_VERSION="$version" cargo build --release --locked --bin daisugi
   )
-  stage "Building daisugi (rust, the first build takes $FIRST_BUILD_HINT)" rust_daisugi || exit 1
+  stage "Building daisugi (rust, $FIRST_BUILD_HINT)" rust_daisugi || exit 1
   daisugi_src="$root/clients/rust/target/release/daisugi"
 else
   build clients/go build/daisugi ./cmd/daisugi daisugi-verify/internal/cli.Version
 fi
 
 mkdir -p "$bin"
+installed=()
 for pair in "coppice:$coppice_src" "sprig:$sprig_src" \
             "daisugi:$daisugi_src"; do
   name="${pair%%:*}" src="${pair#*:}"
   if [ "$name" = daisugi ] && [ "$keep_daisugi" -eq 1 ]; then
-    echo "kept $bin/daisugi: it is a script, most likely the Python CLI, which also has install --gate."
+    echo "kept $bin/daisugi: it is a script, most likely the Python CLI, which has the same install command."
     echo "  The compiled daisugi is at $src. To put it there instead, run again with --replace-daisugi."
     continue
   fi
@@ -245,7 +252,14 @@ for pair in "coppice:$coppice_src" "sprig:$sprig_src" \
   fi
   mv -f "$bin/$name.new" "$bin/$name"
   echo "installed $bin/$name"
+  installed+=("$name")
 done
+# A service that runs a replaced binary still runs the old one until it
+# restarts (2026-11-06: the follow service logged a lead's lines to the
+# root on the old binary).
+if [ "$restart" -eq 1 ] && [ "${#installed[@]}" -gt 0 ]; then
+  "$root/scripts/restart-units.sh" "$bin" "${installed[@]}"
+fi
 
 if [ -n "$moonshine" ]; then
   ln -sfn "$moonshine" "$bin/moonshine-cli"
@@ -266,6 +280,6 @@ fi
 cat <<'NEXT'
 
 Next:
-  daisugi install --gate    # watch every agent tool call (add --enforce to deny)
+  daisugi install          # watch every agent tool call (add --enforce to deny)
   coppice                   # the floor in this terminal, or: coppice web
 NEXT

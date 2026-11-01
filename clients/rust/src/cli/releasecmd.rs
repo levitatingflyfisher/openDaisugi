@@ -3,14 +3,14 @@
 //! manifests, on the one key system the pathway bundles use. The Go
 //! client's `cli/releasecmd.go` is the reference.
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::lprobe::sort_keys;
 use super::registrycmd::{mkdir_parents_py, read_text_strip};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::pyjson::{
+use crate::warden::pyjson::{
     canonical_json_ascii, dumps_indent, loads_py, py_str, py_type_name, Object, Value,
 };
-use crate::gate::sha256::hexdigest;
+use crate::warden::sha256::hexdigest;
 use crate::lerr::{LErr, PyError};
 use crate::signing::{self, Registry};
 

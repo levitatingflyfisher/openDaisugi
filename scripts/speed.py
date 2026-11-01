@@ -8,9 +8,9 @@
 What it measures: one process start, to exit, for each surface below. A
 surface is a tool, an implementation and a command:
 
-  daisugi        py go rs   --version, --help, gate check, gate status
-  daisugi-gate   py go rs   the hook check the agent pays on every tool call
-                            (py is the in-process gate; py-client is the
+  daisugi        py go rs   --version, --help, warden check, warden status
+  daisugi-warden   py go rs   the hook check the agent pays on every tool call
+                            (py is the in-process warden; py-client is the
                             installed hook entry with no resident server)
   coppice        go rs      --version, --help
   sprig          go rs      --version, --help
@@ -18,7 +18,7 @@ surface is a tool, an implementation and a command:
 Every run is a fresh process. The first run of each surface is a warm-up and
 is dropped (it fills the page cache). Fakes only: HOME and every XDG
 directory sit in a scratch directory on real disk (SPEED_SCRATCH, default
-.speed/scratch in this checkout), the gate reads one fake envelope and one fixed
+.speed/scratch in this checkout), the warden reads one fake envelope and one fixed
 fake hook payload, and nothing here opens a network connection, a live floor
 or a model.
 
@@ -57,7 +57,7 @@ DEFAULT_BIN_DIR = REPO / ".speed" / "bin"
 DEFAULT_SCRATCH = REPO / ".speed" / "scratch"
 
 # The one fixed fake hook payload: a Claude Code PreToolUse call for a plain
-# shell command. The envelope below allows it, so the gate runs its whole
+# shell command. The envelope below allows it, so the warden runs its whole
 # path (parse, decompose, verify, audit write) and says yes.
 HOOK_PAYLOAD = (
     '{"session_id": "s1", "tool_name": "Bash", '
@@ -112,10 +112,10 @@ class Surface:
 def _surfaces() -> list[Surface]:
     out: list[Surface] = []
     for impl in ("py", "go", "rs"):
-        for cmd in ("version", "help", "gate-check", "gate-status"):
-            out.append(Surface("daisugi", impl, cmd, stdin=cmd == "gate-check"))
+        for cmd in ("version", "help", "warden-check", "warden-status"):
+            out.append(Surface("daisugi", impl, cmd, stdin=cmd == "warden-check"))
     for impl in ("py", "py-client", "go", "rs"):
-        out.append(Surface("daisugi-gate", impl, "gate-hook", stdin=True))
+        out.append(Surface("daisugi-warden", impl, "warden-hook", stdin=True))
     for tool in ("coppice", "sprig"):
         for impl in ("go", "rs"):
             for cmd in ("version", "help"):
@@ -130,7 +130,7 @@ SURFACES = _surfaces()
 # --- argv for one surface ---------------------------------------------------
 
 
-def gate_args(root: Path) -> list[str]:
+def warden_args(root: Path) -> list[str]:
     return [
         "--mode",
         "enforce",
@@ -158,25 +158,25 @@ def argv_for(s: Surface, bin_dir: Path, root: Path) -> list[str] | None:
     """The command line for a surface, or None when its binary is missing."""
     if s.impl in ("py", "py-client"):
         py = [sys.executable]
-        if s.tool == "daisugi-gate":
-            mod = "opendaisugi.gate" if s.impl == "py" else "opendaisugi.gate_client"
-            return [*py, "-m", mod, *gate_args(root)]
+        if s.tool == "daisugi-warden":
+            mod = "opendaisugi.warden" if s.impl == "py" else "opendaisugi.warden_client"
+            return [*py, "-m", mod, *warden_args(root)]
         head = [*py, "-m", "opendaisugi.cli_entry"]
     else:
         b = binary_for(s, bin_dir)
         if b is None:
             return None
-        if s.tool == "daisugi-gate":
-            return [str(b), *gate_args(root)]
+        if s.tool == "daisugi-warden":
+            return [str(b), *warden_args(root)]
         head = [str(b)]
     if s.command == "version":
         return [*head, "--version"]
     if s.command == "help":
         return [*head, "--help"]
-    if s.command == "gate-check":
-        return [*head, "gate", "check", *gate_args(root)]
-    if s.command == "gate-status":
-        return [*head, "gate", "status", "--root", str(root)]
+    if s.command == "warden-check":
+        return [*head, "warden", "check", *warden_args(root)]
+    if s.command == "warden-status":
+        return [*head, "warden", "status", "--root", str(root)]
     raise ValueError(f"unknown command {s.command}")
 
 
@@ -186,14 +186,14 @@ def argv_for(s: Surface, bin_dir: Path, root: Path) -> list[str] | None:
 def make_world(scratch_parent: Path) -> tuple[Path, dict[str, str], Path]:
     """A scratch HOME and XDG tree on real disk, with one envelope registered.
 
-    Returns (world dir, environment, gate root)."""
+    Returns (world dir, environment, warden root)."""
     scratch_parent.mkdir(parents=True, exist_ok=True)
     world = Path(tempfile.mkdtemp(prefix="speed-", dir=scratch_parent))
     home = world / "home"
     data = world / "data"
-    gate_root = data / "gate"
-    (gate_root / "envelopes").mkdir(parents=True)
-    (gate_root / "envelopes" / "default.json").write_text(json.dumps(ENVELOPE), encoding="utf-8")
+    warden_root = data / "warden"
+    (warden_root / "envelopes").mkdir(parents=True)
+    (warden_root / "envelopes" / "default.json").write_text(json.dumps(ENVELOPE), encoding="utf-8")
     for d in ("home", "config", "state", "cache", "tmp"):
         (world / d).mkdir(exist_ok=True)
     env = {
@@ -210,7 +210,7 @@ def make_world(scratch_parent: Path) -> tuple[Path, dict[str, str], Path]:
         "NO_COLOR": "1",
         "LC_ALL": "C.UTF-8",
     }
-    return world, env, gate_root
+    return world, env, warden_root
 
 
 # --- measuring --------------------------------------------------------------
@@ -262,8 +262,8 @@ def time_once(
     )
 
 
-def is_gate(s: Surface) -> bool:
-    return s.command in ("gate-check", "gate-hook")
+def is_warden(s: Surface) -> bool:
+    return s.command in ("warden-check", "warden-hook")
 
 
 def run_problem(s: Surface, argv: list[str], code: int, out: str, err: str) -> str:
@@ -273,17 +273,17 @@ def run_problem(s: Surface, argv: list[str], code: int, out: str, err: str) -> s
         return f"exit {code} from {where}: {err.strip()[-300:]}"
     if code != 0 and not HELP_LOOK.search(out + err):
         return f"exit {code} from {where} without help text: {err.strip()[-200:]}"
-    if is_gate(s) and not ALLOW.search(out):
+    if is_warden(s) and not ALLOW.search(out):
         # A deny or a crash is a different (often faster) path: timing it
-        # would flatter the gate.
-        return f"the gate did not allow the fixed payload: {out.strip()[:120]}"
+        # would flatter the warden.
+        return f"the warden did not allow the fixed payload: {out.strip()[:120]}"
     return ""
 
 
 def probe_problem(argv: list[str], env: dict[str, str], cwd: Path) -> str:
-    """Run the gate once with a payload the envelope must deny. The real
+    """Run the warden once with a payload the envelope must deny. The real
     deny is exit 2 and a DENIED line on stderr. Anything else means the
-    envelope did not load (a gate that fails open allows everything), so
+    envelope did not load (a warden that fails open allows everything), so
     the timings after it would mean nothing."""
     _, code, _, err = time_once(argv, env, DENY_PAYLOAD.encode(), cwd)
     if code == 2 and DENIED.search(err):
@@ -304,20 +304,20 @@ def measure(
     The runs are interleaved: round 1 starts each surface once, then round 2,
     and so on. One burst of noise on the box then lands on all surfaces
     alike, so a ratio between two of them stays fair."""
-    world, env, gate_root = make_world(scratch_parent)
+    world, env, warden_root = make_world(scratch_parent)
     results: list[Result] = []
     live: list[tuple[Surface, Result, list[str], bytes | None]] = []
     try:
         for s in surfaces:
             r = Result(s.key)
             results.append(r)
-            argv = argv_for(s, bin_dir, gate_root)
+            argv = argv_for(s, bin_dir, warden_root)
             if argv is None:
                 r.skipped = f"no {s.tool}-{s.impl} in {bin_dir}"
                 if require_all:
                     r.error = r.skipped
                 continue
-            if is_gate(s):
+            if is_warden(s):
                 r.error = probe_problem(argv, env, world)
                 if r.error:
                     continue

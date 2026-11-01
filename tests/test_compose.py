@@ -18,7 +18,11 @@ def _frozen(pid: str = "pw", cmd: str = "echo composed") -> CompiledPathway:
         task_description="d",
         task_embedding=[0.1],
         envelope=Envelope(
-            generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+            generated_by="t",
+            task="x",
+            permissions=Permission(
+                shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+            ),
         ),
         plan_template=ActionPlan(
             source="distilled", task="x", steps=[ShellStep(id="s1", command=cmd)]

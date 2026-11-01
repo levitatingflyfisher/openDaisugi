@@ -32,18 +32,18 @@ enforces the same: a manifest with `id` set and no `[[rules]]` tables is a load 
 | `visible_idle`, `visible_blocker`, `visible_working` | bool | evidence flags a client may show. |
 | `skip_state_update` | bool | this rule matching means "emit no event at all". |
 | `contains`, `regex`, `line_regex` | list of string | matchers. See the semantics below. |
-| `all`, `any`, `not` | list of gate tables | nested matchers. |
+| `all`, `any`, `not` | list of condition tables | nested matchers. |
 
 `skip_state_update = true` requires `state = "unknown"` and forbids the three visible flags.
 
-## A gate
+## A condition
 
-A gate table takes the same six matcher keys as a rule: `contains`, `regex`, `line_regex`,
-`all`, `any`, `not`. A gate with no positive matcher is a load error.
+A condition table takes the same six matcher keys as a rule: `contains`, `regex`, `line_regex`,
+`all`, `any`, `not`. A condition with no positive matcher is a load error.
 
-Herdr treats a gate nested inside `not` slightly more leniently: there, a gate that is itself
+Herdr treats a condition nested inside `not` slightly more leniently: there, a condition that is itself
 only a nested `not` list (`not = [{ not = [...] }]`) is accepted, because *something* to negate is
-present even without a positive matcher. coppice does not carry that split - every gate, `not`-
+present even without a positive matcher. coppice does not carry that split - every condition, `not`-
 nested or otherwise, needs a positive matcher - so this one shape is stricter here than in Herdr.
 Unlikely to matter for a hand-written manifest, flagged for completeness.
 
@@ -54,9 +54,9 @@ Unlikely to matter for a hand-written manifest, flagged for completeness.
 - `regex`: **every** pattern must match the region, case-sensitive, against the original text.
 - `line_regex`: **every** pattern must match **some** line of the region. Not necessarily the
   same line.
-- `all`: every nested gate must match.
-- `any`: enforced only when non-empty; then at least one nested gate must match.
-- `not`: no nested gate may match.
+- `all`: every nested condition must match.
+- `any`: enforced only when non-empty; then at least one nested condition must match.
+- `not`: no nested condition may match.
 
 Herdr's patterns come from the Rust `regex` crate, which like Go's `regexp` is RE2-shaped:
 `(?i)`, `(?m)`, `\x{2800}` and character classes all carry over, and neither engine has
@@ -118,8 +118,8 @@ whitespace.
 
 ## Limits, all load errors when exceeded
 
-128 rules per manifest, gate nesting depth 8, 512 gates per manifest, 32 direct matchers per
-gate, 1024 matchers per manifest, 512 characters per matcher.
+128 rules per manifest, condition nesting depth 8, 512 conditions per manifest, 32 direct matchers per
+condition, 1024 matchers per manifest, 512 characters per matcher.
 
 ## Where coppice deliberately differs from Herdr
 

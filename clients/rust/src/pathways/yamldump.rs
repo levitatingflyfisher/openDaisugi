@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::gate::py::text::{as_surrogate, cp_char};
-use crate::gate::pyjson::{float_repr, Object, Value};
+use crate::warden::py::text::{as_surrogate, cp_char};
+use crate::warden::pyjson::{float_repr, Object, Value};
 
 /// A value or text outside what this port writes or reads.
 #[derive(Debug, Clone)]

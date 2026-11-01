@@ -276,7 +276,7 @@ export const HARNESSES = ['claude', 'codex', 'pi', 'sprig', 'opencode'];
 
 // VERBS are the terminal floor's plumbing verbs. A line led by one, at
 // most PLUMBING_WORDS long, is plumbing. A longer one is a sentence.
-const VERBS = ['list', 'read', 'close', 'open', 'swap', 'rotate', 'reset', 'lock', 'unlock', 'layout', 'tree', 'zoom', 'foreman'];
+const VERBS = ['list', 'read', 'close', 'open', 'swap', 'rotate', 'reset', 'lock', 'unlock', 'layout', 'tree', 'zoom', 'steward'];
 const PLUMBING_WORDS = 4;
 
 // SLASH_PLUMBING is the one switch for the chat bar's rule. On, a plain
@@ -298,7 +298,7 @@ export function classifyTell(line, slash = SLASH_PLUMBING) {
     if (text === '/') return 'empty';
     if (!text.startsWith('/')) return text ? 'talk' : 'empty';
     // Only a slash and a known word is plumbing. A path such as
-    // /etc/hosts, or any other slash line, is a sentence for the foreman.
+    // /etc/hosts, or any other slash line, is a sentence for the steward.
     const first = text.slice(1).trim().split(/\s+/)[0] || '';
     return HARNESSES.includes(first) || VERBS.includes(first) ? 'plumbing' : 'talk';
   }
@@ -362,12 +362,12 @@ export function plumbingCommand(line, { panes, cwd }) {
     const pane = found[0];
     return { req: { cmd: 'pane.close', pane: pane.id }, say: 'Closing ' + (pane.label || pane.id) + '.' };
   }
-  if (SLASH_PLUMBING) return { say: '/' + first + ' works on the terminal floor. Here, type /claude, /close NAME, or a sentence for the foreman.' };
-  return { say: first + ' works on the terminal floor. Here, type a harness name, open, close, or a sentence for the foreman.' };
+  if (SLASH_PLUMBING) return { say: '/' + first + ' works on the terminal floor. Here, type /claude, /close NAME, or a sentence for the steward.' };
+  return { say: first + ' works on the terminal floor. Here, type a harness name, open, close, or a sentence for the steward.' };
 }
 
 // talkCommand turns a sentence into floor.talk. The server starts the
-// floor's foreman when none runs and keeps the words in order, so the
+// floor's steward when none runs and keeps the words in order, so the
 // page, the terminal floor and voice never start two.
 export function talkCommand(line) {
   return { req: { cmd: 'floor.talk', text: line } };
@@ -377,7 +377,7 @@ export function talkCommand(line) {
 // server's note when it has one, else where the words went.
 export function talkSay(reply) {
   const r = reply || {};
-  const label = r.label || 'the foreman';
+  const label = r.label || 'the steward';
   if (r.note) return r.note;
   if (r.started) return label + ' starts and gets its page. Your words go once it is ready.';
   if (r.queued > 1) return 'Sent to ' + label + '. ' + r.queued + ' sentences wait for it, yours last.';
@@ -395,11 +395,11 @@ function tellCwd() {
 }
 
 // mountTell wires the chat bar. Send runs the line: plumbing, or talk to
-// the foreman through floor.talk. A line that sends nothing stays in the
+// the steward through floor.talk. A line that sends nothing stays in the
 // bar with the reason on the status line. A talk shows in the chat at
 // once (window.coppice.chat), marked sent when floor.talk answers; a
 // refused talk leaves the chat and stays in the bar. A talk that starts
-// the foreman opens its window on a wide page, since a new harness may ask
+// the steward opens its window on a wide page, since a new harness may ask
 // a question of its own first; on a phone the owner stays with the chat,
 // and a question shows as a card that needs you. The microphone only
 // fills the bar.

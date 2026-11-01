@@ -2,12 +2,12 @@
 //! `generate_envelope` makes it with no cache, pathway store or Tier-1
 //! slot. The Go client's `cli/envelopecmd.go` is the reference.
 
-use super::gatecmds::DECOMPOSE_OPT;
-use super::gateroot::{self, join, path_str};
+use super::wardencmds::DECOMPOSE_OPT;
+use super::wardenroot::{self, join, path_str};
 use super::{config, exit, parse_args, Env, Opt, Res};
 use crate::envgen::{generate, GenErr, Options, DEFAULT_MODEL};
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::{dumps_indent, Object, Value};
+use crate::warden::py::text::{repr, strip};
+use crate::warden::pyjson::{dumps_indent, Object, Value};
 use crate::llm;
 use crate::pathways::pmodel::{validate_json, Id};
 
@@ -34,7 +34,7 @@ impl Env {
     /// `cli._tilde`: a path under the home directory as ~/..., once
     /// resolved.
     pub(super) fn tilde(&self, p: &str) -> String {
-        let Ok(r) = gateroot::resolve(p) else { return p.to_string() };
+        let Ok(r) = wardenroot::resolve(p) else { return p.to_string() };
         let home = self.home.trim_end_matches('/');
         if r == home {
             return "~/.".to_string();
@@ -45,12 +45,12 @@ impl Env {
         }
     }
 
-    /// The gate state `_echo_resolved(data_dir)` names.
-    pub(super) fn gate_state_at(&self, data_dir: &str) -> Result<String, String> {
-        if gateroot::is_disarmed(&join(data_dir, "gate")) {
+    /// The warden state `_echo_resolved(data_dir)` names.
+    pub(super) fn warden_state_at(&self, data_dir: &str) -> Result<String, String> {
+        if wardenroot::is_disarmed(&join(data_dir, "warden")) {
             return Ok("disarmed".into());
         }
-        config::gate_mode(&join(data_dir, "config.yaml")).map_err(|e| e.to_string())
+        config::warden_mode(&join(data_dir, "config.yaml")).map_err(|e| e.to_string())
     }
 
     /// `_echo_resolved` on the old backend name: resolve_backend raises
@@ -59,7 +59,7 @@ impl Env {
         if !llm::renamed(&self.llm_client().backend()) {
             return Ok(());
         }
-        if let Err(why) = self.gate_state_at(data_dir) {
+        if let Err(why) = self.warden_state_at(data_dir) {
             return self.refuse(cmd, &why);
         }
         self.errf(&format!("{}\n", llm::RENAMED_TEXT));
@@ -115,12 +115,12 @@ impl Env {
                 return self.refuse(CMD, &why);
             }
         }
-        let gate = match self.gate_state_at(&data_dir) {
+        let warden = match self.warden_state_at(&data_dir) {
             Ok(g) => g,
             Err(why) => return self.refuse(CMD, &why),
         };
         let shown = self.tilde(&data_dir);
-        self.note(&format!("backend: {} · gate: {gate} · data: {shown}", c.backend()));
+        self.note(&format!("backend: {} · warden: {warden} · data: {shown}", c.backend()));
         let mut o = Options { task, models: vec![model], stakes: stakes.clone(), thinking, ..Default::default() };
         if stakes == "low" {
             let text = if p.has("--low-stakes-envelope") {
@@ -170,7 +170,7 @@ impl Env {
         let decompose = if p.flag_set("--allow-shell-decomposition") {
             p.flag("--allow-shell-decomposition")
         } else {
-            self.decompose_default(&join(&data_dir, "gate"), CMD)?
+            self.decompose_default(&join(&data_dir, "warden"), CMD)?
         };
         let mut env: Object = env;
         if decompose {

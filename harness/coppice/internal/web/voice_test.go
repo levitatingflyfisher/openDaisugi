@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -11,7 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // capturedVoiceRequest is one request the fake voice server saw.
@@ -214,7 +217,7 @@ func TestVoiceTranscribeRelaysTheUpstreamsContentTypeWhenTheBodyIsNotJSON(t *tes
 }
 
 // The failure this names: no daisugi voice serve running, or the wrong
-// --voice-url, must read as a clear next step, not a bare gateway error or
+// --voice-url, must read as a clear next step, not a bare router error or
 // a hang until the client times out.
 func TestVoiceTranscribeAnswers502OnATransportFailure(t *testing.T) {
 	// A real listener, closed before the request, so the dial itself fails
@@ -303,5 +306,150 @@ func TestVoiceTranscribeRefusesAClipOverTheSizeCap(t *testing.T) {
 	}
 	if upstream.count() != 0 {
 		t.Fatalf("an oversize clip still reached the voice server")
+	}
+}
+
+// A two-minute clip is a few hundred KB as webm and about 4 MB as wav; a
+// 20 minute dictation as wav is about 38 MB. The proxy must pass all of it on
+// to the voice server, which owns the real limit and says it.
+func TestVoiceTranscribeForwardsALongClipWhole(t *testing.T) {
+	upstream, upstreamURL := newVoiceUpstream(t, 200, `{"text":"long"}`)
+	_, d := newFakeServer(t, echoOK)
+	ts, _, tok := newTestServer(t, Options{Dial: d, VoiceURL: upstreamURL})
+
+	clip := bytes.Repeat([]byte("a"), 38<<20)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/voice/transcribe", bytes.NewReader(clip))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.ContentLength = int64(len(clip))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if got := len(upstream.last().Body); got != len(clip) {
+		t.Fatalf("the voice server got %d bytes, want %d", got, len(clip))
+	}
+}
+
+// A wait that runs out is not a dead server: the answer says it timed out,
+// so the owner does not read "voice is down" and start the job again.
+func TestVoiceTranscribeSaysWhenTheWaitRanOut(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+	}))
+	t.Cleanup(slow.Close)
+	old := voiceClient.Timeout
+	voiceClient.Timeout = 100 * time.Millisecond
+	t.Cleanup(func() { voiceClient.Timeout = old })
+
+	_, d := newFakeServer(t, echoOK)
+	ts, _, tok := newTestServer(t, Options{Dial: d, VoiceURL: slow.URL})
+	req, _ := http.NewRequest("POST", ts.URL+"/api/voice/transcribe", strings.NewReader("clip"))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+	msg, _ := body["error"].(string)
+	if resp.StatusCode != http.StatusGatewayTimeout || !strings.Contains(msg, "took longer than") ||
+		!strings.Contains(msg, "may still be working") {
+		t.Fatalf("got %d %q", resp.StatusCode, msg)
+	}
+}
+
+// Two clips never run at once, and the voice server is the one that says so:
+// it answers 409 while it works, and the proxy passes that answer on.
+func TestVoiceTranscribeRelaysTheVoiceServersBusyAnswer(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 2)
+	var busy atomic.Bool
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !busy.CompareAndSwap(false, true) {
+			w.WriteHeader(http.StatusConflict)
+			w.Write([]byte(`{"error":"busy","message":"The voice server is still turning an earlier clip into text."}`))
+			return
+		}
+		defer busy.Store(false)
+		entered <- struct{}{}
+		<-release
+		w.Write([]byte(`{"text":"done"}`))
+	}))
+	t.Cleanup(slow.Close)
+	_, d := newFakeServer(t, echoOK)
+	ts, _, tok := newTestServer(t, Options{Dial: d, VoiceURL: slow.URL})
+	post := func() (int, string) {
+		req, _ := http.NewRequest("POST", ts.URL+"/api/voice/transcribe", strings.NewReader("clip"))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return 0, ""
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+	first := make(chan int, 1)
+	go func() { c, _ := post(); first <- c }()
+	<-entered
+	code, body := post()
+	if code != http.StatusConflict || !strings.Contains(body, "still turning an earlier clip") {
+		t.Fatalf("second clip got %d %s", code, body)
+	}
+	close(release)
+	if c := <-first; c != 200 {
+		t.Fatalf("first clip got %d", c)
+	}
+	if c, _ := post(); c != 200 {
+		t.Fatalf("a clip after the first finished got %d", c)
+	}
+}
+
+// A page that drops its request mid-send does not cancel the job upstream:
+// the proxy keeps waiting for the voice server, as the Rust server does, and
+// a second clip meets the voice server's own 409.
+func TestVoiceTranscribeKeepsWaitingWhenThePageGoesAway(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	cancelled := make(chan struct{}, 1)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		select {
+		case <-r.Context().Done():
+			cancelled <- struct{}{}
+		case <-release:
+		}
+		w.Write([]byte(`{"text":"done"}`))
+	}))
+	t.Cleanup(slow.Close)
+	_, d := newFakeServer(t, echoOK)
+	ts, _, tok := newTestServer(t, Options{Dial: d, VoiceURL: slow.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+"/api/voice/transcribe", strings.NewReader("clip"))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	done := make(chan struct{})
+	go func() { http.DefaultClient.Do(req); close(done) }()
+	<-entered
+	cancel()
+	<-done
+	select {
+	case <-cancelled:
+		t.Fatal("the page going away cancelled the job at the voice server")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+}
+
+// The proxy waits as long as the voice server can run on a 20 minute clip
+// (40 windows of 120 s), so it never throws a finished text away.
+func TestTheVoiceWaitCoversTheLongestJobTheServerCanRun(t *testing.T) {
+	if voiceWait < 85*time.Minute {
+		t.Fatalf("the proxy gives up after %v, before the server's 80 minute worst case", voiceWait)
 	}
 }

@@ -23,7 +23,7 @@ ASK = {
     "summary": "rm -rf build",
     "deadline": 9e9,
     "tier": "undoable",
-    "gate": {"verdict": "deny", "rule": 4},
+    "warden": {"verdict": "deny", "rule": 4},
 }
 
 
@@ -115,7 +115,7 @@ def test_ntfy_posts_one_message_with_the_label_and_the_summary(sock, sink):
     post = sink.posts[0]
     assert post["path"] == "/floor"
     assert post["headers"]["title"] == "auth fix needs you."
-    assert post["body"] == "Wants rm -rf build. Gate says no, rule 4."
+    assert post["body"] == "Wants rm -rf build. Warden says no, rule 4."
     assert post["headers"]["click"] == "https://box.example/#/pane/w1:p1"
     assert "actions" not in post["headers"]
     assert {r["cmd"] for r in floor.requests} <= {"hello", "events.subscribe", "pane.list"}
@@ -153,7 +153,7 @@ def test_lockscreen_posts_one_card_with_look_and_no_deny(sock, sink):
     assert len(sink.posts) == 1, sink.posts
     post = sink.posts[0]
     assert post["headers"]["title"] == "auth fix needs you."
-    assert post["body"] == "Wants rm -rf build. Gate says no, rule 4."
+    assert post["body"] == "Wants rm -rf build. Warden says no, rule 4."
     assert post["headers"]["actions"] == "view, Look, https://box.example/#/pane/w1:p1"
     assert "deny" not in post["headers"]["actions"].lower()
 

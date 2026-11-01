@@ -60,7 +60,9 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 	// An opaque invariant whose type names a word of the system dialect
 	// (verify._dialect_word). Audit: the opaque handling below decides and
 	// the word's would-deny is a warning. Enforce: the word decides.
-	if word, isWord := WordFor(item.typeName); isWord && opaque && item.label == "invariant" {
+	isWord := false
+	if word, found := WordFor(item.typeName); found && opaque && item.label == "invariant" {
+		isWord = true
 		if pin != nil {
 			return enforceWord(item, word, plan, env, *pin, base)
 		}
@@ -77,14 +79,26 @@ func checkPredicateItem(item predicateItem, plan ActionPlan, env Envelope, stric
 		}
 		dischargedElsewhere := (item.label == "invariant" && recognizedOpaqueTypes[item.typeName]) ||
 			(item.label == "postcondition" && recognizedStage2PostconditionTypes[item.typeName])
-		if strict && !dischargedElsewhere {
+		if dischargedElsewhere {
+			return nil
+		}
+		remediation := "add an `expr` to make it verifiable, " + "or set enforce=False to keep it as documentation"
+		if isWord {
+			// A dialect word with no pin is audited (the warning above):
+			// below strict stakes it passes, at strict stakes it is rejected.
+			if !strict {
+				return nil
+			}
 			return []Violation{V("predicate", fmt.Sprintf(
 				"%s '%s' declares a safety property with no verifiable expr; cannot be discharged under strict mode", item.label, item.typeName)).
 				With(pyjson.NewObject().Set(item.label, item.typeName).Set("reason", "opaque_unrecognized").
-					Set("suggested_remediation", "add an `expr` to make it verifiable, "+
-						"or set enforce=False to keep it as documentation"), nil)}
+					Set("suggested_remediation", remediation), nil)}
 		}
-		return nil
+		// SG-8: a safety property nothing can check is never a silent pass.
+		return []Violation{V("predicate", fmt.Sprintf(
+			"%s '%s' declares a safety property with no verifiable expr and no definition; nothing can discharge it", item.label, item.typeName)).
+			With(pyjson.NewObject().Set(item.label, item.typeName).Set("reason", "opaque_unrecognized").
+				Set("suggested_remediation", remediation), nil)}
 	}
 
 	var probe any

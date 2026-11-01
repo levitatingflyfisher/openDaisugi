@@ -9,13 +9,13 @@ import (
 
 	"daisugi-verify/internal/config"
 	"daisugi-verify/internal/embed/potion"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 const journalHelp = `Usage: daisugi journal [OPTIONS] COMMAND [ARGS]...
@@ -248,7 +248,7 @@ func (e *Env) journalSearch(args []string) error {
 	// The matcher is the one ~/.opendaisugi/config.yaml names. A matcher
 	// this binary does not carry is refused before Journal() makes
 	// anything; an error Python raises comes after it, as in Python.
-	cfg, cerr := config.Load(gateroot.Join(e.dataHome(), "config.yaml"))
+	cfg, cerr := config.Load(wardenroot.Join(e.dataHome(), "config.yaml"))
 	if cerr != nil && !errors.Is(cerr, config.ErrInvalid) {
 		return e.configLoadErr(cmd, cerr)
 	}

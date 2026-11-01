@@ -10,12 +10,12 @@ import (
 
 	"daisugi-verify/internal/config"
 	"daisugi-verify/internal/envgen"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/pyyaml"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // defaultLowStakes is defaults.DEFAULT_LOW_STAKES_ENVELOPE.
@@ -28,7 +28,7 @@ const defaultLowStakes = `{"id": "env_default_low_stakes", "generated_by": "open
 // tilde is cli._tilde: a path under the home directory as ~/..., once
 // resolved.
 func (e *Env) tilde(p string) string {
-	r, err := gateroot.Resolve(p)
+	r, err := wardenroot.Resolve(p)
 	if err != nil {
 		return p
 	}
@@ -41,15 +41,15 @@ func (e *Env) tilde(p string) string {
 
 // echoResolvedAt is cli._echo_resolved(data_dir) for any data directory.
 func (e *Env) echoResolvedAt(dataDir string) error {
-	root := gateroot.Join(dataDir, "gate")
-	gate := "disarmed"
-	if !gateroot.IsDisarmed(root) {
+	root := wardenroot.Join(dataDir, "warden")
+	warden := "disarmed"
+	if !wardenroot.IsDisarmed(root) {
 		var err error
-		if gate, err = config.GateMode(gateroot.Join(dataDir, "config.yaml")); err != nil {
+		if warden, err = config.WardenMode(wardenroot.Join(dataDir, "config.yaml")); err != nil {
 			return err
 		}
 	}
-	e.note("backend: %s · gate: %s · data: %s", e.backend(), gate, e.tilde(dataDir))
+	e.note("backend: %s · warden: %s · data: %s", e.backend(), warden, e.tilde(dataDir))
 	return nil
 }
 
@@ -80,7 +80,7 @@ func (e *Env) generateEnvelope(args []string) error {
 	}
 	task := p.args[0]
 	model := p.str("--model", envgen.DefaultModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if v := p.str("--llm", ""); p.has("--llm") {
 		if err := e.checkLLMFlag(v); err != nil {
 			return err
@@ -161,7 +161,7 @@ func (e *Env) generateEnvelope(args []string) error {
 	var decompose bool
 	if p.flagSet("--allow-shell-decomposition") {
 		decompose = p.flag("--allow-shell-decomposition")
-	} else if decompose, err = e.decomposeDefault(gateroot.Join(dataDir, "gate"), cmd); err != nil {
+	} else if decompose, err = e.decomposeDefault(wardenroot.Join(dataDir, "warden"), cmd); err != nil {
 		return err
 	}
 	if decompose {
@@ -187,8 +187,8 @@ func (e *Env) renamedBackendAt(cmd, dataDir string) error {
 	if !llm.Renamed(e.backend()) {
 		return nil
 	}
-	if !gateroot.IsDisarmed(gateroot.Join(dataDir, "gate")) {
-		if _, err := config.GateMode(gateroot.Join(dataDir, "config.yaml")); err != nil {
+	if !wardenroot.IsDisarmed(wardenroot.Join(dataDir, "warden")) {
+		if _, err := config.WardenMode(wardenroot.Join(dataDir, "config.yaml")); err != nil {
 			return e.refuse(cmd, err)
 		}
 	}

@@ -136,6 +136,105 @@ verifies the plan; the executor runs it. A misbehaving executor
 outside the library's control — write or vet your own executor if
 you're running in a hostile environment.
 
+## Which boundary does what
+
+Three boundaries, three jobs. Each one stops what the others cannot.
+
+| Boundary | What it decides | How |
+|---|---|---|
+| The fence (`daisugi fence`, Landlock) | Which files and sockets a process can reach | The kernel. It holds for every process the harness starts, whatever its text. |
+| The warden | What a call means: the tool, the shell head, MCP arguments, spend, recipients, API scopes, a child envelope against its parent | It reads the call before it runs and allows, asks or denies. |
+| Z3 | Whether a plan can break its envelope | A proof over the plan, before any step runs. |
+
+The fence is the file boundary. The warden reads the text of a shell line,
+and that text cannot name every file a program touches. A program the line
+starts can read or write anything the user can. Only the kernel stops that.
+
+**Inside a fence**, the warden does not guess at files. A shell read or write
+it cannot place, or places outside `file_read` and `file_write`, is allowed
+and recorded: the audit line carries `fence_enforced` and the session tree
+carries `fenceEnforced`, each with the parser's reason. The kernel stops
+the access, except where the fence itself grants the path to the harness: its
+config, its transcripts and the warden root with the captures and the audit
+log. A shell read of such a path is recorded, not denied, because the kernel
+allows it. Every other check decides as before: the file tools, the
+hard-deny rules, the head allowlist, the metacharacter check, MCP rules,
+network, spend and the Z3 stages. The fence does not limit the network, so a
+shell access to `/dev/tcp/` or `/dev/udp/` is never recorded in its place: it
+is denied as it is without a fence. The warden knows a call is fenced from the
+fence run record that `daisugi fence` writes outside the sandbox, found from
+the caller's process and its parents. A variable cannot set it
+(ADR-0028).
+
+**Without a fence**, enforce mode denies a shell access it cannot place or
+finds out of scope. Those denies guard the paths the parser can read, and only
+those. `daisugi warden status`, `daisugi status` and `daisugi start` print one
+line when the warden is on and `coppice.toml` says `fence = "off"`: files are
+not confined. Coppice's floor and server start print it too, and also when
+`fence = "auto"` runs on a kernel that cannot fence (Landlock ABI below 9);
+that line names the kernel.
+
+Coppice turns the fence on for agent panes, steward workers and tree children
+by default (`fence = "auto"`: fenced while the warden is on and the kernel has
+Landlock ABI 9; below that, the work runs bare and the floor says so). A plain shell
+pane stays bare. The memory stores (`pando/` and the old `foreman/` dir under
+every data dir) are closed to a fenced agent, whatever its envelope says.
+
+A process that is not fenced can write a fence run record, but the same write
+lets it write the `DISARMED` marker. It already has the files.
+
+## Where the envelope comes from
+
+If one model call writes both the plan and the envelope that checks it, the model grades
+its own work. Four rules keep the two apart.
+
+1. **Envelope before plan.** `generate_envelope` takes the task and optional context. It
+   never takes a plan. The planner does not see or shape its own constraints. This holds
+   in the code today.
+2. **A separate call, and for high stakes a separate model.** Envelope generation runs in
+   its own context, with no plan and no agent transcript. The `model` argument picks the
+   generator, so a different model or provider is one setting. Nothing yet requires a
+   different model at `stakes="high"`. That rule is designed, not built.
+3. **Tighten only.** A generated envelope that has a `parent` is checked by
+   `verify_inheritance`, and one that loosens the parent is rejected. The parent is the
+   ceiling that a person sets and reviews. The generator never writes it.
+4. **Provenance.** `generated_by` names the source of each envelope: the model, a
+   compiled pathway or a Tier-1 provider. The envelope does not yet carry a prompt hash
+   or a time stamp, so an audit cannot tell two runs of one model apart.
+
+The effort scales with the stakes:
+
+| Situation | Envelope |
+|---|---|
+| One-off and low stakes | The configured default envelope. No generation call. |
+| Repeated, any stakes below high | A cached or compiled envelope, found by similarity. |
+| High stakes | Generated fresh. The compiled-pathway store and the Tier-1 slot are skipped. |
+
+## Hardware attestation (designed, not built)
+
+Everything above assumes the checker runs in a process the planner cannot reach. If a
+compromised planner can edit the checker or fake its verdict, the proof means nothing.
+The strong answer puts the check on hardware that the planner cannot touch:
+
+1. **TPM.** A key bound to the hardware signs each verdict. A process in user space cannot
+   read the key.
+2. **TEE** (TrustZone, SGX or SEV). The verifier runs in an isolated enclave. A
+   compromised OS cannot look inside it.
+3. **A separate processor.** The check runs on its own chip between the planner and the
+   actuators. Avionics uses the same idea: an independent monitor computer can veto the
+   primary one.
+
+```
+planner (untrusted)  ->  verifier (TEE or separate chip)  ->  executor
+proposes, cannot sign    checks the envelope, signs if valid   runs signed commands only
+```
+
+A signed bundle holds the action, the envelope hash, a time stamp against replay, a nonce
+against duplication and the result. The executor checks the signature and refuses
+anything else. This is the boundary-4 gap above (plan to executor) closed in hardware. No
+part of it exists in the code. A software-only deployment relies on the process boundary
+and on an OS sandbox.
+
 ## Data handling
 
 **Written to disk** (in the configured data directory only):
@@ -211,7 +310,7 @@ Features that typically complicate compliance reviews:
   you do not use and audit what you do.
 - LLM calls through the `api` or the Claude Code backend leave the
   process. Envelope generation, distillation, and plan adaptation are
-  all LLM-gated and require an allowed egress path. Runtime
+  all LLM-checked and require an allowed egress path. Runtime
   verification does not call out.
 - The library is MIT-licensed. See `LICENSE` and `pyproject.toml` for
   the authoritative grant.
@@ -225,11 +324,11 @@ trust surface — meant to be auditable in an afternoon:
 
 - **Public CI, green on every push, with the adversarial suite as a required
   step.** `.github/workflows/ci.yml` runs lint + the full suite and an explicit
-  *Adversarial merge gate* step (`tests/test_adversarial.py` + `daisugi gate
-  audit`). Any attack the gate fails to deny fails the build.
+  *Adversarial merge check* step (`tests/test_adversarial.py` + `daisugi warden
+  audit`). Any attack the warden fails to deny fails the build.
 - **Re-runnable, content-addressed evaluation.** The adversarial corpus is
   deterministic and carries a stable content address (`corpus_hash`); `daisugi
-  gate audit` reproduces the published attack-denial and false-positive rates
+  warden audit` reproduces the published attack-denial and false-positive rates
   on anyone's machine, and a rerun is a rerun. Distilled pathway bundles are
   content-addressed too (`PathwayBundle`).
 - **Pinned, small dependency surface.** Runtime deps are declared in
@@ -242,7 +341,7 @@ trust surface — meant to be auditable in an afternoon:
   its own behalf. The only egress is the LLM calls you configure (envelope
   generation, distillation, delegation) and the Hugging Face API when you run
   `daisugi models search` or `models pin`; runtime *verification* and the
-  call-time *gate* never call out.
+  call-time *warden* never call out.
 - **What is and is not signed — stated honestly.** Distilled pathway bundles
   are cryptographically signed and verified against a trusted-signer registry
   (`opendaisugi.signing`, ed25519). **Release artifacts can now be signed and
@@ -255,6 +354,15 @@ trust surface — meant to be auditable in an afternoon:
   `trusted_signers.json`. The remaining *operator* step is to publish a signed
   manifest with each release; until a given release ships one, install from a
   pinned git ref you have read, not from an unpinned index.
+
+**Dependency policy.** The lockfile (`uv.lock`) carries hashes. The rules below are the
+policy for every dependency; of them only the hash pinning is in place.
+
+- Install from a hash-pinned lockfile. Do not auto-upgrade.
+- Wait a few days before adopting a new release. The wait gives time for a bad release to be found and pulled.
+- Audit for `.pth` files in CI. A `.pth` file runs at interpreter start and is a common place to hide code.
+- Prefer packages that publish through PyPI Trusted Publishers.
+- Keep the number of dependencies small. A component that holds API keys is the most costly one to get wrong, so we wrote our own model client (see [dependencies](reference/dependencies.md)).
 
 The one-line honest summary: everything that decides *allow/deny* is
 deterministic, offline, content-addressed, and re-runnable by you; the trust

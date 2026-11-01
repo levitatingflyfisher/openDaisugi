@@ -30,7 +30,9 @@ def _write_success_trace(journal, task: str):
     env = Envelope(
         generated_by="test",
         task=task,
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -81,7 +83,9 @@ async def test_tend_creates_pathway_from_cluster(tmp_path, monkeypatch):
     env_tmpl = Envelope(
         generated_by="distilled",
         task="T",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan_tmpl = ActionPlan(
         source="template",
@@ -208,7 +212,11 @@ def test_validate_envelope_counts_a_timed_out_plan_as_failing(monkeypatch):
     from opendaisugi.models import Violation
 
     env = Envelope(
-        generated_by="t", task="T", permissions=Permission(shell=True, shell_allowlist=["ls"])
+        generated_by="t",
+        task="T",
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="T", steps=[ShellStep(id="s1", command="ls")])
 

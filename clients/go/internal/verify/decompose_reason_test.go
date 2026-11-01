@@ -2,7 +2,7 @@ package verify
 
 import "testing"
 
-// The gate copies a refused decomposition's reason into a violation's
+// The warden copies a refused decomposition's reason into a violation's
 // detail, so the reason text must be the oracle's, Python repr included.
 func TestDecomposeReasonUsesPythonRepr(t *testing.T) {
 	cases := map[string]string{

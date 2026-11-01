@@ -1,5 +1,5 @@
 {
-  "_comment": "Inputs and the exact file stem ask.py's _safe() produces for each. Go's web.SafeID and Python's opendaisugi.ask._safe both read this file. They must agree byte for byte or the phone writes an answer the gate never reads.",
+  "_comment": "Inputs and the exact file stem ask.py's _safe() produces for each. Go's web.SafeID and Python's opendaisugi.ask._safe both read this file. They must agree byte for byte or the phone writes an answer the warden never reads.",
   "cases": [
     {"in": "toolu_01ABCdef", "out": "toolu_01ABCdef"},
     {"in": "call/with/slashes", "out": "call_with_slashes"},

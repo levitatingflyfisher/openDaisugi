@@ -165,7 +165,7 @@ def test_previous_turn_keeps_its_label_outside_the_window_or_when_known() -> Non
 
 
 def test_store_keeps_the_vector_as_a_float32_blob_and_no_text(tmp_path: Path) -> None:
-    store = rk.OutcomeStore(tmp_path / "gateway" / "routing.db")
+    store = rk.OutcomeStore(tmp_path / "router" / "routing.db")
     tid = store.add(
         conversation="c",
         ts=5.0,
@@ -177,7 +177,7 @@ def test_store_keeps_the_vector_as_a_float32_blob_and_no_text(tmp_path: Path) ->
         latency_ms=12.5,
     )
     assert tid == "t1"
-    con = sqlite3.connect(tmp_path / "gateway" / "routing.db")
+    con = sqlite3.connect(tmp_path / "router" / "routing.db")
     vec, sha, outcome = con.execute("SELECT vec, task_sha256, outcome FROM turns").fetchone()
     assert isinstance(vec, bytes) and len(vec) == 8
     assert sha == rk.task_sha256("secret task")

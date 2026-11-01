@@ -60,7 +60,7 @@ ORACLE = [sys.executable, "-c", shim()]
 CONFIG = ".opendaisugi/config.yaml"
 LEX = {CONFIG: {"text": "matcher_model: lexical\n"}}
 SETTINGS = ".claude/settings.json"
-TURNS = ".opendaisugi/gateway/turns.jsonl"
+TURNS = ".opendaisugi/router/turns.jsonl"
 # Only the case's bin directory (the fake claude) and its own fakes.
 PATH_ENV = {"PATH": "{HOME}/../bin:{HOME}/.fakebin"}
 
@@ -378,8 +378,8 @@ def settings(**events: list[str]) -> dict[str, Any]:
     return {SETTINGS: {"text": json.dumps({"hooks": hooks}, indent=2) + "\n"}}
 
 
-GATE_HOOK = "daisugi hook --mode audit"
-GATEWAY_HOOK = "daisugi gateway-env"
+WARDEN_HOOK = "daisugi hook --mode audit"
+ROUTER_HOOK = "daisugi router-env"
 STOP_HOOK = "daisugi floor report --event stop --backend herdr"
 NOTE_HOOK = "daisugi floor report --event notification --backend herdr"
 
@@ -506,18 +506,18 @@ def build_modules_cases() -> list[dict[str, Any]]:
         wired = {
             **LEX,
             **cfg(
-                "matcher_model: potion\ngateway_router: switchyard\nllm_backend: claude-code\n"
+                "matcher_model: potion\nrouting_mode: switchyard\nllm_backend: claude-code\n"
                 "voice_engine: moonshine\nshell_allow_decomposition: true\n"
                 "llm_base_url: http://gpu-box:11434/v1\nllm_host_kind: ollama\n"
                 "llm_host_model: qwen3:8b\nllm_context_window: 32768\n"
             ),
             **settings(
-                PreToolUse=[GATE_HOOK, GATEWAY_HOOK], Stop=[STOP_HOOK], Notification=[NOTE_HOOK]
+                PreToolUse=[WARDEN_HOOK, ROUTER_HOOK], Stop=[STOP_HOOK], Notification=[NOTE_HOOK]
             ),
             ".claude/projects": {"dir": True},
             ".codex/sessions": {"dir": True},
-            ".pi/agent/extensions/daisugi-gate/index.ts": {"text": "// gate\n"},
-            ".config/opencode/plugins/daisugi-gate.ts": {"text": "// gate\n"},
+            ".pi/agent/extensions/daisugi-warden/index.ts": {"text": "// warden\n"},
+            ".config/opencode/plugins/daisugi-warden.ts": {"text": "// warden\n"},
             **fake("tmux", "herdr", "coppice", "switchyard-server", "opencode"),
             **STORES,
         }
@@ -538,7 +538,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
         case("modules minilm named", "modules", *j, before=cfg("matcher_model: all-MiniLM-L6-v2\n"))
     )
     add(case("modules unbuilt matcher", "modules", before=cfg("matcher_model: nope\n")))
-    add(case("modules invalid config", "modules", before=cfg("gate_ask: maybe\n")))
+    add(case("modules invalid config", "modules", before=cfg("warden_ask: maybe\n")))
     add(case("modules invalid config json", "modules", *j, before=cfg("z3_timeout_ms: 1.5\n")))
     add(
         case(
@@ -547,7 +547,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             "--data-dir",
             "{HOME}/dd/",
             before={
-                "dd/config.yaml": {"text": "matcher_model: lexical\ngateway_router: switchyard\n"},
+                "dd/config.yaml": {"text": "matcher_model: lexical\nrouting_mode: switchyard\n"},
                 **journal(1, 0, "dd"),
             },
         )
@@ -578,7 +578,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             "modules opencode xdg",
             "modules",
             *j,
-            before={**LEX, "xdg/opencode/plugins/daisugi-gate.ts": {"text": "// gate\n"}},
+            before={**LEX, "xdg/opencode/plugins/daisugi-warden.ts": {"text": "// warden\n"}},
             env={"XDG_CONFIG_HOME": "{HOME}/xdg"},
         )
     )
@@ -637,7 +637,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             "modules switchyard selected no binary",
             "modules",
             *j,
-            before=cfg("matcher_model: lexical\ngateway_router: switchyard\n"),
+            before=cfg("matcher_model: lexical\nrouting_mode: switchyard\n"),
         )
     )
     add(
@@ -645,7 +645,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             "modules knn selected",
             "modules",
             *j,
-            before=cfg("matcher_model: lexical\ngateway_router: knn\n"),
+            before=cfg("matcher_model: lexical\nrouting_mode: knn\n"),
         )
     )
     add(case("modules knn row text", "modules", before=LEX))
@@ -656,19 +656,19 @@ def build_modules_cases() -> list[dict[str, Any]]:
     )
     add(
         case(
-            "modules gateway hook",
+            "modules router hook",
             "modules",
             *j,
-            before={**LEX, **settings(PreToolUse=[GATEWAY_HOOK])},
+            before={**LEX, **settings(PreToolUse=[ROUTER_HOOK])},
         )
     )
     add(
         case(
-            "modules gateway env",
+            "modules router env",
             "modules",
             *j,
             before=LEX,
-            env={"OPENDAISUGI_GATEWAY_BASE_URL": "http://127.0.0.1:1/x"},
+            env={"OPENDAISUGI_ROUTER_BASE_URL": "http://127.0.0.1:1/x"},
         )
     )
     # The backend rows.
@@ -810,11 +810,11 @@ def build_modules_cases() -> list[dict[str, Any]]:
         add(case("modules pieces fresh" + sfx, "modules", "--pieces", *fmt, before=LEX))
         add(
             case(
-                "modules pieces gate only" + sfx,
+                "modules pieces warden only" + sfx,
                 "modules",
                 "--pieces",
                 *fmt,
-                before={**LEX, **settings(PreToolUse=[GATE_HOOK])},
+                before={**LEX, **settings(PreToolUse=[WARDEN_HOOK])},
             )
         )
         add(
@@ -824,10 +824,10 @@ def build_modules_cases() -> list[dict[str, Any]]:
                 "--pieces",
                 *fmt,
                 before={
-                    **cfg("matcher_model: lexical\ngateway_router: switchyard\n"),
-                    **settings(PreToolUse=[GATE_HOOK, GATEWAY_HOOK]),
+                    **cfg("matcher_model: lexical\nrouting_mode: switchyard\n"),
+                    **settings(PreToolUse=[WARDEN_HOOK, ROUTER_HOOK]),
                     **claude_json,
-                    ".pi/agent/extensions/daisugi-gate/index.ts": {"text": "// gate\n"},
+                    ".pi/agent/extensions/daisugi-warden/index.ts": {"text": "// warden\n"},
                     **fake("sprig"),
                 },
                 sockets=[".opendaisugi/coppice/server.sock"],
@@ -835,12 +835,12 @@ def build_modules_cases() -> list[dict[str, Any]]:
         )
     add(
         case(
-            "modules pieces gateway env",
+            "modules pieces router env",
             "modules",
             "--pieces",
             "--json",
             before=LEX,
-            env={"OPENDAISUGI_GATEWAY_BASE_URL": "http://127.0.0.1:8787"},
+            env={"OPENDAISUGI_ROUTER_BASE_URL": "http://127.0.0.1:8787"},
         )
     )
     add(
@@ -850,7 +850,7 @@ def build_modules_cases() -> list[dict[str, Any]]:
             "--pieces",
             "--data-dir",
             "{HOME}/dd",
-            before={"dd/config.yaml": {"text": "gateway_router: switchyard\n"}, **LEX},
+            before={"dd/config.yaml": {"text": "routing_mode: switchyard\n"}, **LEX},
         )
     )
     add(
@@ -911,7 +911,7 @@ def build_dashboard_cases() -> list[dict[str, Any]]:
     )
     add(
         case(
-            "dashboard once gateway skipped lines",
+            "dashboard once router skipped lines",
             "dashboard",
             "--once",
             before={**LEX, TURNS: {"text": "{broken\n\n[1]\n" + turn("kept") + '{"task": "x"}\n'}},
@@ -919,7 +919,7 @@ def build_dashboard_cases() -> list[dict[str, Any]]:
     )
     add(
         case(
-            "dashboard once gateway not utf8",
+            "dashboard once router not utf8",
             "dashboard",
             "--once",
             before={**LEX, TURNS: {"hex": "ff0a"}},
@@ -927,7 +927,7 @@ def build_dashboard_cases() -> list[dict[str, Any]]:
     )
     add(
         case(
-            "dashboard once gateway empty",
+            "dashboard once router empty",
             "dashboard",
             "--once",
             before={**LEX, TURNS: {"text": ""}},
@@ -936,7 +936,7 @@ def build_dashboard_cases() -> list[dict[str, Any]]:
     # A record of other types: the oracle adds what is there (GW-8).
     add(
         case(
-            "dashboard once gateway float tokens",
+            "dashboard once router float tokens",
             "dashboard",
             "--once",
             before={**LEX, **turns(turn("floaty", tokens=(1.5, 2, 0, 0)))},
@@ -981,7 +981,7 @@ def build_dashboard_cases() -> list[dict[str, Any]]:
             "dashboard unbuilt matcher", "dashboard", "--once", before=cfg("matcher_model: nope\n")
         )
     )
-    add(case("dashboard invalid config", "dashboard", "--json", before=cfg("gate_mode: [1]\n")))
+    add(case("dashboard invalid config", "dashboard", "--json", before=cfg("warden_mode: [1]\n")))
     add(case("dashboard unknown option", "dashboard", "--bogus"))
     add(case("dashboard plain", "--plain", "dashboard", "--once", before=LEX))
     add(case("dashboard quiet", "-q", "dashboard", "--once", before=LEX))
@@ -1026,16 +1026,16 @@ def build_metrics_cases() -> list[dict[str, Any]]:
             },
         )
     )
-    add(case("metrics gateway not utf8", "metrics", before={TURNS: {"hex": "ff0a"}}))
+    add(case("metrics router not utf8", "metrics", before={TURNS: {"hex": "ff0a"}}))
     add(
         case(
-            "metrics gateway float tokens",
+            "metrics router float tokens",
             "metrics",
             before=turns(turn("f", tokens=(1.5, 2, 0, 0))),
         )
     )
     add(case("metrics unbuilt matcher", "metrics", before=cfg("matcher_model: nope\n")))
-    add(case("metrics invalid config", "metrics", before=cfg("gate_ask: maybe\n")))
+    add(case("metrics invalid config", "metrics", before=cfg("warden_ask: maybe\n")))
     add(
         case(
             "metrics data dir",
@@ -1516,6 +1516,168 @@ def build_hook_cases() -> list[dict[str, Any]]:
             coppice=True,
         )
     )
+
+    # The host formats: Hermes and OpenClaw send their own tool names.
+    h_terminal = {
+        "hook_event_name": "pre_tool_call",
+        "tool_name": "terminal",
+        "tool_input": {"command": "ls"},
+        "session_id": "h",
+        "cwd": "/w",
+        "extra": {"tool_call_id": "c"},
+    }
+    oc_exec = {"tool": "exec", "args": {"command": "ls"}, "session_id": "o", "tool_use_id": "t"}
+    add(hook("hook record hermes terminal", "--format", "hermes", stdin=h_terminal))
+    add(
+        hook(
+            "hook record hermes read relative",
+            "--format",
+            "hermes",
+            stdin={**h_terminal, "tool_name": "read_file", "tool_input": {"path": "a.txt"}},
+        )
+    )
+    add(
+        hook(
+            "hook record hermes write",
+            "--format",
+            "hermes",
+            stdin={
+                **h_terminal,
+                "tool_name": "write_file",
+                "tool_input": {"path": "/w/o", "content": "xyz"},
+            },
+        )
+    )
+    add(
+        hook(
+            "hook record hermes web urls",
+            "--format",
+            "hermes",
+            stdin={
+                **h_terminal,
+                "tool_name": "web_extract",
+                "tool_input": {"urls": ["https://a/b"]},
+            },
+        )
+    )
+    add(
+        hook(
+            "hook record hermes unknown",
+            "--format",
+            "hermes",
+            stdin={**h_terminal, "tool_name": "vision_analyze", "tool_input": {"image": "x"}},
+        )
+    )
+    add(hook("hook record hermes name under claude", "--format", "claude", stdin=h_terminal))
+    add(hook("hook record openclaw exec", "--format", "openclaw", stdin=oc_exec))
+    add(
+        hook(
+            "hook record openclaw apply patch",
+            "--format",
+            "openclaw",
+            stdin={
+                **oc_exec,
+                "tool": "apply_patch",
+                "args": {"patch": "*** Begin Patch\n*** Add File: /w/n\n+x\n*** End Patch"},
+            },
+        )
+    )
+    add(
+        hook(
+            "hook record openclaw web fetch",
+            "--format",
+            "openclaw",
+            stdin={**oc_exec, "tool": "web_fetch", "args": {"url": "https://x/y"}},
+        )
+    )
+    add(
+        hook(
+            "hook record openclaw unknown",
+            "--format",
+            "openclaw",
+            stdin={**oc_exec, "tool": "message", "args": {"action": "send"}},
+        )
+    )
+    add(
+        hook(
+            "hook record pi lowercase bash",
+            "--format",
+            "pi",
+            stdin={"tool_name": "bash", "tool_input": {"command": "ls"}, "session_id": "p"},
+        )
+    )
+    add(
+        hook(
+            "hook record pi unknown is mcp",
+            "--format",
+            "pi",
+            stdin={"tool_name": "ls", "tool_input": {}, "session_id": "p"},
+        )
+    )
+    return C
+
+
+def _cap(sid: str, n: int = 1) -> dict[str, Any]:
+    text = "".join(
+        json.dumps(
+            {
+                "captured_at": 1_700_000_000.0 + i,
+                "session_id": sid,
+                "tool_name": "Bash",
+                "step_type": "shell",
+                "command": "ls",
+            }
+        )
+        + "\n"
+        for i in range(n)
+    )
+    return {"text": text, "mode": 0o644}
+
+
+def _two_roots() -> dict[str, Any]:
+    return {
+        ".opendaisugi/captures/same.jsonl": _cap("same", 2),
+        ".opendaisugi/warden/captures/same.jsonl": _cap("same", 5),
+        ".opendaisugi/warden/captures/pi-only.jsonl": _cap("pi-only", 1),
+    }
+
+
+def build_hook_feed_cases() -> list[dict[str, Any]]:
+    """The journal feed reads the warden's captures beside the primary ones."""
+    C: list[dict[str, Any]] = []
+    add = C.append
+    add(case("hook list two roots", "hook", "list", before=_two_roots()))
+    add(case("hook list two roots json", "hook", "list", "--json", before=_two_roots()))
+    add(
+        case(
+            "hook list one root flag",
+            "hook",
+            "list",
+            "--captures-root",
+            "{HOME}/.opendaisugi/warden/captures",
+            before=_two_roots(),
+        )
+    )
+    add(
+        case(
+            "hook to-trace from warden root",
+            "hook",
+            "to-trace",
+            "pi-only",
+            before={".opendaisugi/warden/captures/pi-only.jsonl": _cap("pi-only", 1)},
+        )
+    )
+    add(case("hook to-trace missing names both roots", "hook", "to-trace", "nope"))
+    add(
+        case(
+            "hook auto-tend two roots",
+            "hook",
+            "auto-tend",
+            "--force",
+            "--skip-distill",
+            before={**_two_roots(), ".opendaisugi/config.yaml": {"text": "auto_tend: true\n"}},
+        )
+    )
     return C
 
 
@@ -1532,6 +1694,7 @@ def all_cases() -> list[dict[str, Any]]:
         + build_metrics_cases()
         + build_status_cases()
         + build_hook_cases()
+        + build_hook_feed_cases()
     )
     seen: set[str] = set()
     for c in cases:

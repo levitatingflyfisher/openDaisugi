@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 
 use daisugi_verify::aliases::{load_system, parse_and_resolve, Alias, Error, Registry};
-use daisugi_verify::gate::pyjson::{dumps, loads, Object, Value};
+use daisugi_verify::warden::pyjson::{dumps, loads, Object, Value};
 
 fn outcome(r: Result<Value, Error>) -> Value {
     Value::Obj(match r {

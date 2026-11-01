@@ -3,7 +3,7 @@
 //
 // Python's recursion limit is part of the oracle's behavior. Its walks
 // recurse once per tree level, so a deep enough command (about a thousand
-// && links) raises RecursionError, which the gate turns into a deny. This
+// && links) raises RecursionError, which the warden turns into a deny. This
 // port counts Python frames the same way and raises at the same depth:
 // every function below takes the frame depth its Python twin runs at.
 package shell
@@ -106,7 +106,7 @@ func Decompose(command string, depth int) (Decomposition, *pystr.Exception) {
 	return compute(command).resolve(depth)
 }
 
-// Cache keeps one call's decompositions: the gate decomposes the same
+// Cache keeps one call's decompositions: the warden decomposes the same
 // line in several rules, and parsing it once is enough.
 type Cache struct {
 	mu sync.Mutex

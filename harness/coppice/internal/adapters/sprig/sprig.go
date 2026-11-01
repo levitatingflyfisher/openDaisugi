@@ -58,10 +58,10 @@
 // explicit --session that happens to name a file already on disk (that
 // turn is about to fail regardless - NewSessionWriter's own refusal - and
 // its pre-existing history must not replay into the pane on the way there
-// either). A "verdict","decision":"deny" row is sprig's own real gate
+// either). A "verdict","decision":"deny" row is sprig's own real warden
 // refusal, so this adapter, unlike claude's and codex's, DOES report
 // blocked from its own stream for it: the clause travels in Detail. Every
-// other permission decision still also reaches coppice through the gate
+// other permission decision still also reaches coppice through the warden
 // hook (COPPICE_SOCK/COPPICE_PANE, wired by rule (a) of pane.Adapter) - the
 // tree row and the hook are two paths to the same fact, not competing ones.
 //
@@ -413,7 +413,7 @@ func (adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pane.
 	}
 	// Never replay a pre-existing session's recorded history into this
 	// pane: start tailing from wherever the file already ends, not from
-	// byte zero. This is unconditional, not gated on isResume: an explicit
+	// byte zero. This is unconditional, not checked on isResume: an explicit
 	// --session naming a file that ALREADY exists (SHOULD-FIX 1 - a
 	// client's own doing, not this adapter's resume path) is just as much
 	// a pre-existing file as an actual --resume is, and its history must
@@ -523,7 +523,7 @@ func (e errSessionNotFound) Error() string {
 
 // turnArgv builds one turn's full argv: --session-dir always, exactly one
 // of --session or --resume, then whatever extra flags the pane's own
-// StartOpts.Argv carried (--gate, --max-turns, ...), then the task,
+// StartOpts.Argv carried (--warden, --max-turns, ...), then the task,
 // separated by "--" so a task that happens to start with "-" is never
 // misread as a flag. It refuses outright, returning errSessionNotFound
 // instead of an argv, when a resume-started pane's session file does not
@@ -635,7 +635,7 @@ func (p *proc) Prompt(text string) error {
 	name, args := pane.Wrapped(p.opts.Wrap, binary(), argv)
 	cmd := exec.CommandContext(p.ctx, name, args...)
 	cmd.Dir = p.opts.Cwd
-	// Rule (a) of pane.Adapter: the only path by which the gate hook finds
+	// Rule (a) of pane.Adapter: the only path by which the warden hook finds
 	// COPPICE_SOCK and COPPICE_PANE, for this turn's process same as every
 	// other adapter's spawn.
 	cmd.Env = pane.BuildEnv(os.Environ(), p.opts.Env, p.opts.Sock, p.opts.PaneID, p.opts.DataDir)
@@ -950,7 +950,7 @@ func (p *proc) parseRow(line []byte) []pane.Event {
 		return []pane.Event{{Kind: pane.EvTool, Tool: r.Name, Detail: r.Detail}}
 	case "verdict":
 		if r.Decision == "deny" {
-			// This IS the real gate verdict the package doc points to:
+			// This IS the real warden verdict the package doc points to:
 			// blocked, with the clause attached, because sprig's tree
 			// carries a fact it produced, not because this adapter is
 			// guessing at a terminal.

@@ -11,8 +11,8 @@ pub mod runs;
 use rusqlite::types::ValueRef;
 use rusqlite::{params, Connection, OpenFlags};
 
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{any_json, dumps, Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{any_json, dumps, Object, Value};
 use crate::pathways::pmodel::{self, take_model, Id, Mode};
 use crate::pathways::store::{sql_err, Col};
 use crate::pathways::yamldump::safe_dump;
@@ -420,7 +420,7 @@ pub fn load_trace(traces_dir: &str, id: &str) -> Result<Result<Record, LoadError
                     typ: "TypeError".into(),
                     msg: format!(
                         "opendaisugi.models.{class}() argument after ** must be a mapping, not {}",
-                        crate::gate::pyjson::py_type_name(other)
+                        crate::warden::pyjson::py_type_name(other)
                     ),
                 }))
             }

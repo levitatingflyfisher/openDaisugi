@@ -580,7 +580,7 @@ func TestRunExpiresABlockedAskWithoutANewFrame(t *testing.T) {
 	this := "w1:p1"
 	sendState(t, enc, proto.PaneStateEvent{
 		V: 1, TS: nowSeconds(), SessionID: "s1", Harness: "claude-code", Pane: &this,
-		State: proto.StateBlocked, Source: proto.SrcGate,
+		State: proto.StateBlocked, Source: proto.SrcWarden,
 		Ask: &proto.Ask{ID: "a1", Tool: "Bash", Summary: "rm -rf build/", Deadline: nowSeconds() + 0.3},
 	})
 

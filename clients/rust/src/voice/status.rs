@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use super::engine::{py_path_str, resolve_engine};
 use super::moonshine::{moonshine_dir, ModelEnv, MOONSHINE_MODELS};
 use super::parakeet::{parakeet_dir, PARAKEET_MODELS};
-use crate::gate::pyjson::{self, Value};
+use crate::warden::pyjson::{self, Value};
 
 /// What this build calls itself in voice status.
 pub const STATUS_KIND: &str = "rust";

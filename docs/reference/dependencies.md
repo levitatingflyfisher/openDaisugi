@@ -33,6 +33,7 @@ exact versions.
 | typer | MIT | The `daisugi` CLI. The Go and Rust CLIs copy its parse and help output, so it stays while Python is the oracle. | keep |
 | click | BSD-3-Clause | `cli.py` uses `click.Choice`; typer no longer depends on it. | keep (small) |
 | numpy | BSD-3-Clause and others (0BSD, MIT, Zlib, CC0-1.0) | Similarity, clustering, the lexical matcher, audio resampling. | keep |
+| google-re2 | BSD-3-Clause | The engine for an MCP argument rule's `matches` and `not_matches` (`rule_regex.py`). RE2 runs in linear time, so a rule regex cannot hang the warden, and it is the engine Go `regexp` and Rust `regex` implement. Imported only when a rule regex runs. | keep (new 2026-11-01) |
 | networkx | BSD-3-Clause | Was four graph calls in `dag.py`. Our own walk now gives networkx's answers (tested against it on 2000 random plans). | removed 2026-10-09 |
 
 `rich` arrives only through typer; `src/opendaisugi` never imports it.
@@ -42,7 +43,7 @@ exact versions.
 | Extra: package | Licence | Why we need it | Status |
 |---|---|---|---|
 | `[generate]` httpx | BSD-3-Clause | Our own model client (`llm_client.py`): the Anthropic Messages wire and OpenAI-compatible chat. | optional |
-| `[gateway]` httpx, uvicorn | BSD-3-Clause | The Python token-saving gateway (the oracle; Go and Rust have their own). | optional |
+| `[router]` httpx, uvicorn | BSD-3-Clause | The Python token-saving router (the oracle; Go and Rust have their own). | optional |
 | `[search]` sentence-transformers | Apache-2.0 | The MiniLM matcher through torch. Not the default matcher (`lexical` is). torch pulls NVIDIA's proprietary CUDA wheels: see Licences. | optional; open (the int8 matcher runs the same model with no torch) |
 | `[potion]` model2vec | MIT | The potion matcher. The Go and Rust ports load potion with their own code. | optional; open (port the loader back) |
 | `[potion]` huggingface_hub | Apache-2.0 | `snapshot_download` of the potion model at a pinned revision. | optional (declared 2026-10-09) |
@@ -72,7 +73,7 @@ exact versions.
 | twine | Apache-2.0 | PyPI upload. No script used it; it pulled 22 packages into every dev venv. Run `uvx twine` at release time. | removed 2026-10-09 |
 | litellm, instructor | MIT | Were the model client. Our own `llm_client.py` replaced them. | removed (before this page) |
 
-`[dev]` pulls in `[mcp]`, `[shell]`, `[sign]`, `[gateway]`, `[tui]`, `[voice]`,
+`[dev]` pulls in `[mcp]`, `[shell]`, `[sign]`, `[router]`, `[tui]`, `[voice]`,
 `[potion]`, `[int8]` and `[generate]` so their tests run. It never pulls `[search]`,
 `[lora]` or `[vla]`.
 

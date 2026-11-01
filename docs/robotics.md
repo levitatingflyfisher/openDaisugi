@@ -146,3 +146,74 @@ Robot pathways export through the same `export(pathway, "json")` and
 union carries each step's type tag end-to-end — skills exported from one
 openDaisugi instance can be imported elsewhere without losing
 `joint_targets`, `target_position`, `action`, or `hold_s`.
+
+## Where openDaisugi sits in a robot stack
+
+openDaisugi works in the slow loop, above the controllers that run in real time.
+
+```
+LLM or VLA        slow loop. Proposes the task. A separate call writes the envelope.   openDaisugi
+Envelope check    before execution. Z3, schema, bounds and trajectory checks.          openDaisugi
+CBF-QP filter     real-time filter, about 100 Hz. Changes an action as little as it must.   controls stack
+Simplex fallback  a verified baseline takes over when the envelope is broken.          controls stack
+Perception        not solved. Every line above assumes it is right.
+```
+
+A foundation model such as pi0 turns pixels into motor commands with no safety layer of
+its own. Wrapping it bounds the damage a bad output can do. It does not raise the share of
+tasks the model completes. The envelope can prove a force stays under 5 N. It cannot prove
+the camera saw the glass. That is the perception gap, and the work here bounds it.
+
+### What exists
+
+| Layer | State |
+|---|---|
+| Agent verification: envelope, `verify`, supervisor, journal | Built and tested in Python, Go and Rust |
+| Robot step types, robot permissions, four invariants | Built, experimental. Checked by `verify`. |
+| MuJoCo executor with rollout-time torque and contact guards | Built, experimental. Behind the `robotics` extra. |
+| VLA executor scaffolding and a pi/SmolVLA recipe | Built, experimental ([pi-vla-integration.md](pi-vla-integration.md)) |
+| Evidence that the checker helps a real VLA | None. No intervention measurement has been run. |
+| CBF-QP filter, trajectory pre-simulation, world-model rollout | Not built. The first is the controls stack's job. |
+| Perception-conditioned envelopes | Idea only. See [the north star](north-star.md). |
+| Hardware-attested checker | Designed, not built ([security model](security-model.md#hardware-attestation-designed-not-built)) |
+
+### Prior art
+
+Runtime safety filters under a VLA already exist, and openDaisugi does not build one.
+
+- SafeVLA (NeurIPS 2025) aligns a VLA for safety with constrained reinforcement learning at
+  training time.
+- The Attention-Guided Safety Filter ([arXiv 2606.09749](https://arxiv.org/abs/2606.09749), 2026) reads the target from the
+  VLA's attention heads, treats the rest of the scene as obstacles and enforces avoidance
+  with a runtime control barrier function filter. It needs no retraining.
+- Safe-Night VLA (arXiv 2603.05754, 2026) adds thermal perception to a VLA and enforces workspace limits with a control barrier function filter
+  ([source](https://arxiv.org/abs/2603.05754)).
+
+What we did not find is the level above the filter. Here a model writes the task-specific
+constraint set that the filter enforces, and the set can only tighten a fixed base. We also
+did not find verified VLA trajectories compiled into movement primitives, so that a
+repeated task skips the VLA. "Not found" is not "does not exist". Check newer work before
+you quote this.
+
+### Checks at four time scales (designed)
+
+| Scale | Check | Catches |
+|---|---|---|
+| About 10 ms per cycle | CBF-QP filter | A control step that leaves the safe set |
+| 10 to 50 ms | Trajectory pre-simulation | A bad VLA chunk, before it runs |
+| About 10 ms | World-model rollout | A meaning-level constraint, such as "do not tip the cup" |
+| Each decision | Perception confidence gating | A margin that is too thin for how well the robot sees |
+
+Only the second row has a start in this repo (the MuJoCo executor and its guards).
+
+### The test that would show the checker works
+
+Replay stored VLA trajectories against the checker in MuJoCo. This tests the checker, not
+the closed loop. Report three numbers:
+
+- **Intervention rate.** The share of chunks the checker blocks.
+- **Intervention precision.** The share of blocks that were right.
+- **Task-success retention.** The task success rate with the checker on, as a share of the rate with it off.
+
+A checker that blocks everything scores well on safety and fails on retention. The three
+numbers are read together. None has been measured.

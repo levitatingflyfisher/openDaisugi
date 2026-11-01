@@ -352,5 +352,5 @@ def test_a_core_profile_fake_client_reads_fail_open_one_on_exactly_the_predicate
     verdicts, _, failure = client_verdicts(argv, cases, timeout_s=CLIENT_TIMEOUT_S)
     assert failure is None
     ids = fail_open_ids(cases, verdicts)
-    assert ids == ["351e3f0b43d62cd7"]
+    assert ids == ["2fc10b57178665b5"]
     assert score(cases, verdicts) == {"agree": len(cases) - 1, "disagree": 1, "fail_open": 1}

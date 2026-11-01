@@ -470,9 +470,9 @@ def test_wait_for_a_pane_already_ended_is_still_honest_about_an_unmatched_state(
 
 
 def test_wait_for_state_reads_an_expired_blocked_ask_as_working():
-    """A stale gate hold must not satisfy `until="blocked"` forever.
+    """A stale warden hold must not satisfy `until="blocked"` forever.
 
-    merge() only clears a gate blocked hold when a fresh event arrives. A
+    merge() only clears a warden blocked hold when a fresh event arrives. A
     poller has no fresh event, only the last stored one, so it must apply
     the same expiry effective_state applies at read time.
     """
@@ -483,7 +483,7 @@ def test_wait_for_state_reads_an_expired_blocked_ask_as_working():
                 session_id="s",
                 harness="shell",
                 state="blocked",
-                source="gate",
+                source="warden",
                 ts=time.time(),
                 pane="p1",
                 ask=Ask(id="a1", tool="Bash", summary="run it", deadline=0.0),
@@ -524,7 +524,7 @@ def test_build_backend_coppice_falls_back_to_the_default_socket(tmp_path):
     assert backend.data_dir == tmp_path / "coppice"
 
 
-def _write_gate_state(data_dir, pane_id: str, ev: PaneStateEvent) -> None:
+def _write_warden_state(data_dir, pane_id: str, ev: PaneStateEvent) -> None:
     import json
 
     from opendaisugi.session_tree import SessionTree
@@ -538,33 +538,33 @@ def _write_gate_state(data_dir, pane_id: str, ev: PaneStateEvent) -> None:
     tree.append("state", json.loads(ev.to_json()), clock=lambda: ev.ts)
 
 
-def test_build_backend_tmux_reads_gate_states_from_the_configured_data_dir(tmp_path):
-    """The tmux backend the registry builds must be able to see a gate fact
+def test_build_backend_tmux_reads_warden_states_from_the_configured_data_dir(tmp_path):
+    """The tmux backend the registry builds must be able to see a warden fact
     the session tree already holds, not the always-empty default a bare
     TmuxBackend() falls back to."""
     from opendaisugi.config import Config
     from opendaisugi.floor.registry import build_backend
 
     ev = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=1.0, pane="p1"
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=1.0, pane="p1"
     )
-    _write_gate_state(tmp_path, "p1", ev)
+    _write_warden_state(tmp_path, "p1", ev)
 
     backend = build_backend("tmux", Config(data_dir=tmp_path))
-    assert backend._gate_states()["p1"].state == "working"
+    assert backend._warden_states()["p1"].state == "working"
 
 
-def test_build_backend_herdr_reads_gate_states_from_the_configured_data_dir(tmp_path):
+def test_build_backend_herdr_reads_warden_states_from_the_configured_data_dir(tmp_path):
     from opendaisugi.config import Config
     from opendaisugi.floor.registry import build_backend
 
     ev = PaneStateEvent(
-        session_id="s1", harness="claude-code", state="working", source="gate", ts=1.0, pane="p1"
+        session_id="s1", harness="claude-code", state="working", source="warden", ts=1.0, pane="p1"
     )
-    _write_gate_state(tmp_path, "p1", ev)
+    _write_warden_state(tmp_path, "p1", ev)
 
     backend = build_backend("herdr", Config(data_dir=tmp_path))
-    assert backend._gate_states()["p1"].state == "working"
+    assert backend._warden_states()["p1"].state == "working"
 
 
 # The coppice config file. The Go side writes it; the Python side reads the

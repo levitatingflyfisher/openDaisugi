@@ -4,7 +4,7 @@
 //! writes the oracle's SQLite file. The Go client's `internal/pathways`
 //! is the reference.
 
-pub mod blake2b;
+pub use pando::blake2b;
 pub mod dumped;
 pub mod export;
 pub mod find;

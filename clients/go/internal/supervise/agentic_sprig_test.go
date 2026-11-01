@@ -31,7 +31,7 @@ func sprigAgentic(t *testing.T, ws, tmp, bin string, shell bool) *Agentic {
 	return &Agentic{Envelope: parent, Model: "haiku", Self: "/opt/daisugi", TempDir: tmp, Runtime: "sprig", Sprig: bin}
 }
 
-func TestAgenticSprigRunsUnderThePinnedGate(t *testing.T) {
+func TestAgenticSprigRunsUnderThePinnedWarden(t *testing.T) {
 	dir, ws, tmp := t.TempDir(), t.TempDir(), t.TempDir()
 	bin := fakeSprig(t, dir, `printf '%s' '{"answer": "done", "turns": 2}'`)
 	step := agenticStep(ws, []string{"Read", "Glob", "Bash"}, nil)
@@ -44,10 +44,10 @@ func TestAgenticSprigRunsUnderThePinnedGate(t *testing.T) {
 	if len(dirs) != 1 {
 		t.Fatalf("tree dirs %v", dirs)
 	}
-	root := filepath.Join(dirs[0], "gate")
+	root := filepath.Join(dirs[0], "warden")
 	args, _ := os.ReadFile(filepath.Join(dir, "args"))
-	want := []string{"--json", "--gate", "--gate-cmd",
-		"/opt/daisugi gate check --mode enforce --root " + root + " --session agentic-g --captures-root " + root + "/captures",
+	want := []string{"--json", "--warden", "--warden-cmd",
+		"/opt/daisugi warden check --mode enforce --root " + root + " --session agentic-g --captures-root " + root + "/captures",
 		"--tools", "read,bash", "--model", "haiku", "--session-dir", root + "/sessions", "--session", "agentic-g", "-"}
 	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
@@ -166,7 +166,7 @@ func TestAgenticSprigOnlyUnbackedToolsDelegatesNothing(t *testing.T) {
 	}
 }
 
-func TestAgenticSprigSpaceInTheGateCommandFails(t *testing.T) {
+func TestAgenticSprigSpaceInTheWardenCommandFails(t *testing.T) {
 	dir, ws := t.TempDir(), t.TempDir()
 	tmp := filepath.Join(t.TempDir(), "t mp")
 	if err := os.Mkdir(tmp, 0o755); err != nil {

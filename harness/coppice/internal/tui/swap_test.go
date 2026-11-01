@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// s swaps the selected agent's model or router (F12a). A model goes at
-// once; a router asks first, since it restarts the agent.
+// s swaps the selected agent's model or route (F12a). A model goes at
+// once; a route asks first, since it restarts the agent.
 
 // fakeSwapServer answers agent.set_model with when queued and every other
 // request ok, and keeps each swap request it gets.
@@ -42,7 +42,7 @@ func fakeSwapServer(t *testing.T) (sock string, got func() []map[string]any) {
 					case "agent.set_model":
 						reply = `{"id":"1","ok":true,"result":{"when":"queued"}}`
 						fallthrough
-					case "agent.set_router":
+					case "agent.set_route":
 						mu.Lock()
 						sets = append(sets, req)
 						mu.Unlock()
@@ -97,45 +97,45 @@ func TestSAsksForAModelAndSendsItAtOnce(t *testing.T) {
 	}
 }
 
-func TestSRouterAsksFirstAndEnterRestartsTheAgent(t *testing.T) {
+func TestSRouteAsksFirstAndEnterRestartsTheAgent(t *testing.T) {
 	sock, got := fakeSwapServer(t)
 	m := &Model{Rows: []Row{{ID: "w1:p1", Label: "auth", State: "idle", Harness: "claude", Kind: "pty"}}}
 	f := testFloor(m, 120)
 	f.o.Socket = sock
 	handleAll(t, f, key{kind: keyByte, b: 's'})
-	typeLine(t, f, "router gateway")
+	typeLine(t, f, "route router")
 	if len(got()) != 0 {
-		t.Fatalf("the router was swapped before the question: %v", got())
+		t.Fatalf("the route was swapped before the question: %v", got())
 	}
-	if m.Confirm != "w1:p1" || m.ConfirmRouter != "gateway" ||
+	if m.Confirm != "w1:p1" || m.ConfirmRoute != "router" ||
 		m.PromptLine() != "Restarts auth and resumes its conversation. A turn in progress ends. Enter resumes, Esc keeps." {
-		t.Fatalf("question: %q %q %q", m.Confirm, m.ConfirmRouter, m.PromptLine())
+		t.Fatalf("question: %q %q %q", m.Confirm, m.ConfirmRoute, m.PromptLine())
 	}
 	handleAll(t, f, key{kind: keyByte, b: '\r'})
 	sets := got()
-	if len(sets) != 1 || sets[0]["cmd"] != "agent.set_router" || sets[0]["router"] != "gateway" {
+	if len(sets) != 1 || sets[0]["cmd"] != "agent.set_route" || sets[0]["route"] != "router" {
 		t.Fatalf("requests %v", sets)
 	}
-	if want := "auth restarted and resumed through the gateway. It enforces again."; m.Message != want {
+	if want := "auth restarted and resumed through the router. It enforces again."; m.Message != want {
 		t.Fatalf("message %q, want %q", m.Message, want)
 	}
-	if m.Confirm != "" || m.ConfirmRouter != "" {
+	if m.Confirm != "" || m.ConfirmRoute != "" {
 		t.Fatal("the question stayed")
 	}
 }
 
-func TestSRouterThenEscKeepsTheAgentAndOtherWordsGetTheHint(t *testing.T) {
+func TestSRouteThenEscKeepsTheAgentAndOtherWordsGetTheHint(t *testing.T) {
 	sock, got := fakeSwapServer(t)
 	m := &Model{Rows: []Row{{ID: "w1:p1", Label: "auth", State: "idle", Harness: "claude", Kind: "pty"}}}
 	f := testFloor(m, 120)
 	f.o.Socket = sock
 	handleAll(t, f, key{kind: keyByte, b: 's'})
-	typeLine(t, f, "router direct")
+	typeLine(t, f, "route direct")
 	handleAll(t, f, key{kind: keyEsc})
-	if len(got()) != 0 || m.Confirm != "" || m.ConfirmRouter != "" {
+	if len(got()) != 0 || m.Confirm != "" || m.ConfirmRoute != "" {
 		t.Fatalf("Esc swapped: %v %q", got(), m.Confirm)
 	}
-	for _, line := range []string{"router switchyard", "model", "colour red", "model a b"} {
+	for _, line := range []string{"route switchyard", "model", "colour red", "model a b"} {
 		handleAll(t, f, key{kind: keyByte, b: 's'})
 		typeLine(t, f, line)
 		if m.Message != SwapHint || len(got()) != 0 {
@@ -148,22 +148,22 @@ func TestSHasNothingForAnAgentThatNamesNoHarness(t *testing.T) {
 	m := &Model{Rows: []Row{{ID: "w1:p1", Label: "sh", State: "idle"}}}
 	f := testFloor(m, 120)
 	handleAll(t, f, key{kind: keyByte, b: 's'})
-	if m.Swapping != "" || m.Message != "Swapping the model, router or loop of sh is not built for a pane with no harness yet." {
+	if m.Swapping != "" || m.Message != "Swapping the model, route or loop of sh is not built for a pane with no harness yet." {
 		t.Fatalf("swapping %q, message %q", m.Swapping, m.Message)
 	}
-	// Sprig headless has a model swap and no router swap. Only an agent whose conversation the server
+	// Sprig headless has a model swap and no route swap. Only an agent whose conversation the server
 	// reads as claude or headless sprig can move to another loop.
 	if mdl, rtr, lp := swaps(Row{Harness: "sprig", Kind: KindHeadless}); !mdl || rtr || !lp {
-		t.Fatalf("sprig headless: model %v router %v loop %v", mdl, rtr, lp)
+		t.Fatalf("sprig headless: model %v route %v loop %v", mdl, rtr, lp)
 	}
 	if mdl, rtr, lp := swaps(Row{Harness: "codex"}); mdl || rtr || lp {
-		t.Fatalf("codex: model %v router %v loop %v", mdl, rtr, lp)
+		t.Fatalf("codex: model %v route %v loop %v", mdl, rtr, lp)
 	}
 	if _, _, lp := swaps(Row{Harness: "sprig", Kind: "pty"}); lp {
 		t.Fatal("a terminal sprig has no conversation to move")
 	}
 	if mdl, rtr, lp := swaps(Row{Harness: "claude", Parent: "w1:p1"}); mdl || rtr || lp {
-		t.Fatalf("a subagent row: model %v router %v loop %v", mdl, rtr, lp)
+		t.Fatalf("a subagent row: model %v route %v loop %v", mdl, rtr, lp)
 	}
 }
 

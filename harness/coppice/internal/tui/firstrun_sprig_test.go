@@ -19,7 +19,7 @@ func TestThePickerLabelsSprigAsNeedingAModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := out.String()
-	if !strings.Contains(s, "  2. sprig    /bin/sprig  (needs a model: see docs/how-to/foreman-any-model.md)\n") {
+	if !strings.Contains(s, "  2. sprig    /bin/sprig  (needs a model: see docs/how-to/steward-any-model.md)\n") {
 		t.Fatalf("sprig is not labeled: %q", s)
 	}
 	if !strings.Contains(s, "  1. claude    /bin/claude\n") {
@@ -33,7 +33,7 @@ func TestSprigAloneIsNamedWithItsNote(t *testing.T) {
 	if _, err := FirstRun([]config.Found{{Name: "sprig", Path: "/bin/sprig"}}, strings.NewReader(""), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "sprig is your default. Enter opens it here.  (needs a model: see docs/how-to/foreman-any-model.md)\n") {
+	if !strings.Contains(out.String(), "sprig is your default. Enter opens it here.  (needs a model: see docs/how-to/steward-any-model.md)\n") {
 		t.Fatalf("no note: %q", out.String())
 	}
 }

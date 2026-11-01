@@ -2,7 +2,7 @@
 
 The dashboard is a live-metrics *skin* over the same `detect_stages` map that
 `daisugi modules` renders. It must: read the real local stores (journal,
-pathway, gateway) with zero fabrication, stay read-only (no store is created as
+pathway, router) with zero fabrication, stay read-only (no store is created as
 a side effect of looking), degrade gracefully when a store is empty or absent,
 and emit a JSON that is a strict superset of `wiring_json` so there is one
 contract for a future exporter to read.
@@ -40,18 +40,18 @@ class FakeStream:
         return self._buf.getvalue()
 
 
-def _seed_gateway(data_dir, *, input_tokens: int, output_tokens: int) -> None:
-    """Append one downgraded turn to the gateway journal at ``data_dir``.
+def _seed_router(data_dir, *, input_tokens: int, output_tokens: int) -> None:
+    """Append one downgraded turn to the router journal at ``data_dir``.
 
     ``summarize`` derives the headline "frontier tokens saved" from a downgraded
     turn's own input+output tokens (the work that ran on a cheaper model instead
     of the frontier), not from the per-record ``frontier_tokens_saved`` field —
     so seed the token counts and let the summary do the arithmetic.
     """
-    from opendaisugi.gateway_journal import GatewayJournal, GatewayTurnRecord
+    from opendaisugi.router_journal import RouterJournal, RouterTurnRecord
 
-    GatewayJournal(path=data_dir / "gateway" / "turns.jsonl").append(
-        GatewayTurnRecord(
+    RouterJournal(path=data_dir / "router" / "turns.jsonl").append(
+        RouterTurnRecord(
             created_at="2026-08-22T00:00:00+00:00",
             signature="sig",
             task="t",
@@ -84,14 +84,14 @@ def test_collect_metrics_is_read_only(tmp_path):
     collect_metrics(tmp_path)
     assert not (tmp_path / "journal").exists()
     assert not (tmp_path / "pathways.db").exists()
-    assert not (tmp_path / "gateway").exists()
+    assert not (tmp_path / "router").exists()
 
 
-def test_router_gauge_reflects_seeded_gateway_journal(tmp_path):
+def test_router_gauge_reflects_seeded_router_journal(tmp_path):
     # Two downgraded turns, each 1000 in + 117 out -> 2 * 1117 = 2,234 frontier
     # tokens that ran on a cheaper model instead of the frontier.
-    _seed_gateway(tmp_path, input_tokens=1000, output_tokens=117)
-    _seed_gateway(tmp_path, input_tokens=1000, output_tokens=117)
+    _seed_router(tmp_path, input_tokens=1000, output_tokens=117)
+    _seed_router(tmp_path, input_tokens=1000, output_tokens=117)
     router = collect_metrics(tmp_path)["router"][0]
     assert "2,234" in router.value, router.value  # summarized frontier tokens saved
     assert "$" in router.detail  # dollars alongside
@@ -109,9 +109,9 @@ def test_render_dashboard_ascii_reuses_module_map_and_has_flow(tmp_path):
 
 def test_unmetered_stage_states_why_it_is_blank(tmp_path):
     m = collect_metrics(tmp_path)
-    gate = " ".join(g.detail for g in m.get("gate", []))
+    warden = " ".join(g.detail for g in m.get("warden", []))
     ver = " ".join(g.detail for g in m.get("verifier", []))
-    assert "no passive counter" in gate
+    assert "no passive counter" in warden
     assert "benchmark" in ver
 
 

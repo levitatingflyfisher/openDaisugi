@@ -3,9 +3,10 @@
 pub mod agent;
 pub mod cli;
 pub mod env;
-pub mod gate;
+pub mod warden;
 pub mod goerr;
 pub mod gostr;
+pub mod help;
 pub mod hook;
 pub mod http;
 pub mod json;

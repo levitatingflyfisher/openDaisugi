@@ -5,10 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/router"
 )
 
 // CleanupPrompt is cleanup.CLEANUP_PROMPT_V1.
@@ -16,8 +17,11 @@ const CleanupPrompt = "Fix punctuation and obvious transcription errors. Keep th
 	"the words. Return only the corrected text."
 
 const (
-	noTextReason       = "The cleanup model returned no text. Check the model, then try again."
-	unreachableReason  = "The cleanup model failed to respond. Check that it is running, then try again."
+	noTextReason      = "The cleanup model returned no text. Check the model, then try again."
+	unreachableReason = "The cleanup model failed to respond. Check that it is running, then try again."
+	// shortReason is the reply of a cleanup model that cut the text: a
+	// small model context drops the end of a long transcript.
+	shortReason        = "The cleanup model returned much less text than it was given. The raw text is kept."
 	unwritableReason   = "The transcript could not be journaled. Check the data directory, then try again."
 	cleanupRouteReason = "voice cleanup runs on a fixed local model. It is never routed."
 )
@@ -85,6 +89,70 @@ func containsSlash(s string) bool {
 	return false
 }
 
+// MinCleanedPercent is how much of its source a cleaned chunk must keep. A
+// reply below it is a cut reply, and the raw text of the chunk is kept.
+const MinCleanedPercent = 80
+
+// CleanParts cleans a transcript window by window, so no one call is longer
+// than a small model can hold, and joins the results. A window that failed
+// to clean keeps its raw text, and so do the others' cleaned text. A clip of
+// one window goes through CleanTranscript whole. cleaned is true when any
+// window was cleaned; the reason is the first reason any window gave.
+func CleanParts(t *Transcript, cfg CleanupConfig, tr Transport, now time.Time) (CleanupResult, error) {
+	return CleanPartsBudget(t, cfg, tr, now, time.Now, CleanupBudget)
+}
+
+// CleanupBudget is all the time the cleanup calls of one clip share. A model
+// that hangs would otherwise cost its own timeout on every window of a long
+// clip. Past the budget, or after the model failed to answer once, the
+// windows left keep their raw text and the model is not called again.
+const CleanupBudget = 120 * time.Second
+
+const budgetReason = "The cleanup took too long, so the rest of the text is raw. " +
+	"Check that the cleanup model is fast enough, then try again."
+
+// CleanPartsBudget is CleanParts with its clock and budget given.
+func CleanPartsBudget(t *Transcript, cfg CleanupConfig, tr Transport, now time.Time,
+	clock func() time.Time, budget time.Duration) (CleanupResult, error) {
+	if len(t.Parts) <= 1 {
+		return CleanTranscript(t.Text, cfg, tr, now)
+	}
+	out := make([]string, 0, len(t.Parts))
+	var final CleanupResult
+	started := clock()
+	stopped := false
+	for _, part := range t.Parts {
+		if pystr.Strip(part) == "" || part == GapMarker {
+			out = append(out, part)
+			continue
+		}
+		if !stopped && clock().Sub(started) > budget {
+			stopped = true
+			if final.Reason == nil {
+				final.Reason = strp(budgetReason)
+			}
+		}
+		if stopped {
+			out = append(out, part)
+			continue
+		}
+		res, err := CleanTranscript(part, cfg, tr, now)
+		if err != nil {
+			return CleanupResult{}, err
+		}
+		out = append(out, res.Text)
+		final.Cleaned = final.Cleaned || res.Cleaned
+		if final.Reason == nil {
+			final.Reason = res.Reason
+		}
+		if res.Reason != nil && *res.Reason == unreachableReason {
+			stopped = true
+		}
+	}
+	final.Text = JoinTexts(out)
+	return final, nil
+}
+
 // CleanTranscript is cleanup.clean_transcript. A journal error that is
 // not a file error is returned as err, which the server answers 500, as
 // the oracle's would.
@@ -101,17 +169,20 @@ func CleanTranscript(text string, cfg CleanupConfig, tr Transport, now time.Time
 	if cleaned == "" {
 		return CleanupResult{Text: text, Reason: strp(noTextReason)}, nil
 	}
-	line, err := gateway.LocalTurnLine(model, text, cleanupRouteReason, in, out, now)
+	if utf8.RuneCountInString(cleaned)*100 < utf8.RuneCountInString(text)*MinCleanedPercent {
+		return CleanupResult{Text: text, Reason: strp(shortReason)}, nil
+	}
+	line, err := router.LocalTurnLine(model, text, cleanupRouteReason, in, out, now)
 	if err != nil {
 		return CleanupResult{}, err
 	}
-	if err := appendLine(filepath.Join(cfg.DataDir, "gateway", "turns.jsonl"), line); err != nil {
+	if err := appendLine(filepath.Join(cfg.DataDir, "router", "turns.jsonl"), line); err != nil {
 		return CleanupResult{Text: cleaned, Reason: strp(unwritableReason)}, nil
 	}
 	return CleanupResult{Text: cleaned, Cleaned: true}, nil
 }
 
-// appendLine is GatewayJournal.append: the parent made, one line added.
+// appendLine is RouterJournal.append: the parent made, one line added.
 func appendLine(path, line string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err

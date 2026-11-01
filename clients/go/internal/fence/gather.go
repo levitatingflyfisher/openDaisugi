@@ -16,20 +16,20 @@ import (
 
 // Options is what the command line and the environment say.
 type Options struct {
-	Harness   string   // "" picks it from the command's name
-	Workspace string   // "" is Cwd
-	Allow     []string // PATH or PATH:rw
-	Workdirs  []string // more dirs to read and write, checked like the workspace
-	Envelope  string   // an envelope file; "" looks in the gate root
-	GateRoot  string
-	Tmpdir    string   // the private temp dir a caller made (coppice); "" makes one
-	Sockets   []string // the coppice socket, connect only
-	Cmd       []string
-	Environ   []string // KEY=VALUE
-	Cwd       string
-	SelfExe   string // this binary's path, "" if unknown
-	PwHome    string // the password entry's home; "" when unknown
-	Pid       int    // the pid the harness will have (this one: exec keeps it)
+	Harness    string   // "" picks it from the command's name
+	Workspace  string   // "" is Cwd
+	Allow      []string // PATH or PATH:rw
+	Workdirs   []string // more dirs to read and write, checked like the workspace
+	Envelope   string   // an envelope file; "" looks in the warden root
+	WardenRoot string
+	Tmpdir     string   // the private temp dir a caller made (coppice); "" makes one
+	Sockets    []string // the coppice socket, connect only
+	Cmd        []string
+	Environ    []string // KEY=VALUE
+	Cwd        string
+	SelfExe    string // this binary's path, "" if unknown
+	PwHome     string // the password entry's home; "" when unknown
+	Pid        int    // the pid the harness will have (this one: exec keeps it)
 }
 
 func envMap(environ []string) map[string]string {
@@ -159,14 +159,17 @@ func Gather(o Options) (Input, string, error) {
 	for _, d := range o.Workdirs {
 		in.Workdirs = append(in.Workdirs, real(Expand(d, home, ws)))
 	}
+	// No git special case: a linked worktree gets no grant of its repo's
+	// common dir, since that dir holds the config and hooks the owner's git
+	// runs (review fix 3, H1). A Pando lead works in a clone of its own.
 	for _, sck := range o.Sockets {
 		if strings.HasPrefix(sck, "/") {
 			sck = filepath.Clean(sck)
 			in.Sockets = append(in.Sockets, filepath.Join(real(filepath.Dir(sck)), filepath.Base(sck)))
 		}
 	}
-	if o.GateRoot != "" {
-		in.GateRoot = real(Expand(o.GateRoot, home, ws))
+	if o.WardenRoot != "" {
+		in.WardenRoot = real(Expand(o.WardenRoot, home, ws))
 	}
 	switch {
 	case o.Tmpdir != "":
@@ -194,6 +197,17 @@ func Gather(o Options) (Input, string, error) {
 			in.StateExtra = append(in.StateExtra, r)
 		}
 	}
+	// The memory stores, as they resolve: a store that is a link shuts at its
+	// target. (A data dir that is a link is a StateExtra above, and Plan
+	// closes the stores under it.)
+	for _, d := range state {
+		for _, m := range Memory {
+			p := d + "/" + m
+			if r := real(p); r != p && r != real(d)+"/"+m {
+				in.NeverExtra = append(in.NeverExtra, r)
+			}
+		}
+	}
 	// The harness table's roots, as they resolve (FN-R-16).
 	for _, h := range Harness[in.Harness] {
 		p := norm(home + "/" + h.rel)
@@ -205,13 +219,13 @@ func Gather(o Options) (Input, string, error) {
 	envPath := o.Envelope
 	if envPath == "" {
 		roots := DataDirs(in.Env, home)
-		if in.GateRoot != "" {
-			roots = []string{filepath.Dir(in.GateRoot)}
+		if in.WardenRoot != "" {
+			roots = []string{filepath.Dir(in.WardenRoot)}
 		}
 		for _, d := range roots {
-			c := d + "/gate/envelopes/default.json"
-			if in.GateRoot != "" {
-				c = in.GateRoot + "/envelopes/default.json"
+			c := d + "/warden/envelopes/default.json"
+			if in.WardenRoot != "" {
+				c = in.WardenRoot + "/envelopes/default.json"
 			}
 			if _, err := os.Stat(c); err == nil {
 				envPath = c
@@ -346,22 +360,22 @@ func EnsureHarnessDirs(harness, home, workspace string) {
 	}
 }
 
-// GateRoots are the gate roots this plan connects to: --gate-root, else
-// each data dir's gate.
-func GateRoots(in Input) []string {
-	if in.GateRoot != "" {
-		return []string{in.GateRoot}
+// WardenRoots are the warden roots this plan connects to: --warden-root, else
+// each data dir's warden.
+func WardenRoots(in Input) []string {
+	if in.WardenRoot != "" {
+		return []string{in.WardenRoot}
 	}
 	var out []string
 	for _, d := range DataDirs(in.Env, in.Home) {
-		out = append(out, d+"/gate")
+		out = append(out, d+"/warden")
 	}
 	return out
 }
 
-// GateOn is true when a gate root is in use: its envelopes dir is there or
+// WardenOn is true when a warden root is in use: its envelopes dir is there or
 // cannot be read. Only a missing envelopes dir reads as off (FN-R-17).
-func GateOn(root string) bool {
+func WardenOn(root string) bool {
 	_, err := os.Stat(root + "/envelopes")
 	return !errors.Is(err, os.ErrNotExist)
 }

@@ -238,7 +238,7 @@ def test_splitmix_known_values():
     ]
 
 
-def test_the_gate_rule_covers_the_owner_verbs():
+def test_the_warden_rule_covers_the_owner_verbs():
     assert names_rank_record("daisugi rank record pick ch_000000000000 a")
     assert names_rank_record("daisugi rank record drop ch_000000000000")
     assert not names_rank_record("daisugi rank queue --json")
@@ -310,11 +310,11 @@ def test_pick_overrides_and_feeds_the_next_fit(tmp_path):
     assert out["order"] == ["b", "a"] and out["label"] == "b"
 
 
-def test_a_card_decays_after_seven_days_and_a_writer_records_it(tmp_path):
+def test_a_card_decays_after_fourteen_days_and_a_writer_records_it(tmp_path):
     dd = tmp_path / "dd"
     d = rank.rankings_dir(dd)
     d.mkdir(parents=True)
-    old = time.time() - 8 * 86400
+    old = time.time() - 15 * 86400
     row = {
         "choice_id": "ch_000000000001",
         "ranking_id": "r0",
@@ -337,7 +337,7 @@ def test_a_card_decays_after_seven_days_and_a_writer_records_it(tmp_path):
     assert res.exit_code == 0, res.output
     rows = [json.loads(x) for x in (d / "choices.jsonl").read_text().splitlines()]
     assert [r["event"] for r in rows] == ["opened", "ignored", "overridden"]
-    assert rows[1]["trigger"] == "time" and rows[1]["fired_at"] == old + 7 * 86400
+    assert rows[1]["trigger"] == "time" and rows[1]["fired_at"] == old + 14 * 86400
 
 
 def test_a_gone_alternative_is_follow_up_only(tmp_path):
@@ -412,3 +412,140 @@ def test_switch_cost_counts_the_runs_that_resumed_the_card(tmp_path):
     assert card.resumed == ["run_b", "run_c"]
     sc = rank.switch_cost(card, dd)
     assert sc["cost"] == "follow_up_only" and sc["fired_at"] == 20.0
+
+
+def test_show_reads_votes_and_choices_and_creates_nothing(tmp_path):
+    dd = tmp_path / "dd"
+    f = _write(
+        tmp_path / "a.json",
+        _doc([_att("a"), _att("b")], comps=_cmp("j1", "p1", "a", "b", "a", "a")),
+    )
+    out = json.loads(_run("choose", str(f), "--data-dir", str(dd), "--json").output)
+    cid = out["choice_id"]
+    res = _run("show", "--choice", cid, "--data-dir", str(dd), "--json")
+    assert res.exit_code == 0, res.output
+    doc = json.loads(res.output)
+    assert doc["ranking_id"] == "r1" and [c["event"] for c in doc["choices"]] == ["opened"]
+    assert doc["card"]["choice_id"] == cid
+    before = sorted(p.name for p in dd.rglob("*"))
+    _run("show", "--ranking", "r1", "--data-dir", str(dd))
+    assert sorted(p.name for p in dd.rglob("*")) == before
+
+
+def test_show_refuses_two_selectors_and_names_a_missing_ranking(tmp_path):
+    dd = tmp_path / "dd"
+    assert _run("show", "--ranking", "r1", "--choice", "ch_x", "--data-dir", str(dd)).exit_code == 2
+    res = _run("show", "--ranking", "nope", "--data-dir", str(dd))
+    assert res.exit_code == 1 and "No ranking nope." in res.output
+    assert not dd.exists()
+
+
+def test_tau_b_handles_ties():
+    assert rank.kendall_tau_b(["a", "b", "c"], ["a", "b", "c"]) == 1.0
+    assert rank.kendall_tau_b(["a", "b", "c"], ["c", "b", "a"]) == -1.0
+    assert rank.kendall_tau_b([["a", "b"], "c"], ["a", "b", "c"]) == pytest.approx(0.816496581)
+    assert rank.kendall_tau_b(["a"], ["a"]) is None
+
+
+def test_cyclic_magnitude_needs_a_loop():
+    def v(w, lo):
+        return rank.Vote(i=w, j=lo, win=1.0, judge="j")
+
+    assert rank.cyclic_magnitude([v("a", "b"), v("b", "c")]) is None
+    assert rank.cyclic_magnitude([v("a", "b"), v("b", "c"), v("c", "a")]) == pytest.approx(1.0)
+    assert rank.cyclic_magnitude([v("a", "b"), v("b", "c"), v("a", "c")]) == pytest.approx(0.0)
+
+
+def test_a_judge_under_the_floor_is_dropped(tmp_path):
+    dd = tmp_path / "dd"
+    for n in range(5):
+        comps = _cmp("j-bad", f"p{n}", "a", "b", "a", "a")
+        doc = {**_doc([_att("a"), _att("b")], comps=comps), "ranking_id": f"r{n}"}
+        f = _write(tmp_path / f"{n}.json", doc)
+        cid = json.loads(_run("choose", str(f), "--data-dir", str(dd), "--json").output)[
+            "choice_id"
+        ]
+        assert _run("record", "pick", cid, "b", "--data-dir", str(dd)).exit_code == 0
+        # the votes live in the journal, as rank judge writes them
+        rank.append_comparisons(dd, [{**c, "ranking_id": f"r{n}"} for c in comps])
+    out = json.loads(_run("judges", "--data-dir", str(dd), "--json").output)
+    t = out["judges"]["j-bad"]
+    assert t["cards"] == 5 and t["agree"] == 0.0 and t["dropped"] is True
+    assert (t["agreed"], t["disagreed"]) == (0, 5)
+    assert "j-bad" not in out["weights"]
+
+
+def test_judges_reads_nothing_into_existence(tmp_path):
+    res = _run("judges", "--data-dir", str(tmp_path / "dd"), "--json")
+    assert res.exit_code == 0 and json.loads(res.output)["judges"] == {}
+    assert not (tmp_path / "dd").exists()
+
+
+def test_beta_sample_is_deterministic_and_in_range():
+    a = rank.beta_sample(3, 2, rank.SplitMix64(7))
+    assert a == rank.beta_sample(3, 2, rank.SplitMix64(7)) and 0.0 < a < 1.0
+    assert rank.beta_sample(1, 1, rank.SplitMix64(7)) == rank.beta_sample(1, 1, rank.SplitMix64(7))
+
+
+def test_weights_follow_the_posterior_and_replay_exactly():
+    trust = {
+        "good": {"agreed": 40, "disagreed": 2, "dropped": False},
+        "poor": {"agreed": 6, "disagreed": 6, "dropped": False},
+        "cut": {"agreed": 0, "disagreed": 5, "dropped": True},
+    }
+    w1 = rank.judge_weights(trust, "ab12")
+    assert w1 == rank.judge_weights(trust, "ab12") and "cut" not in w1
+    assert w1["good"] > 1.4 and 0.0 < w1["poor"] < 2.0
+    assert rank.judge_weights(trust, "cd34") != w1
+
+
+def _doc_two_judges() -> dict:
+    comps = _cmp("j1", "p1", "a", "b", "a", "a") + _cmp("j2", "p2", "a", "b", "b", "b")
+    return _doc([_att("a"), _att("b")], comps=comps)
+
+
+def test_fit_uses_weights_and_names_them():
+    res = rank.fit(rank.parse(_doc_two_judges()), weights={"j1": 1.9, "j2": 0.1})
+    assert res["judge_weights"] == {"j1": 1.9, "j2": 0.1}
+    assert res["order"][0] == "a"
+    res2 = rank.fit(rank.parse(_doc_two_judges()), weights={"j1": 0.1, "j2": 1.9})
+    assert res2["scores"]["b"]["strength"] > res2["scores"]["a"]["strength"]
+    assert res["scores"]["a"]["strength"] > res["scores"]["b"]["strength"]
+    assert "judge_weights" not in rank.fit(rank.parse(_doc_two_judges()))
+
+
+def test_a_dropped_judge_has_no_vote():
+    res = rank.fit(rank.parse(_doc_two_judges()), weights={"j1": 1.0})
+    assert res["order"][0] == "a" and res["scores"]["a"]["votes"] == 1
+
+
+def test_beta_sample_values_are_pinned_for_the_ports():
+    assert rank.beta_sample(3, 2, rank.SplitMix64(7)) == 0.582930293
+    assert rank.beta_sample(1, 1, rank.SplitMix64(7)) == 0.389829748
+    trust = {
+        "good": {"agreed": 40, "disagreed": 2, "dropped": False},
+        "poor": {"agreed": 6, "disagreed": 6, "dropped": False},
+    }
+    assert rank.judge_weights(trust, "ab12") == {"good": 1.921783876, "poor": 0.589813668}
+
+
+def test_a_card_decays_after_fourteen_days_not_seven(tmp_path):
+    def card(age_days):
+        dd = tmp_path / f"dd{age_days}"
+        _card_with_run(dd)
+        rows = [
+            json.loads(x)
+            for x in (rank.rankings_dir(dd) / "choices.jsonl").read_text().splitlines()
+        ]
+        rows[0]["ts"] = time.time() - age_days * 86400
+        (rank.rankings_dir(dd) / "choices.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows)
+        )
+        return dd, rank.read_cards(dd)[0]
+
+    dd, young = card(10)
+    assert rank.decay(young, dd, time.time()) is None
+    assert rank.queue(dd, time.time(), "date")["cards"][0]["decays_in_days"] == 4
+    dd, old = card(15)
+    assert rank.decay(old, dd, time.time())["trigger"] == "time"
+    assert rank.DECAY_SECONDS == 14 * 86400

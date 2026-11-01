@@ -24,16 +24,27 @@ def _perm(allowlist, *, decompose=True) -> Permission:
     return Permission(shell=True, shell_allowlist=allowlist, shell_allow_decomposition=decompose)
 
 
+def _perm_files(allowlist) -> Permission:
+    """Operands face the file scopes too (SG-1): these cases grant them all."""
+    return Permission(
+        shell=True,
+        shell_allowlist=allowlist,
+        shell_allow_decomposition=True,
+        file_read=["**"],
+        file_write=["**"],
+    )
+
+
 # --- opt-in: safe compound of allowlisted heads now verifies --------------------
 
 
 def test_pipe_of_allowlisted_heads_passes_when_opted_in():
-    result = verify(_plan("grep -r TODO src | head -20"), _env(_perm(["grep", "head"])))
+    result = verify(_plan("grep -r TODO src | head -20"), _env(_perm_files(["grep", "head"])))
     assert result.ok, result.violations
 
 
 def test_newline_joined_allowlisted_heads_pass():
-    result = verify(_plan("cd x\nsed -n 1,5p f"), _env(_perm(["cd", "sed"])))
+    result = verify(_plan("cd x\nsed -n 1,5p f"), _env(_perm_files(["cd", "sed"])))
     assert result.ok, result.violations
 
 
@@ -84,6 +95,7 @@ def test_redirect_write_inside_file_scope_passes():
         shell=True,
         shell_allowlist=["sort"],
         shell_allow_decomposition=True,
+        file_read=["x"],
         file_write=["out/**"],
     )
     result = verify(_plan("sort x > out/sorted.txt"), _env(perm))
@@ -117,7 +129,7 @@ def test_dev_null_write_is_always_in_scope():
 def test_quoted_metacharacter_argument_passes_after_decomposition():
     # The bash grammar proved the pipe-in-quotes is data, so the decomposed
     # part must not be re-rejected by the raw metachar regex.
-    result = verify(_plan('grep -E "a|b" f && ls'), _env(_perm(["grep", "ls"])))
+    result = verify(_plan('grep -E "a|b" f && ls'), _env(_perm_files(["grep", "ls"])))
     assert result.ok, result.violations
 
 

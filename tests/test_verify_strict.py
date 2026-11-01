@@ -10,7 +10,7 @@ def _env(stakes):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(shell=True, shell_allowlist=["ls"], file_read=["**"]),
         stakes=stakes,
     )
 
@@ -34,7 +34,7 @@ def _opaque_env(stakes, inv_type="no_credit_cards"):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(shell=True, shell_allowlist=["ls"], file_read=["**"]),
         stakes=stakes,
         invariants=[
             Invariant(type=inv_type, description="custom safety property", expr=None, enforce=True)
@@ -52,9 +52,11 @@ def test_opaque_invariant_rejected_under_strict_high():
     assert any(v.stage == "predicate" and "no_credit_cards" in v.message for v in result.violations)
 
 
-def test_opaque_invariant_passes_as_documentation_at_low_stakes():
+def test_opaque_invariant_is_rejected_at_low_stakes_too():
+    # SG-8: a safety property nothing can check is never a silent pass.
     result = verify(_plan(), _opaque_env("low"))
-    assert result.ok, result.violations
+    assert not result.ok
+    assert result.violations[0].detail["reason"] == "opaque_unrecognized"
 
 
 def test_opaque_invariant_with_enforce_false_skipped_even_at_high():

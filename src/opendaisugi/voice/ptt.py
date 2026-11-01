@@ -42,8 +42,14 @@ class VoiceServerError(RuntimeError):
     """The voice server answered a request with an error, or could not be reached.
 
     The message is ready to show a person as one line. It never needs a
-    caller to unpack a status code or a JSON body first.
+    caller to unpack a status code or a JSON body first. busy is true when
+    the server is still turning an earlier clip into text (409): the clip is
+    good, and it can go out again later.
     """
+
+    def __init__(self, message: str = "", *, busy: bool = False) -> None:
+        super().__init__(message)
+        self.busy = busy
 
 
 def _read_token_file(token_file) -> str | None:
@@ -67,6 +73,21 @@ def _error_message(payload: dict | None, exc: urllib_error.HTTPError) -> str:
     if payload is None:
         return fallback
     return str(payload.get("message") or payload.get("error") or fallback)
+
+
+def _no_answer() -> VoiceServerError:
+    return VoiceServerError("The voice server did not answer in time.")
+
+
+def _not_json() -> VoiceServerError:
+    return VoiceServerError("The voice server sent an answer that is not JSON.")
+
+
+def _read_json(resp) -> dict:
+    try:
+        return json.loads(resp.read())
+    except ValueError as exc:
+        raise _not_json() from exc
 
 
 def _unreachable(server_url: str) -> VoiceServerError:
@@ -120,11 +141,15 @@ class HttpVoiceClient:
         )
         try:
             with urllib_request.urlopen(req, timeout=self.timeout_s) as resp:
-                return json.loads(resp.read())
+                return _read_json(resp)
         except urllib_error.HTTPError as exc:
-            raise VoiceServerError(_error_message(_read_error_payload(exc), exc)) from exc
+            payload = _read_error_payload(exc)
+            busy = exc.code == 409 and payload is not None and payload.get("error") == "busy"
+            raise VoiceServerError(_error_message(payload, exc), busy=busy) from exc
         except urllib_error.URLError as exc:
             raise _unreachable(self.server_url) from exc
+        except TimeoutError as exc:
+            raise _no_answer() from exc
 
     def deliver(self, pane: str, text: str, *, mode: str) -> dict:
         body = json.dumps({"pane": pane, "text": text, "mode": mode}).encode()
@@ -136,7 +161,7 @@ class HttpVoiceClient:
         )
         try:
             with urllib_request.urlopen(req, timeout=self.timeout_s) as resp:
-                return json.loads(resp.read())
+                return _read_json(resp)
         except urllib_error.HTTPError as exc:
             payload = _read_error_payload(exc)
             if payload is not None and "delivered" in payload:
@@ -145,6 +170,8 @@ class HttpVoiceClient:
             raise VoiceServerError(_error_message(payload, exc)) from exc
         except urllib_error.URLError as exc:
             raise _unreachable(self.server_url) from exc
+        except TimeoutError as exc:
+            raise _no_answer() from exc
 
 
 def record_and_send(
@@ -249,16 +276,22 @@ def run_ptt(
     discarding an in-progress recording first. Returns the text and delivery
     result pairs produced, one per full press and release cycle. A cycle
     that raises VoiceServerError prints the message and moves on, so one bad
-    clip does not end the session.
+    clip does not end the session. A clip the server refused because it was
+    busy with a long job is kept, and goes out with the next one, so the
+    words are not lost. A clip that meets any error is kept, never dropped, and
+    a kept clip still unsent when the session ends is named.
     """
     open_stream = open_stream or _default_stream
     results: list[tuple[str, dict]] = []
     recording = False
     stream: "RecordStream | None" = None
+    kept: list[bytes] = []
     for ch in keys:
         if ch == "q":
             if recording and stream is not None:
                 stream.stop()
+            if kept:
+                print_fn("A kept recording was not sent.")
             break
         if ch == " " and not recording:
             recording = True
@@ -273,10 +306,14 @@ def run_ptt(
                 if chunk:
                     frames.append(chunk)
             stream.stop()
+            frames = kept + frames
+            kept = []
             try:
                 text, result = record_and_send(frames, pane=pane, client=client, print_fn=print_fn)
             except VoiceServerError as exc:
                 print_fn(str(exc))
+                kept = frames
+                print_fn("Your recording is kept and goes out with the next one.")
                 continue
             results.append((text, result))
     return results

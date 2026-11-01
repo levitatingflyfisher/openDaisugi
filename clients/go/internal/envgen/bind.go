@@ -131,12 +131,23 @@ var verifyPlan = verify.Verify
 // that did not finish is a failure here, where the oracle's lenient
 // verify keeps it as a warning (GW-11, K1-3).
 func PlanVerifies(plan *pyjson.Object, env verify.Envelope, z3ms int) bool {
+	ok, _ := PlanVerdict(plan, env, z3ms)
+	return ok
+}
+
+// PlanVerdict is PlanVerifies with the messages of the violations, for the
+// reason recall gives.
+func PlanVerdict(plan *pyjson.Object, env verify.Envelope, z3ms int) (bool, []string) {
 	p, err := verify.ParsePlan(json.RawMessage(pathways.DumpJSON(plan)))
 	if err != nil {
-		return false
+		return false, nil
 	}
 	r := verifyPlan(p, env, verify.VerifyOptions{Z3TimeoutMs: z3ms})
-	return r.OK && len(r.Timeouts) == 0
+	var msgs []string
+	for _, v := range r.Violations {
+		msgs = append(msgs, v.Message)
+	}
+	return r.OK && len(r.Timeouts) == 0, msgs
 }
 
 // Bind is bind_parameters: a verified concrete plan for task, or the

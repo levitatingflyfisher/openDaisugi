@@ -16,13 +16,13 @@ Each case is a dict:
 - sessions: files to make under {SESS} first, {name: text}.
 - claude: the fake claude's replies, in order (see reply()).
 - api: the fake API's replies, in order (see api_reply()).
-- gate: the fake gate's rules (see gate_rule()).
+- warden: the fake warden's rules (see warden_rule()).
 - fakes: which fake binaries are on PATH: a subset of "claude", "fakegate",
-  "daisugi" (the fake gate under the name daisugi). Default: claude and
+  "daisugi" (the fake warden under the name daisugi). Default: claude and
   fakegate.
 - pwd_link: run with PWD set to a symlink to {WORK}.
-- real_gate: run only with --daisugi, once per daisugi binary given, with
-  that binary on PATH as daisugi, after `daisugi gate init --workspace
+- real_warden: run only with --daisugi, once per daisugi binary given, with
+  that binary on PATH as daisugi, after `daisugi warden init --workspace
   {WORK}` in the side's HOME.
 - tree: the fake tree command's replies, in order ({"stdout", "stderr",
   "exit"}); it is on PATH as faketree and records each call.
@@ -119,8 +119,8 @@ def api_text_usage(text: str, usage: dict):
     )
 
 
-def gate_rule(tool="*", match="", exit=0, stdout="", stderr="", sleep=0.0):
-    """A fake gate rule: the first rule whose tool and match fit the payload
+def warden_rule(tool="*", match="", exit=0, stdout="", stderr="", sleep=0.0):
+    """A fake warden rule: the first rule whose tool and match fit the payload
     decides. tool is the payload's tool_name or "*"; match is a substring of
     the raw payload."""
     return {
@@ -133,14 +133,14 @@ def gate_rule(tool="*", match="", exit=0, stdout="", stderr="", sleep=0.0):
     }
 
 
-ALLOW_ALL = [gate_rule()]
+ALLOW_ALL = [warden_rule()]
 DENY_BASH = [
-    gate_rule(
+    warden_rule(
         tool="Bash",
         exit=2,
-        stderr="RuntimeWarning: noise\nopenDaisugi gate: DENIED \u2014 bash is not allowed\ntrailing\n",
+        stderr="RuntimeWarning: noise\nopenDaisugi warden: DENIED \u2014 bash is not allowed\ntrailing\n",
     ),
-    gate_rule(),
+    warden_rule(),
 ]
 
 API_ENV = {
@@ -150,8 +150,21 @@ API_ENV = {
 }
 
 
-def sprig(name, *args, **kw):
-    return {"name": name, "bin": "sprig", "args": list(args), **kw}
+def _warden_off(args, default_warden=False):
+    """Prepend --warden=false to a case that means "warden off": the warden is
+    on by default, so a case that does not name a --warden flag and does not
+    ask for the default gets the opt-out."""
+    named = any(
+        isinstance(a, str) and a.startswith("-") and a.lstrip("-").startswith("warden")
+        for a in args
+    )
+    if default_warden or named:
+        return list(args)
+    return ["--warden=false", *args]
+
+
+def sprig(name, *args, default_warden=False, **kw):
+    return {"name": name, "bin": "sprig", "args": _warden_off(args, default_warden), **kw}
 
 
 def rpc(id_, method, params=None):
@@ -176,15 +189,15 @@ def add(*cases):
 add(
     sprig("cli-version", "--version"),
     sprig("cli-version-one-dash", "-version"),
-    sprig("cli-help", "--help"),
-    sprig("cli-h", "-h"),
-    sprig("cli-undefined-flag", "--nope", "task"),
-    sprig("cli-missing-int", "--max-turns"),
-    sprig("cli-bad-int", "--max-turns", "x", "task"),
-    sprig("cli-int-out-of-range", "--max-turns=99999999999999999999", "task"),
+    sprig("cli-help", "--help", go_only=True),
+    sprig("cli-h", "-h", go_only=True),
+    sprig("cli-undefined-flag", "--nope", "task", go_only=True),
+    sprig("cli-missing-int", "--max-turns", go_only=True),
+    sprig("cli-bad-int", "--max-turns", "x", "task", go_only=True),
+    sprig("cli-int-out-of-range", "--max-turns=99999999999999999999", "task", go_only=True),
     sprig("cli-int-hex-no-task", "--max-turns", "0x10"),
     sprig("cli-int-underscore-no-task", "--max-turns", "1_0"),
-    sprig("cli-bad-bool", "--json=maybe", "task"),
+    sprig("cli-bad-bool", "--json=maybe", "task", go_only=True),
     sprig("cli-bool-false-version", "--json=false", "--version"),
     sprig("cli-bool-T", "--version=T"),
     sprig("cli-no-task"),
@@ -200,9 +213,9 @@ add(
     ),
     sprig("cli-dash-blank-stdin", "-", stdin="  \n\t "),
     sprig("cli-resume-needs-dir", "--resume", "abc", "task"),
-    sprig("cli-triple-dash", "---x"),
-    sprig("cli-dash-equals", "-=x"),
-    sprig("cli-missing-string", "--gate-cmd"),
+    sprig("cli-triple-dash", "---x", go_only=True),
+    sprig("cli-dash-equals", "-=x", go_only=True),
+    sprig("cli-missing-string", "--warden-cmd", go_only=True),
     sprig("cli-api-no-key", "task", env={"SPRIG_BACKEND": "api"}),
     sprig("cli-no-claude", "hello", fakes=[]),
     sprig("cli-flag-after-task", "do", "it", "--json", claude=[reply("ok")]),
@@ -223,13 +236,13 @@ add(
     ),
     sprig(
         "cli-tools-call-outside-wall",
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "--tools",
         "bash,read",
         "go",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
         claude=[reply(call("write", path="x.txt", content="no")), reply("refused")],
     ),
     sprig("cli-tools-empty", "--tools", "", "go", claude=[reply("never")]),
@@ -537,8 +550,8 @@ add(
     ),
     sprig(
         "loop-input-numbers",
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate check",
         "--session-dir",
         "{SESS}",
@@ -546,7 +559,7 @@ add(
         "nums",
         "do it",
         files={"f": "F"},
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
         claude=[
             reply(
                 "```sprig-tool\n"
@@ -565,17 +578,17 @@ add(
     ),
 )
 
-# --- the gate ---------------------------------------------------------------
+# --- the warden ---------------------------------------------------------------
 
 add(
     sprig(
-        "gate-allow-and-deny",
-        "--gate",
-        "--gate-cmd",
+        "warden-allow-and-deny",
+        "--warden",
+        "--warden-cmd",
         "fakegate check --mode enforce",
         "do it",
         files={"k.txt": "K"},
-        gate=DENY_BASH,
+        warden=DENY_BASH,
         claude=[
             reply(call("read", path="k.txt")),
             reply(call("bash", cmd="echo hi")),
@@ -583,119 +596,142 @@ add(
         ],
     ),
     sprig(
-        "gate-deny-stdout-only",
-        "--gate",
-        "--gate-cmd",
+        "warden-deny-stdout-only",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
-        gate=[gate_rule(exit=1, stdout="  just stdout  \n")],
+        warden=[warden_rule(exit=1, stdout="  just stdout  \n")],
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-deny-silent",
-        "--gate",
-        "--gate-cmd",
+        "warden-deny-silent",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
-        gate=[gate_rule(exit=7)],
+        warden=[warden_rule(exit=7)],
         claude=[reply(call("write", path="w", content="c")), reply("done")],
     ),
     sprig(
-        "gate-deny-stderr-last-line",
-        "--gate",
-        "--gate-cmd",
+        "warden-deny-stderr-last-line",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
-        gate=[gate_rule(exit=1, stderr="first\n  second line  \n\n\n")],
+        warden=[warden_rule(exit=1, stderr="first\n  second line  \n\n\n")],
         claude=[reply(call("edit", path="e", old="a", new="b")), reply("done")],
     ),
     sprig(
-        "gate-default-cmd-no-daisugi",
-        "--gate",
+        "warden-default-cmd-no-daisugi",
+        "--warden",
         "do it",
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-default-cmd-fake-daisugi",
-        "--gate",
+        "warden-default-cmd-fake-daisugi",
+        "--warden",
         "do it",
         fakes=["claude", "daisugi"],
-        gate=DENY_BASH,
+        warden=DENY_BASH,
         claude=[reply(call("bash", cmd="echo hi")), reply(call("read", path="x")), reply("d")],
     ),
     sprig(
-        "gate-cmd-not-found",
-        "--gate",
-        "--gate-cmd",
+        "default-warden-missing-daisugi",
+        "do it",
+        default_warden=True,
+        fakes=["claude"],
+        claude=[reply(call("bash", cmd="echo hi")), reply("done")],
+    ),
+    sprig(
+        "default-warden-fake-daisugi",
+        "do it",
+        default_warden=True,
+        fakes=["claude", "daisugi"],
+        warden=ALLOW_ALL,
+        claude=[reply(call("bash", cmd="echo hi")), reply("done")],
+    ),
+    sprig(
+        "warden-off-flag",
+        "--warden=false",
+        "do it",
+        fakes=["claude", "daisugi"],
+        warden=DENY_BASH,
+        claude=[reply(call("bash", cmd="echo hi")), reply("done")],
+    ),
+    sprig(
+        "warden-cmd-not-found",
+        "--warden",
+        "--warden-cmd",
         "nogate here",
         "do it",
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-cmd-bad-path",
-        "--gate",
-        "--gate-cmd",
-        "./no/such/gate",
+        "warden-cmd-bad-path",
+        "--warden",
+        "--warden-cmd",
+        "./no/such/warden",
         "do it",
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-cmd-not-executable",
-        "--gate",
-        "--gate-cmd",
+        "warden-cmd-not-executable",
+        "--warden",
+        "--warden-cmd",
         "./plain.txt",
         "do it",
         files={"plain.txt": "not a program"},
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-cmd-empty",
-        "--gate",
-        "--gate-cmd",
+        "warden-cmd-empty",
+        "--warden",
+        "--warden-cmd",
         "   ",
         "do it",
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-unknown-tool-skips-gate",
-        "--gate",
-        "--gate-cmd",
+        "warden-unknown-tool-skips-warden",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
         claude=[reply(call("zap", fence="```tool")), reply("done")],
     ),
     sprig(
-        "gate-pwd-symlink",
-        "--gate",
-        "--gate-cmd",
+        "warden-pwd-symlink",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
         pwd_link=True,
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
         claude=[reply(call("read", path="k")), reply("done")],
         files={"k": "K"},
     ),
     sprig(
-        "gate-session-id",
-        "--gate",
-        "--gate-cmd",
+        "warden-session-id",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "--session-dir",
         "{SESS}",
         "--session",
         "gs",
         "do it",
-        gate=DENY_BASH,
+        warden=DENY_BASH,
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
     ),
     sprig(
-        "gate-timeout",
-        "--gate",
-        "--gate-cmd",
+        "warden-timeout",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "do it",
-        gate=[gate_rule(sleep=12)],
+        warden=[warden_rule(sleep=12)],
         claude=[reply(call("bash", cmd="echo hi")), reply("done")],
         timeout=60,
     ),
@@ -998,7 +1034,7 @@ add(
     sprig("cli-key-fd-newline-only", "--key-fd", "3", "say hi", fds={"3": "\n"}, env=FD_API_ENV),
     sprig("cli-key-fd-not-open", "--key-fd", "9", "say hi", env=FD_API_ENV),
     sprig("cli-key-fd-stdio", "--key-fd", "1", "say hi", env=FD_API_ENV),
-    sprig("cli-key-fd-bad-int", "--key-fd", "x", "say hi"),
+    sprig("cli-key-fd-bad-int", "--key-fd", "x", "say hi", go_only=True),
     sprig("cli-key-fd-huge", "--key-fd", "99999999999", "say hi", env=FD_API_ENV),
     sprig(
         "cli-key-fd-version-first",
@@ -1034,17 +1070,17 @@ add(
         claude=[reply(call("bash", cmd=SHOW_ENV)), reply("shown")],
     ),
     sprig(
-        "cli-env-scrubbed-gate",
-        "--gate",
-        "--gate-cmd",
+        "cli-env-scrubbed-warden",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "--scrub-env",
         "SECRET_EXTRA",
         "read it",
         files={"a.txt": "A"},
-        gate=ALLOW_ALL,
-        sentinel=sentinel("cli-env-scrubbed-gate"),
-        env=key_env("cli-env-scrubbed-gate"),
+        warden=ALLOW_ALL,
+        sentinel=sentinel("cli-env-scrubbed-warden"),
+        env=key_env("cli-env-scrubbed-warden"),
         claude=[reply(call("read", path="a.txt")), reply("read")],
     ),
     sprig(
@@ -1098,12 +1134,12 @@ add(
     ),
     sprig(
         "cli-no-fd-leak",
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "check fds",
         fds={"5": "five", "7": ""},
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
         claude=[reply(call("bash", cmd=SHOW_FDS)), reply("checked")],
     ),
     sprig(
@@ -1566,7 +1602,7 @@ add(
         "say hi",
         claude=[reply("plenty")],
     ),
-    sprig("cli-max-tokens-bad", "--max-tokens", "lots", "say hi"),
+    sprig("cli-max-tokens-bad", "--max-tokens", "lots", "say hi", go_only=True),
     sprig(
         "cli-max-tokens-negative-off",
         "--max-tokens",
@@ -1713,6 +1749,34 @@ def tree_reply(status="ran", exit=None, **kw):
     return {"stdout": json.dumps(body) + "\n", "exit": code, **kw}
 
 
+def branch_reply(answer="kept", tokens=(10, 12), choice_id="ch_000000000001", **kw):
+    """One reply of the fake tree command for a branched run (attempts)."""
+    branches = [
+        {
+            "session": f"n-00000000000{k}",
+            "status": "ran",
+            "worktree": f"/w/b{k}",
+            "tokens_used": t,
+            "turns_used": 1,
+            "tests": [],
+        }
+        for k, t in enumerate(tokens)
+    ]
+    body = {
+        "status": "ran",
+        "session": "n-000000000000",
+        "answer": answer,
+        "reasons": [],
+        "branches": branches,
+        "leader": "n-000000000000",
+        "choice_id": choice_id,
+        "ranking": {},
+        "ranking_id": "br_000000000001",
+        "ask_id": None,
+    }
+    return {"stdout": json.dumps(body) + "\n", "exit": 0, **kw}
+
+
 SPAWN = ("--tools", "read,spawn", "--tree-cmd", "faketree --data-dir D", "--session", "par-1")
 CHILD_ENV = {"permissions": {"file_read": ["{WORK}/**"], "max_execution_time_s": 30}}
 
@@ -1787,28 +1851,30 @@ add(
         claude=[reply("hi")],
     ),
     sprig(
-        "spawn-gate-deny",
-        "--gate",
-        "--gate-cmd",
+        "spawn-warden-deny",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         *SPAWN,
-        "delegate",
-        gate=[
-            gate_rule(tool="mcp__sprig__spawn", exit=2, stderr="openDaisugi gate: DENIED spawn\n"),
-            gate_rule(),
+        "spawn",
+        warden=[
+            warden_rule(
+                tool="mcp__sprig__spawn", exit=2, stderr="openDaisugi warden: DENIED spawn\n"
+            ),
+            warden_rule(),
         ],
         tree=[],
         claude=[reply(spawn_call()), reply("it was refused")],
     ),
     sprig(
         "spawn-runs",
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         *SPAWN,
         "--json",
-        "delegate",
-        gate=ALLOW_ALL,
+        "spawn",
+        warden=ALLOW_ALL,
         tree=[tree_reply(answer="three files", tokens_used=40, turns_used=2)],
         claude=[
             reply(spawn_call(profile="desk", model="llama3.3:70b", tools=["read", "bash"])),
@@ -1818,7 +1884,7 @@ add(
     sprig(
         "spawn-refused",
         *SPAWN,
-        "delegate",
+        "spawn",
         tree=[
             tree_reply(
                 "refused", reasons=["tokens: the child asks for 9; the parent has 1 left", "x"]
@@ -1829,7 +1895,7 @@ add(
     sprig(
         "spawn-asked",
         *SPAWN,
-        "delegate",
+        "spawn",
         tree=[tree_reply("asked", ask_id="ask_0123456789ab", reasons=["r"])],
         claude=[reply(spawn_call()), reply("asked")],
     ),
@@ -1837,14 +1903,14 @@ add(
         "spawn-failed-child",
         *SPAWN,
         "--json",
-        "delegate",
+        "spawn",
         tree=[tree_reply("failed", reasons=["agentic sub-agent failed: sprig exited with code 1"])],
         claude=[reply(spawn_call(tokens=30)), reply("it failed")],
     ),
     sprig(
         "spawn-parent-pinned",
         *SPAWN,
-        "delegate",
+        "spawn",
         tree=[tree_reply(answer="ok")],
         claude=[
             reply(spawn_call(parent="evil-root", session="evil", tokens=5, turns=2, max_turns=3)),
@@ -1856,7 +1922,7 @@ add(
         *SPAWN,
         "--spawn-keys-fd",
         "4",
-        "delegate",
+        "spawn",
         fds={"4": json.dumps({"desk": {"key": sentinel("spawn-keys-forwarded")}})},
         sentinel=sentinel("spawn-keys-forwarded"),
         env=key_env("spawn-keys-forwarded"),
@@ -1868,14 +1934,62 @@ add(
         *SPAWN,
         "--max-tokens",
         "200",
-        "delegate",
+        "spawn",
         tree=[tree_reply(answer="a", tokens_used=80), tree_reply(answer="b", tokens_used=80)],
         claude=[reply(spawn_call()), reply(spawn_call()), reply("never asked")],
     ),
     sprig(
+        "spawn attempts",
+        *SPAWN,
+        "--json",
+        "spawn",
+        tree=[branch_reply(answer="the kept answer", tokens=(30, 40), choice_id="ch_000000000001")],
+        claude=[
+            reply(spawn_call(attempts=2, why="failed_tests", tokens=60)),
+            reply("kept"),
+        ],
+    ),
+    sprig(
+        "spawn attempts no card",
+        *SPAWN,
+        "spawn",
+        tree=[branch_reply(answer="only one ran", tokens=(30, None), choice_id=None)],
+        claude=[reply(spawn_call(attempts=3, why="operator", tokens=50)), reply("kept")],
+    ),
+    sprig(
+        "spawn attempts bad",
+        *SPAWN,
+        "spawn",
+        tree=[],
+        claude=[
+            reply(spawn_call(attempts=9, why="operator")),
+            reply(spawn_call(attempts=2)),
+            reply(spawn_call(attempts=2, why="because")),
+            reply(spawn_call(attempts=1.5, why="operator")),
+            reply(spawn_call(attempts="2", why="operator")),
+            reply("gave up"),
+        ],
+    ),
+    sprig(
+        "spawn attempts cap",
+        *SPAWN,
+        "--max-tokens",
+        "100",
+        "spawn",
+        tree=[
+            branch_reply(answer="a", tokens=(40, 40), choice_id="ch_000000000001"),
+            tree_reply(answer="b", tokens_used=30),
+        ],
+        claude=[
+            reply(spawn_call(attempts=2, why="operator", tokens=60)),
+            reply(spawn_call()),
+            reply("never asked"),
+        ],
+    ),
+    sprig(
         "spawn-bad-input",
         *SPAWN,
-        "delegate",
+        "spawn",
         tree=[],
         claude=[
             reply(spawn_call(tokens=1.5)),
@@ -1888,7 +2002,7 @@ add(
     sprig(
         "spawn-tree-fails",
         *SPAWN,
-        "delegate",
+        "spawn",
         tree=[{"stdout": "not json", "stderr": "Traceback\nboom: it broke\n", "exit": 1}],
         claude=[reply(spawn_call()), reply("broken")],
     ),
@@ -1900,7 +2014,7 @@ add(
         "no-such-tree-cmd",
         "--session",
         "s",
-        "delegate",
+        "spawn",
         claude=[reply(spawn_call()), reply("missing")],
     ),
     sprig(
@@ -1910,7 +2024,7 @@ add(
         "anthropic",
         "--base-url",
         "{API}",
-        "delegate",
+        "spawn",
         tree=[tree_reply(answer="child ok", tokens_used=3)],
         api=[
             api_tools(("u1", "spawn", {"task": "t", "envelope": {"permissions": {}}, "tokens": 7})),
@@ -1926,7 +2040,7 @@ add(
         "{API}",
         "--model",
         "qwen3-coder",
-        "delegate",
+        "spawn",
         tree=[tree_reply(answer="child ok")],
         api=[
             oai_reply(calls=[("c1", "spawn", {"task": "t", "envelope": {"permissions": {}}})]),
@@ -1946,79 +2060,87 @@ BASH_PAYLOAD = json.dumps({"tool_name": "Bash", "tool_input": {"command": "rm -r
 READ_PAYLOAD = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}})
 
 add(
-    hook("hook-allow", READ_PAYLOAD, "--gate-cmd", "fakegate check", gate=DENY_BASH),
-    hook("hook-deny", BASH_PAYLOAD, "--gate-cmd", "fakegate check", gate=DENY_BASH),
-    hook("hook-deny-silent", BASH_PAYLOAD, "--gate-cmd", "fakegate", gate=[gate_rule(exit=1)]),
-    hook("hook-unreadable", "not json", "--gate-cmd", "fakegate", gate=ALLOW_ALL),
-    hook("hook-empty-stdin", "", "--gate-cmd", "fakegate", gate=ALLOW_ALL),
-    hook("hook-no-tool-name", '{"tool_input":{}}', "--gate-cmd", "fakegate", gate=ALLOW_ALL),
+    hook("hook-allow", READ_PAYLOAD, "--warden-cmd", "fakegate check", warden=DENY_BASH),
+    hook("hook-deny", BASH_PAYLOAD, "--warden-cmd", "fakegate check", warden=DENY_BASH),
+    hook(
+        "hook-deny-silent", BASH_PAYLOAD, "--warden-cmd", "fakegate", warden=[warden_rule(exit=1)]
+    ),
+    hook("hook-unreadable", "not json", "--warden-cmd", "fakegate", warden=ALLOW_ALL),
+    hook("hook-empty-stdin", "", "--warden-cmd", "fakegate", warden=ALLOW_ALL),
+    hook("hook-no-tool-name", '{"tool_input":{}}', "--warden-cmd", "fakegate", warden=ALLOW_ALL),
     hook(
         "hook-tool-name-wrong-type",
         '{"tool_name":5,"tool_input":{}}',
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
     ),
     hook(
         "hook-folded-dup-keys",
         '{"TOOL_NAME":"Read","tool_name":"Bash","Tool_Input":{"command":"x"},"tool_input":{"b":1}}',
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        gate=DENY_BASH,
+        warden=DENY_BASH,
     ),
-    hook("hook-no-input", '{"tool_name":"write"}', "--gate-cmd", "fakegate", gate=ALLOW_ALL),
+    hook("hook-no-input", '{"tool_name":"write"}', "--warden-cmd", "fakegate", warden=ALLOW_ALL),
     hook(
         "hook-input-numbers",
         '{"tool_name":"Bash","tool_input":{"command":"ls","n":1e2,"big":12345678901234567890,'
         '"neg":-0,"s":"<&>\\u2028","dup":1,"dup":{"x":[]}}}',
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
     ),
     hook(
-        "hook-gate-cmd-nbsp",
+        "hook-warden-cmd-nbsp",
         READ_PAYLOAD,
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate\u00a0check\u3000x",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
     ),
     hook("hook-default-cmd-no-daisugi", READ_PAYLOAD),
     hook(
         "hook-default-cmd-fake-daisugi",
         BASH_PAYLOAD,
         fakes=["daisugi"],
-        gate=DENY_BASH,
+        warden=DENY_BASH,
     ),
     hook(
         "hook-timeout",
         READ_PAYLOAD,
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        "--gate-timeout",
+        "--warden-timeout",
         "1",
-        gate=[gate_rule(sleep=3)],
+        warden=[warden_rule(sleep=3)],
     ),
     hook(
         "hook-bad-timeout-ignored",
         READ_PAYLOAD,
-        "--gate-timeout",
+        "--warden-timeout",
         "zero",
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        "--gate-timeout",
+        "--warden-timeout",
         "-4",
         "--unknown",
-        gate=ALLOW_ALL,
+        warden=ALLOW_ALL,
     ),
-    hook("hook-trailing-gate-cmd", READ_PAYLOAD, "--gate-cmd"),
+    hook("hook-trailing-warden-cmd", READ_PAYLOAD, "--warden-cmd"),
 )
 
 # --- sprig-mcp --------------------------------------------------------------
 
 
-def mcp(name, lines, *args, **kw):
+def mcp(name, lines, *args, default_warden=False, **kw):
     stdin = "".join(line + "\n" for line in lines) if isinstance(lines, list) else lines
-    return {"name": name, "bin": "sprig-mcp", "args": list(args), "stdin": stdin, **kw}
+    return {
+        "name": name,
+        "bin": "sprig-mcp",
+        "args": _warden_off(args, default_warden),
+        "stdin": stdin,
+        **kw,
+    }
 
 
 def tcall(id_, name, arguments):
@@ -2088,39 +2210,39 @@ add(
     mcp("mcp-empty", ""),
     mcp("mcp-help", [], "--help"),
     mcp(
-        "mcp-gate",
+        "mcp-warden",
         [tcall(1, "bash", {"cmd": "echo hi"}), tcall(2, "read", {"path": "r"})],
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         files={"r": "R"},
-        gate=DENY_BASH,
+        warden=DENY_BASH,
     ),
     mcp(
-        "mcp-gate-cmd-without-gate",
+        "mcp-warden-cmd-without-warden",
         [tcall(1, "bash", {"cmd": "echo free"})],
-        "--gate-cmd",
+        "--warden-cmd",
         "fakegate",
-        gate=[gate_rule(exit=1)],
+        warden=[warden_rule(exit=1)],
     ),
     mcp(
-        "mcp-gate-timeout",
+        "mcp-warden-timeout",
         [tcall(1, "read", {"path": "r"})],
-        "--gate",
-        "--gate-cmd",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
-        "--gate-timeout",
+        "--warden-timeout",
         "1",
-        gate=[gate_rule(sleep=3)],
+        warden=[warden_rule(sleep=3)],
     ),
-    mcp("mcp-gate-default-no-daisugi", [tcall(1, "read", {"path": "r"})], "--gate"),
+    mcp("mcp-warden-default-no-daisugi", [tcall(1, "read", {"path": "r"})], "--warden"),
 )
 
 # --- weave ------------------------------------------------------------------
 
 
-def weave(name, *args, **kw):
-    return {"name": name, "bin": "weave", "args": list(args), **kw}
+def weave(name, *args, default_warden=False, **kw):
+    return {"name": name, "bin": "weave", "args": _warden_off(args, default_warden), **kw}
 
 
 def wf(steps, name="flow"):
@@ -2226,13 +2348,13 @@ add(
         claude=[reply("C")],
     ),
     weave(
-        "weave-gate",
-        "--gate",
-        "--gate-cmd",
+        "weave-warden",
+        "--warden",
+        "--warden-cmd",
         "fakegate",
         "w.json",
         files={"w.json": wf([{"id": "a", "task": "t"}])},
-        gate=DENY_BASH,
+        warden=DENY_BASH,
         claude=[reply(call("bash", cmd="echo hi")), reply("blocked")],
     ),
     weave(
@@ -2244,18 +2366,18 @@ add(
     ),
 )
 
-# --- the real daisugi gate --------------------------------------------------
+# --- the real daisugi warden --------------------------------------------------
 
 add(
     sprig(
-        "real-gate-loop",
-        "--gate",
+        "real-warden-loop",
+        "--warden",
         "--session-dir",
         "{SESS}",
         "--session",
         "real",
         "do it",
-        real_gate=True,
+        real_warden=True,
         files={"in.txt": "inside"},
         claude=[
             reply(call("read", path="in.txt")),
@@ -2266,32 +2388,32 @@ add(
             reply("done"),
         ],
     ),
-    hook("real-gate-hook-deny", BASH_PAYLOAD, real_gate=True),
+    hook("real-warden-hook-deny", BASH_PAYLOAD, real_warden=True),
     hook(
-        "real-gate-hook-allow",
+        "real-warden-hook-allow",
         json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
-        real_gate=True,
+        real_warden=True,
     ),
     hook(
-        "real-gate-hook-sprig-names",
+        "real-warden-hook-sprig-names",
         json.dumps({"tool_name": "read", "tool_input": {"path": "/etc/hosts"}}),
-        real_gate=True,
+        real_warden=True,
     ),
     mcp(
-        "real-gate-mcp",
+        "real-warden-mcp",
         [
             tcall(1, "write", {"path": "m.txt", "content": "M"}),
             tcall(2, "bash", {"cmd": "rm -rf /"}),
             tcall(3, "read", {"path": "/etc/passwd"}),
         ],
-        "--gate",
-        real_gate=True,
+        "--warden",
+        real_warden=True,
     ),
     weave(
-        "real-gate-weave",
-        "--gate",
+        "real-warden-weave",
+        "--warden",
         "w.json",
-        real_gate=True,
+        real_warden=True,
         files={"w.json": wf([{"id": "a", "task": "t"}])},
         claude=[reply(call("bash", cmd="rm -rf ~")), reply("stopped")],
     ),
@@ -2611,7 +2733,7 @@ add(
 # one-shot call (--tools none, no MCP) marks the system block only; a run
 # with no system file marks nothing. The other wires send no mark.
 
-SYS = {"sys.txt": "You are the foreman."}
+SYS = {"sys.txt": "You are the steward."}
 
 add(
     sprig(
@@ -2746,6 +2868,153 @@ add(
         files=SYS,
         claude=[reply("wait")],
     ),
+)
+
+
+# --- the help tool ---------------------------------------------------------
+
+HELP_FILE = "\n".join(
+    [
+        '{"type":"session","v":1,"id":"h1","harness":"sprig","cwd":"/x","ts":1.5}',
+        '{"type":"prompt","id":"aaaa0001","parentId":null,"ts":2,"text":"first task"}',
+        '{"type":"assistant","id":"aaaa0002","parentId":"aaaa0001","ts":3,"model":"haiku",'
+        '"text":"","toolUses":[{"id":"t1","name":"help"}],"usage":{}}',
+        '{"type":"tool_call","id":"aaaa0003","parentId":"aaaa0002","ts":4,"toolUseId":"t1",'
+        '"name":"help","input":{"kind":"need_info","text":"which db?"}}',
+        '{"type":"verdict","id":"aaaa0004","parentId":"aaaa0003","ts":5,"toolUseId":"t1",'
+        '"decision":"allow"}',
+        '{"type":"tool_result","id":"aaaa0005","parentId":"aaaa0004","ts":6,"toolUseId":"t1",'
+        '"ok":true,"summary":"Your question was sent. The run pauses here. The answer comes as the next message."}',
+    ]
+)
+HELP_SESS = ("--session-dir", "{SESS}", "--session", "h1")
+
+
+def helpcall(kind, text="which db?"):
+    return call("help", kind=kind, text=text)
+
+
+add(
+    *[
+        sprig(
+            f"help-claude-{kind}",
+            "--json",
+            "--tools",
+            "read,help",
+            *HELP_SESS,
+            "task",
+            claude=[reply(helpcall(kind)), reply("never asked")],
+        )
+        for kind in ("need_info", "escalate", "give_up")
+    ],
+    sprig(
+        "help-claude-plain-output",
+        "--tools",
+        "help",
+        "task",
+        claude=[reply(helpcall("need_info", "plain?"))],
+    ),
+    sprig(
+        "help-api-escalate",
+        "--json",
+        "--tools",
+        "read,help",
+        "task",
+        env=API_ENV,
+        api=[api_tools(("u1", "help", {"kind": "escalate", "text": "owner call"}))],
+    ),
+    sprig(
+        "help-openai-give-up",
+        *OAI,
+        "--model",
+        "m1",
+        "--json",
+        "--tools",
+        "help",
+        "task",
+        api=[oai_reply(calls=[("c1", "help", {"kind": "give_up", "text": "cannot do it"})])],
+    ),
+    sprig(
+        "help-bad-kind",
+        "--json",
+        "--tools",
+        "help",
+        "task",
+        claude=[reply(helpcall("shout")), reply("ok after error")],
+    ),
+    sprig(
+        "help-empty-text",
+        "--json",
+        "--tools",
+        "help",
+        "task",
+        claude=[reply(helpcall("need_info", "  ")), reply("ok after error")],
+    ),
+    sprig(
+        "help-twice",
+        "--json",
+        "--tools",
+        "help",
+        "task",
+        claude=[
+            reply(
+                f"{TOOL_FENCE}\n"
+                + json.dumps({"tool": "help", "input": {"kind": "need_info", "text": "a"}})
+                + "\n```"
+            ),
+            reply("never"),
+        ],
+    ),
+    sprig(
+        "help-not-in-wall",
+        "--tools",
+        "read",
+        "task",
+        claude=[reply(helpcall("need_info")), reply("ok")],
+    ),
+    sprig(
+        "help-with-warden-down",
+        "--json",
+        "--warden",
+        "--tools",
+        "help",
+        "task",
+        claude=[reply(helpcall("need_info"))],
+        fakes=["claude", "fakegate", "daisugi"],
+        warden=[warden_rule(exit=2, stderr="no")],
+    ),
+    sprig(
+        "help-resume-new-session",
+        "--json",
+        "--tools",
+        "help",
+        "--session-dir",
+        "{SESS}",
+        "--resume",
+        "h1",
+        "--session",
+        "h2",
+        "sqlite",
+        sessions={"h1.jsonl": HELP_FILE},
+        claude=[reply("used sqlite")],
+    ),
+    sprig(
+        "help-resume-api",
+        "--json",
+        "--tools",
+        "help",
+        "--session-dir",
+        "{SESS}",
+        "--resume",
+        "h1",
+        "--session",
+        "h2",
+        "sqlite",
+        sessions={"h1.jsonl": HELP_FILE},
+        env=API_ENV,
+        api=[api_text("used sqlite via api")],
+    ),
+    sprig("help-tools-unknown", "--tools", "help,grep", "task", claude=[reply("never")]),
 )
 
 

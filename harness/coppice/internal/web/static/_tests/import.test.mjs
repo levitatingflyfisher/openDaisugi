@@ -4,7 +4,7 @@ import { reset, element } from './browser-stub.mjs';
 import { importView, mountImportBar, mountChat } from '../chat.js';
 
 // The import bar (FM-R-71): the owner's choice to bring old Claude Code and
-// Codex chats into the foreman. Offered once with a yes and a no, a pause
+// Codex chats into the steward. Offered once with a yes and a no, a pause
 // while it runs, a resume while it is paused, nothing when it is declined
 // or done. The page never starts it by itself.
 
@@ -82,7 +82,7 @@ test('No thanks sends decline and the bar goes away', async () => {
 });
 
 test('a server that cannot import leaves the bar empty', async () => {
-  const { m, el } = bar({ status: new Error('import needs the foreman in chat mode') });
+  const { m, el } = bar({ status: new Error('import needs the steward in chat mode') });
   await m.refresh();
   assert.equal(el.hidden, true);
 });

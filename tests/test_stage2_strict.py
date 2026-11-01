@@ -1,4 +1,4 @@
-"""v0.27.0 hardening — stage2 (the runtime gate before effects commit) must not
+"""v0.27.0 hardening — stage2 (the runtime warden before effects commit) must not
 silently pass opaque enforced postconditions under strict mode. Pre-existing
 fail-open: verify.py was hardened but the parallel stage2 path was not.
 """

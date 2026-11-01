@@ -6,7 +6,7 @@ import (
 )
 
 func TestReportExtrasAreAbsentWhenNotSent(t *testing.T) {
-	x, err := ParseReportExtras([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"claude","state":"idle","source":"gate"}`))
+	x, err := ParseReportExtras([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"claude","state":"idle","source":"warden"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestReportExtrasCutALongClauseAndTool(t *testing.T) {
 // never carries a transcript path.
 func TestAStateEventWithExtrasStillParses(t *testing.T) {
 	ev, err := ParseStateEvent([]byte(`{"v":1,"ts":1,"session_id":"s","harness":"claude",` +
-		`"state":"working","source":"gate","transcript_path":"/t.jsonl","mode":"enforcing",` +
+		`"state":"working","source":"warden","transcript_path":"/t.jsonl","mode":"enforcing",` +
 		`"verdict":{"decision":"allow","tool":"Bash","clause":""}}`))
 	if err != nil {
 		t.Fatal(err)

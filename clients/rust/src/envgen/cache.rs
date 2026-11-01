@@ -4,7 +4,7 @@
 use rusqlite::{params, Connection, OpenFlags};
 
 use super::prompts_gen::PROMPT_VERSION;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::pyjson::{Object, Value};
 use crate::pathways::pathway::dump_json;
 use crate::pathways::pmodel::{validate_json, Id};
 
@@ -34,7 +34,7 @@ pub fn cache_key(a: &KeyArgs) -> String {
     if let Some(t) = a.tier1 {
         lines.push(format!("tier1:{t}"));
     }
-    crate::gate::sha256::hexdigest(lines.join("\n").as_bytes())
+    crate::warden::sha256::hexdigest(lines.join("\n").as_bytes())
 }
 
 const SCHEMA: &str = "
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn a_key_is_the_hash_of_its_lines() {
         let a = KeyArgs { task: "t", context: None, model: "m", parent: None, summarize: false, thinking: "standard", tier1: None };
-        assert_eq!(cache_key(&a), crate::gate::sha256::hexdigest(b"task:t\ncontext:\nmodel:m\nparent:\nsummarize:0\nthinking:standard"));
+        assert_eq!(cache_key(&a), crate::warden::sha256::hexdigest(b"task:t\ncontext:\nmodel:m\nparent:\nsummarize:0\nthinking:standard"));
         let b = KeyArgs { tier1: Some("http:x"), ..a };
         assert_ne!(cache_key(&b), cache_key(&a));
     }

@@ -27,7 +27,7 @@ is next touched. Re-read this file, or re-fetch the two sources above.
   them by name in `mcp_allowlist`, and a re-fetch that pins their input
   shape can move them into `_PI_TOOL_TYPE_MAP`.
 - The extension sends `session_id` only when `OPENDAISUGI_SESSION_ID` is
-  set. Without it the gate consults the `default` envelope.
+  set. Without it the warden consults the `default` envelope.
 - `event.toolCallId`, `event.input`. The input is mutable in place. This
   extension does not change it.
 - Return `{ block: true, reason?: string, terminate?: boolean }` to block.
@@ -101,3 +101,9 @@ is next touched. Re-read this file, or re-fetch the two sources above.
 - Quoted: "Extensions in auto-discovered locations can be hot-reloaded with
   `/reload`." That is a manual slash command in an interactive session.
   `--mode rpc` has no slash commands. Restart the pi process there.
+
+## Recording (daisugi side)
+
+The extension sends every call to the resident warden. The warden mirrors each
+call it allows into `<data>/warden/captures` under `--format pi` (lowercase tool
+names). `hook list`, `hook to-trace` and `hook auto-tend` read that directory.

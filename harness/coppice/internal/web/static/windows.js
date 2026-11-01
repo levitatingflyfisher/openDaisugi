@@ -156,7 +156,8 @@ export function phoneSize(widthPx, heightPx) {
 }
 
 // scrollFollow is where a window's body scrolls so the cursor stays in
-// sight. It follows the cursor row down while the reader has not scrolled
+// sight. It follows the lower of the cursor row and the last row with text
+// (s.contentRow, when given) down while the reader has not scrolled
 // away from where the last follow put it, and moves sideways, with a
 // margin of eight cells, when the cursor moves past an edge. s holds the
 // shown size, the grid's cols and rows, the cell, the cursor, the scroll
@@ -171,7 +172,11 @@ export function scrollFollow(s) {
   if (shownH > 0 && gridH > shownH) {
     const following = autoTop === undefined || top === autoTop || top + shownH >= gridH - s.cellH;
     if (following) {
-      top = Math.min(gridH - shownH, Math.max(0, (s.cursor[1] + 1) * s.cellH - shownH));
+      // The row to keep in sight is the cursor row or the last row with
+      // text, whichever is lower: a redraw that parks the cursor near the
+      // top of the screen must not pull a reader at the bottom up to it.
+      const row = Math.max(s.cursor[1], Number.isInteger(s.contentRow) ? s.contentRow : -1);
+      top = Math.min(gridH - shownH, Math.max(0, (row + 1) * s.cellH - shownH));
       autoTop = top;
     }
   }

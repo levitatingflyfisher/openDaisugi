@@ -4,14 +4,17 @@ sprig is openDaisugi's own small agent loop, in Go. It is on hold with the owner
 
 | Binary | What it is |
 |---|---|
-| `sprig` (`cmd/sprig`) | The loop: one model, a small tool set, each tool call checked by the gate. |
+| `sprig` (`cmd/sprig`) | The loop: one model, a small tool set, each tool call checked by the warden. |
 | `sprig-hook` (`cmd/sprig-hook`) | The loop run inside a host's hook path. |
 | `sprig-mcp` (`cmd/sprig-mcp`) | The loop's tools served over MCP. |
 | `weave` (`cmd/weave`) | A JSON graph of steps, run one step at a time. |
 
-With `--gate`, each entry point calls `daisugi gate check --mode enforce`. Without `--gate` the
-gate is off (`AllowAll`, `cli.go`). The owner agreed to turn the gate on by default once it runs
-smoothly.
+Each entry point checks every tool call with `daisugi warden check` by default. The command carries
+no `--mode`, so the mode daisugi is installed in decides: audit records and blocks nothing, enforce
+denies. With no `daisugi` on PATH every tool call is denied and the run fails; a dead warden never
+allows. The only opt-out is `--warden=false` (`sprig`, `weave`, `sprig-mcp`). It prints one line to
+stderr (`sprig: the warden is off (--warden=false): nothing is checked or recorded`) and runs with
+`AllowAll`. `sprig-hook` is the warden, so it has no opt-out.
 
 Three flags shape one run of `sprig`:
 
@@ -46,14 +49,14 @@ The model wire and the key:
 - `--wire claude-code|anthropic|openai` picks the wire. `claude-code` runs `claude -p` (the
   default). `anthropic` speaks the Messages API (`SPRIG_BACKEND=api` picks it too). `openai`
   speaks chat completions with native function calls: OpenAI, Ollama, llama.cpp, vLLM, or a
-  gateway such as Switchyard. The model id is free text on every wire.
+  router such as Switchyard. The model id is free text on every wire.
 - `--base-url U` is the server for the `anthropic` or `openai` wire. The request goes to
   `U/v1/messages` or `U/chat/completions`. A key is required only for the default server
   (`https://api.anthropic.com`, `https://api.openai.com/v1`); a local server without a key gets
   no auth header.
 - `--key-fd N` reads the key from descriptor N (3 or more) and closes it. With it, sprig reads no
   key from the environment. A key with a control character is refused.
-- Every process sprig starts (a bash call, the `claude -p` backend, the gate) gets sprig's
+- Every process sprig starts (a bash call, the `claude -p` backend, the warden) gets sprig's
   environment less `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `SPRIG_API_KEY`
   and the names in `--scrub-env A,B`. None inherits a descriptor above 2. The key in a provider's
   error text reads `[key]`.
@@ -62,7 +65,7 @@ The spawn tool:
 
 - `--tools ...,spawn --tree-cmd CMD --session S` offers `spawn`: start a child agent on a task in
   a narrower envelope, wait, and return its answer. CMD is the one starter, `daisugi tree run`,
-  split at whitespace as `--gate-cmd` is. The gate sees the call as `mcp__sprig__spawn`, so only
+  split at whitespace as `--warden-cmd` is. The warden sees the call as `mcp__sprig__spawn`, so only
   an envelope whose `mcp_allowlist` names `sprig/spawn` lets it run.
 - The parent of every child is sprig's own `--session`, never a value from the call. sprig's own
   use so far goes as `--parent-tokens-used` and `--parent-turns-used`; the call's profile, model,
@@ -72,11 +75,11 @@ The spawn tool:
 - The result is the child's answer, `refused: ` and the reasons, or `sent to the operator as ask
   ID`. A child's branch use counts toward `--max-tokens`. Children run one at a time.
 
-This is not an OS sandbox: a tool the gate allows still runs as the same user.
+This is not an OS sandbox: a tool the warden allows still runs as the same user.
 
 daisugi's agentic steps can run on sprig (`daisugi weave|run|orchestrate --agent sprig`): daisugi
-starts `sprig --json --gate --gate-cmd ... --tools ... --model ...` in the step's workspace, with
-the gate pinned to a private gate root and a session daisugi picks.
+starts `sprig --json --warden --warden-cmd ... --tools ... --model ...` in the step's workspace, with
+the warden pinned to a private warden root and a session daisugi picks.
 
 grove, the fleet view over many sprigs, is retired. coppice (`../coppice`) replaced it: coppice
 holds every session in one server with thin TUI, web and phone clients, for any harness.
@@ -95,7 +98,7 @@ The designs are in `docs/harness/harness-designs.md`.
 `harness/sprig-rs` is a second sprig, written in Rust: the same four binaries, the same command
 line, prompt, request bodies, session tree, hook and MCP wire, and Go's own error words.
 `clients/sprig_compare.py` runs each case on the Go and the Rust binaries side by side, with a fake
-`claude`, a fake gate and a fake API, and some cases through the real Go and Rust daisugi
+`claude`, a fake warden and a fake API, and some cases through the real Go and Rust daisugi
 (`clients/ADJUDICATIONS.md`, SP-R-1 to SP-R-6). Go stays the default. To build and install the
 Rust one in its place (you need cargo as well):
 

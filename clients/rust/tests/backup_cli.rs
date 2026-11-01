@@ -9,6 +9,15 @@ use std::process::Command;
 struct Home(PathBuf);
 
 impl Home {
+    /// A home under the temp dir, for a test that binds a unix socket in it:
+    /// the cargo target dir is too long for a socket path in a deep checkout.
+    fn short(tag: &str) -> Home {
+        let p = std::env::temp_dir().join(format!("bc-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        Home(p)
+    }
+
     fn new(tag: &str) -> Home {
         let p = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("backup-cli-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&p);
@@ -67,11 +76,11 @@ fn backup_then_restore_into_a_fresh_home() {
     seed_db(&home.0, "journal/index.db", "idx");
     seed(&home.0, "journal/index.db-wal", "torn");
     seed(&home.0, "pathways.db-shm", "torn");
-    seed(&home.0, "gate/envelopes/s.json", "{}");
-    seed(&home.0, "gate/audit/2026.jsonl", "{}\n");
-    seed(&home.0, "gate/disarmed", "");
+    seed(&home.0, "warden/envelopes/s.json", "{}");
+    seed(&home.0, "warden/audit/2026.jsonl", "{}\n");
+    seed(&home.0, "warden/disarmed", "");
     seed(&home.0, "sessions/a.json", "private");
-    seed(&home.0, "gate/api-token", "SECRET");
+    seed(&home.0, "warden/api-token", "SECRET");
 
     let (code, out, err) = run(&home.0, &work.0, &["backup"]);
     assert!(code == 0 && out.contains("5 files"), "{code} {out} {err}");
@@ -85,7 +94,7 @@ fn backup_then_restore_into_a_fresh_home() {
     let nd = fresh.0.join(".opendaisugi");
     assert_eq!(read_db(&nd.join("journal/index.db")), "idx");
     assert_eq!(read_db(&nd.join("pathways.db")), "p1");
-    for p in ["sessions", "gate/api-token", "gate/disarmed", "journal/index.db-wal", "pathways.db-shm"] {
+    for p in ["sessions", "warden/api-token", "warden/disarmed", "journal/index.db-wal", "pathways.db-shm"] {
         assert!(!nd.join(p).exists(), "restored {p}");
     }
 }
@@ -112,17 +121,17 @@ fn usage_errors() {
 }
 
 #[test]
-fn restore_refuses_while_a_gate_answers() {
-    let (home, work, fresh) = (Home::new("h4"), Home::new("w4"), Home::new("f4"));
+fn restore_refuses_while_a_warden_answers() {
+    let (home, work, fresh) = (Home::new("h4"), Home::new("w4"), Home::short("f4"));
     seed(&home.0, "config.yaml", "a: 1\n");
     let file = work.0.join("b.tgz");
     let f = file.to_str().unwrap();
     assert_eq!(run(&home.0, &work.0, &["backup", f]).0, 0);
-    let sock = fresh.0.join(".opendaisugi/gate/gate.sock");
+    let sock = fresh.0.join(".opendaisugi/warden/warden.sock");
     fs::create_dir_all(sock.parent().unwrap()).unwrap();
     let _l = std::os::unix::net::UnixListener::bind(&sock).unwrap();
     let (code, _, err) = run(&fresh.0, &work.0, &["restore", f]);
-    assert!(code == 1 && err.contains("Stop agent sessions or run `daisugi gate disarm` first"), "{code} {err}");
+    assert!(code == 1 && err.contains("Stop agent sessions or run `daisugi warden disarm` first"), "{code} {err}");
     assert!(!fresh.0.join(".opendaisugi/config.yaml").exists());
 }
 
@@ -156,19 +165,19 @@ fn backup_help_does_not_overclaim() {
 fn a_failed_restore_puts_the_old_files_back_and_says_so() {
     let (home, work, target) = (Home::new("h8"), Home::new("w8"), Home::new("t8"));
     seed(&home.0, "config.yaml", "new\n");
-    seed(&home.0, "gate/envelopes/s.json", "{}");
+    seed(&home.0, "warden/envelopes/s.json", "{}");
     let file = work.0.join("b.tgz");
     let f = file.to_str().unwrap();
     assert_eq!(run(&home.0, &work.0, &["backup", f]).0, 0);
     seed(&target.0, "config.yaml", "old\n");
-    // "gate" is a file, so gate/envelopes cannot be put in place.
-    seed(&target.0, "gate", "a file");
+    // "warden" is a file, so warden/envelopes cannot be put in place.
+    seed(&target.0, "warden", "a file");
     let (code, out, err) = run(&target.0, &work.0, &["restore", f, "--force"]);
     assert!(code == 1 && err.contains("The old data is back in place") && err.contains(".restore-"), "{code} {out} {err}");
     assert!(!out.contains("Moved aside"), "{out}");
     let nd = target.0.join(".opendaisugi");
     assert_eq!(fs::read_to_string(nd.join("config.yaml")).unwrap(), "old\n");
-    assert_eq!(fs::read_to_string(nd.join("gate")).unwrap(), "a file");
+    assert_eq!(fs::read_to_string(nd.join("warden")).unwrap(), "a file");
 }
 
 #[test]
@@ -188,5 +197,41 @@ fn restore_moves_a_stale_wal_aside_and_the_database_opens() {
     for n in ["pathways.db-wal", "pathways.db-shm"] {
         assert!(!nd.join(n).exists(), "{n} stayed beside the restored database");
         assert!(out.contains(&format!("{n}.broken-")), "{n} not in the aside list: {out}");
+    }
+}
+
+/// The conversation memory (ADR-0023) is in the backup: every store, its
+/// children, its view and its import queue, never a lock.
+#[test]
+fn backup_holds_every_pando_store_and_its_children() {
+    let (home, work, fresh) = (Home::new("hp"), Home::new("wp"), Home::new("fp"));
+    seed(&home.0, "config.yaml", "a: 1\n");
+    for s in ["work", "notes"] {
+        seed(&home.0, &format!("pando/{s}/main/2026-10-24.jsonl"), "{\"id\":0}\n");
+        seed(&home.0, &format!("pando/{s}/tree/2026-10-24.jsonl"), "{}\n");
+        seed(&home.0, &format!("pando/{s}/view.json"), "{}");
+        seed(&home.0, &format!("pando/{s}/lock"), "");
+    }
+    seed(&home.0, "pando/work/import.json", "{\"sessions\":[]}");
+    seed(&home.0, "pando/work/children/w1/main/2026-10-24.jsonl", "{\"id\":0}\n");
+    seed(&home.0, "pando/work/children/w1/lock", "");
+    let file = work.0.join("b.tgz");
+    let f = file.to_str().unwrap();
+    let (code, out, err) = run(&home.0, &work.0, &["backup", f]);
+    assert!(code == 0 && out.contains("9 files"), "{code} {out} {err}");
+    let (code, out, err) = run(&fresh.0, &work.0, &["restore", f]);
+    assert!(code == 0 && out.contains("9 files"), "{code} {out} {err}");
+    let nd = fresh.0.join(".opendaisugi");
+    for p in [
+        "pando/work/main/2026-10-24.jsonl",
+        "pando/notes/main/2026-10-24.jsonl",
+        "pando/notes/view.json",
+        "pando/work/import.json",
+        "pando/work/children/w1/main/2026-10-24.jsonl",
+    ] {
+        assert!(nd.join(p).exists(), "not restored: {p}");
+    }
+    for p in ["pando/work/lock", "pando/notes/lock", "pando/work/children/w1/lock"] {
+        assert!(!nd.join(p).exists(), "restored a lock: {p}");
     }
 }

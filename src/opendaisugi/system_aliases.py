@@ -138,8 +138,8 @@ def _pytest_passes() -> Alias:
     # (verify_completed_step). Used as an ``Invariant.expr`` it produces a
     # loud violation on every plan, because the predicate evaluates False
     # against the unpopulated metadata. Authoring guidance: only attach to
-    # a ``Postcondition`` (Stage 2 gate) — never to an ``Invariant``
-    # (Stage 1 gate). Same caveat applies to any alias whose path begins
+    # a ``Postcondition`` (Stage 2 warden) — never to an ``Invariant``
+    # (Stage 1 warden). Same caveat applies to any alias whose path begins
     # with ``metadata.output`` / ``metadata.body`` / other
     # runtime-populated fields. The alias name kept for compatibility;
     # docstring is the authoring contract.

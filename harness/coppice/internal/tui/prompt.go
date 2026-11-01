@@ -12,7 +12,7 @@ import (
 )
 
 // Kind is what a prompt line is: a plumbing command the floor runs itself,
-// or talk meant for a foreman.
+// or talk meant for a steward.
 type Kind int
 
 const (
@@ -24,26 +24,26 @@ const (
 var Harnesses = []string{"claude", "codex", "pi", "sprig", "opencode"}
 
 // Verbs are the plumbing verbs the prompt line answers to.
-var Verbs = []string{"list", "read", "close", "open", "swap", "rotate", "reset", "lock", "unlock", "layout", "tree", "zoom", "foreman"}
+var Verbs = []string{"list", "read", "close", "open", "swap", "rotate", "reset", "lock", "unlock", "layout", "tree", "zoom", "steward"}
 
-// ForemanLabel is the label of the pane "foreman <harness>" opens. The
-// server gives the foreman it starts on the first talk the same label.
-const ForemanLabel = "foreman"
+// StewardLabel is the label of the pane "steward <harness>" opens. The
+// server gives the steward it starts on the first talk the same label.
+const StewardLabel = "steward"
 
-// PromotionLine is the one line that makes a pane the foreman. The pane
-// runs coppice skill foreman, which prints the page the binary carries.
+// PromotionLine is the one line that makes a pane the steward. The pane
+// runs coppice skill steward, which prints the page the binary carries.
 // src/opendaisugi/floor/promote.py sends the same line.
 const PromotionLine = skills.FloorLine
 
-// TaskPromotionLine is the line that makes a pane the foreman of one
+// TaskPromotionLine is the line that makes a pane the steward of one
 // task. It hears the asks of that task's panes first.
 func TaskPromotionLine(task string) string {
-	return "Run: coppice skill foreman. Follow it. You are the foreman of task " + task +
+	return "Run: coppice skill steward. Follow it. You are the steward of task " + task +
 		". Its panes' asks come to you first. Say ready."
 }
 
-// noForemanAnswer is what "foreman" alone says on a floor with no foreman.
-const noForemanAnswer = "no foreman yet. Say a sentence and one starts, or type: foreman claude"
+// noStewardAnswer is what "steward" alone says on a floor with no steward.
+const noStewardAnswer = "no steward yet. Say a sentence and one starts, or type: steward claude"
 
 // Messages the layout words answer with.
 const (

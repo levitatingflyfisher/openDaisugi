@@ -51,9 +51,9 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
     """Return the JSON stdout a given host runtime expects from a pre-tool hook.
 
     Passive capture always allows the call (block=False). The block branch is
-    used by the call-time gate (:mod:`opendaisugi.gate`) on hosts whose deny
-    contract is JSON-on-stdout; on the Claude Code path the gate denies via
-    exit code 2 instead (see ``gate.gate_and_contract``).
+    used by the call-time warden (:mod:`opendaisugi.warden`) on hosts whose deny
+    contract is JSON-on-stdout; on the Claude Code path the warden denies via
+    exit code 2 instead (see ``warden.warden_and_contract``).
 
     - claude (and default): ``{"continue": true}`` (PreToolUse contract)
     - hermes: ``{}`` no-op, or a block object carrying BOTH ``decision`` and
@@ -76,16 +76,16 @@ def stdout_for_format(fmt: str, *, block: bool, reason: str = "") -> str:
 
 # Formats whose host reads the process exit code as the allow or deny signal,
 # 2 for deny, and never parses stdout for a verdict. Claude Code's PreToolUse
-# hook, pi's gate extension and OpenCode's plugin all read this signal. pi
-# and OpenCode read it from the resident gate's {"exit_code": ...} socket
+# hook, pi's warden extension and OpenCode's plugin all read this signal. pi
+# and OpenCode read it from the resident warden's {"exit_code": ...} socket
 # reply. The set names every exit-code host at once so the two plugins
-# cannot land two different rewrites of gate._outcome.
+# cannot land two different rewrites of warden._outcome.
 EXIT_CODE_FORMATS = frozenset({"claude", "pi", "opencode"})
 
 # Formats whose host reads a JSON body on stdout as the verdict, exit code
-# always 0. The two sets together are every format the gate speaks. A
+# always 0. The two sets together are every format the warden speaks. A
 # format in neither set must not fall through stdout_for_format's default
-# body, which is an allow. gate._outcome denies it instead.
+# body, which is an allow. warden._outcome denies it instead.
 STDOUT_BLOCK_FORMATS = frozenset({"hermes", "openclaw"})
 
 
@@ -101,7 +101,7 @@ def record_and_contract(raw: bytes, *, root: Path, fmt: str) -> str:
         text = raw.decode("utf-8", "replace")
         payload = json.loads(text) if text.strip() else {}
         if payload:
-            record_call(payload, root=root)
+            record_call(payload, root=root, fmt=fmt)
     except Exception:
         pass
     return stdout_for_format(fmt, block=False)
@@ -169,7 +169,7 @@ def record_lifecycle_event(
 
     A payload that is not a JSON object, or that has no ``session_id``,
     reports and writes nothing (whole-branch review, minor 2) — it mirrors
-    gate.py's own guard (``_maybe_report_state``/``_log_tree``). Without
+    warden.py's own guard (``_maybe_report_state``/``_log_tree``). Without
     this, garbage stdin fell through to ``_safe_session_id(None) ==
     "no-session"`` and both delivered a report and created a real
     session-tree directory for a session that never existed.
@@ -195,7 +195,7 @@ def record_lifecycle_event(
         return stdout_for_format(fmt, block=False)
     try:
         from opendaisugi._state_report import build_event, report_state, report_transcript_path
-        from opendaisugi.gate import _HARNESS_BY_FMT
+        from opendaisugi.warden import _HARNESS_BY_FMT
 
         sid = _safe_session_id(payload.get("session_id"))
         harness = _HARNESS_BY_FMT.get(fmt, fmt)
@@ -288,6 +288,51 @@ _PI_TOOL_TYPE_MAP: dict[str, str] = {
     "edit": "file_write",
 }
 
+# Hermes shell-hook tool names, consulted only under fmt="hermes". Sources
+# (fetched 2026-10-30):
+#   https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks
+#     stdin JSON: hook_event_name, tool_name, tool_input, session_id, cwd,
+#     profile, extra {task_id, tool_call_id}.
+#   https://hermes-agent.nousresearch.com/docs/user-guide/features/tools
+#   https://raw.githubusercontent.com/NousResearch/hermes-agent/main/tools/file_tools.py
+#     read_file(path, offset, limit), write_file(path, content),
+#     patch(path, old_string, new_string, replace_all), search_files(pattern,
+#     target, path, ...); terminal(command, background, pty).
+# Argument names of web_extract and web_search are NOT documented there. The
+# record takes url, then urls[0], then query. Only a real Hermes install can
+# confirm them (box check 1).
+_HERMES_TOOL_TYPE_MAP: dict[str, str] = {
+    "terminal": "shell",
+    "read_file": "file_read",
+    "search_files": "file_read",
+    "write_file": "file_write",
+    "patch": "file_write",
+    "web_search": "network",
+    "web_extract": "network",
+}
+
+# OpenClaw tool names, consulted only under fmt="openclaw". Sources (fetched
+# 2026-10-30):
+#   https://docs.openclaw.ai/plugins/hooks/tool-policy  (before_tool_call:
+#     toolName, params, toolCallId, runId; ctx.sessionId, ctx.runId)
+#   https://docs.openclaw.ai/tools  (exec, read, write, edit, apply_patch,
+#     web_fetch, web_search, ...)
+#   https://docs.openclaw.ai/tools/exec  (command, workdir, env, background,
+#     timeoutSeconds, pty, elevated)
+#   https://docs.openclaw.ai/tools/web-fetch  (url, extractMode, maxChars)
+# Argument names of read, write and edit are NOT on those pages. The record
+# takes path, then file_path, then filePath. Only a real OpenClaw install can
+# confirm them (box check 2).
+_OPENCLAW_TOOL_TYPE_MAP: dict[str, str] = {
+    "exec": "shell",
+    "read": "file_read",
+    "write": "file_write",
+    "edit": "file_write",
+    "apply_patch": "file_write",
+    "web_fetch": "network",
+    "web_search": "network",
+}
+
 
 def _classify_tool(name: str, *, fmt: str = "claude") -> str | None:
     """Return our step type for a host's tool name, or None for unknown.
@@ -297,7 +342,7 @@ def _classify_tool(name: str, *, fmt: str = "claude") -> str | None:
     a name this function does not recognize is treated as MCP-style instead
     of dropped. pi has no ``mcp__`` prefix convention, and a dropped record
     would become an unconditional deny that no envelope could override. As
-    an MCP-style call, the gate's deny-by-default ``mcp_allowlist`` can name
+    an MCP-style call, the warden's deny-by-default ``mcp_allowlist`` can name
     it, the same as any other MCP tool. Host MCP tools follow the
     ``mcp__<server>__<tool>`` convention under every other format and
     classify as ``mcp`` regardless of ``fmt``.
@@ -309,12 +354,29 @@ def _classify_tool(name: str, *, fmt: str = "claude") -> str | None:
         return mapped
     if fmt == "pi":
         return _PI_TOOL_TYPE_MAP.get(name, "mcp")
+    if fmt == "hermes":
+        return _HERMES_TOOL_TYPE_MAP.get(name)
+    if fmt == "openclaw":
+        return _OPENCLAW_TOOL_TYPE_MAP.get(name)
     return None
 
 
 # OpenCode's apply_patch tool. The plugin sends it under this MCP-style
-# name, but it writes files, so the gate never treats it as an MCP call.
+# name, but it writes files, so the warden never treats it as an MCP call.
 APPLY_PATCH_TOOL = "mcp__opencode__apply_patch"
+# Codex sends the same tool under its own bare name, with the patch text in
+# tool_input.command. It is a patch writer under the claude-shaped format
+# Codex's hook uses (OpenClaw has its own apply_patch handling).
+CODEX_APPLY_PATCH_TOOL = "apply_patch"
+
+
+def is_patch_call(tool_name: object, fmt: str = "claude") -> bool:
+    """True for a call the warden reads as a patch: OpenCode's name, or
+    Codex's bare name under the claude-shaped format."""
+    return tool_name == APPLY_PATCH_TOOL or (
+        tool_name == CODEX_APPLY_PATCH_TOOL and fmt == "claude"
+    )
+
 
 _PATCH_HEREDOC = re.compile(r"^(?:cat\s+)?<<['\"]?(\w+)['\"]?\s*\n([\s\S]*?)\n\1\s*$")
 _PATCH_HEADERS = ("*** Add File:", "*** Update File:", "*** Delete File:", "*** Move to:")
@@ -327,7 +389,7 @@ def parse_apply_patch(text: object) -> list[str] | None:
     This follows OpenCode's own parser: strip the text, unwrap one heredoc,
     find the first Begin Patch and End Patch lines, and read the header
     lines between them. It takes every header line in that range, even one
-    OpenCode would skip, so the gate checks at least every path OpenCode
+    OpenCode would skip, so the warden checks at least every path OpenCode
     touches. A patch with no Begin and End pair, or with no path, is None.
     """
     if not isinstance(text, str):
@@ -380,6 +442,8 @@ JOIN_KEYS = (
     "transcript_path",
     "hook_event_name",
     "permission_mode",
+    "turn_id",
+    "model",
 )
 
 
@@ -391,6 +455,27 @@ def join_keys(payload: dict[str, Any]) -> dict[str, Any]:
     ``parentUuid`` tree; ``agent_id`` names a sub-agent. Absent keys stay absent.
     """
     return {k: payload[k] for k in JOIN_KEYS if payload.get(k)}
+
+
+_INPUT_KEYS = ("tool_input", "args", "input")
+
+
+def _mcp_call_arguments(payload: dict[str, Any], inp: Any) -> Any:
+    """What an MCP call's arguments are, as the host sent them.
+
+    An object stays. A host value that is no object (a list, a string, a
+    number, null) stays as it is, so an argument rule can deny it; an empty
+    value (``[]``, ``""``, ``0``, null) is found past the ``or`` chain that
+    gave ``{}``. No key at all is a call with no arguments, ``{}``.
+    """
+    if not isinstance(inp, dict):
+        return inp
+    if inp:
+        return inp
+    for key in _INPUT_KEYS:
+        if key in payload and not isinstance(payload[key], dict):
+            return payload[key]
+    return inp
 
 
 def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[str, Any] | None:
@@ -409,6 +494,9 @@ def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[
     """
     tool_name = payload.get("tool_name") or payload.get("tool") or payload.get("name")
     if not tool_name:
+        return None
+    if is_patch_call(tool_name, fmt):
+        # A file writer, never a capture. The warden reads its paths.
         return None
     step_type = _classify_tool(tool_name, fmt=fmt)
     if step_type is None:
@@ -431,8 +519,12 @@ def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[
             or inp.get("pattern")
             or ""
         )
+        if fmt == "openclaw" and tool_name == "apply_patch":
+            # The patch text names its files; the first one is the record's path.
+            named = parse_apply_patch(inp.get("patch") or inp.get("input") or "")
+            record["path"] = named[0] if named else ""
         # A relative path names a file under the call's working directory,
-        # so the gate checks that file. With no absolute cwd the path stays
+        # so the warden checks that file. With no absolute cwd the path stays
         # as written, and no workspace pattern matches it. A path that starts
         # with ~ or names a $variable also stays as written: the hard-deny
         # rules expand those, and a join would hide them from those rules.
@@ -454,10 +546,12 @@ def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[
             content = inp.get("content") or inp.get("new_string") or inp.get("newString") or ""
             record["content_len"] = len(content)
     elif step_type == "network":
-        record["url"] = inp.get("url") or inp.get("query") or ""
+        urls = inp.get("urls")
+        first_url = urls[0] if isinstance(urls, list) and urls else None
+        record["url"] = inp.get("url") or first_url or inp.get("query") or ""
     elif step_type == "mcp":
         if tool_name == APPLY_PATCH_TOOL:
-            # A file writer, never an MCP call. The gate reads its paths
+            # A file writer, never an MCP call. The warden reads its paths
             # with parse_apply_patch, and a capture never names it.
             return None
         parsed = _parse_mcp_tool_name(tool_name)
@@ -466,7 +560,7 @@ def _payload_to_record(payload: dict[str, Any], *, fmt: str = "claude") -> dict[
                 return None
             parsed = ("pi", tool_name)
         record["mcp_server"], record["mcp_tool"] = parsed
-        record["arguments"] = inp if isinstance(inp, dict) else {}
+        record["arguments"] = _mcp_call_arguments(payload, inp)
     record.update(join_keys(payload))
     return record
 
@@ -483,13 +577,18 @@ def _safe_session_id(raw: object) -> str:
     return safe or "no-session"
 
 
-def record_call(payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT) -> Path | None:
+def record_call(
+    payload: dict[str, Any], *, root: Path = DEFAULT_CAPTURES_ROOT, fmt: str = "claude"
+) -> Path | None:
     """Append a normalized tool-call capture to ``<root>/<session_id>.jsonl``.
+
+    ``fmt`` is the host format the payload came in (claude, codex, pi, ...).
+    It decides which tool names classify.
 
     Returns the file path written, or ``None`` if the payload didn't
     contain a recognizable tool call (in which case nothing is written).
     """
-    record = _payload_to_record(payload)
+    record = _payload_to_record(payload, fmt=fmt)
     if record is None:
         return None
     # 0o700 dir / 0o600 files so other local users can't read captured
@@ -550,6 +649,44 @@ def list_sessions(*, root: Path = DEFAULT_CAPTURES_ROOT) -> list[dict[str, Any]]
         )
     rows.sort(key=lambda r: r["last_at"] or 0, reverse=True)
     return rows
+
+
+def capture_roots(data_dir: Path) -> list[Path]:
+    """The directories the journal feed scans for captures, primary first.
+
+    ``<data>/captures`` holds what the capture hook writes. ``<data>/warden/
+    captures`` holds what the resident warden mirrors (pi, OpenCode, Codex).
+    A Claude Code session with the resident warden up lands in both; the
+    primary copy wins and the second is skipped by session id.
+    """
+    return [data_dir / "captures", data_dir / "warden" / "captures"]
+
+
+def list_sessions_in(roots: list[Path]) -> list[dict[str, Any]]:
+    """``list_sessions`` over several roots: one row per session id.
+
+    A session found in more than one root appears once. Its row comes from the
+    first root that holds it. Each row gains ``root``. Sorted newest-first.
+    """
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in roots:
+        for row in list_sessions(root=root):
+            if row["session_id"] in seen:
+                continue
+            seen.add(row["session_id"])
+            rows.append({**row, "root": str(root)})
+    rows.sort(key=lambda r: r["last_at"] or 0, reverse=True)
+    return rows
+
+
+def find_capture(session_id: str, roots: list[Path]) -> Path | None:
+    """The first ``<root>/<session_id>.jsonl`` that exists, in root order."""
+    for root in roots:
+        path = root / f"{session_id}.jsonl"
+        if path.exists():
+            return path
+    return None
 
 
 def _glob_for_path(path: str) -> str:
@@ -620,6 +757,43 @@ def _observed_effects(command: str, *, decompose: bool) -> tuple[list[str], list
     return heads, reads, writes
 
 
+def _has_metachar(command: str) -> bool:
+    from opendaisugi.verify import _SHELL_METACHAR_RE
+
+    return bool(_SHELL_METACHAR_RE.search(command))
+
+
+def _glob_for_access(path: str, tree: bool) -> str:
+    """The file-scope glob that admits one shell access. A tree needs a
+    ``/**`` glob (SG-2); a path takes its parent directory's glob."""
+    if not tree:
+        return _glob_for_path(path)
+    if path in ("", "."):
+        return "./**"
+    return f"{path.rstrip('/')}/**"
+
+
+def _observed_accesses(command: str) -> tuple[set[str], set[str]]:
+    """The file-scope globs for the operand accesses of ``command`` (SG-1):
+    what the verifier will check besides redirects. An access that cannot be
+    placed adds nothing, so the command stays rejected downstream."""
+    from opendaisugi.verify import _SANCTIONED_READ_SOURCES, _SANCTIONED_WRITE_SINKS
+    from opendaisugi.write_paths import shell_accesses
+
+    acc = shell_accesses(command, None)
+    reads = {
+        _glob_for_access(a.path, a.tree)
+        for a in acc.reads
+        if a.via == "operand" and a.path not in _SANCTIONED_READ_SOURCES
+    }
+    writes = {
+        _glob_for_access(a.path, a.tree)
+        for a in acc.writes
+        if a.via == "operand" and a.path not in _SANCTIONED_WRITE_SINKS
+    }
+    return reads, writes
+
+
 def infer_envelope(
     records: list[dict[str, Any]],
     *,
@@ -643,7 +817,7 @@ def infer_envelope(
     ``allow_shell_decomposition`` opts the synthesized envelope into ADR-0010
     and widens head collection to match: without both halves a captured
     ``cd /repo && pytest`` still fails, since the flag alone leaves ``pytest``
-    off the allowlist and the heads alone leave the metachar gate in force. The
+    off the allowlist and the heads alone leave the metachar warden in force. The
     field is set whenever it is asked for, even if nothing compound was
     captured — the distiller ANDs permissions across a cluster and re-verifies
     the plan template against the result, so a session-by-session flag would
@@ -665,6 +839,10 @@ def infer_envelope(
                     cmd, decompose=allow_shell_decomposition
                 )
                 shell_heads.update(obs_heads)
+                if allow_shell_decomposition or not _has_metachar(cmd):
+                    op_reads, op_writes = _observed_accesses(cmd)
+                    file_read_globs.update(op_reads)
+                    file_write_globs.update(op_writes)
                 # Redirect targets are file accesses the verifier will scope-check
                 # (ADR-0014); sanctioned pathless sinks (/dev/null, std streams)
                 # are never checked, so gloving them would only widen the scope.
@@ -688,7 +866,7 @@ def infer_envelope(
             server = r.get("mcp_server") or ""
             tool = r.get("mcp_tool") or ""
             # apply_patch writes files, so an envelope never admits it by
-            # name. The gate checks each path it names instead.
+            # name. The warden checks each path it names instead.
             if server and tool and (server, tool) != ("opencode", "apply_patch"):
                 mcp_tools.add(f"{server}/{tool}")
     return Envelope(
@@ -732,15 +910,17 @@ def _records_to_steps(records: list[dict[str, Any]]) -> list:
         elif r["step_type"] == "network":
             steps.append(NetworkStep(id=sid, url=r.get("url") or "", depends_on=deps))
         elif r["step_type"] == "mcp":
-            steps.append(
-                MCPStep(
-                    id=sid,
-                    server=r.get("mcp_server") or "",
-                    tool=r.get("mcp_tool") or "",
-                    arguments=r.get("arguments") or {},
-                    depends_on=deps,
-                )
+            raw = r.get("arguments")
+            step = MCPStep(
+                id=sid,
+                server=r.get("mcp_server") or "",
+                tool=r.get("mcp_tool") or "",
+                arguments=raw if isinstance(raw, dict) else {},
+                depends_on=deps,
             )
+            if "arguments" in r and not isinstance(raw, dict):
+                step.keep_raw_arguments(raw)
+            steps.append(step)
         prev_id = sid
     return steps
 
@@ -757,7 +937,7 @@ def captures_to_trace(
     Reads the JSONL, synthesizes an envelope that admits everything that
     happened, builds an ActionPlan with sequential depends_on, runs
     verify() (which by construction passes against the synthesized
-    envelope — minus the metachar gate, which catches genuinely complex
+    envelope — minus the metachar warden, which catches genuinely complex
     captured commands; those steps drop out), and appends the trace via
     ``journal.log``. Returns the trace id.
 
@@ -799,8 +979,12 @@ def _spawn_detached_auto_tend(data_dir: Path) -> None:
     """Fire-and-forget `daisugi hook auto-tend` in a fully detached process."""
     import subprocess
 
+    from opendaisugi.install import daisugi_exe
+
+    # The absolute entry point, as install writes it: a hook runs with the
+    # agent's PATH, which often lacks the directory `daisugi` is in.
     subprocess.Popen(
-        ["daisugi", "hook", "auto-tend", "--data-dir", str(data_dir)],
+        [daisugi_exe(), "hook", "auto-tend", "--data-dir", str(data_dir)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,

@@ -1,19 +1,19 @@
-//! `daisugi gate serve`: the resident gate (`gate_server.py`). One JSON
-//! request line per connection on `<root>/gate.sock`, one reply line, then
-//! the connection is closed. Each gate call is decided in a child process
+//! `daisugi warden serve`: the resident warden (`warden_server.py`). One JSON
+//! request line per connection on `<root>/warden.sock`, one reply line, then
+//! the connection is closed. Each warden call is decided in a child process
 //! of this binary, so no crash of one call ends the server or reads as an
 //! allow.
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::hook::run_resident_child;
-use crate::gate::resident::{self, Request, MAX_REQUEST_BYTES, PANE_ENV_KEYS};
+use crate::warden::hook::run_resident_child;
+use crate::warden::resident::{self, Request, MAX_REQUEST_BYTES, PANE_ENV_KEYS};
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Condvar, Mutex};
 
-const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Gate state directory (envelopes, audit log, disarm marker).");
+const ROOT_OPT: Opt = Opt::val(&["--root"], "PATH", "Warden state directory (envelopes, audit log, disarm marker).");
 /// The captures root, fixed when the server starts: a request never names
 /// one (FN-R-21).
 const CAPTURES_OPT: Opt = Opt::val(
@@ -31,25 +31,25 @@ const MAX_CHILDREN: usize = 32;
 const CONN_STACK: usize = 256 << 20;
 
 impl Env {
-    pub(super) fn gate_serve(&mut self, args: &[String]) -> Res {
+    pub(super) fn warden_serve(&mut self, args: &[String]) -> Res {
         let opts = [ROOT_OPT, CAPTURES_OPT];
         let p = match parse_args(args, &opts, 0) {
             Ok(p) => p,
-            Err(m) => return self.usage("gate serve", m),
+            Err(m) => return self.usage("warden serve", m),
         };
         if p.help {
-            return self.cmd_help("gate serve", "", "Run the resident gate in the foreground (Ctrl-C to stop).", &opts);
+            return self.cmd_help("warden serve", "", "Run the resident warden in the foreground (Ctrl-C to stop).", &opts);
         }
-        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.data_home(), "gate") };
+        let root = if p.has("--root") { path_str(&p.str("--root", "")) } else { join(&self.data_home(), "warden") };
         let captures = if p.has("--captures-root") { Some(path_str(&p.str("--captures-root", ""))) } else { None };
-        let sock = join(&root, "gate.sock");
+        let sock = join(&root, "warden.sock");
         self.flush();
-        // A live gate keeps its socket; a second server never takes it over.
+        // A live warden keeps its socket; a second server never takes it over.
         if probe(&sock) == Probe::Live {
-            self.errf(&format!("gate: a resident gate already answers on {sock}; stop it first\n"));
+            self.errf(&format!("warden: a resident warden already answers on {sock}; stop it first\n"));
             return exit(1);
         }
-        let _ = std::io::stderr().write_all(format!("gate: serving on {sock} (Ctrl-C to stop)\n").as_bytes());
+        let _ = std::io::stderr().write_all(format!("warden: serving on {sock} (Ctrl-C to stop)\n").as_bytes());
         // This process serves every session, so it is no one pane: the
         // calls it decides (its children inherit this environment) and the
         // reports it sends never read these.
@@ -60,7 +60,7 @@ impl Env {
         let listener = match listen(&root, &sock) {
             Ok(l) => l,
             Err(e) => {
-                self.errf(&format!("daisugi gate serve: {e}\n"));
+                self.errf(&format!("daisugi warden serve: {e}\n"));
                 return exit(1);
             }
         };
@@ -141,7 +141,7 @@ pub(super) enum Probe {
     Stale,
 }
 
-/// `gate_server.probe`: nothing at the path, a server that accepts a
+/// `warden_server.probe`: nothing at the path, a server that accepts a
 /// connection (or whose queue is full), or something nobody listens on
 /// (the socket of a dead server, a regular file). It sends an empty
 /// request and reads the reply, so a Python server never writes to a
@@ -222,7 +222,7 @@ extern "C" fn stop_term(_: libc::c_int) {
 
 /// Ctrl-C prints a newline and ends the server, as the typer command's
 /// KeyboardInterrupt does; SIGTERM ends it with no newline. Either way the
-/// socket goes with it: one left behind reads as a running gate to the
+/// socket goes with it: one left behind reads as a running warden to the
 /// next `start`. A SIGINT this process was started with ignored stays
 /// ignored, as in Python. A SIGTERM ignored at start does not, as in Go,
 /// whose runtime cannot keep it ignored.
@@ -244,7 +244,7 @@ fn on_stop_signals(sock: &str) {
 
 /// Answers one connection: `_Handler.handle`.
 fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar), fixed: &(String, Option<String>)) {
-    use crate::gate::fenceruns;
+    use crate::warden::fenceruns;
     let (root, captures) = fixed;
     let peer = peer_pid(&c);
     let line = read_request_line(&mut c);
@@ -264,7 +264,7 @@ fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar), fi
         if report {
             resident::reply_line("", &format!("daisugi hook report: {}", fenceruns::PATH_REFUSAL), 1)
         } else {
-            let res = crate::gate::deny_fmt(&words, fenceruns::PATH_REFUSAL);
+            let res = crate::warden::deny_fmt(&words, fenceruns::PATH_REFUSAL);
             resident::reply_line(&res.out_stdout, &res.out_stderr, res.exit as i64)
         }
     } else if report {
@@ -289,7 +289,7 @@ fn serve_conn(mut c: UnixStream, home: &str, slots: &(Mutex<usize>, Condvar), fi
             *n += 1;
         }
         let res = run_resident_child(&q);
-        crate::gate::statefile::give_notes(&res.notes);
+        crate::warden::statefile::give_notes(&res.notes);
         {
             let (n, cv) = slots;
             let mut n = n.lock().unwrap_or_else(|e| e.into_inner());
@@ -330,7 +330,7 @@ fn read_request_line(c: &mut UnixStream) -> Vec<u8> {
 }
 
 /// The pid SO_PEERCRED names for an accepted connection
-/// (`gate_server._peer_pid`).
+/// (`warden_server._peer_pid`).
 fn peer_pid(c: &UnixStream) -> Option<i64> {
     use std::os::fd::AsRawFd;
     // SAFETY: getsockopt fills a ucred of the size it is given.
@@ -356,11 +356,11 @@ mod tests {
     fn listen_replaces_a_stale_file_and_keeps_the_modes() {
         let d = std::env::temp_dir().join(format!("daisugi-serve-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        let root = d.join("a").join("gate");
+        let root = d.join("a").join("warden");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::write(root.join("gate.sock"), "stale").unwrap();
-        let (r, s) = (root.to_str().unwrap().to_string(), root.join("gate.sock").to_str().unwrap().to_string());
+        std::fs::write(root.join("warden.sock"), "stale").unwrap();
+        let (r, s) = (root.to_str().unwrap().to_string(), root.join("warden.sock").to_str().unwrap().to_string());
         let l = listen(&r, &s).unwrap();
         use std::os::unix::fs::FileTypeExt;
         let st = std::fs::symlink_metadata(&s).unwrap();
@@ -399,9 +399,9 @@ mod tests {
         let d = std::env::temp_dir().join(format!("daisugi-serve-f-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("gate"), "x").unwrap();
-        let r = d.join("gate").to_str().unwrap().to_string();
-        assert!(listen(&r, &format!("{r}/gate.sock")).is_err());
+        std::fs::write(d.join("warden"), "x").unwrap();
+        let r = d.join("warden").to_str().unwrap().to_string();
+        assert!(listen(&r, &format!("{r}/warden.sock")).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

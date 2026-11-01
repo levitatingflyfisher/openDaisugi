@@ -1,18 +1,18 @@
-//! `gateway_journal.load`, `gateway_cluster.cluster_repeats` and
-//! `gateway_distill.rank_reuse_candidates`: the ranked reuse worklist
+//! `router_journal.load`, `router_cluster.cluster_repeats` and
+//! `router_distill.rank_reuse_candidates`: the ranked reuse worklist
 //! `distill-repeats` prints.
 
 use std::collections::HashMap;
 
 use crate::garden::{cosine, format_f};
-use crate::gate::py::text::{split, strip};
-use crate::gate::pyjson::{loads_py, Value};
+use crate::warden::py::text::{split, strip};
+use crate::warden::pyjson::{loads_py, Value};
 use crate::pathways::find::Embedder;
 use crate::pathways::PwErr;
 
 use super::normalize_task;
 
-/// The part of a GatewayTurnRecord the worklist reads.
+/// The part of a RouterTurnRecord the worklist reads.
 #[derive(Clone)]
 pub struct Turn {
     pub signature: String,
@@ -38,7 +38,7 @@ const REQUIRED: &[&str] = &[
     "counterfactual_dollars",
 ];
 
-/// `GatewayJournal(path).load()`: each line a record, a line that is not
+/// `RouterJournal(path).load()`: each line a record, a line that is not
 /// JSON or not a record skipped. A record whose values the worklist cannot
 /// add up the Python way is refused.
 pub fn load_turns(path: &str) -> Result<Vec<Turn>, PwErr> {
@@ -47,9 +47,9 @@ pub fn load_turns(path: &str) -> Result<Vec<Turn>, PwErr> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(PwErr::Io(e)),
     };
-    let text = String::from_utf8(raw).map_err(|_| PwErr::Unreadable("the gateway journal is not UTF-8".into()))?;
+    let text = String::from_utf8(raw).map_err(|_| PwErr::Unreadable("the router journal is not UTF-8".into()))?;
     let mut out = vec![];
-    for line in crate::gate::py::text::splitlines(&text) {
+    for line in crate::warden::py::text::splitlines(&text) {
         let line = strip(line);
         if line.is_empty() {
             continue;
@@ -66,8 +66,8 @@ pub fn load_turns(path: &str) -> Result<Vec<Turn>, PwErr> {
     Ok(out)
 }
 
-fn turn_of(o: &crate::gate::pyjson::Object) -> Result<Turn, PwErr> {
-    let bad = |what: &str| PwErr::Unreadable(format!("a gateway turn's {what} is not the type the worklist adds up"));
+fn turn_of(o: &crate::warden::pyjson::Object) -> Result<Turn, PwErr> {
+    let bad = |what: &str| PwErr::Unreadable(format!("a router turn's {what} is not the type the worklist adds up"));
     let (sig, task) = match (o.value("signature"), o.value("task")) {
         (Value::Str(s), Value::Str(t)) => (s.clone(), t.clone()),
         _ => return Err(bad("signature or task")),
@@ -191,7 +191,7 @@ pub fn rank_reuse(turns: &[Turn], emb: &Embedder, threshold: f64, find: &mut dyn
                 each.push(t.dollars);
             }
         }
-        let dollars = crate::gateway::report::sum_floats(&each);
+        let dollars = crate::router::report::sum_floats(&each);
         out.push(Candidate { representative: c.rep.to_string(), count: c.count, tokens, dollars, reusable: find(c.rep) });
     }
     // sort(key=(tokens, dollars), reverse=True) keeps equal items in order.

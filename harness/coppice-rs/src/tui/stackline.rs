@@ -1,5 +1,5 @@
 //! The one line a window shows under its header: what the agent runs on,
-//! its last gate verdict, and its tokens.
+//! its last warden verdict, and its tokens.
 
 use crate::textwidth;
 
@@ -14,12 +14,12 @@ pub fn daisugi_of(p: &Obj) -> (String, String) {
     }
 }
 
-/// The stack, gate and tokens objects of one pane.list row as one line. A
+/// The stack, warden and tokens objects of one pane.list row as one line. A
 /// field the server does not send is left out.
 pub fn stack_text(p: &Obj) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(st) = obj(p, "stack") {
-        for k in ["loop", "model", "router"] {
+        for k in ["loop", "model", "route"] {
             let v = s(st, k);
             if !v.is_empty() {
                 parts.push(v);
@@ -29,14 +29,14 @@ pub fn stack_text(p: &Obj) -> String {
             let mode = s(d, "mode");
             if !mode.is_empty() {
                 let mut text = format!("daisugi {mode}");
-                // The owner set watching; the gate reads it on the next call.
+                // The owner set watching; the warden reads it on the next call.
                 if s(d, "marker") == "watching" && mode != "watching" {
                     text.push_str(" → watching");
                 }
-                // The gate would refuse a path on the way to the marker
+                // The warden would refuse a path on the way to the marker
                 // (GR-R-11): say so, and the line says which.
                 if s(d, "marker") == "refused" {
-                    text.push_str(" (gate state refused)");
+                    text.push_str(" (warden state refused)");
                 }
                 if d.get("armed").and_then(serde_json::Value::as_bool) == Some(false) {
                     text.push_str(" disarmed");
@@ -45,10 +45,10 @@ pub fn stack_text(p: &Obj) -> String {
             }
         }
     }
-    if let Some(g) = obj(p, "gate") {
+    if let Some(g) = obj(p, "warden") {
         let dec = s(g, "decision");
         if !dec.is_empty() {
-            let mut text = format!("gate {dec}");
+            let mut text = format!("warden {dec}");
             let tool = s(g, "tool");
             if !tool.is_empty() {
                 text.push(' ');

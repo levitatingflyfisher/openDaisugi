@@ -2,26 +2,39 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"daisugi-verify/internal/capture"
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
+	"daisugi-verify/internal/wardenroot"
 )
 
-var capturesRootOpt = opt{names: []string{"--captures-root"}, value: true, metavar: "PATH"}
+var capturesRootOpt = opt{names: []string{"--captures-root"}, value: true, metavar: "PATH",
+	help: "Read this one directory only. Default: <data>/captures, then <data>/warden/captures."}
 
-// capturesRoot is the --captures-root value as pathlib prints it.
-func (e *Env) capturesRoot(p *parsed) string {
+// captureRoots is the roots the journal feed reads: the one --captures-root
+// names, or the data dir's two (primary first).
+func (e *Env) captureRoots(p *parsed, dataDir string) []string {
 	if p.has("--captures-root") {
-		return gateroot.PathStr(p.str("--captures-root", ""))
+		return []string{wardenroot.PathStr(p.str("--captures-root", ""))}
 	}
-	return gateroot.Join(e.dataHome(), "captures")
+	return []string{wardenroot.Join(dataDir, "captures"), wardenroot.Join(dataDir, "warden/captures")}
+}
+
+// capturePath is captures_root / f"{id}.jsonl": an absolute name replaces
+// the root, as pathlib joins it.
+func capturePath(root, id string) string {
+	name := id + ".jsonl"
+	if strings.HasPrefix(name, "/") {
+		return wardenroot.PathStr(name)
+	}
+	return wardenroot.Join(root, wardenroot.PathStr(name))
 }
 
 // pyRaise ends a command with an exception Python does not catch: the
@@ -35,7 +48,9 @@ func (e *Env) pyRaise(cmd string, pe *capture.PyErr) error {
 // counts, newest first.
 func (e *Env) hookList(args []string) error {
 	const cmd = "hook list"
-	opts := []opt{capturesRootOpt, {names: []string{"--json"}, help: "Machine-readable JSON output."}}
+	opts := []opt{capturesRootOpt,
+		{names: []string{"--data-dir"}, value: true, metavar: "PATH"},
+		{names: []string{"--json"}, help: "Machine-readable JSON output."}}
 	p, err := parseArgs(args, opts, 0)
 	if err != nil {
 		return e.usage(cmd, err)
@@ -43,7 +58,7 @@ func (e *Env) hookList(args []string) error {
 	if p.help {
 		return e.cmdHelp(cmd, "", "List captured sessions with call counts.", opts)
 	}
-	sessions, err := capture.ListSessions(e.capturesRoot(p))
+	sessions, err := capture.ListSessionsIn(e.captureRoots(p, e.dataDir(p)))
 	var pe *capture.PyErr
 	if errors.As(err, &pe) {
 		return e.pyRaise(cmd, pe)
@@ -58,7 +73,7 @@ func (e *Env) hookList(args []string) error {
 		rows := make([]any, len(sessions))
 		for i, s := range sessions {
 			rows[i] = pyjson.NewObject().Set("session_id", s.ID).Set("calls", s.Calls).
-				Set("first_at", s.FirstAt).Set("last_at", s.LastAt)
+				Set("first_at", s.FirstAt).Set("last_at", s.LastAt).Set("root", wardenroot.PathStr(s.Root))
 		}
 		e.out("%s\n", pyjson.Dumps(rows, true))
 		return nil
@@ -67,9 +82,22 @@ func (e *Env) hookList(args []string) error {
 		e.out("(no captured sessions)\n")
 		return nil
 	}
-	e.out("%s  %6s  last_at\n", ljust("session_id", 40), "calls")
+	roots := map[string]bool{}
 	for _, s := range sessions {
-		e.out("%s  %6d  %s\n", ljust(s.ID, 40), s.Calls, pyStrOf(s.LastAt))
+		roots[s.Root] = true
+	}
+	showRoot := len(roots) > 1
+	head := ljust("session_id", 40) + "  " + fmt.Sprintf("%6s", "calls") + "  last_at"
+	if showRoot {
+		head += "  root"
+	}
+	e.out("%s\n", head)
+	for _, s := range sessions {
+		line := fmt.Sprintf("%s  %6d  %s", ljust(s.ID, 40), s.Calls, pyStrOf(s.LastAt))
+		if showRoot {
+			line += "  " + wardenroot.PathStr(s.Root)
+		}
+		e.out("%s\n", line)
 	}
 	return nil
 }
@@ -101,19 +129,24 @@ func (e *Env) hookToTrace(args []string) error {
 		return e.missingArg(cmd, "SESSION_ID", "SESSION_ID")
 	}
 	id := p.args[0]
-	name := id + ".jsonl"
-	path := gateroot.PathStr(name)
-	if !strings.HasPrefix(name, "/") {
-		path = gateroot.Join(e.capturesRoot(p), gateroot.PathStr(name))
+	dataDir := e.dataDir(p)
+	path := ""
+	var searched []string
+	for _, root := range e.captureRoots(p, dataDir) {
+		cand := capturePath(root, id)
+		searched = append(searched, cand)
+		if _, err := os.Stat(cand); err == nil {
+			path = cand
+			break
+		}
 	}
-	if _, err := os.Stat(path); err != nil {
-		e.errf("error: no capture at %s\n", path)
+	if path == "" {
+		e.errf("error: no capture at %s\n", strings.Join(searched, ", "))
 		return exit(1)
 	}
-	dataDir := e.dataDir(p)
 	decompose := p.flag("--allow-shell-decomposition")
 	if !p.flagSet("--allow-shell-decomposition") {
-		cfg, err := config.Load(gateroot.Join(dataDir, "config.yaml"))
+		cfg, err := config.Load(wardenroot.Join(dataDir, "config.yaml"))
 		if err != nil {
 			return e.configLoadErr(cmd, err)
 		}

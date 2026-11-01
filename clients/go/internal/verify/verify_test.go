@@ -45,6 +45,8 @@ func TestCheckPermissions_MetacharRejectsWithoutDecomposition(t *testing.T) {
 	env := DefaultEnvelope()
 	env.Permissions.Shell = true
 	env.Permissions.ShellAllowlist = []string{"git", "ls"}
+	env.Permissions.FileRead = []string{"**"}
+	env.Permissions.FileWrite = []string{"**"}
 	plan := ActionPlan{Steps: []Step{stepRaw("s1", "shell", map[string]interface{}{"command": "git status && ls"})}}
 	v := CheckPermissions(plan, env, false)
 	if len(v) != 1 {
@@ -57,6 +59,8 @@ func TestCheckPermissions_DecompositionOptIn(t *testing.T) {
 	env.Permissions.Shell = true
 	env.Permissions.ShellAllowDecomposition = true
 	env.Permissions.ShellAllowlist = []string{"git", "ls"}
+	env.Permissions.FileRead = []string{"**"}
+	env.Permissions.FileWrite = []string{"**"}
 	plan := ActionPlan{Steps: []Step{stepRaw("s1", "shell", map[string]interface{}{"command": "git status && ls"})}}
 	v := CheckPermissions(plan, env, false)
 	if len(v) != 0 {

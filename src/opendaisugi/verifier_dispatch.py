@@ -40,7 +40,7 @@ from opendaisugi.models import ActionPlan, Envelope, VerificationResult, Violati
 
 _log = logging.getLogger("opendaisugi.verifier_dispatch")
 
-DEFAULT_GATE_ROOT = data_home() / "gate"
+DEFAULT_WARDEN_ROOT = data_home() / "warden"
 LAST_DISPATCH_NAME = "last_dispatch.json"
 
 
@@ -48,7 +48,9 @@ class ClientFailure(RuntimeError):
     """The dispatched client did not produce a usable verdict."""
 
 
-def _case_for(plan: ActionPlan, envelope: Envelope, oracle: VerificationResult) -> dict[str, Any]:
+def _case_for(
+    plan: ActionPlan, envelope: Envelope, oracle: VerificationResult, fenced: bool = False
+) -> dict[str, Any]:
     """One conformance verify case, carrying the oracle's own expectation.
 
     The oracle has already run, so the case is the same body the conformance
@@ -58,7 +60,10 @@ def _case_for(plan: ActionPlan, envelope: Envelope, oracle: VerificationResult) 
     """
     from opendaisugi.conformance import make_verify_case
 
-    return make_verify_case(plan, envelope, {"strict": None, "z3_timeout_ms": 500}, oracle)
+    options: dict[str, Any] = {"strict": None, "z3_timeout_ms": 500}
+    if fenced:
+        options["fenced"] = True
+    return make_verify_case(plan, envelope, options, oracle)
 
 
 def _well_formed(verdict: object) -> bool:
@@ -210,7 +215,7 @@ def _record_dispatch(root: Path, client: str, ok: bool, error: str) -> None:
 
 def last_dispatch(root: Path | None = None) -> dict:
     """The last recorded dispatch, or {} when there is none."""
-    base = root or DEFAULT_GATE_ROOT
+    base = root or DEFAULT_WARDEN_ROOT
     try:
         record = json.loads((base / "verifier" / LAST_DISPATCH_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -228,6 +233,7 @@ def verify_via(
     locate: "Callable[[Any], list[str]] | None" = None,
     dialect_pin: str | None = None,
     dialect_base: str | None = None,
+    fenced: bool = False,
 ) -> VerificationResult:
     """Verify with the oracle AND a compiled client. The client may only tighten.
 
@@ -246,14 +252,22 @@ def verify_via(
     broke.
 
     ``dialect_pin`` and ``dialect_base`` go to the oracle only. The client's case is as before,
-    so a client can still only tighten the oracle's verdict.
+    so a client can still only tighten the oracle's verdict. ``fenced`` (ADR-0028) goes to
+    both: the client's case carries it in its options.
     """
     from opendaisugi.bench import options
     from opendaisugi.verify import verify
 
-    base = root or DEFAULT_GATE_ROOT
+    base = root or DEFAULT_WARDEN_ROOT
     t0 = time.monotonic()
-    oracle = verify(plan, envelope, strict=None, dialect_pin=dialect_pin, dialect_base=dialect_base)
+    oracle = verify(
+        plan,
+        envelope,
+        strict=None,
+        dialect_pin=dialect_pin,
+        dialect_base=dialect_base,
+        fenced=fenced,
+    )
     oracle_s = time.monotonic() - t0
     left = timeout_s - oracle_s
 
@@ -261,7 +275,7 @@ def verify_via(
     failure = ""
     verdict: dict | None = None
     # ``locate`` is how a client is found: the bench's checkout rule by
-    # default, options.gate_client_argv on the gate.
+    # default, options.warden_client_argv on the warden.
     argv = (locate(spec) if locate else options.client_argv(spec)) if spec is not None else []
     built = bool(argv) if locate else spec is not None and options.client_is_built(spec)
     if spec is None:
@@ -273,7 +287,7 @@ def verify_via(
     else:
         argv = argv or list(spec.argv)
         try:
-            verdict = _run_client(argv, _case_for(plan, envelope, oracle), left)
+            verdict = _run_client(argv, _case_for(plan, envelope, oracle, fenced), left)
         except ClientFailure as exc:
             failure = str(exc)
 

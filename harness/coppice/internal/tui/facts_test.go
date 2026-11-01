@@ -15,7 +15,7 @@ func TestTheHeaderRowShowsTheFloorFacts(t *testing.T) {
 		"working":      9.0,
 		"needing_you":  9.0,
 		"tokens_today": map[string]any{"fresh": 1000.0, "cache_read": 1200000.0, "cache_write": 3000.0, "out": 5000.0},
-		"gateway":      map[string]any{"url": "http://127.0.0.1:8787", "answers": true},
+		"router":       map[string]any{"url": "http://127.0.0.1:8787", "answers": true},
 	})
 	m := &Model{
 		Rows: []Row{
@@ -28,7 +28,7 @@ func TestTheHeaderRowShowsTheFloorFacts(t *testing.T) {
 	}
 	lines := Render(m, 120, 20)
 	got := stripSGR(lines[1])
-	for _, want := range []string{"daisugi · 1 enforcing · 2 watching", "gateway answers", "2 working", "1 needs you", "tokens today 1.2M"} {
+	for _, want := range []string{"daisugi · 1 enforcing · 2 watching", "router answers", "2 working", "1 needs you", "tokens today 1.2M"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("header row %q lacks %q", got, want)
 		}
@@ -36,20 +36,20 @@ func TestTheHeaderRowShowsTheFloorFacts(t *testing.T) {
 	if narrow := Render(m, 99, 20); strings.Contains(stripSGR(narrow[1]), "daisugi") {
 		t.Fatalf("a narrow screen drew the header row: %q", narrow[1])
 	}
-	m.Facts = decodeFacts(map[string]any{"daisugi": map[string]any{"armed": false, "off": 1.0}, "gateway": map[string]any{"url": "http://box:1"}})
+	m.Facts = decodeFacts(map[string]any{"daisugi": map[string]any{"armed": false, "off": 1.0}, "router": map[string]any{"url": "http://box:1"}})
 	got = stripSGR(Render(m, 120, 20)[1])
-	if !strings.Contains(got, "daisugi · 1 off · disarmed") || !strings.Contains(got, "gateway ?") {
+	if !strings.Contains(got, "daisugi · 1 off · disarmed") || !strings.Contains(got, "router ?") {
 		t.Fatalf("header row %q", got)
 	}
 }
 
-// With no gate hook installed and no agent guarded, the floor says how to
-// turn the gate on, on any screen wide enough for the line, and says
+// With no warden hook installed and no agent guarded, the floor says how to
+// turn the warden on, on any screen wide enough for the line, and says
 // nothing once a hook is installed or an agent is guarded.
-func TestTheFloorNamesTheGateInstallUntilAHookIsInstalled(t *testing.T) {
+func TestTheFloorNamesTheWardenInstallUntilAHookIsInstalled(t *testing.T) {
 	has := func(m *Model, cols int) bool {
 		for _, l := range Render(m, cols, 20) {
-			if strings.Contains(stripSGR(l), gateHint) {
+			if strings.Contains(stripSGR(l), wardenHint) {
 				return true
 			}
 		}

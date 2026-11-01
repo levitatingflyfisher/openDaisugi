@@ -20,7 +20,13 @@ def _fixture():
     env = Envelope(
         generated_by="t",
         task="triage and act",
-        permissions=Permission(shell=True, shell_allowlist=["find"], mcp_allowlist=[]),
+        permissions=Permission(
+            shell=True,
+            shell_allowlist=["find"],
+            file_read=["**"],
+            file_write=["**"],
+            mcp_allowlist=[],
+        ),
     )
     plan = ActionPlan(
         source="t",
@@ -80,7 +86,11 @@ def test_render_dag_html_is_self_contained():
 def test_render_dag_html_escapes_script_close_in_labels():
     # A command containing </script> must not break out of the data block.
     env = Envelope(
-        generated_by="t", task="x", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="x",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="x", steps=[ShellStep(id="s1", command="echo '</script>'")])
     html = render_dag_html(plan, env)

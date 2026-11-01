@@ -4,9 +4,9 @@
 use std::io::Read;
 use std::time::Instant;
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res};
-use crate::gate::pyjson::{dumps_indent, py_repr, Value};
+use crate::warden::pyjson::{dumps_indent, py_repr, Value};
 use crate::pathways::pmodel::Id;
 use crate::supervise;
 
@@ -175,7 +175,7 @@ impl Env {
             Opt::val(
                 &["--root"],
                 "PATH",
-                "Gate data root \u{2014} where the session tree this event appends to lives.",
+                "Warden data root \u{2014} where the session tree this event appends to lives.",
             ),
         ];
         let p = match parse_args(args, &opts, 0) {
@@ -192,7 +192,7 @@ impl Env {
         }
         let mut raw = vec![];
         let _ = std::io::stdin().read_to_end(&mut raw);
-        let default_root = super::gateroot::join(&self.data_home(), "gate");
+        let default_root = super::wardenroot::join(&self.data_home(), "warden");
         let mut argv = vec![
             "--root".to_string(),
             path_str(&p.str("--root", &default_root)),
@@ -202,7 +202,7 @@ impl Env {
             argv.push(p.str("--pane", ""));
         }
         let (stdout, stderr, code) =
-            crate::gate::resident::hook_report_cli(&argv, &raw, &self.env, &self.home);
+            crate::warden::resident::hook_report_cli(&argv, &raw, &self.env, &self.home);
         if !stdout.is_empty() {
             self.echo(&format!("{stdout}\n"));
         }

@@ -6,7 +6,7 @@ map and swap knobs (yesterday's dashboard), reachable by ``:wiring`` or Tab,
 never first. The floor, every pane and its state with a live attach, is the
 coppice binary: ``daisugi coppice floor`` execs it.
 
-B1: the header / gate-mode indicator / status / ``:`` command line are composed
+B1: the header / warden-mode indicator / status / ``:`` command line are composed
 on each SCREEN via :class:`~opendaisugi.tui_base.CockpitScreen`, not on the App —
 a pushed screen is opaque to ``App.query`` and the always-visible mode indicator
 would otherwise hide behind it (a safety failure). The App owns only the screen
@@ -51,8 +51,8 @@ if _HAVE_TEXTUAL:
 
     # `:floor <option>` is an alias for the `floor_backend` swap stage. `:floor`
     # alone, with no option, names the coppice binary, where the floor lives now.
-    # `:gate <option>` keeps its own stage key, unchanged.
-    _COMMAND_STAGE_ALIAS = {"gate": "gate", "floor": "floor_backend"}
+    # `:warden <option>` keeps its own stage key, unchanged.
+    _COMMAND_STAGE_ALIAS = {"warden": "warden", "floor": "floor_backend"}
 
     FLOOR_MOVED = "The floor lives in the coppice binary. Run: daisugi coppice floor"
 
@@ -101,7 +101,7 @@ if _HAVE_TEXTUAL:
             from opendaisugi import ask
 
             try:
-                ask.clear_presence(self.data_dir / "gate")
+                ask.clear_presence(self.data_dir / "warden")
             except OSError:
                 pass
 
@@ -109,7 +109,7 @@ if _HAVE_TEXTUAL:
             from opendaisugi import ask
 
             try:
-                ask.write_presence(self.data_dir / "gate")
+                ask.write_presence(self.data_dir / "warden")
             except OSError:
                 pass
 
@@ -213,7 +213,7 @@ if _HAVE_TEXTUAL:
                 self.exit()
             else:
                 self.set_status(
-                    f"unknown command: {line!r} · try sessions, tree <id>, wiring, gate enforce"
+                    f"unknown command: {line!r} · try sessions, tree <id>, wiring, warden enforce"
                 )
 
         def set_status(self, text: str) -> None:

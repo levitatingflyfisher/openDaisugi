@@ -156,7 +156,7 @@ def verify_delegation(
     elif sig_valid is None and trusted_signers:
         # Supplying trusted_signers means "only run signed skills from these
         # signers". An UNSIGNED contract must then be denied — otherwise an
-        # attacker's unsigned-but-subsumed contract silently bypasses the gate
+        # attacker's unsigned-but-subsumed contract silently bypasses the warden
         # (subsumption caps authority, but provenance is unenforced).
         allowed = False
         reasons.append(

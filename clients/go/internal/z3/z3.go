@@ -1,4 +1,4 @@
-// Package z3 binds the part of Z3's C API the gate's verifier uses, the
+// Package z3 binds the part of Z3's C API the warden's verifier uses, the
 // way z3py builds the same terms, so a check here asks Z3 exactly the
 // question the oracle asks.
 //
@@ -7,7 +7,7 @@
 // runtime, so the binary needs no libz3 or libstdc++ at run time.
 //
 // Every term lives in one process-wide context, as z3py's main_ctx does.
-// Reference counts are taken and never dropped: the gate is a short
+// Reference counts are taken and never dropped: the warden is a short
 // process that builds a few dozen terms.
 package z3
 
@@ -18,6 +18,10 @@ package z3
 #include <z3.h>
 
 static Z3_context new_context(void) {
+	// Z3 swaps in its own SIGINT handler for the length of a check and puts
+	// the old one back with signal(), which drops SA_ONSTACK: a Ctrl-C then
+	// kills a Go process. With the parameter off, Go keeps SIGINT.
+	Z3_global_param_set("ctrl_c", "false");
 	Z3_config cfg = Z3_mk_config();
 	Z3_context c = Z3_mk_context_rc(cfg);
 	Z3_set_error_handler(c, NULL);

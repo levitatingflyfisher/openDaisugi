@@ -8,18 +8,19 @@ import (
 
 // coppiceSpec has the shape `coppice backup` has: three areas and its
 // allow-list.
+// The areas keep the name the archives on disk have (steward.DirName).
 func coppiceSpec(data, cfg string) Spec {
 	return Spec{Tool: "coppice", Version: "9.9",
-		Roots: map[string]string{"data": data, "foreman": filepath.Join(data, "foreman"), "config": cfg},
-		Units: []Unit{{"data", "layout.json"}, {"data", "recent-dirs.json"}, {"foreman", "main"}, {"foreman", "tree"},
-			{"foreman", "view.json"}, {"config", "coppice.toml"}, {"config", "pools.toml"}}}
+		Roots: map[string]string{"data": data, "foreman": filepath.Join(data, "foreman"), "config": cfg}, // names-ok: the log dir name on disk
+		Units: []Unit{{"data", "layout.json"}, {"data", "recent-dirs.json"}, {"foreman", "main"}, {"foreman", "tree"}, // names-ok: the log dir name on disk
+			{"foreman", "view.json"}, {"config", "coppice.toml"}, {"config", "pools.toml"}}} // names-ok: the log dir name on disk
 }
 
 func coppiceFiles(t *testing.T, root, who string) {
 	write(t, root+"/d/layout.json", "{\"from\":\""+who+"\"}\n")
-	write(t, root+"/d/foreman/main/2026-10-24.jsonl", "{}\n")
-	write(t, root+"/d/foreman/tree/a.jsonl", "{}\n")
-	write(t, root+"/d/foreman/view.json", "{}")
+	write(t, root+"/d/foreman/main/2026-10-24.jsonl", "{}\n") // names-ok: the log dir name on disk
+	write(t, root+"/d/foreman/tree/a.jsonl", "{}\n")          // names-ok: the log dir name on disk
+	write(t, root+"/d/foreman/view.json", "{}")               // names-ok: the log dir name on disk
 	write(t, root+"/c/coppice.toml", "fence = \"auto\"\n")
 }
 
@@ -32,7 +33,7 @@ func TestReadsTheArchiveTheRustCoppiceMade(t *testing.T) {
 	if err != nil || r.Files != 5 {
 		t.Fatalf("%v %+v", err, r)
 	}
-	for p, want := range map[string]string{"d/layout.json": "{\"from\":\"rust\"}\n", "d/foreman/tree/a.jsonl": "{}\n", "c/coppice.toml": "fence = \"auto\"\n"} {
+	for p, want := range map[string]string{"d/layout.json": "{\"from\":\"rust\"}\n", "d/foreman/tree/a.jsonl": "{}\n", "c/coppice.toml": "fence = \"auto\"\n"} { // names-ok: the log dir name on disk
 		if b, _ := os.ReadFile(filepath.Join(dst, p)); string(b) != want {
 			t.Errorf("%s = %q", p, b)
 		}

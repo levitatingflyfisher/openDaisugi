@@ -8,14 +8,14 @@ import (
 	"strings"
 	"syscall"
 
-	"daisugi-verify/internal/delegate"
-	"daisugi-verify/internal/gateroot"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
+	"daisugi-verify/internal/router"
+	"daisugi-verify/internal/spawn"
+	"daisugi-verify/internal/wardenroot"
 )
 
-// The promotion meter's constants (router_report.py).
+// The promotion meter's constants (router_status.py).
 const (
 	minLabeled         = 3
 	maxTranscriptBytes = 64 * 1024 * 1024
@@ -33,10 +33,10 @@ const sumLimit = int64(1) << 53
 
 func labelsPath(dataDir string) string { return filepath2(dataDir, "router", "labels.jsonl") }
 
-// sessionOK is router_report.session_ok.
-func sessionOK(s string) bool { return gateroot.SafeSessionID(s) == s }
+// sessionOK is router_status.session_ok.
+func sessionOK(s string) bool { return wardenroot.SafeSessionID(s) == s }
 
-// readLabels is router_report.read_labels: the last good row wins.
+// readLabels is router_status.read_labels: the last good row wins.
 func readLabels(dataDir string) map[string]string {
 	out := map[string]string{}
 	for _, row := range readJSONL(labelsPath(dataDir)) {
@@ -49,7 +49,7 @@ func readLabels(dataDir string) map[string]string {
 	return out
 }
 
-// countOf is router_report._count: an integer from 0 to 2**53, else 0.
+// countOf is router_status._count: an integer from 0 to 2**53, else 0.
 func countOf(v any) int64 {
 	n := measureInt(v)
 	if n < 0 {
@@ -58,7 +58,7 @@ func countOf(v any) int64 {
 	return n
 }
 
-// readCapped is router_report._read_capped.
+// readCapped is router_status._read_capped.
 func readCapped(path string) []byte {
 	if strings.ContainsRune(path, 0) {
 		return nil
@@ -108,7 +108,7 @@ type cost struct {
 	estimated bool
 }
 
-// sessionCost is router_report.session_cost: nil when the transcript
+// sessionCost is router_status.session_cost: nil when the transcript
 // cannot be read.
 func sessionCost(path string) (*cost, error) {
 	if !strings.HasPrefix(path, "/") {
@@ -165,7 +165,7 @@ func sessionCost(path string) (*cost, error) {
 		m := msgs[k]
 		in, cr := countOf(m.usage.Value("input_tokens")), countOf(m.usage.Value("cache_read_input_tokens"))
 		cw, out := countOf(m.usage.Value("cache_creation_input_tokens")), countOf(m.usage.Value("output_tokens"))
-		d, known := gateway.PriceMessage(m.model, in, out, cr, cw)
+		d, known := router.PriceMessage(m.model, in, out, cr, cw)
 		if !known {
 			c.estimated = true
 		}
@@ -178,10 +178,10 @@ func sessionCost(path string) (*cost, error) {
 	return c, nil
 }
 
-// readAudit is router_report._read_audit: every audit record, by file
+// readAudit is router_status._read_audit: every audit record, by file
 // name then line.
 func readAudit(dataDir string) []*pyjson.Object {
-	dir := filepath2(dataDir, "gate", "audit")
+	dir := filepath2(dataDir, "warden", "audit")
 	enc, e := pystr.FSEncode(dir)
 	if e != nil {
 		return nil
@@ -234,9 +234,9 @@ func (r *armRow) object() *pyjson.Object {
 		Set("dollars_per_success", opt(r.perSuccess)).Set("quota_per_success", opt(r.quotaPerSuccess))
 }
 
-// trial is router_report.trial_state.
+// trial is router_status.trial_state.
 type trial struct {
-	rule                 *delegate.Rule
+	rule                 *spawn.Rule
 	graft, control       *armRow
 	conflicting          int64
 	verdict, verdictText string
@@ -251,14 +251,14 @@ func (t *trial) object() *pyjson.Object {
 		Set("verdict", t.verdict).Set("verdict_text", t.verdictText)
 }
 
-// trialState is router_report.trial_state: nil when no rule in audit or
+// trialState is router_status.trial_state: nil when no rule in audit or
 // trial is in force.
 func trialState(dataDir string) (*trial, error) {
-	rules, _, err := delegate.LoadRules(filepath2(dataDir, "gate"))
+	rules, _, err := spawn.LoadRules(filepath2(dataDir, "warden"))
 	if err != nil {
 		return nil, err
 	}
-	var rule *delegate.Rule
+	var rule *spawn.Rule
 	for _, r := range rules {
 		if r.Acting() {
 			rule = r
@@ -362,8 +362,8 @@ func trialState(dataDir string) (*trial, error) {
 	return t, nil
 }
 
-// verdictOf is router_report._verdict.
-func verdictOf(rule *delegate.Rule, g, c *armRow) (string, string) {
+// verdictOf is router_status._verdict.
+func verdictOf(rule *spawn.Rule, g, c *armRow) (string, string) {
 	if rule.State == "audit" {
 		return "none", "nothing: the rule is in audit, so both arms only record. " +
 			"Set its state to trial to compare them."
@@ -406,7 +406,7 @@ func armLine(name string, r *armRow) string {
 		fixed(r.dollars, 4) + est + ", " + groupInt(r.quota) + " quota tokens; " + per
 }
 
-// trialLines is router_report.trial_lines.
+// trialLines is router_status.trial_lines.
 func trialLines(t *trial) []string {
 	out := []string{"trial (rule " + t.rule.ID + " v" + t.rule.Version.Text + ", " + t.rule.State + ", seed " +
 		strconv.FormatInt(t.rule.Seed, 10) + "): promotion is the operator's; nothing is changed here."}
@@ -445,7 +445,7 @@ func (e *Env) routerLabel(args []string) error {
 		return exit(2)
 	}
 	if !sessionOK(session) {
-		e.errf("Error: SESSION must be a session id as the gate names it: 1 to 128 of A-Z a-z 0-9 . _ -, with no dot at either end.\n")
+		e.errf("Error: SESSION must be a session id as the warden names it: 1 to 128 of A-Z a-z 0-9 . _ -, with no dot at either end.\n")
 		return exit(2)
 	}
 	var note any
@@ -457,8 +457,8 @@ func (e *Env) routerLabel(args []string) error {
 		}
 		note = n
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
-	row := pyjson.NewObject().Set("at", delegate.NowISO()).Set("session", session).Set("outcome", outcome).Set("note", note)
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
+	row := pyjson.NewObject().Set("at", spawn.NowISO()).Set("session", session).Set("outcome", outcome).Set("note", note)
 	path := labelsPath(dataDir)
 	if !appendLabel(dataDir, path, pyjson.Dumps(row, true)+"\n") {
 		e.errf("Error: the label could not be written to %s.\n", path)
@@ -472,7 +472,7 @@ func (e *Env) routerLabel(args []string) error {
 	return nil
 }
 
-// appendLabel is router_report.write_label's file work: false when it
+// appendLabel is router_status.write_label's file work: false when it
 // cannot be written.
 func appendLabel(dataDir, path, line string) bool {
 	dir, e := pystr.FSEncode(filepath2(dataDir, "router"))

@@ -1,4 +1,4 @@
-"""daisugi install --harness opencode: copy the gate plugin into OpenCode's
+"""daisugi install --harness opencode: copy the warden plugin into OpenCode's
 global plugin directory, and take it out again.
 
 Every test runs with HOME and XDG_CONFIG_HOME under tmp_path, so no test
@@ -30,13 +30,13 @@ def private_homes(tmp_path, monkeypatch):
 
 
 def _default_path(home: Path) -> Path:
-    return home / ".config" / "opencode" / "plugins" / "daisugi-gate.ts"
+    return home / ".config" / "opencode" / "plugins" / "daisugi-warden.ts"
 
 
 def _shipped() -> str:
     return (
         ir.files("opendaisugi")
-        .joinpath("harness_opencode", "plugin", "daisugi-gate.ts")
+        .joinpath("harness_opencode", "plugin", "daisugi-warden.ts")
         .read_text(encoding="utf-8")
     )
 
@@ -49,7 +49,7 @@ def test_the_plugin_path_follows_xdg_config_home():
     home = Path("/h")
     assert opencode_plugin_path(home, {}) == _default_path(home)
     xdg = opencode_plugin_path(home, {"XDG_CONFIG_HOME": "/x/cfg"})
-    assert xdg == Path("/x/cfg/opencode/plugins/daisugi-gate.ts")
+    assert xdg == Path("/x/cfg/opencode/plugins/daisugi-warden.ts")
     # A relative XDG_CONFIG_HOME is not a config home.
     assert opencode_plugin_path(home, {"XDG_CONFIG_HOME": "cfg"}) == _default_path(home)
 
@@ -63,7 +63,7 @@ def test_install_copies_the_plugin_byte_for_byte(tmp_path):
 def test_install_writes_under_xdg_config_home_when_set(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
     install_harness_extension("opencode", home=tmp_path)
-    assert (tmp_path / "cfg" / "opencode" / "plugins" / "daisugi-gate.ts").exists()
+    assert (tmp_path / "cfg" / "opencode" / "plugins" / "daisugi-warden.ts").exists()
     assert not _default_path(tmp_path).exists()
 
 
@@ -116,8 +116,8 @@ def test_cli_install_prints_the_honest_restart_and_mode_lines(tmp_path):
     assert result.exit_code == 0, result.output
     assert _default_path(tmp_path).exists()
     assert "Restart OpenCode" in result.output
-    assert "OpenCode asks the gate in-process." in result.output
-    assert "gate_mode: enforce" in result.output
+    assert "OpenCode asks the warden in-process." in result.output
+    assert "warden_mode: enforce" in result.output
     assert "daisugi start" in result.output
     assert "every tool call will be denied" not in result.output
 
@@ -150,7 +150,7 @@ def test_cli_installs_pi_and_opencode_together(tmp_path):
     result = CliRunner().invoke(app, ["install", "--harness", "pi", "--harness", "opencode"])
     assert result.exit_code == 0, result.output
     assert _default_path(tmp_path).exists()
-    assert (tmp_path / ".pi" / "agent" / "extensions" / "daisugi-gate" / "index.ts").exists()
+    assert (tmp_path / ".pi" / "agent" / "extensions" / "daisugi-warden" / "index.ts").exists()
 
 
 def test_cli_unknown_harness_names_both_supported_ones(tmp_path):

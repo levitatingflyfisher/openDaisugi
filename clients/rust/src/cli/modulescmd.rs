@@ -8,11 +8,11 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use super::config::{self, ConfigErr, RowsErr};
 use super::configcmd::JSON_OPT;
-use super::gateroot::{join, parent, path_str};
+use super::wardenroot::{join, parent, path_str};
 use super::statuscmd::{matcher_threshold, DATA_DIR_OPT};
 use super::{parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::{len as py_len, repr, strip};
-use crate::gate::pyjson::{dumps_indent, loads, LoadError, Object, Value};
+use crate::warden::py::text::{len as py_len, repr, strip};
+use crate::warden::pyjson::{dumps_indent, loads, LoadError, Object, Value};
 use crate::pathways::store::{Col, Store};
 use crate::tracejournal::Journal;
 use num_bigint::BigInt;
@@ -100,7 +100,7 @@ impl Glyphs {
 /// `swap.STAGE_EFFECT`: how a choice at each stage takes effect.
 fn stage_effect(key: &str) -> &'static str {
     match key {
-        "harness" | "gate" | "envelope" | "floor_report" | "voice_engine" => "cfg",
+        "harness" | "warden" | "envelope" | "floor_report" | "voice_engine" => "cfg",
         "verifier" | "shell" | "backend" | "matcher" | "router" | "distill" | "floor_backend" => {
             "live"
         }
@@ -117,9 +117,9 @@ const CARRIES_POTION: bool = true;
 const CARRIES_INT8: bool = false;
 const INT8_REASON: &str = "needs opendaisugi[int8]";
 
-const OPENCODE_GATE_NOTE: &str = "in-process deny-only hook; fail-closed on every call. apply_patch is \
+const OPENCODE_WARDEN_NOTE: &str = "in-process deny-only hook; fail-closed on every call. apply_patch is \
     checked path by path. Writes to OpenCode's config, to .opencode plugin and tool directories and to any \
-    opencode.json are hard-denied. Every ask is permanent: the gate has no fixed project root for OpenCode. A \
+    opencode.json are hard-denied. Every ask is permanent: the warden has no fixed project root for OpenCode. A \
     coppice pane will not start without the plugin or with --pure. Outside coppice, OpenCode runs ungated if the \
     plugin fails to load or with --pure. Plugins under OPENCODE_CONFIG_DIR are not guarded";
 
@@ -229,7 +229,7 @@ fn knn_module(router: &str) -> Module {
     if router == "knn" {
         m("knn", ACTIVE, "selected; routes by past outcomes. See `daisugi router status`")
     } else {
-        m("knn", AVAILABLE, "learns from outcomes: daisugi install --gateway --router knn")
+        m("knn", AVAILABLE, "learns from outcomes: daisugi install --router --routing-mode knn")
     }
 }
 
@@ -241,13 +241,13 @@ fn switchyard_module(router: &str, present: bool) -> Module {
         (true, true) => m(
             "NeMo Switchyard",
             ACTIVE,
-            "selected; `daisugi gateway` starts it. The gateway row says if turns flow. See `daisugi router status`",
+            "selected; `daisugi router serve` starts it. The router row says if turns flow. See `daisugi router status`",
         ),
         (true, false) => m("NeMo Switchyard", POSSIBLE, format!("selected, but the binary is missing: {install}")),
         (false, true) => m(
             "NeMo Switchyard",
             AVAILABLE,
-            "binary found: daisugi install --gateway --router switchyard --efficient-model <id>",
+            "binary found: daisugi install --router --routing-mode switchyard --efficient-model <id>",
         ),
         (false, false) => m("NeMo Switchyard", POSSIBLE, format!("needs the binary: {install}")),
     }
@@ -302,7 +302,7 @@ impl Env {
             Some(x) if x.starts_with('/') => path_str(x),
             _ => join(&self.home, ".config"),
         };
-        join(&base, "opencode/plugins/daisugi-gate.ts")
+        join(&base, "opencode/plugins/daisugi-warden.ts")
     }
 
     /// `modules._coppice_socket_present`: a socket this user owns at the
@@ -374,7 +374,7 @@ impl Env {
             .collect();
         let pi_installed = exists(&join(
             &self.home,
-            ".pi/agent/extensions/daisugi-gate/index.ts",
+            ".pi/agent/extensions/daisugi-warden/index.ts",
         ));
         let pi_present = is_dir(&join(&self.home, ".pi"));
         let oc_path = self.opencode_plugin_path();
@@ -394,13 +394,13 @@ impl Env {
                 .unwrap_or(""),
         )
         .to_string();
-        let gateway_on = self
+        let router_on = self
             .env
-            .get("OPENDAISUGI_GATEWAY_BASE_URL")
+            .get("OPENDAISUGI_ROUTER_BASE_URL")
             .is_some_and(|v| !v.is_empty())
-            || pre.hooks.installed("gateway", "PreToolUse");
+            || pre.hooks.installed("router", "PreToolUse");
         let matcher_sel = cfg.matcher_model.clone();
-        let switchyard_row = switchyard_module(&cfg.gateway_router, which("switchyard-server"));
+        let switchyard_row = switchyard_module(&cfg.routing_mode, which("switchyard-server"));
         let herdr_stop_on = pre.hooks.installed("--event stop", "Stop");
         let herdr_notif_on = pre.hooks.installed("--event notification", "Notification");
         let herdr_hooks_on = herdr_stop_on && herdr_notif_on;
@@ -414,10 +414,10 @@ impl Env {
         } else if herdr_hooks_partial {
             (
                 AVAILABLE,
-                "one of two hooks installed; run `daisugi install --gate --report herdr`",
+                "one of two hooks installed; run `daisugi install --report herdr`",
             )
         } else if herdr_binary {
-            (AVAILABLE, "run `daisugi install --gate --report herdr`")
+            (AVAILABLE, "run `daisugi install --report herdr`")
         } else {
             (POSSIBLE, "install Herdr first")
         };
@@ -559,10 +559,10 @@ impl Env {
                 POSSIBLE
             }
         };
-        let gate_hook = pre.hooks.installed("daisugi hook", "PreToolUse");
+        let warden_hook = pre.hooks.installed("daisugi hook", "PreToolUse");
         let cond = |b: bool, yes: &'static str, no: &'static str| if b { yes } else { no };
         let (pi_state, pi_note) = if pi_installed {
-            (ACTIVE, "gate extension installed")
+            (ACTIVE, "warden extension installed")
         } else if pi_present {
             (AVAILABLE, "pi detected. Run `daisugi install --harness pi`")
         } else {
@@ -571,7 +571,7 @@ impl Env {
         let (oc_state, oc_note) = if oc_installed {
             (
                 ACTIVE,
-                "gate plugin installed: in-process deny-only hook; fail-closed",
+                "warden plugin installed: in-process deny-only hook; fail-closed",
             )
         } else if oc_present {
             (
@@ -619,16 +619,16 @@ impl Env {
                 ],
             ),
             stage(
-                "gate",
-                "gate (call-time)",
+                "warden",
+                "warden (call-time)",
                 "checks each proposed action BEFORE it runs; fail-closed",
                 vec![
                     m(
                         "claude PreToolUse",
-                        cond(gate_hook, ACTIVE, POSSIBLE),
-                        cond(gate_hook, "installed", "run `daisugi install`"),
+                        cond(warden_hook, ACTIVE, POSSIBLE),
+                        cond(warden_hook, "installed", "run `daisugi install`"),
                     ),
-                    m("codex hooks.json", AVAILABLE, "fail-open class — soft gate"),
+                    m("codex hooks.json", AVAILABLE, "fail-open class — soft warden"),
                     m(
                         "pi tool_call (in-process)",
                         cond(pi_installed, ACTIVE, POSSIBLE),
@@ -643,11 +643,11 @@ impl Env {
                         cond(oc_installed, ACTIVE, POSSIBLE),
                         cond(
                             oc_installed,
-                            OPENCODE_GATE_NOTE,
+                            OPENCODE_WARDEN_NOTE,
                             "run `daisugi install --harness opencode`",
                         ),
                     ),
-                    m("audit / off", AVAILABLE, "config: gate mode"),
+                    m("audit / off", AVAILABLE, "config: warden mode"),
                 ],
             ),
             stage(
@@ -733,20 +733,20 @@ impl Env {
             ),
             stage(
                 "router",
-                "token router / gateway",
+                "router",
                 "routes turns to cheap vs frontier models to save tokens",
                 vec![
                     m(
-                        "daisugi gateway",
-                        cond(gateway_on, ACTIVE, POSSIBLE),
-                        cond(gateway_on, "base_url wired", "daisugi install --gateway"),
+                        "daisugi router serve",
+                        cond(router_on, ACTIVE, POSSIBLE),
+                        cond(router_on, "base_url wired", "daisugi install --router"),
                     ),
                     switchyard_row,
-                    knn_module(&cfg.gateway_router),
+                    knn_module(&cfg.routing_mode),
                     m(
                         "off (direct)",
                         AVAILABLE,
-                        "default; start routing with `daisugi gateway`",
+                        "default; start routing with `daisugi router serve`",
                     ),
                 ],
             ),
@@ -1085,65 +1085,65 @@ impl Env {
         };
         let env = self.env.clone();
         let which = |name: &str| super::install::look_path(&env, name).is_some();
-        let mut gate_for: Vec<&str> = Vec::new();
+        let mut warden_for: Vec<&str> = Vec::new();
         if hooks.installed("daisugi hook", "PreToolUse") {
-            gate_for.push("claude-code");
+            warden_for.push("claude-code");
         }
-        if exists(&join(&home, ".pi/agent/extensions/daisugi-gate/index.ts")) {
-            gate_for.push("pi");
+        if exists(&join(&home, ".pi/agent/extensions/daisugi-warden/index.ts")) {
+            warden_for.push("pi");
         }
         if exists(&self.opencode_plugin_path()) {
-            gate_for.push("opencode");
+            warden_for.push("opencode");
         }
-        let gateway_on = self
+        let router_on = self
             .env
-            .get("OPENDAISUGI_GATEWAY_BASE_URL")
+            .get("OPENDAISUGI_ROUTER_BASE_URL")
             .is_some_and(|v| !v.is_empty())
-            || hooks.installed("gateway", "PreToolUse");
-        let router = cfg.gateway_router.clone();
-        let mut router_detail = format!("gateway_router: {router}");
-        let router_state = if gateway_on {
+            || hooks.installed("router", "PreToolUse");
+        let router = cfg.routing_mode.clone();
+        let mut router_detail = format!("routing_mode: {router}");
+        let router_state = if router_on {
             router.clone()
         } else {
-            router_detail.push_str("; it runs only when the gateway is on");
+            router_detail.push_str("; it runs only when the router is on");
             "off".to_string()
         };
         let mcp = self.mcp_registered();
         let floor = self.coppice_socket_present();
         let sprig = which("sprig");
-        let gate_on = !gate_for.is_empty();
+        let warden_on = !warden_for.is_empty();
         Ok(vec![
             Piece {
-                key: "gate",
-                title: "gate",
-                state: on_off(gate_on).to_string(),
+                key: "warden",
+                title: "warden",
+                state: on_off(warden_on).to_string(),
                 detail: pick(
-                    gate_on,
-                    &format!("hook installed for {}", gate_for.join(", ")),
-                    "no gate hook found",
+                    warden_on,
+                    &format!("hook installed for {}", warden_for.join(", ")),
+                    "no warden hook found",
                 ),
-                turn_on: "daisugi install --gate",
-                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
-            },
-            Piece {
-                key: "gateway",
-                title: "gateway",
-                state: on_off(gateway_on).to_string(),
-                detail: pick(
-                    gateway_on,
-                    "the harness base_url points at it",
-                    "no harness points at it",
-                ),
-                turn_on: "daisugi install --gateway",
-                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
+                turn_on: "daisugi install",
+                turn_off: "daisugi install --uninstall (removes warden, router and memory together)",
             },
             Piece {
                 key: "router",
                 title: "router",
+                state: on_off(router_on).to_string(),
+                detail: pick(
+                    router_on,
+                    "the harness base_url points at it",
+                    "no harness points at it",
+                ),
+                turn_on: "daisugi install --router",
+                turn_off: "daisugi install --uninstall (removes warden, router and memory together)",
+            },
+            Piece {
+                key: "routing_mode",
+                title: "routing mode",
                 state: router_state,
                 detail: router_detail,
-                turn_on: "daisugi install --gateway --router rules|switchyard|knn|model",
-                turn_off: "daisugi install --gateway --router off",
+                turn_on: "daisugi install --router --routing-mode rules|switchyard|knn|model",
+                turn_off: "daisugi install --router --routing-mode off",
             },
             Piece {
                 key: "memory",
@@ -1151,7 +1151,7 @@ impl Env {
                 state: on_off(mcp).to_string(),
                 detail: pick(mcp, "MCP server registered", "MCP server not registered"),
                 turn_on: "daisugi install",
-                turn_off: "daisugi install --uninstall (removes gate, gateway and memory together)",
+                turn_off: "daisugi install --uninstall (removes warden, router and memory together)",
             },
             Piece {
                 key: "floor",

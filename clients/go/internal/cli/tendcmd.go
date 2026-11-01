@@ -286,7 +286,7 @@ func (e *Env) afterWrites(cmd string, err error) error {
 func (e *Env) distillRepeats(args []string) error {
 	const cmd = "distill-repeats"
 	opts := []opt{
-		{names: []string{"--data-dir"}, value: true, metavar: "PATH", help: "Daisugi data directory (reads <data-dir>/gateway/turns.jsonl)."},
+		{names: []string{"--data-dir"}, value: true, metavar: "PATH", help: "Daisugi data directory (reads <data-dir>/router/turns.jsonl)."},
 		{names: []string{"--top"}, value: true, metavar: "INTEGER", help: "Maximum number of rows to print."},
 	}
 	p, err := parseArgs(args, opts, 0)
@@ -294,14 +294,14 @@ func (e *Env) distillRepeats(args []string) error {
 		return e.usage(cmd, err)
 	}
 	if p.help {
-		return e.cmdHelp(cmd, "", "Rank repeated gateway asks into a reuse worklist.", opts)
+		return e.cmdHelp(cmd, "", "Rank repeated router asks into a reuse worklist.", opts)
 	}
 	top, err := clickInt(p, "--top", 20)
 	if err != nil {
 		return e.usage(cmd, err)
 	}
 	dataDir := p.str("--data-dir", e.dataHome())
-	path := filepath.Join(dataDir, "gateway", "turns.jsonl")
+	path := filepath.Join(dataDir, "router", "turns.jsonl")
 	// Skipped lines are logged on the opendaisugi logger, which prints
 	// nothing by default.
 	turns, _, err := distill.LoadTurns(path)
@@ -309,7 +309,7 @@ func (e *Env) distillRepeats(args []string) error {
 		return e.tendErrAs(cmd, err)
 	}
 	if len(turns) == 0 {
-		e.out("no turns recorded yet — run `daisugi gateway` to start journaling.\n")
+		e.out("no turns recorded yet — run `daisugi router serve` to start journaling.\n")
 		return nil
 	}
 	signed := false

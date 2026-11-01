@@ -6,8 +6,8 @@
 //! bytes hashed and signed are the oracle's bytes. The Go client's
 //! `internal/bundle` is the reference.
 
-use crate::gate::pyjson::{canonical_json_ascii, Object, Value};
-use crate::gate::sha256::hexdigest;
+use crate::warden::pyjson::{canonical_json_ascii, Object, Value};
+use crate::warden::sha256::hexdigest;
 use crate::lerr::PyError;
 use crate::pathways::pathway::json_mode;
 use crate::pathways::pmodel::{validate_model, Id, Mode, ValidationError};
@@ -169,7 +169,7 @@ pub fn validate(v: &Value) -> Result<Object, ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::loads;
+    use crate::warden::pyjson::loads;
 
     fn pathway() -> Object {
         let v = loads(

@@ -98,7 +98,7 @@ def test_verified_import_via_log_is_distillable(tmp_path):
 
 
 def test_unverified_import_via_log_is_not_distillable(tmp_path):
-    """The ok-gate still holds: a trace the verifier REFUSED is not learned from
+    """The ok-warden still holds: a trace the verifier REFUSED is not learned from
     (safety is separately re-enforced at reuse, but we don't cluster refusals)."""
     j = Journal(data_dir=tmp_path)
     _log_trace(j, "danger", ok=False)

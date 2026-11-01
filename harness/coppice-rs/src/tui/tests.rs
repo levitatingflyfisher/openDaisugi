@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::facts::{decode_facts, hint_min_cols, GATE_HINT};
+use super::facts::{decode_facts, hint_min_cols, WARDEN_HINT};
 use super::keys::tests::feed;
 use super::keys::{hit_row, hit_tile, parse_sgr, read_key_from, table, Click, Key};
 use super::model::*;
@@ -203,7 +203,7 @@ fn apply_copies_the_list_fields() {
     let mut m = model(vec![]);
     m.apply(
         &list(json!([
-            {"id":"a","label":"gate-refactor","cwd":"/work/gate","harness":"claude","state":"working","source":"gate","detail":"editing","quiet_for":4.5},
+            {"id":"a","label":"gear-refactor","cwd":"/work/warden","harness":"claude","state":"working","source":"warden","detail":"editing","quiet_for":4.5},
             {"id":"b","state":"idle","source":null}
         ])),
         0.0,
@@ -217,7 +217,7 @@ fn apply_copies_the_list_fields() {
             a.source.as_str(),
             a.line.as_str()
         ),
-        ("gate-refactor", "/work/gate", "claude", "gate", "editing")
+        ("gear-refactor", "/work/warden", "claude", "warden", "editing")
     );
     assert_eq!(a.quiet_for, 4.5);
     assert_eq!(m.rows[1].source, "");
@@ -287,20 +287,20 @@ fn move_stays_inside_the_rows() {
 fn events_change_a_known_pane_only() {
     let mut m = model(vec![]);
     m.apply(&list(json!([{"id":"a","state":"working","ts":10.0}])), 70.0);
-    m.event(&o(json!({"event":"state","pane":"a","state":"blocked","source":"gate","detail":"","ask":{"tool":"Bash","summary":"ls"}})));
+    m.event(&o(json!({"event":"state","pane":"a","state":"blocked","source":"warden","detail":"","ask":{"tool":"Bash","summary":"ls"}})));
     let r = &m.rows[0];
     assert_eq!(
         (r.state.as_str(), r.source.as_str(), r.line.as_str(), r.age),
-        ("blocked", "gate", "Bash: ls", 0.0)
+        ("blocked", "warden", "Bash: ls", 0.0)
     );
     assert_eq!(m.need_you, 1);
     let mut m = model(vec![]);
     m.apply(&list(json!([{"id":"a","state":"working"}])), 0.0);
     m.event(&o(
-        json!({"event":"state","pane":"zzz","state":"blocked","source":"gate"}),
+        json!({"event":"state","pane":"zzz","state":"blocked","source":"warden"}),
     ));
     m.event(&o(
-        json!({"event":"state","pane":null,"state":"blocked","source":"gate"}),
+        json!({"event":"state","pane":null,"state":"blocked","source":"warden"}),
     ));
     assert_eq!(m.rows.len(), 1);
     assert_eq!(m.rows[0].state, "working");
@@ -373,7 +373,7 @@ fn next_need_does_nothing_with_nothing_to_go_to() {
 fn render_fits_the_screen_and_ends_with_the_prompt() {
     let mut m = model(vec![Row {
         id: "a".into(),
-        label: "gate-refactor".into(),
+        label: "gear-refactor".into(),
         harness: "claude".into(),
         state: "blocked".into(),
         line: "wants git push --force".into(),
@@ -402,7 +402,7 @@ fn every_line_is_exactly_cols_wide() {
     let mut m = model(vec![
         mk(
             "a",
-            "gate-refactor",
+            "gear-refactor",
             "claude",
             "blocked",
             "wants git push --force",
@@ -538,7 +538,7 @@ fn a_header_folds_and_rows_keep_their_order() {
     f.handle(byte(b' ')).unwrap();
     assert!(plain(&render(&mut f.m, 80, 10)).contains("w1:p10"));
     f.m.event(&o(
-        json!({"pane":"w1:p10","state":"blocked","source":"gate"}),
+        json!({"pane":"w1:p10","state":"blocked","source":"warden"}),
     ));
     assert_eq!(f.m.tree_rows()[0].id, "w1:p2");
 }
@@ -629,7 +629,7 @@ fn the_peek_renders_the_ask_the_verdict_and_the_last_text() {
     m.open_peek(
         "line1\nline2",
         Some(&o(
-            json!({"tool":"git","summary":"push --force","gate":{"verdict":"deny","rule":3}}),
+            json!({"tool":"git","summary":"push --force","warden":{"verdict":"deny","rule":3}}),
         )),
     );
     let lines = render(&mut m, 80, 20);
@@ -640,7 +640,7 @@ fn the_peek_renders_the_ask_the_verdict_and_the_last_text() {
             header = i;
         } else if p.starts_with("asks: git: push --force") {
             ask = i;
-        } else if p.starts_with("The gate says no, rule 3") {
+        } else if p.starts_with("The warden says no, rule 3") {
             verdict = i;
         }
     }
@@ -651,15 +651,15 @@ fn the_peek_renders_the_ask_the_verdict_and_the_last_text() {
     m.open_peek(
         "",
         Some(&o(
-            json!({"summary":"ls","gate":{"verdict":"allow","rule":1.0}}),
+            json!({"summary":"ls","warden":{"verdict":"allow","rule":1.0}}),
         )),
     );
     assert!(render(&mut m, 80, 20)
         .join("\n")
-        .contains("The gate says yes"));
+        .contains("The warden says yes"));
     m.open_peek("text", Some(&o(json!({"summary":"ls"}))));
     let out = render(&mut m, 80, 20).join("\n");
-    assert!(!out.contains("The gate says") && out.contains("asks: ls"));
+    assert!(!out.contains("The warden says") && out.contains("asks: ls"));
 }
 
 #[test]
@@ -738,7 +738,7 @@ fn the_shared_words_match_the_web_page() {
         ("kill_confirm", json!(stop_question("fine"))),
         ("clear_all_confirm_2", json!(clear_all_question(2))),
         ("clear_all_confirm_1", json!(clear_all_question(1))),
-        ("blocked_by_gate", json!(BLOCKED_BY_GATE)),
+        ("blocked_by_warden", json!(BLOCKED_BY_WARDEN)),
         ("blocked_own_question", json!(BLOCKED_OWN_QUESTION)),
         (
             "ended_clear_ms",
@@ -761,13 +761,13 @@ fn a_block_with_no_ask_says_who_found_it() {
     let rows = rows_from(
         &list(json!([
             {"id":"a","state":"blocked","source":"manifest","detail":"live_prompt_box"},
-            {"id":"b","state":"blocked","source":"gate"},
-            {"id":"c","state":"blocked","source":"gate","ask":{"tool":"Bash","summary":"rm"}}
+            {"id":"b","state":"blocked","source":"warden"},
+            {"id":"c","state":"blocked","source":"warden","ask":{"tool":"Bash","summary":"rm"}}
         ])),
         0.0,
     );
     assert_eq!(rows[0].line, BLOCKED_OWN_QUESTION);
-    assert_eq!(rows[1].line, BLOCKED_BY_GATE);
+    assert_eq!(rows[1].line, BLOCKED_BY_WARDEN);
     assert_eq!(rows[2].line, "Bash: rm");
 }
 
@@ -799,13 +799,13 @@ fn harness_names_and_short_verb_lines_are_plumbing() {
     assert_eq!(HARNESSES.join(" "), "claude codex pi sprig opencode");
     assert_eq!(
         VERBS.join(" "),
-        "list read close open swap rotate reset lock unlock layout tree zoom foreman"
+        "list read close open swap rotate reset lock unlock layout tree zoom steward"
     );
-    assert!(PROMOTION_LINE.starts_with("Run: coppice skill foreman."));
+    assert!(PROMOTION_LINE.starts_with("Run: coppice skill steward."));
 }
 
 #[test]
-fn open_peek_reads_the_ask_and_the_gate() {
+fn open_peek_reads_the_ask_and_the_warden() {
     let mut m = model(vec![Row {
         id: "a".into(),
         label: "x".into(),
@@ -815,7 +815,7 @@ fn open_peek_reads_the_ask_and_the_gate() {
     m.open_peek(
         "line1\nline2",
         Some(&o(
-            json!({"summary":"push --force","tool":"git","gate":{"verdict":"deny","rule":3.0}}),
+            json!({"summary":"push --force","tool":"git","warden":{"verdict":"deny","rule":3.0}}),
         )),
     );
     let p = m.peek.clone().unwrap();
@@ -827,7 +827,7 @@ fn open_peek_reads_the_ask_and_the_gate() {
         (p.ask.as_str(), p.tool.as_str()),
         ("git: push --force", "git")
     );
-    assert!(p.has_gate && p.verdict == "deny" && p.rule == 3);
+    assert!(p.has_warden && p.verdict == "deny" && p.rule == 3);
     let mut m = model(vec![]);
     m.open_peek("text", None);
     assert!(m.peek.is_none());
@@ -1150,18 +1150,18 @@ fn rendered(f: &mut Floor) -> String {
 #[test]
 fn a_permanent_peek_asks_for_the_name() {
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "permanent", &sock);
+    let mut f = peek_floor("gear-refactor", "permanent", &sock);
     let out = rendered(&mut f);
     for want in [
         "Deny is the default.",
         "n deny",
-        "type gate-refactor and enter",
+        "type gear-refactor and enter",
     ] {
         assert!(out.contains(want), "{out}");
     }
     assert!(!out.contains("y allow once"));
-    let mut f = peek_floor("gate-refactor", "", &sock);
-    assert!(rendered(&mut f).contains("type gate-refactor and enter"));
+    let mut f = peek_floor("gear-refactor", "", &sock);
+    assert!(rendered(&mut f).contains("type gear-refactor and enter"));
     let mut f = peek_floor("", "permanent", &sock);
     assert!(rendered(&mut f).contains("type w1:p1 and enter"));
 }
@@ -1169,7 +1169,7 @@ fn a_permanent_peek_asks_for_the_name() {
 #[test]
 fn y_on_a_permanent_peek_only_says_type_the_name() {
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "permanent", &sock);
+    let mut f = peek_floor("gear-refactor", "permanent", &sock);
     press(&mut f, b"y");
     assert_eq!(f.m.message, "type the pane name to allow");
     assert!(sock.requests().is_empty());
@@ -1182,18 +1182,18 @@ fn y_on_a_permanent_peek_only_says_type_the_name() {
 #[test]
 fn the_name_then_enter_allows_and_a_wrong_name_allows_nothing() {
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "permanent", &sock);
-    press(&mut f, b"\x14gate-refactor\r");
+    let mut f = peek_floor("gear-refactor", "permanent", &sock);
+    press(&mut f, b"\x14gear-refactor\r");
     let reqs = sock.requests();
     assert_eq!(reqs.len(), 1);
     assert_eq!(reqs[0]["cmd"], "agent.allow");
-    assert_eq!(reqs[0]["confirm"], "gate-refactor");
+    assert_eq!(reqs[0]["confirm"], "gear-refactor");
     assert_eq!(reqs[0]["pane"], "w1:p1");
     assert_eq!(reqs[0]["ask"], "toolu_1");
     assert!(f.m.peek.is_none());
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "permanent", &sock);
-    press(&mut f, b"\x14gate-refactr\r");
+    let mut f = peek_floor("gear-refactor", "permanent", &sock);
+    press(&mut f, b"\x14warden-refactr\r");
     assert!(sock.requests().is_empty());
     assert!(f.m.message.contains("not the pane name"));
     assert!(f.m.peek.is_some());
@@ -1207,7 +1207,7 @@ fn the_name_then_enter_allows_and_a_wrong_name_allows_nothing() {
 fn n_denies_y_allows_once_and_t_allows_for_the_task() {
     for tier in ["permanent", "undoable"] {
         let sock = answer_socket(never);
-        let mut f = peek_floor("gate-refactor", tier, &sock);
+        let mut f = peek_floor("gear-refactor", tier, &sock);
         press(&mut f, b"n");
         let reqs = sock.requests();
         assert_eq!(reqs.len(), 1);
@@ -1215,14 +1215,14 @@ fn n_denies_y_allows_once_and_t_allows_for_the_task() {
         assert!(!reqs[0].contains_key("confirm"));
     }
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "undoable", &sock);
+    let mut f = peek_floor("gear-refactor", "undoable", &sock);
     assert!(rendered(&mut f).contains("y allow once  t allow for this task  n deny"));
     press(&mut f, b"y");
     let reqs = sock.requests();
     assert_eq!(reqs[0]["cmd"], "agent.allow");
     assert!(!reqs[0].contains_key("confirm") && !reqs[0].contains_key("scope"));
     let sock = answer_socket(never);
-    let mut f = peek_floor("gate-refactor", "undoable", &sock);
+    let mut f = peek_floor("gear-refactor", "undoable", &sock);
     press(&mut f, b"t");
     assert_eq!(sock.requests()[0]["scope"], "task");
 }
@@ -1230,9 +1230,9 @@ fn n_denies_y_allows_once_and_t_allows_for_the_task() {
 #[test]
 fn a_refusal_shows_and_keeps_the_peek() {
     let sock = answer_socket(|_| {
-        "this cannot be undone. Type the pane name to allow: gate-refactor".into()
+        "this cannot be undone. Type the pane name to allow: gear-refactor".into()
     });
-    let mut f = peek_floor("gate-refactor", "undoable", &sock);
+    let mut f = peek_floor("gear-refactor", "undoable", &sock);
     press(&mut f, b"y");
     assert!(f.m.message.contains("this cannot be undone"));
     assert!(f.m.peek.is_some());
@@ -1380,11 +1380,11 @@ fn a_held_ask_renders_under_working() {
     assert_eq!(secs[1].rows[0].id, "w1:p1");
     let text = plain(&render(&mut m, 100, 20));
     assert!(
-        text.contains("waiting on review-team's foreman · 1m"),
+        text.contains("waiting on review-team's steward · 1m"),
         "{text}"
     );
     assert!(text.contains("▾ t2  1 working") && text.contains("▾ no directory  1 needs"));
-    m.event(&o(json!({"pane":"w1:p1","state":"blocked","source":"gate","ask":{"id":"ask-1","summary":"rm -rf build/"}})));
+    m.event(&o(json!({"pane":"w1:p1","state":"blocked","source":"warden","ask":{"id":"ask-1","summary":"rm -rf build/"}})));
     assert_eq!(m.need_you, 2);
 }
 
@@ -1490,9 +1490,9 @@ fn tree_fixture() -> (Vec<TaskRow>, Vec<Row>) {
         t("t2", "docs", "t1", "", "working", &["w1:p1", "w1:p2"]),
         t(
             "t3",
-            "gate-refactor",
+            "gear-refactor",
             "",
-            "/repo-worktrees/gate-refactor",
+            "/repo-worktrees/gear-refactor",
             "blocked",
             &["w1:p3"],
         ),
@@ -1525,7 +1525,7 @@ fn render_tree_draws_tasks_then_panes() {
         "└─",
         "review-team",
         "docs",
-        "gate-refactor",
+        "gear-refactor",
         "writer",
         "checker",
         "● needs you",
@@ -1536,7 +1536,7 @@ fn render_tree_draws_tasks_then_panes() {
         assert!(text.contains(want), "{want}: {text}");
     }
     assert!(!text.contains("/repo-worktrees"));
-    assert_eq!(text.matches("gate-refactor").count(), 2);
+    assert_eq!(text.matches("gear-refactor").count(), 2);
     assert!(!text.contains("loose"));
     let docs = lines.iter().position(|l| l.contains("docs")).unwrap();
     assert!(lines[docs + 1].contains("writer"));
@@ -1720,7 +1720,7 @@ fn the_header_row_shows_the_floor_facts() {
         "daisugi": {"mode":"watching","armed":true,"enforcing":1.0,"watching":2.0,"off":0.0},
         "working": 9.0, "needing_you": 9.0,
         "tokens_today": {"fresh":1000.0,"cache_read":1200000.0,"cache_write":3000.0,"out":5000.0},
-        "gateway": {"url":"http://127.0.0.1:8787","answers":true}
+        "router": {"url":"http://127.0.0.1:8787","answers":true}
     })));
     let mut m = model(vec![
         Row {
@@ -1751,7 +1751,7 @@ fn the_header_row_shows_the_floor_facts() {
     let got = strip_sgr(&render(&mut m, 120, 20)[1]);
     for want in [
         "daisugi · 1 enforcing · 2 watching",
-        "gateway answers",
+        "router answers",
         "2 working",
         "1 needs you",
         "tokens today 1.2M",
@@ -1760,18 +1760,18 @@ fn the_header_row_shows_the_floor_facts() {
     }
     assert!(!strip_sgr(&render(&mut m, 99, 20)[1]).contains("daisugi"));
     m.facts = decode_facts(&o(
-        json!({"daisugi":{"armed":false,"off":1.0},"gateway":{"url":"http://box:1"}}),
+        json!({"daisugi":{"armed":false,"off":1.0},"router":{"url":"http://box:1"}}),
     ));
     let got = strip_sgr(&render(&mut m, 120, 20)[1]);
-    assert!(got.contains("daisugi · 1 off · disarmed") && got.contains("gateway ?"));
+    assert!(got.contains("daisugi · 1 off · disarmed") && got.contains("router ?"));
 }
 
 #[test]
-fn the_floor_names_the_gate_install_until_a_hook_is_installed() {
+fn the_floor_names_the_warden_install_until_a_hook_is_installed() {
     let has = |m: &mut Model, cols: i64| {
         render(m, cols, 20)
             .iter()
-            .any(|l| strip_sgr(l).contains(GATE_HINT))
+            .any(|l| strip_sgr(l).contains(WARDEN_HINT))
     };
     let mut m = model(vec![]);
     m.facts = decode_facts(&o(json!({"daisugi":{"armed":true,"installed":false}})));
@@ -1827,7 +1827,7 @@ fn tiled_model() -> Model {
     let mut m = model(vec![
         Row {
             id: "a".into(),
-            label: "gate-refactor".into(),
+            label: "gear-refactor".into(),
             harness: "claude".into(),
             state: "blocked".into(),
             line: "wants git push --force".into(),
@@ -1867,9 +1867,9 @@ fn a_wide_screen_splits_and_the_tile_carries_a_header() {
     let mut m = tiled_model();
     let lines = render(&mut m, 140, 30);
     let right = right_of_divider(&lines);
-    assert!(right.join("\n").contains("gate-refactor  claude  blocked"));
+    assert!(right.join("\n").contains("gear-refactor  claude  blocked"));
     assert!(!lines[0].contains('│'));
-    assert!(plain(&lines).contains("  › 1 gate-refactor"));
+    assert!(plain(&lines).contains("  › 1 gear-refactor"));
     for l in render(&mut m, 80, 24) {
         assert!(!l.contains('│'));
     }
@@ -2303,7 +2303,7 @@ fn slim_rail_rows_are_six_columns_and_every_line_is_cols_wide() {
         assert!(joined.contains("›1●g  │"), "{joined}");
         assert!(joined.contains("  ●d  │"), "{joined}");
         assert!(
-            joined.contains("gate-refactor  claude  blocked"),
+            joined.contains("gear-refactor  claude  blocked"),
             "{joined}"
         );
     }
@@ -2324,13 +2324,13 @@ fn the_slim_rail_gives_way_to_the_peek() {
     let mut m = tiled_model();
     m.peek = Some(PeekView {
         pane: "a".into(),
-        label: "gate-refactor".into(),
+        label: "gear-refactor".into(),
         text: "hello\n".into(),
         ..Default::default()
     });
     let lines = render(&mut m, 100, 24);
     assert!(lines.iter().all(|l| !l.contains('│')));
-    assert!(plain(&lines).contains("peek a gate-refactor"));
+    assert!(plain(&lines).contains("peek a gear-refactor"));
 }
 
 fn subtask_model() -> Model {
@@ -2474,7 +2474,7 @@ fn slim_labels_are_the_shortest_unique_prefix() {
         depth: 0,
     };
     let items = vec![
-        row("1", "gate"),
+        row("1", "gear"),
         row("2", "docs"),
         row("3", "docker"),
         row("4", "e2e shell"),
@@ -2757,7 +2757,7 @@ fn the_journal_covers_the_windows_and_leaves_the_rail() {
     assert!(frame.contains("alpha"), "{frame}");
     assert!(frame.contains("ask · Bash"), "{frame}");
     assert!(
-        frame.contains("Journal · the verdicts the gate and each agent's loop report"),
+        frame.contains("Journal · the verdicts the warden and each agent's loop report"),
         "{frame}"
     );
     assert!(!frame.contains("Empty. Select a row"), "{frame}");
@@ -2769,7 +2769,7 @@ fn the_journal_covers_the_windows_and_leaves_the_rail() {
 
     let mut empty = model(vec![]);
     empty.journal = Some(Default::default());
-    assert!(journal_frame(&mut empty, 100, 20).contains("No gate verdicts yet."));
+    assert!(journal_frame(&mut empty, 100, 20).contains("No warden verdicts yet."));
     let mut failed = model(vec![]);
     failed.journal = Some(super::journal::JournalView {
         err: "the server is away".into(),
@@ -2806,7 +2806,7 @@ fn j_opens_the_journal_and_esc_or_j_closes_it_and_down_stops_at_the_end() {
 }
 
 #[test]
-fn the_header_names_tokens_saved_only_from_a_gateway_figure() {
+fn the_header_names_tokens_saved_only_from_a_router_figure() {
     let line = |res: Value| {
         let mut m = model(vec![]);
         m.facts = decode_facts(&o(res));
@@ -2838,12 +2838,12 @@ fn chat_model() -> Model {
     let mut m = tiled_model();
     m.rows.push(Row {
         id: "f".into(),
-        label: "foreman".into(),
+        label: "steward".into(),
         harness: "claude".into(),
         state: "idle".into(),
         ..Default::default()
     });
-    m.foreman_id = "f".into();
+    m.steward_id = "f".into();
     let mut ts = Tiles::new(Layout::Focus, 1);
     ts.fill("f");
     m.tiles = Some(ts);
@@ -2867,12 +2867,12 @@ fn chat_model() -> Model {
 }
 
 #[test]
-fn the_foreman_window_draws_the_chat_and_its_own_line() {
+fn the_steward_window_draws_the_chat_and_its_own_line() {
     let mut m = chat_model();
     let joined = plain(&render(&mut m, 120, 30));
     for want in [
         "you start the import fix",
-        "foreman Started glean-import",
+        "steward Started glean-import",
         "· Bash ls",
         CHAT_PLACEHOLDER,
         "Screen",
@@ -2887,7 +2887,7 @@ fn the_foreman_window_draws_the_chat_and_its_own_line() {
 }
 
 #[test]
-fn screen_in_the_header_shows_the_foremans_terminal() {
+fn screen_in_the_header_shows_the_stewards_terminal() {
     let mut m = chat_model();
     m.chat_screen = true;
     let joined = plain(&render(&mut m, 120, 30));
@@ -2899,7 +2899,7 @@ fn screen_in_the_header_shows_the_foremans_terminal() {
 }
 
 #[test]
-fn only_the_foreman_has_a_screen_word() {
+fn only_the_steward_has_a_screen_word() {
     let mut m = chat_model();
     assert_eq!(
         (m.toggle_word("f"), m.toggle_word("a"), m.toggle_word("")),
@@ -2921,7 +2921,7 @@ fn a_chat_line_is_never_wider_than_the_window_and_wraps_words() {
         ChatMsg {
             id: String::new(),
             role: "note".into(),
-            text: "A new foreman started.".into(),
+            text: "A new steward started.".into(),
             tool: String::new(),
         },
     ];
@@ -2978,16 +2978,16 @@ fn decode_chat_keeps_roles_and_tool_names() {
 }
 
 #[test]
-fn the_foreman_fills_after_the_agents_that_need_you_and_never_before() {
+fn the_steward_fills_after_the_agents_that_need_you_and_never_before() {
     let mut m = tiled_model();
     m.rows.push(Row {
         id: "f".into(),
-        label: "foreman".into(),
+        label: "steward".into(),
         harness: "claude".into(),
         state: "idle".into(),
         ..Default::default()
     });
-    m.foreman_id = "f".into();
+    m.steward_id = "f".into();
     m.chat = vec![ChatMsg {
         id: "c2".into(),
         role: "agent".into(),
@@ -3000,7 +3000,7 @@ fn the_foreman_fills_after_the_agents_that_need_you_and_never_before() {
 }
 
 #[test]
-fn a_reply_with_no_free_window_marks_the_foremans_rail_row_and_moves_nothing() {
+fn a_reply_with_no_free_window_marks_the_stewards_rail_row_and_moves_nothing() {
     let mut m = chat_model();
     let mut ts = Tiles::new(Layout::Focus, 1);
     ts.fill("a");
@@ -3010,7 +3010,7 @@ fn a_reply_with_no_free_window_marks_the_foremans_rail_row_and_moves_nothing() {
     let wide = plain(&render(&mut m, 140, 30));
     assert!(wide.contains(super::chat::REPLY_MARK), "{wide}");
     let slim = plain(&render(&mut m, 100, 30));
-    assert!(slim.contains("*f  "), "{slim}");
+    assert!(slim.contains("*s  "), "{slim}");
     assert_eq!(m.tiles.as_ref().unwrap().slots.join(","), before);
     m.tiles.as_mut().unwrap().locked = true;
     render(&mut m, 140, 30);
@@ -3088,25 +3088,25 @@ fn mode_row(id: &str, label: &str, mode: &str, marker: &str) -> Row {
 }
 
 #[test]
-fn the_footer_names_m_only_on_a_gated_agent() {
+fn the_footer_names_m_only_on_a_checked_agent() {
     let mut plain = model(vec![row("a", "working")]);
     assert!(!footer_text(&mut plain).contains("m mode"));
-    let mut gated = model(vec![mode_row("a", "", "enforcing", "")]);
+    let mut checked = model(vec![mode_row("a", "", "enforcing", "")]);
     assert!(
-        footer_text(&mut gated).contains("ctrl-w stop  m mode"),
+        footer_text(&mut checked).contains("ctrl-w stop  m mode"),
         "{}",
-        footer_text(&mut gated)
+        footer_text(&mut checked)
     );
 }
 
 #[test]
-fn the_stack_line_says_when_the_gate_refuses_its_state() {
+fn the_stack_line_says_when_the_warden_refuses_its_state() {
     let p = o(
         json!({"stack": {"loop": "claude", "daisugi": {"mode": "enforcing", "armed": true, "marker": "refused", "markerNote": "/g: is writable by group or others (fix: chmod 700 '/g')"}}}),
     );
     assert_eq!(
         super::stackline::stack_text(&p),
-        "claude · daisugi enforcing (gate state refused)"
+        "claude · daisugi enforcing (warden state refused)"
     );
 }
 
@@ -3142,7 +3142,7 @@ fn m_asks_once_then_enter_lowers_the_agent_to_watching() {
     let mut f = mode_floor(mode_row("w1:p1", "auth", "enforcing", ""), &sock);
     press(&mut f, b"m");
     assert_eq!((f.m.confirm.as_str(), f.m.confirm_mode), ("w1:p1", true));
-    assert_eq!(f.m.prompt_line(), "Watch only? The gate will log the calls of auth and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no.");
+    assert_eq!(f.m.prompt_line(), "Watch only? The warden will log the calls of auth and stop none. While it watches, it can also change the warden for other agents. Enter yes, Esc no.");
     assert!(sock.requests().is_empty(), "m set the mode before it asked");
     press(&mut f, b"\r");
     let reqs = sock.requests();
@@ -3178,41 +3178,41 @@ fn m_on_a_watching_agent_enforces_at_once_and_off_is_never_offered() {
     assert!(f.m.confirm.is_empty());
     assert_eq!(
         f.m.message,
-        "auth goes back to the gate's own mode from its next tool call."
+        "auth goes back to the warden's own mode from its next tool call."
     );
     let mut fo = mode_floor(mode_row("w1:p2", "plain", "off", ""), &sock);
     press(&mut fo, b"m");
     assert!(fo.m.confirm.is_empty());
-    assert_eq!(fo.m.message, mode_no_gate("plain"));
+    assert_eq!(fo.m.message, mode_no_warden("plain"));
     assert_eq!(sock.requests().len(), 1);
 }
 
-// F11-R-14: when the whole gate watches (the hook runs in audit), m offers
+// F11-R-14: when the whole warden watches (the hook runs in audit), m offers
 // nothing to lower and the footer does not name it.
 #[test]
-fn m_on_an_agent_the_whole_gate_watches_lowers_nothing() {
+fn m_on_an_agent_the_whole_warden_watches_lowers_nothing() {
     let sock = mode_socket();
     let mut f = mode_floor(mode_row("w1:p1", "auth", "watching", ""), &sock);
     assert!(!footer_text(&mut f.m).contains("m mode"));
     press(&mut f, b"m");
     assert!(f.m.confirm.is_empty() && sock.requests().is_empty());
-    assert_eq!(f.m.message, gate_watches("auth"));
+    assert_eq!(f.m.message, warden_watches("auth"));
 }
 
-// F11-R-15: when the installed hook names another gate root, m says so and
+// F11-R-15: when the installed hook names another warden root, m says so and
 // sets nothing.
 #[test]
 fn m_sets_nothing_when_the_hook_reads_another_root() {
     let sock = mode_socket();
     let mut f = mode_floor(mode_row("w1:p1", "auth", "enforcing", ""), &sock);
-    f.m.facts = decode_facts(&o(json!({"daisugi": {"hook_root": "/elsewhere/gate"}})));
+    f.m.facts = decode_facts(&o(json!({"daisugi": {"hook_root": "/elsewhere/warden"}})));
     press(&mut f, b"m");
     assert!(f.m.confirm.is_empty() && sock.requests().is_empty());
-    assert_eq!(f.m.message, hook_root_line("/elsewhere/gate"));
+    assert_eq!(f.m.message, hook_root_line("/elsewhere/warden"));
 }
 
-// s swaps the selected agent's model or router (F12a). A model goes at
-// once; a router asks first, since it restarts the agent.
+// s swaps the selected agent's model or route (F12a). A model goes at
+// once; a route asks first, since it restarts the agent.
 fn swap_socket() -> AnswerSocket {
     let dir = scratch("swap");
     let path = dir.join("s.sock");
@@ -3239,7 +3239,7 @@ fn swap_socket() -> AnswerSocket {
                     json!({"pane": "w1:p2", "when": "queued"})
                 };
             }
-            if cmd == "agent.set_model" || cmd == "agent.set_router" || cmd == "agent.move" {
+            if cmd == "agent.set_model" || cmd == "agent.set_route" || cmd == "agent.move" {
                 r2.lock().unwrap().push(req.clone());
             }
             let out = json!({"id": req.get("id"), "ok": true, "result": result});
@@ -3290,18 +3290,18 @@ fn s_asks_for_a_model_and_sends_it_at_once() {
 }
 
 #[test]
-fn s_router_asks_first_and_enter_restarts_the_agent() {
+fn s_route_asks_first_and_enter_restarts_the_agent() {
     let sock = swap_socket();
     let mut f = mode_floor(swap_row("claude", "pty"), &sock);
     press(&mut f, b"s");
-    type_line(&mut f, "router gateway");
+    type_line(&mut f, "route router");
     assert!(
         sock.requests().is_empty(),
-        "the router was swapped before the question"
+        "the route was swapped before the question"
     );
     assert_eq!(
-        (f.m.confirm.as_str(), f.m.confirm_router.as_str()),
-        ("w1:p1", "gateway")
+        (f.m.confirm.as_str(), f.m.confirm_route.as_str()),
+        ("w1:p1", "router")
     );
     assert_eq!(
         f.m.prompt_line(),
@@ -3310,24 +3310,24 @@ fn s_router_asks_first_and_enter_restarts_the_agent() {
     press(&mut f, b"\r");
     let reqs = sock.requests();
     assert_eq!(reqs.len(), 1);
-    assert_eq!(reqs[0].get("cmd"), Some(&json!("agent.set_router")));
-    assert_eq!(reqs[0].get("router"), Some(&json!("gateway")));
+    assert_eq!(reqs[0].get("cmd"), Some(&json!("agent.set_route")));
+    assert_eq!(reqs[0].get("route"), Some(&json!("router")));
     assert_eq!(
         f.m.message,
-        "auth restarted and resumed through the gateway. It enforces again."
+        "auth restarted and resumed through the router. It enforces again."
     );
-    assert!(f.m.confirm.is_empty() && f.m.confirm_router.is_empty());
+    assert!(f.m.confirm.is_empty() && f.m.confirm_route.is_empty());
 }
 
 #[test]
-fn s_router_then_esc_keeps_the_agent_and_other_words_get_the_hint() {
+fn s_route_then_esc_keeps_the_agent_and_other_words_get_the_hint() {
     let sock = swap_socket();
     let mut f = mode_floor(swap_row("claude", "pty"), &sock);
     press(&mut f, b"s");
-    type_line(&mut f, "router direct");
+    type_line(&mut f, "route direct");
     f.handle(Key::Esc).unwrap();
-    assert!(sock.requests().is_empty() && f.m.confirm.is_empty() && f.m.confirm_router.is_empty());
-    for line in ["router switchyard", "model", "colour red", "model a b"] {
+    assert!(sock.requests().is_empty() && f.m.confirm.is_empty() && f.m.confirm_route.is_empty());
+    for line in ["route switchyard", "model", "colour red", "model a b"] {
         press(&mut f, b"s");
         type_line(&mut f, line);
         assert_eq!(f.m.message, SWAP_HINT, "{line}");
@@ -3343,9 +3343,9 @@ fn s_has_nothing_for_an_agent_that_names_no_harness() {
     assert!(f.m.swapping.is_empty());
     assert_eq!(
         f.m.message,
-        "Swapping the model, router or loop of auth is not built for a pane with no harness yet."
+        "Swapping the model, route or loop of auth is not built for a pane with no harness yet."
     );
-    // Sprig headless has a model swap and no router swap. Only an agent
+    // Sprig headless has a model swap and no route swap. Only an agent
     // whose conversation the server can read can move to another loop.
     assert_eq!(
         swaps(&swap_row("sprig", KIND_HEADLESS)),
@@ -3450,7 +3450,7 @@ fn a_sentence_keeps_its_act_until_done() {
     assert_ne!(f.act_for("another"), b);
 }
 
-// FM-R-85: the bar says "importing done/total" while the foreman imports.
+// FM-R-85: the bar says "importing done/total" while the steward imports.
 #[test]
 fn the_bar_shows_the_import_progress() {
     use super::chat::import_line;

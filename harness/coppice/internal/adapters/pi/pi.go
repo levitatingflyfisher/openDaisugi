@@ -91,7 +91,7 @@ func (a adapter) Start(ctx context.Context, o pane.StartOpts, _ *pane.Grid) (pan
 	name, args := pane.Wrapped(o.Wrap, bin, argv)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = o.Cwd
-	// Rule 1: the only path by which the gate extension finds COPPICE_SOCK
+	// Rule 1: the only path by which the warden extension finds COPPICE_SOCK
 	// and COPPICE_PANE.
 	cmd.Env = pane.BuildEnv(os.Environ(), o.Env, o.Sock, o.PaneID, o.DataDir)
 

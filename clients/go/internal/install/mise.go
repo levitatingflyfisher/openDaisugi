@@ -159,5 +159,5 @@ func MiseWhich(env map[string]string, tool string) (string, error) {
 // VersionedNote is the one line install prints when the hook keeps a
 // versioned mise path.
 func VersionedNote(path string) string {
-	return "note: " + path + " is a versioned mise install. Run daisugi install --gate again after mise upgrades daisugi."
+	return "note: " + path + " is a versioned mise install. Run daisugi install again after mise upgrades daisugi."
 }

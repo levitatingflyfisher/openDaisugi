@@ -200,11 +200,11 @@ func TestBoolFlagFollowedByTextIsUnaffected(t *testing.T) {
 
 func TestTaskCreateFlagsMapToTheWire(t *testing.T) {
 	params, _, errMsg := parseVerbArgs("task", "create",
-		[]string{"--label", "gate-refactor", "--parent", "t1", "--cwd", "/repo", "--worktree", "--model", "opus"})
+		[]string{"--label", "gear-refactor", "--parent", "t1", "--cwd", "/repo", "--worktree", "--model", "opus"})
 	if errMsg != "" {
 		t.Fatalf("unexpected error %q", errMsg)
 	}
-	if params["label"] != "gate-refactor" || params["parent"] != "t1" || params["cwd"] != "/repo" ||
+	if params["label"] != "gear-refactor" || params["parent"] != "t1" || params["cwd"] != "/repo" ||
 		params["worktree"] != true || params["model"] != "opus" {
 		t.Fatalf("params = %v", params)
 	}

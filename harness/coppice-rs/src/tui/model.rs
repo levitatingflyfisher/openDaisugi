@@ -34,7 +34,7 @@ pub struct Row {
     /// Set on a subagent row: the id of the pane whose harness runs it.
     pub parent: String,
     pub child: String,
-    /// Set while a foreman hears this row's ask first.
+    /// Set while a steward hears this row's ask first.
     pub held: Option<Held>,
     /// The watched workspace files a fenced run changed (workspace_changed).
     pub changed: Vec<String>,
@@ -47,7 +47,7 @@ pub struct Row {
     pub kind: String,
     /// True while the pane shows Claude's folder trust screen.
     pub trust: bool,
-    /// The daisugi mode the gate last reported (enforcing, watching or
+    /// The daisugi mode the warden last reported (enforcing, watching or
     /// off), "" when the server sends none. marker is "watching" while
     /// the owner set the agent to watching.
     pub mode: String,
@@ -76,7 +76,7 @@ pub const KIND_HEADLESS: &str = "headless";
 /// Who holds a row's ask.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Held {
-    pub foreman: String,
+    pub steward: String,
     pub task_label: String,
     pub waited: f64,
 }
@@ -107,7 +107,7 @@ pub fn obj<'a>(m: &'a Obj, key: &str) -> Option<&'a Obj> {
 fn held_of(m: &Obj, now: f64) -> Option<Held> {
     let h = obj(m, "held")?;
     let mut out = Held {
-        foreman: s(h, "by"),
+        steward: s(h, "by"),
         task_label: s(h, "task_label"),
         waited: 0.0,
     };
@@ -123,7 +123,7 @@ fn held_of(m: &Obj, now: f64) -> Option<Held> {
 }
 
 impl Row {
-    /// A blocked pane whose ask no foreman holds.
+    /// A blocked pane whose ask no steward holds.
     pub fn needs_you(&self) -> bool {
         self.state == "blocked" && self.held.is_none() && self.parent.is_empty()
     }
@@ -174,7 +174,7 @@ pub struct PeekView {
     pub tool: String,
     pub verdict: String,
     pub rule: i64,
-    pub has_gate: bool,
+    pub has_warden: bool,
     pub ask_id: String,
     pub tier: String,
     pub trust: bool,
@@ -288,6 +288,9 @@ pub struct Model {
     /// The typed prompt line, as bytes: a key adds one byte at a time.
     pub prompt: Vec<u8>,
     pub message: String,
+    /// The server's one line while the warden is on and no fence runs. The
+    /// floor keeps it on screen; it is not a per-call message.
+    pub unconfined: String,
     /// How many agents the restart line offered to bring back. While it
     /// is above 0 the footer adds R resume all. Any key ends it.
     pub restarted: i64,
@@ -300,9 +303,9 @@ pub struct Model {
     /// With confirm_mode the question is m's: whether to lower the agent
     /// to watching.
     pub confirm_mode: bool,
-    /// The route (direct or gateway) the question asks about when confirm
-    /// names an agent to restart for a router swap.
-    pub confirm_router: String,
+    /// The route (direct or router) the question asks about when confirm
+    /// names an agent to restart for a route swap.
+    pub confirm_route: String,
     /// The harness the question asks about when confirm names an agent
     /// whose conversation moves there, and the replay cost line the
     /// server's preview gave.
@@ -320,18 +323,18 @@ pub struct Model {
     pub typing: String,
     pub headless_line: HashMap<String, String>,
     pub headless_cursor: HashMap<String, usize>,
-    /// The pane id of the floor's tracked foreman, from floor.facts, or "".
+    /// The pane id of the floor's tracked steward, from floor.facts, or "".
     /// Its window draws `chat`, the messages of floor.chat, with an input
     /// line of its own that sends floor.talk. `chat_screen` turns that
-    /// window to the foreman's terminal. `chat_seen` is the id of the newest
+    /// window to the steward's terminal. `chat_seen` is the id of the newest
     /// reply a chat window has shown.
-    pub foreman_id: String,
+    pub steward_id: String,
     pub chat: Vec<super::chat::ChatMsg>,
     pub chat_seen: String,
     pub chat_screen: bool,
     /// Set while the server refuses floor.chat for this floor.
     pub chat_err: String,
-    /// "importing 12/340" while the foreman imports old chats (FM-R-85),
+    /// "importing 12/340" while the steward imports old chats (FM-R-85),
     /// else "". The bar shows it.
     pub import_line: String,
     pub leave: u8,
@@ -350,8 +353,8 @@ pub struct Model {
     pub win_rows: i64,
     pub picker: Option<Picker>,
     pub renaming: String,
-    /// The id of the agent whose model or router the prompt line swaps.
-    /// The prompt holds the line, model NAME or router direct|gateway,
+    /// The id of the agent whose model or route the prompt line swaps.
+    /// The prompt holds the line, model NAME or route direct|router,
     /// until Enter sends it or Esc drops it.
     pub swapping: String,
     pub clear_all: bool,
@@ -511,7 +514,7 @@ pub fn line_for(detail: &str, ask: Option<&Obj>) -> String {
     summary
 }
 
-pub const BLOCKED_BY_GATE: &str = "Blocked. The gate gave no detail.";
+pub const BLOCKED_BY_WARDEN: &str = "Blocked. The warden gave no detail.";
 pub const BLOCKED_OWN_QUESTION: &str = "Waiting on the agent's own question. Open it to answer.";
 pub const TRUST_LINE: &str =
     "Asks to trust this folder. Peek with Space, then y trusts it or n is not now.";
@@ -523,8 +526,8 @@ fn trust_of(m: &Obj) -> bool {
 fn event_line(m: &Obj) -> String {
     let ask = ask_of(m);
     if ask.is_none() && s(m, "state") == "blocked" {
-        if s(m, "source") == "gate" {
-            return BLOCKED_BY_GATE.into();
+        if s(m, "source") == "warden" {
+            return BLOCKED_BY_WARDEN.into();
         }
         if trust_of(m) {
             return TRUST_LINE.into();
@@ -1025,10 +1028,10 @@ impl Model {
             p.tool = s(ask, "tool");
             p.ask_id = s(ask, "id");
             p.tier = normal_tier(&s(ask, "tier"));
-            if let Some(gate) = obj(ask, "gate") {
-                p.has_gate = true;
-                p.verdict = s(gate, "verdict");
-                p.rule = num(gate, "rule").unwrap_or(0.0) as i64;
+            if let Some(warden) = obj(ask, "warden") {
+                p.has_warden = true;
+                p.verdict = s(warden, "verdict");
+                p.rule = num(warden, "rule").unwrap_or(0.0) as i64;
             }
         }
         self.peek = Some(p);
@@ -1050,8 +1053,8 @@ impl Model {
 
     /// The text after the prompt mark.
     pub fn prompt_line(&self) -> String {
-        if !self.confirm.is_empty() && !self.confirm_router.is_empty() {
-            return router_question(&self.label_of(&self.confirm));
+        if !self.confirm.is_empty() && !self.confirm_route.is_empty() {
+            return route_question(&self.label_of(&self.confirm));
         }
         if !self.confirm.is_empty() && !self.confirm_loop.is_empty() {
             return loop_question(&self.confirm_line);
@@ -1083,8 +1086,8 @@ impl Model {
     }
 }
 
-/// The one question s asks before a router swap.
-pub fn router_question(label: &str) -> String {
+/// The one question s asks before a route swap.
+pub fn route_question(label: &str) -> String {
     format!(
         "Restarts {} and resumes its conversation. A turn in progress ends. Enter resumes, Esc keeps.",
         textwidth::printable(label, 0)
@@ -1099,7 +1102,7 @@ pub fn loop_question(line: &str) -> String {
 
 /// What s says to a line it cannot read.
 pub const SWAP_HINT: &str =
-    "Type model NAME, router direct|gateway or loop HARNESS. Esc keeps things as they are.";
+    "Type model NAME, route direct|router or loop HARNESS. Esc keeps things as they are.";
 
 /// A token count in a few characters: 999, 12.3k, 2.5M.
 fn token_word(n: f64) -> String {
@@ -1169,13 +1172,13 @@ pub fn model_done(label: &str, model: &str, when: &str) -> String {
     }
 }
 
-/// The status line after s swaps a router. The agent comes back as a new
+/// The status line after s swaps a route. The agent comes back as a new
 /// window that enforces, since its mode marker went with the old pane.
-pub fn router_done(label: &str, router: &str) -> String {
-    let way = if router == "direct" {
+pub fn route_done(label: &str, route: &str) -> String {
+    let way = if route == "direct" {
         "direct"
     } else {
-        "through the gateway"
+        "through the router"
     };
     format!(
         "{} restarted and resumed {way}. It enforces again.",
@@ -1191,13 +1194,13 @@ pub fn swap_none(label: &str, harness: &str) -> String {
         harness
     };
     format!(
-        "Swapping the model, router or loop of {} is not built for {harness} yet.",
+        "Swapping the model, route or loop of {} is not built for {harness} yet.",
         textwidth::printable(label, 0)
     )
 }
 
 /// Which swaps s offers for a row: a model for claude in a terminal and
-/// for headless sprig, a router for claude, and a move to another loop for
+/// for headless sprig, a route for claude, and a move to another loop for
 /// claude and headless sprig, the two conversations the server can read.
 pub fn swaps(r: &Row) -> (bool, bool, bool) {
     if !r.parent.is_empty() {
@@ -1222,45 +1225,45 @@ pub fn clear_all_question(n: usize) -> String {
 /// watching.
 pub fn watch_question(label: &str) -> String {
     format!(
-        "Watch only? The gate will log the calls of {} and stop none. While it watches, it can also change the gate for other agents. Enter yes, Esc no.",
+        "Watch only? The warden will log the calls of {} and stop none. While it watches, it can also change the warden for other agents. Enter yes, Esc no.",
         textwidth::printable(label, 0)
     )
 }
 
-/// The status line after m sets a mode. The gate reads the marker on the
+/// The status line after m sets a mode. The warden reads the marker on the
 /// agent's next tool call, so it says when.
 pub fn mode_done(label: &str, mode: &str) -> String {
     let label = textwidth::printable(label, 0);
     if mode == "watching" {
         return format!(
-            "{label} watches from its next tool call. The gate logs its calls and stops none."
+            "{label} watches from its next tool call. The warden logs its calls and stops none."
         );
     }
-    format!("{label} goes back to the gate's own mode from its next tool call.")
+    format!("{label} goes back to the warden's own mode from its next tool call.")
 }
 
-/// What m says when the installed gate hook names another gate root than
+/// What m says when the installed warden hook names another warden root than
 /// the server's: a mode set here would do nothing (F11-R-15).
 pub fn hook_root_line(root: &str) -> String {
     format!(
-        "The gate hook reads another gate root, {}, so a mode set here does nothing.",
+        "The warden hook reads another warden root, {}, so a mode set here does nothing.",
         textwidth::printable(root, 0)
     )
 }
 
-/// What m says on an agent that watches because the whole gate does: its
+/// What m says on an agent that watches because the whole warden does: its
 /// hook runs in audit, so there is nothing to lower (F11-R-14).
-pub fn gate_watches(label: &str) -> String {
+pub fn warden_watches(label: &str) -> String {
     format!(
-        "The gate itself watches every call of {}: its hook runs in audit, so there is nothing to lower here.",
+        "The warden itself watches every call of {}: its hook runs in audit, so there is nothing to lower here.",
         textwidth::printable(label, 0)
     )
 }
 
-/// What m says on an agent no gate hook reports for.
-pub fn mode_no_gate(label: &str) -> String {
+/// What m says on an agent no warden hook reports for.
+pub fn mode_no_warden(label: &str) -> String {
     format!(
-        "No gate hook reports for {}, so it has no daisugi mode to set.",
+        "No warden hook reports for {}, so it has no daisugi mode to set.",
         textwidth::printable(label, 0)
     )
 }

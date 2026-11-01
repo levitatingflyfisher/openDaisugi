@@ -3,6 +3,7 @@ package z3
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVersionIsPinned(t *testing.T) {
@@ -62,4 +63,34 @@ func TestConcatOfOneRaisesAsZ3pyDoes(t *testing.T) {
 		}
 	}()
 	Concat(Re([]rune("a")))
+}
+
+// Z3's command interpreter swaps in its own SIGINT handler for the length of
+// a check-sat, set with signal(), which drops SA_ONSTACK. A Ctrl-C in that
+// window kills a Go process ("non-Go code set up signal handler without
+// SA_ONSTACK flag"). The context turns the handler off with the global
+// ctrl_c parameter, so Go's disposition must hold for the whole check.
+func TestASlowCheckLeavesGosSigintDispositionAlone(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		EvalSMTLIB2("(set-option :timeout 400)(declare-const x Int)" +
+			"(assert (= (* x x x x x) 123456789012345678901234567))(check-sat)")
+	}()
+	polls := 0
+	for {
+		select {
+		case <-done:
+			if polls < 20 {
+				t.Fatalf("the check ended after %d polls: too fast to prove anything", polls)
+			}
+			return
+		default:
+			polls++
+			if sigintFlags()&saOnstack == 0 {
+				t.Fatalf("SIGINT lost SA_ONSTACK while Z3 solved (poll %d)", polls)
+			}
+			time.Sleep(50 * time.Microsecond)
+		}
+	}
 }

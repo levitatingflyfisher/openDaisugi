@@ -13,13 +13,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/opendaisugi/coppice/internal/layout"
 	"github.com/opendaisugi/coppice/internal/proto"
 )
 
 // fenceHarnesses are the harness names `daisugi fence` carries a table for.
-var fenceHarnesses = map[string]bool{"claude": true, "codex": true, "pi": true, "opencode": true, "sprig": true}
+var fenceHarnesses = map[string]bool{"claude": true, "codex": true, "pi": true, "opencode": true, "sprig": true, "hermes": true}
 
 // FenceRefusal is the message a pane, a plugin or a peer the server cannot
 // place gets for turning a pane's fence off: a fenced agent must not get an
@@ -30,10 +31,10 @@ const FenceRefusal = "only the operator turns a pane's fence off."
 // pane that runs with no fence.
 const TypeFenceRefusal = "a fenced pane may type only into a fenced pane."
 
-// gateRoots are the gate roots this floor's panes may use: the configured
-// one, then the gate of each data dir openDaisugi may pick
+// wardenRoots are the warden roots this floor's panes may use: the configured
+// one, then the warden of each data dir openDaisugi may pick
 // (datahome.guarded_data_dirs).
-func (s *Server) gateRoots() []string {
+func (s *Server) wardenRoots() []string {
 	var out []string
 	add := func(p string) {
 		if p == "" {
@@ -47,10 +48,10 @@ func (s *Server) gateRoots() []string {
 		}
 		out = append(out, p)
 	}
-	add(s.cfg.GateRoot)
+	add(s.cfg.WardenRoot)
 	// The home is the one whose harness settings the floor reads. The
 	// data-dir variables count only for the user's own home, so a server
-	// with another home (a test's) never reads the user's gate.
+	// with another home (a test's) never reads the user's warden.
 	home := s.cfg.HookHome
 	if home == "" {
 		return out
@@ -72,21 +73,21 @@ func (s *Server) gateRoots() []string {
 		return ""
 	}
 	if strings.HasPrefix(home, "/") {
-		add(filepath.Join(home, ".opendaisugi", "gate"))
+		add(filepath.Join(home, ".opendaisugi", "warden"))
 	}
 	if d := usable(os.Getenv("OPENDAISUGI_HOME")); d != "" {
-		add(filepath.Join(d, "gate"))
+		add(filepath.Join(d, "warden"))
 	}
 	if x := usable(os.Getenv("XDG_DATA_HOME")); x != "" {
-		add(filepath.Join(x, "opendaisugi", "gate"))
+		add(filepath.Join(x, "opendaisugi", "warden"))
 	}
 	return out
 }
 
-// gateArmed is true when root holds envelopes and no DISARMED marker. Only a
+// wardenArmed is true when root holds envelopes and no DISARMED marker. Only a
 // missing envelopes dir reads as off: a root the agent made unreadable
 // (Landlock cannot stop chmod) still counts as on (FN-R-17).
-func gateArmed(root string) bool {
+func wardenArmed(root string) bool {
 	if _, err := os.Stat(filepath.Join(root, "envelopes")); errors.Is(err, fs.ErrNotExist) {
 		return false
 	}
@@ -94,10 +95,10 @@ func gateArmed(root string) bool {
 	return err != nil
 }
 
-// gateOn is true when any gate root this floor's panes may use is armed.
-func (s *Server) gateOn() bool {
-	for _, root := range s.gateRoots() {
-		if gateArmed(root) {
+// wardenOn is true when any warden root this floor's panes may use is armed.
+func (s *Server) wardenOn() bool {
+	for _, root := range s.wardenRoots() {
+		if wardenArmed(root) {
 			return true
 		}
 	}
@@ -105,7 +106,7 @@ func (s *Server) gateOn() bool {
 }
 
 // fenceOn says whether a pane's harness starts under `daisugi fence`: the
-// pane's own setting first, then the config's. Under "auto" it is the gate
+// pane's own setting first, then the config's. Under "auto" it is the warden
 // that decides. A plain shell pane is the operator's own and is fenced only
 // when its own setting says on (a pane a fenced pane made, say).
 func (s *Server) fenceOn(rec layout.Pane) bool {
@@ -124,8 +125,75 @@ func (s *Server) fenceOn(rec layout.Pane) bool {
 	case "on":
 		return true
 	}
-	return s.gateOn()
+	return s.autoFence()
 }
+
+// fenceMinABI is the Landlock ABI `daisugi fence` needs. Below it the fence
+// refuses to start unless it is told to allow weak IPC, and coppice never
+// tells it to: weak IPC would let a child reach D-Bus or the user systemd
+// outside the fence.
+const fenceMinABI = 9
+
+// landlockABI is the Landlock ABI this kernel reports (0 for none). A test
+// swaps it. It makes the version call `daisugi fence` makes first.
+var landlockABI = func() int {
+	const sysLandlockCreateRuleset = 444
+	const createRulesetVersion = 1
+	v, _, errno := syscall.Syscall(sysLandlockCreateRuleset, 0, 0, createRulesetVersion)
+	if errno != 0 {
+		return 0
+	}
+	return int(v)
+}
+
+// landlockUsable says whether this kernel can run `daisugi fence`.
+func landlockUsable() bool { return landlockABI() >= fenceMinABI }
+
+// autoFence is the "auto" decision: fence while the warden is on and this
+// kernel can fence. A kernel without Landlock runs the work bare, and the
+// floor says so (Unconfined). Only "on" fails closed (ADR-0028).
+func (s *Server) autoFence() bool {
+	return s.wardenOn() && landlockUsable()
+}
+
+// UnconfinedLine is the one line the floor shows while agent work runs with
+// the warden on and the config says the fence is off. The Python oracle holds
+// the same text (fence_notice.py).
+const UnconfinedLine = "Files are not confined: the warden checks commands, but only a fence stops " +
+	"a file access. Turn the fence on with fence = \"auto\" in coppice.toml."
+
+// unconfinedNoKernelLine is the line for "auto, but this kernel cannot
+// fence": the setting is already right, so it names the kernel instead.
+func unconfinedNoKernelLine(abi int) string {
+	what := fmt.Sprintf("Landlock ABI %d, the fence needs 9", abi)
+	if abi <= 0 {
+		what = "no Landlock, the fence needs ABI 9"
+	}
+	return "Files are not confined: the warden checks commands, but only a fence stops " +
+		"a file access. This kernel cannot fence (" + what + ")."
+}
+
+// UnconfinedNotice is the one-line notice while agent work runs with the
+// warden on and no fence, and "" otherwise: the config says off (turn it on),
+// or it says auto and the kernel cannot fence (name the kernel).
+func (s *Server) UnconfinedNotice() string {
+	if !s.wardenOn() {
+		return ""
+	}
+	switch s.cfg.Fence {
+	case "off":
+		return UnconfinedLine
+	case "on":
+		return ""
+	}
+	if abi := landlockABI(); abi < fenceMinABI {
+		return unconfinedNoKernelLine(abi)
+	}
+	return ""
+}
+
+// Unconfined says whether agent work runs with the warden on and no fence.
+func (s *Server) Unconfined() bool { return s.UnconfinedNotice() != "" }
 
 // paneFenced says whether the live pane id runs under the fence.
 func (s *Server) paneFenced(id string) bool {
@@ -210,6 +278,9 @@ func (s *Server) fenceWrap(rec layout.Pane, tmp string) ([]string, error) {
 		return nil, fmt.Errorf("this pane starts under daisugi fence, and %s is not on PATH. "+
 			"Install daisugi, or set fence = \"off\" in coppice.toml.", daisugiBin())
 	}
+	if msg := homeFolderRefusal(rec.Cwd); msg != "" {
+		return nil, errors.New(msg)
+	}
 	w := []string{bin, "fence"}
 	if fenceHarnesses[rec.Harness] {
 		w = append(w, "--harness", rec.Harness)
@@ -217,12 +288,34 @@ func (s *Server) fenceWrap(rec layout.Pane, tmp string) ([]string, error) {
 	if rec.Cwd != "" {
 		w = append(w, "--workspace", rec.Cwd)
 	}
-	if s.cfg.GateRoot != "" {
-		w = append(w, "--gate-root", s.cfg.GateRoot)
+	if s.cfg.WardenRoot != "" {
+		w = append(w, "--warden-root", s.cfg.WardenRoot)
 	}
 	w = append(w, "--tmpdir", tmp)
 	if s.cfg.SocketPath != "" {
 		w = append(w, "--coppice-socket", s.cfg.SocketPath)
+	}
+	// The steward's own tools live on the standing socket, in the steward
+	// log dir. A fenced steward must reach it to have its tools.
+	if isStewardLabel(rec.Label) {
+		w = append(w, "--coppice-socket", s.standingSockPath())
+	}
+	// A pane of a Pando branch reads its branch and everything below it,
+	// read only. The rest of the memory stays shut at the kernel: the store
+	// above, its log and view, and every sibling branch (round 8b). It
+	// cannot write its branch: the data home is the warden's state, so the
+	// follow service and coppice, outside the fence, log its chat.
+	if d := s.paneBranchDir(rec); d != "" {
+		w = append(w, "--allow", d)
+	}
+	// A lead's clone borrows its repo's objects (git clone --shared): the
+	// fence lets it read them, and nothing else of the owner's repo (H1).
+	objs, err := leadObjectsDirs(rec)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range objs {
+		w = append(w, "--allow", d)
 	}
 	// A sprig pane keeps its session in a directory it was given. It is a
 	// work dir, checked like the workspace: the pane picks the path.
@@ -236,31 +329,52 @@ func (s *Server) fenceWrap(rec layout.Pane, tmp string) ([]string, error) {
 	return append(w, "--"), nil
 }
 
-// fenceCmd is the prefix that runs a foreman worker or turn under the
+// homeFolderRefusal is what a fenced pane started in the home folder gets,
+// or "". `daisugi fence` shuts the home folder
+// because it holds ~/.ssh, ~/.age and the like, so the refusal comes in any
+// case; this says it first, in one line that names what to do.
+func homeFolderRefusal(cwd string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || cwd == "" || home == "" {
+		return ""
+	}
+	if wsKey(cwd) != wsKey(home) {
+		return ""
+	}
+	return "the fence refuses your home folder (" + cwd + "), because it holds secrets such as ~/.ssh and ~/.age. " +
+		"Open the pane in a project folder, for example under ~/code, or set fence = \"off\" for that pane."
+}
+
+// fenceCmd is the prefix that runs a steward worker or turn under the
 // fence (FN-R-17): the same rules as a pane, the workspace its directory,
 // and its own data dir read and write, named by --allow. keepFD3 keeps the
-// key pipe. nil when the gate is off and the config does not say on.
+// key pipe. nil when the warden is off and the config does not say on.
 func (s *Server) fenceCmd(harness, dir string, allow []string, keepFD3 bool) ([]string, error) {
+	return s.fenceCmdSockets(harness, dir, allow, keepFD3, nil)
+}
+
+// fenceCmdSockets is fenceCmd with more sockets the command may connect to.
+func (s *Server) fenceCmdSockets(harness, dir string, allow []string, keepFD3 bool, sockets []string) ([]string, error) {
 	switch s.cfg.Fence {
 	case "off":
 		return nil, nil
 	case "on":
 	default:
-		if !s.gateOn() {
+		if !s.autoFence() {
 			return nil, nil
 		}
 	}
 	bin, err := exec.LookPath(daisugiBin())
 	if err != nil {
-		return nil, fmt.Errorf("the gate is on, so this runs under daisugi fence, and %s is not on PATH", daisugiBin())
+		return nil, fmt.Errorf("the warden is on, so this runs under daisugi fence, and %s is not on PATH", daisugiBin())
 	}
 	w := []string{bin, "fence"}
 	if harness != "" {
 		w = append(w, "--harness", harness)
 	}
 	w = append(w, "--workspace", dir)
-	if s.cfg.GateRoot != "" {
-		w = append(w, "--gate-root", s.cfg.GateRoot)
+	if s.cfg.WardenRoot != "" {
+		w = append(w, "--warden-root", s.cfg.WardenRoot)
 	}
 	for _, a := range allow {
 		w = append(w, "--allow", a+":rw")
@@ -268,52 +382,63 @@ func (s *Server) fenceCmd(harness, dir string, allow []string, keepFD3 bool) ([]
 	if s.cfg.SocketPath != "" {
 		w = append(w, "--coppice-socket", s.cfg.SocketPath)
 	}
+	for _, sock := range sockets {
+		w = append(w, "--coppice-socket", sock)
+	}
 	if keepFD3 {
 		w = append(w, "--keep-fd", "3")
 	}
 	return append(w, "--"), nil
 }
 
-// sprigFence is the `daisugi fence` prefix (no "--") a foreman worker's
-// sprig starts under, or nil when the gate is off and the config does not
-// say on. The workspace is the worker's directory; the gate root is the
-// worker's own, so the fence starts its resident gate and keeps it read
+// sprigFence is the `daisugi fence` prefix (no "--") a steward worker's
+// sprig starts under, or nil when the warden is off and the config does not
+// say on. The workspace is the worker's directory; the warden root is the
+// worker's own, so the fence starts its resident warden and keeps it read
 // only; the tree run adds sprig's session dir and its key descriptors
 // (FN-R-25).
-func (s *Server) sprigFence(dir, gateRoot string) ([]string, error) {
+func (s *Server) sprigFence(dir, wardenRoot string, allow ...string) ([]string, error) {
 	w, err := s.fenceCmd("", dir, nil, false)
 	if err != nil || w == nil {
 		return nil, err
 	}
 	w = w[:len(w)-1] // the "--"
+	// allow entries carry their own mode: "path" is read only, "path:rw"
+	// read and write.
+	for _, a := range allow {
+		w = append(w, "--allow", a)
+	}
 	for i := 0; i+1 < len(w); i++ {
-		if w[i] == "--gate-root" {
+		if w[i] == "--warden-root" {
 			w = append(w[:i], w[i+2:]...)
 			break
 		}
 	}
-	return append(w, "--gate-root", gateRoot), nil
+	return append(w, "--warden-root", wardenRoot), nil
 }
 
 // claudeSettings is the --settings document a fenced claude pane starts
 // with (FN-R-13). Precedence puts it over the user, project and local
-// files, so a planted settings file cannot drop the gate hook or switch
+// files, so a planted settings file cannot drop the warden hook or switch
 // hooks off mid-session, and a ConfigChange hook refuses any change to
-// those files. The gate hook covers every tool (matcher *) and a hook that
+// those files. The warden hook covers every tool (matcher *) and a hook that
 // fails blocks.
-func (s *Server) claudeSettings(daisugi string) string {
-	root := s.cfg.GateRoot
+func (s *Server) claudeSettings(daisugi, session string) string {
+	root := s.cfg.WardenRoot
 	if root == "" {
-		for _, r := range s.gateRoots() {
-			if gateArmed(r) {
+		for _, r := range s.wardenRoots() {
+			if wardenArmed(r) {
 				root = r
 				break
 			}
 		}
 	}
-	cmd := "DAISUGI_GATE_HOOK=opendaisugi.gate " + shellQuote(daisugi) + " gate check"
+	cmd := "DAISUGI_WARDEN_HOOK=opendaisugi.warden " + shellQuote(daisugi) + " warden check"
 	if root != "" {
 		cmd += " --root " + shellQuote(root)
+	}
+	if session != "" {
+		cmd += " --session " + shellQuote(session)
 	}
 	cmd += " --format claude --verify-timeout 10 --ask --ask-timeout 90 || exit 2"
 	doc := map[string]any{
@@ -336,11 +461,11 @@ func (s *Server) claudeSettings(daisugi string) string {
 
 // fencedClaudeArgv adds the --settings document to a fenced claude pane's
 // argv: after the program for a pty pane, in front for an adapter's.
-func (s *Server) fencedClaudeArgv(rec layout.Pane, wrap []string, argv []string, pty bool) []string {
+func (s *Server) fencedClaudeArgv(rec layout.Pane, wrap []string, argv []string, pty bool, session string) []string {
 	if len(wrap) == 0 || rec.Harness != "claude" {
 		return argv
 	}
-	settings := []string{"--settings", s.claudeSettings(wrap[0])}
+	settings := []string{"--settings", s.claudeSettings(wrap[0], session)}
 	if pty {
 		if len(argv) == 0 {
 			return argv
@@ -402,8 +527,10 @@ func workspaceWatched(dir string) map[string]string {
 	for _, f := range []string{".mcp.json", ".envrc", ".gitmodules", "opencode.json", "opencode.jsonc"} {
 		add(filepath.Join(dir, f), 0)
 	}
-	for _, d := range []string{".claude", ".codex", ".opencode"} {
-		add(filepath.Join(dir, d), watchDepth)
+	for d, list := range harnessWatched {
+		for _, w := range list {
+			add(filepath.Join(dir, d, w.name), w.depth)
+		}
 	}
 	gitDirWatched := func(gd string) {
 		add(filepath.Join(gd, "config"), 0)
@@ -433,6 +560,44 @@ func workspaceWatched(dir string) map[string]string {
 		add(git, 0)
 	}
 	return out
+}
+
+// harnessWatched is what the watch reads inside a harness config dir: an
+// allowlist of the files that change how the harness behaves (settings,
+// hooks, MCP config, instruction files, commands, agents, skills, plugin
+// config). The rest of the dir is state the harness writes while it runs
+// (projects, todos, shell snapshots, tool results). In a home folder the
+// dir is the harness's global state dir, and watching it all held the whole
+// home for ever. A depth of 0 is one file; a depth of 1 is the files
+// directly in a dir; a bigger depth walks the tree.
+var harnessWatched = map[string][]watchEntry{
+	".claude": {
+		{"settings.json", 0}, {"settings.local.json", 0}, {"CLAUDE.md", 0}, {"CLAUDE.local.md", 0},
+		{".mcp.json", 0}, {"mcp.json", 0}, {"keybindings.json", 0},
+		{"hooks", watchDepth}, {"commands", watchDepth}, {"agents", watchDepth}, {"skills", watchDepth},
+		{"output-styles", watchDepth}, {"plugins", 1},
+	},
+	".codex": {
+		{"config.toml", 0}, {"hooks.json", 0}, {"AGENTS.md", 0}, {"AGENTS.override.md", 0},
+		{"prompts", watchDepth}, {"skills", watchDepth}, {"agents", watchDepth}, {"hooks", watchDepth},
+		// execpolicy: Codex reads *.rules to decide which commands run
+		// without approval.
+		{"rules", watchDepth},
+	},
+	".opencode": {
+		{"opencode.json", 0}, {"opencode.jsonc", 0}, {"AGENTS.md", 0},
+		{"agent", watchDepth}, {"agents", watchDepth}, {"command", watchDepth}, {"commands", watchDepth},
+		{"plugin", watchDepth}, {"plugins", watchDepth}, {"tool", watchDepth}, {"tools", watchDepth},
+		{"mode", watchDepth}, {"skill", watchDepth}, {"skills", watchDepth},
+		// OpenCode runs `bun install` on a package.json in its config dir,
+		// for plugin dependencies: https://opencode.ai/docs/plugins/
+		{"package.json", 0},
+	},
+}
+
+type watchEntry struct {
+	name  string
+	depth int
 }
 
 // The watch reads at most watchBudget entries, watchDepth levels into a

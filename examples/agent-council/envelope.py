@@ -16,7 +16,7 @@ from opendaisugi.models import Envelope, Invariant, Permission
 def build_envelope() -> Envelope:
     return Envelope(
         generated_by="agent-council-kit",
-        task="Gate a contribution on N-agent council quorum + no-PII review",
+        task="Warden a contribution on N-agent council quorum + no-PII review",
         permissions=Permission(
             shell=False,
             file_read=["./contributions/**"],

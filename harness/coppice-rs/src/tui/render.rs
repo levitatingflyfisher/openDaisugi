@@ -4,7 +4,7 @@
 use crate::config;
 use crate::textwidth;
 
-use super::facts::{facts_line, gate_hint_shown, FACTS_MIN_COLS, GATE_HINT};
+use super::facts::{facts_line, warden_hint_shown, FACTS_MIN_COLS, WARDEN_HINT};
 use super::keys::{join_keys, table, without_mode, Action};
 use super::model::{answerable, Item, ItemKind, Model, PeekView, RailGroup, Row, Size};
 use super::railtree::group_line;
@@ -89,7 +89,7 @@ pub fn footer_text(m: &mut Model) -> String {
 /// The footer without the restart offer.
 fn footer_base(m: &mut Model) -> String {
     if !m.typing.is_empty() {
-        let back = if m.typing == m.foreman_id && m.chat_screen {
+        let back = if m.typing == m.steward_id && m.chat_screen {
             "  click Chat to read the chat"
         } else {
             ""
@@ -145,7 +145,7 @@ fn footer_base(m: &mut Model) -> String {
         }
     }
     let mut t = table();
-    // m shows only on an agent it can act on, so a floor with no gate
+    // m shows only on an agent it can act on, so a floor with no warden
     // keeps its footer short.
     let settable = m
         .selected()
@@ -639,7 +639,7 @@ pub fn row_line(r: &Row, cursor: bool, dim: bool, focused: bool, tag: &str, cols
     if let Some(h) = &r.held {
         state = "held".into();
         line = format!(
-            "waiting on {}'s foreman · {}",
+            "waiting on {}'s steward · {}",
             textwidth::printable(&h.task_label, 0),
             age_text(h.waited)
         );
@@ -739,7 +739,7 @@ pub fn roster(m: &mut Model, cols: i64, height: i64) -> (Vec<String>, Vec<i64>) 
                 tag.push_str(&"  ".repeat(it.depth.min(MAX_INDENT)));
                 let mut shown = r.clone();
                 if m.reply_waiting(&r.id) {
-                    // The foreman has a reply and no window to show it in.
+                    // The steward has a reply and no window to show it in.
                     shown.state = super::chat::REPLY_MARK.to_string();
                 }
                 lines.push(row_line(
@@ -998,7 +998,7 @@ pub fn tile_lines(m: &mut Model, id: &str, i: usize, w: i64, h: i64) -> Vec<Stri
     let headless = !id.is_empty() && m.takes_line(id) && h >= 2;
     let budget = if headless { h - 1 } else { h };
     if m.chat_window(id) {
-        // The window has shown the foreman's newest reply.
+        // The window has shown the steward's newest reply.
         m.chat_seen = super::chat::last_reply(&m.chat);
         let room = budget - lines.len() as i64;
         lines.extend(super::chat::chat_lines(m, w, room));
@@ -1150,8 +1150,8 @@ pub fn render(m: &mut Model, cols: i64, rows: i64) -> Vec<String> {
             ));
         }
     }
-    if gate_hint_shown(&m.facts) && cols >= width(GATE_HINT) {
-        head.push(pad(GATE_HINT, cols));
+    if warden_hint_shown(&m.facts) && cols >= width(WARDEN_HINT) {
+        head.push(pad(WARDEN_HINT, cols));
     }
     let mut tail: Vec<String> = Vec::new();
     for n in &m.notes {
@@ -1180,6 +1180,12 @@ pub fn render(m: &mut Model, cols: i64, rows: i64) -> Vec<String> {
         tail.push(format!(
             "{color}{}{SGR_RESET}",
             pad(&textwidth::printable(&m.ended_line, 0), cols)
+        ));
+    }
+    if !m.unconfined.is_empty() {
+        tail.push(format!(
+            "{SGR_AMBER}{}{SGR_RESET}",
+            pad(&textwidth::truncate(&textwidth::printable(&m.unconfined, 0), cols), cols)
         ));
     }
     if !m.message.is_empty() {
@@ -1323,7 +1329,7 @@ pub fn peek_lines(p: &PeekView, cols: i64, height: i64) -> Vec<String> {
     if !p.ask.is_empty() {
         head.push(pad(&format!("asks: {}", p.ask), cols));
     }
-    if p.has_gate {
+    if p.has_warden {
         head.push(pad(&verdict_text(&p.verdict, p.rule), cols));
     }
     for line in trust_lines(p) {
@@ -1381,10 +1387,10 @@ pub fn trust_lines(p: &PeekView) -> Vec<String> {
 /// The peek's line of keys for the trust screen.
 pub const TRUST_KEYS: &str = "y trust this folder  n not now, which ends Claude";
 
-/// The one line that says what the gate decided.
+/// The one line that says what the warden decided.
 pub fn verdict_text(verdict: &str, rule: i64) -> String {
     if verdict == "allow" {
-        return "The gate says yes".into();
+        return "The warden says yes".into();
     }
-    format!("The gate says no, rule {rule}")
+    format!("The warden says no, rule {rule}")
 }

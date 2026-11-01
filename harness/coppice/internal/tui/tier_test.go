@@ -97,9 +97,9 @@ func rendered(f *floor) string {
 }
 
 func TestAPermanentPeekAsksForTheName(t *testing.T) {
-	f := peekFloor(t, "gate-refactor", "permanent", newAnswerSocket(t, never))
+	f := peekFloor(t, "gear-refactor", "permanent", newAnswerSocket(t, never))
 	out := rendered(f)
-	for _, want := range []string{"Deny is the default.", "n deny", "type gate-refactor and enter"} {
+	for _, want := range []string{"Deny is the default.", "n deny", "type gear-refactor and enter"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("the peek does not say %q:\n%s", want, out)
 		}
@@ -110,15 +110,15 @@ func TestAPermanentPeekAsksForTheName(t *testing.T) {
 }
 
 func TestAnAskWithNoTierPeeksAsPermanent(t *testing.T) {
-	f := peekFloor(t, "gate-refactor", "", newAnswerSocket(t, never))
-	if !strings.Contains(rendered(f), "type gate-refactor and enter") {
+	f := peekFloor(t, "gear-refactor", "", newAnswerSocket(t, never))
+	if !strings.Contains(rendered(f), "type gear-refactor and enter") {
 		t.Fatal("an ask with no tier did not peek as permanent")
 	}
 }
 
 func TestYOnAPermanentPeekOnlySaysTypeTheName(t *testing.T) {
 	sock := newAnswerSocket(t, never)
-	f := peekFloor(t, "gate-refactor", "permanent", sock)
+	f := peekFloor(t, "gear-refactor", "permanent", sock)
 	press(t, f, "y")
 	if f.m.Message != "type the pane name to allow" {
 		t.Fatalf("message %q", f.m.Message)
@@ -137,10 +137,10 @@ func TestYOnAPermanentPeekOnlySaysTypeTheName(t *testing.T) {
 
 func TestTypingTheNameThenEnterAllowsAPermanentAsk(t *testing.T) {
 	sock := newAnswerSocket(t, never)
-	f := peekFloor(t, "gate-refactor", "permanent", sock)
-	press(t, f, "\x14gate-refactor\r")
+	f := peekFloor(t, "gear-refactor", "permanent", sock)
+	press(t, f, "\x14gear-refactor\r")
 	reqs := sock.requests()
-	if len(reqs) != 1 || reqs[0]["cmd"] != "agent.allow" || reqs[0]["confirm"] != "gate-refactor" ||
+	if len(reqs) != 1 || reqs[0]["cmd"] != "agent.allow" || reqs[0]["confirm"] != "gear-refactor" ||
 		reqs[0]["pane"] != "w1:p1" || reqs[0]["ask"] != "toolu_1" {
 		t.Fatalf("requests %v", reqs)
 	}
@@ -151,8 +151,8 @@ func TestTypingTheNameThenEnterAllowsAPermanentAsk(t *testing.T) {
 
 func TestAWrongNameAllowsNothingAndTalksToNobody(t *testing.T) {
 	sock := newAnswerSocket(t, never)
-	f := peekFloor(t, "gate-refactor", "permanent", sock)
-	press(t, f, "\x14gate-refactr\r")
+	f := peekFloor(t, "gear-refactor", "permanent", sock)
+	press(t, f, "\x14warden-refactr\r")
 	if n := len(sock.requests()); n != 0 {
 		t.Fatalf("a wrong name sent %v", sock.requests())
 	}
@@ -173,7 +173,7 @@ func TestAWrongNameAllowsNothingAndTalksToNobody(t *testing.T) {
 func TestNDeniesInOneKeyOnEitherTier(t *testing.T) {
 	for _, tier := range []string{"permanent", "undoable"} {
 		sock := newAnswerSocket(t, never)
-		f := peekFloor(t, "gate-refactor", tier, sock)
+		f := peekFloor(t, "gear-refactor", tier, sock)
 		press(t, f, "n")
 		reqs := sock.requests()
 		if len(reqs) != 1 || reqs[0]["cmd"] != "agent.deny" || reqs[0]["ask"] != "toolu_1" {
@@ -187,7 +187,7 @@ func TestNDeniesInOneKeyOnEitherTier(t *testing.T) {
 
 func TestAnUndoablePeekAcceptsY(t *testing.T) {
 	sock := newAnswerSocket(t, never)
-	f := peekFloor(t, "gate-refactor", "undoable", sock)
+	f := peekFloor(t, "gear-refactor", "undoable", sock)
 	out := rendered(f)
 	if !strings.Contains(out, "Deny is the default.") || !strings.Contains(out, "y allow once  t allow for this task  n deny") {
 		t.Fatalf("the undoable peek:\n%s", out)
@@ -207,7 +207,7 @@ func TestAnUndoablePeekAcceptsY(t *testing.T) {
 
 func TestTAllowsForTheTask(t *testing.T) {
 	sock := newAnswerSocket(t, never)
-	f := peekFloor(t, "gate-refactor", "undoable", sock)
+	f := peekFloor(t, "gear-refactor", "undoable", sock)
 	press(t, f, "t")
 	reqs := sock.requests()
 	if len(reqs) != 1 || reqs[0]["cmd"] != "agent.allow" || reqs[0]["scope"] != "task" {
@@ -244,9 +244,9 @@ func TestAPaneWithNoLabelIsNamedByItsID(t *testing.T) {
 // A refusal from the server shows on the message line and leaves the peek.
 func TestARefusalShowsAndKeepsThePeek(t *testing.T) {
 	sock := newAnswerSocket(t, func(map[string]any) string {
-		return "this cannot be undone. Type the pane name to allow: gate-refactor"
+		return "this cannot be undone. Type the pane name to allow: gear-refactor"
 	})
-	f := peekFloor(t, "gate-refactor", "undoable", sock)
+	f := peekFloor(t, "gear-refactor", "undoable", sock)
 	press(t, f, "y")
 	if !strings.Contains(f.m.Message, "this cannot be undone") {
 		t.Fatalf("message %q", f.m.Message)

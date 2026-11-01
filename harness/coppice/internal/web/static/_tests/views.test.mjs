@@ -117,7 +117,8 @@ test('the floor posts panes, tasks and sel to the frame, and never the token', a
   for (const p of posted) assert.ok(!JSON.stringify(p.msg).includes(TOKEN), 'a post carried the token');
   // The exact key set: a new key, a token among them, fails here.
   for (const p of posted.filter((x) => x.msg.type === 'coppice.data')) {
-    assert.deepEqual(Object.keys(p.msg).sort(), ['events', 'from', 'panes', 'sel', 'tasks', 'type', 'view']);
+    // The tree view is also given the delegation tree; no other key.
+    assert.deepEqual(Object.keys(p.msg).sort(), ['events', 'from', 'panes', 'sel', 'tasks', 'tree', 'type', 'view']);
   }
   for (const p of posted.filter((x) => x.msg.type === 'coppice.watch')) {
     assert.deepEqual(Object.keys(p.msg).sort(), ['live', 'refused', 'type', 'view']);
@@ -294,10 +295,10 @@ test('the journal opens over the floor, says where its lines come from, and list
   assert.ok(text.includes("100 per agent, 500 in all, oldest first"), text);
   assert.ok(text.includes('deny \u00b7 Bash \u00b7 clause net'), text);
   assert.ok(text.includes('allow \u00b7 Read'), text);
-  // A gate report while the journal shows reads it again.
-  global.window.coppice.state.onEvent({ event: 'state', pane: 'w1:p1', source: 'gate', state: 'working', detail: 'verdict=deny', ts: 60 });
+  // A warden report while the journal shows reads it again.
+  global.window.coppice.state.onEvent({ event: 'state', pane: 'w1:p1', source: 'warden', state: 'working', detail: 'verdict=deny', ts: 60 });
   await settle();
-  assert.equal(asked().length, 2, 'a gate report did not read the journal again');
+  assert.equal(asked().length, 2, 'a warden report did not read the journal again');
   // A refused read shows its words with the journal still open.
   ws.fire('message', { data: JSON.stringify({ id: asked()[1].id, ok: false, error: { code: 'bad_request', message: 'The server is busy.' } }) });
   await settle();
@@ -625,9 +626,9 @@ test('switching to another view ends the old watch', async () => {
 
 test('a view waits for the floor detaches before it attaches', async () => {
   let release = null;
-  const gate = new Promise((r) => { release = r; });
+  const warden = new Promise((r) => { release = r; });
   const { host, calls, send, answer } = watchHost();
-  await host.show('herdr-grid', [], gate);
+  await host.show('herdr-grid', [], warden);
   send({ type: 'watch', panes: ['w1:p1'] });
   await tick0();
   assert.equal(calls.length, 0);
@@ -828,4 +829,85 @@ test('the minimap sits in the rail, after the view list', () => {
   const css = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
   assert.match(css, /#rail \{ grid-column: 1; grid-row: 1;/);
   assert.match(css, /#floor \{ grid-column: 2; grid-row: 1;/);
+});
+
+test('answer post-back is accepted only for a card the page sent', () => {
+  const cards = [{ choice_id: 'ch_1', alternatives: ['b'] }];
+  assert.deepEqual(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'drop' }, [], cards),
+    { kind: 'answer', choice_id: 'ch_1', outcome: 'drop', pick: '' });
+  assert.deepEqual(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'switch', pick: 'b' }, [], cards),
+    { kind: 'answer', choice_id: 'ch_1', outcome: 'switch', pick: 'b' });
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_9', outcome: 'drop' }, [], cards), null);
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'burn' }, [], cards), null);
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'switch' }, [], cards), null, 'switch needs a pick');
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'switch', pick: 'zzz' }, [], cards), null, 'the pick must be an alternative');
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'drop' }, [], []), null, 'no cards sent, no answer');
+  assert.equal(viewAction({ type: 'answer', choice_id: 'ch_1', outcome: 'drop' }, []), null);
+});
+
+test('a card diff request and a tree answer are accepted only for ids the page sent', () => {
+  const cards = [{ choice_id: 'ch_1' }];
+  const tree = { asks: [{ ask_id: 'a1' }] };
+  assert.deepEqual(viewAction({ type: 'card-diff', choice_id: 'ch_1' }, [], cards), { kind: 'card-diff', choice_id: 'ch_1' });
+  assert.equal(viewAction({ type: 'card-diff', choice_id: 'ch_2' }, [], cards), null);
+  assert.deepEqual(viewAction({ type: 'tree-answer', ask_id: 'a1', decision: 'allow' }, [], cards, tree),
+    { kind: 'tree-answer', ask_id: 'a1', decision: 'allow' });
+  assert.equal(viewAction({ type: 'tree-answer', ask_id: 'a2', decision: 'allow' }, [], cards, tree), null);
+  assert.equal(viewAction({ type: 'tree-answer', ask_id: 'a1', decision: 'maybe' }, [], cards, tree), null);
+  assert.equal(viewAction({ type: 'tree-answer', ask_id: 'a1', decision: 'deny' }, [], cards, null), null);
+});
+
+test('the host reads the cards for the cards view and answers a card with the floor token', async () => {
+  reset();
+  const calls = [];
+  const frame = { contentWindow: { postMessage: (m) => posted.push(m) }, dataset: {}, addEventListener() {}, set src(v) { this._s = v; } };
+  const posted = [];
+  const api = async (path, init) => {
+    calls.push([path, init && init.method]);
+    if (path.startsWith('/api/cards?')) return { cards: [{ choice_id: 'ch_1', alternatives: ['b'] }] };
+    if (path === '/api/cards/answer') return { recorded: true, pruned: { removed: ['s1'] } };
+    return { tasks: [], panes: [] };
+  };
+  const host = mountViewHost(frame, {
+    api, panes: () => [], go() {}, replace() {}, every: () => 1, cancel() {}, later: (fn) => { fn(); return 1; },
+    wants: (id, kind) => id === 'cards' && kind === 'cards',
+  });
+  await host.show('cards', []);
+  assert.ok(calls.some((c) => c[0].startsWith('/api/cards?')), 'the cards were read');
+  assert.equal(lastData(posted).cards.length, 1);
+  host.onMessage({ source: frame.contentWindow, data: { type: 'answer', choice_id: 'ch_1', outcome: 'drop' } });
+  await tick();
+  await tick();
+  assert.ok(calls.some((c) => c[0] === '/api/cards/answer' && c[1] === 'POST'), 'the answer was posted by the floor');
+  assert.match(lastData(posted).notice, /Dropped/);
+  // Another view is never given the cards.
+  const other = mountViewHost(frame, { api, panes: () => [], go() {}, replace() {}, every: () => 1, cancel() {}, wants: () => false });
+  posted.length = 0;
+  await other.show('colony', []);
+  assert.equal('cards' in lastData(posted), false, 'another view is not given the cards');
+});
+
+test('the tree view shows a task\'s nodes with budgets and proof, and an ask with Allow and Deny', () => {
+  reset();
+  const tasks = [{ id: 't1', label: 'lead', state: 'working', panes: [], session: 't1-aa' }];
+  const tree = {
+    nodes: [
+      { session: 't1-aa', parent: null, state: 'running', proved: true, tokens: { budget: 100, used: 40 }, children: ['c1'] },
+      { session: 'c1', parent: 't1-aa', state: 'ended', proved: false, tokens: { budget: 50, used: 70 }, children: [] },
+    ],
+    asks: [{ ask_id: 'a1', parent: 't1-aa', session: 'c2', reasons: ['shell head rm'] }],
+  };
+  const texts = treeLines(tasks, [], tree).map((l) => l.text);
+  assert.ok(texts.some((t) => /t1-aa {2}running {2}tokens 40\/100 {2}proved/.test(t)), texts.join('\n'));
+  assert.ok(texts.some((t) => /c1 {2}ended {2}tokens 70\/50 {2}over by 20 {2}not proved against its parent/.test(t)), texts.join('\n'));
+  assert.ok(texts.some((t) => /ask a1 {2}t1-aa asks to start c2: shell head rm/.test(t)));
+  const sent = [];
+  const t = mountTree(element('tree-status'), element('tree-lines'), { post: (m) => sent.push(m) });
+  t.render({ type: 'coppice.data', tasks, panes: [], sel: [], tree });
+  const ask = element('tree-lines').children.find((li) => li.dataset.ask === 'a1');
+  assert.deepEqual(ask.children.map((b) => b.textContent), ['Allow', 'Deny']);
+  ask.children[1].dispatchEvent({ type: 'click' });
+  assert.deepEqual(sent, [{ type: 'tree-answer', ask_id: 'a1', decision: 'deny' }]);
+  // With no tree the lines are the old ones.
+  assert.deepEqual(treeLines(fixture.tasks, fixture.panes).map((l) => l.text), fixture.lines);
 });

@@ -1,7 +1,7 @@
-// Package fenceruns is fence_runs.py: what the resident gate trusts about a
+// Package fenceruns is fence_runs.py: what the resident warden trusts about a
 // caller, and what it never takes from a request (FN-R-21).
 //
-// The resident gate runs outside the fence and makes every write. So it
+// The resident warden runs outside the fence and makes every write. So it
 // takes no path from a request: its root and captures root are fixed when
 // it starts. A resident call's session id must be plain. A checkpoint is
 // taken only inside the workspace of the fence run above the caller:
@@ -28,27 +28,27 @@ import (
 	"daisugi-verify/internal/statefile"
 )
 
-// RunsDir is the directory under the gate root that holds the records.
+// RunsDir is the directory under the warden root that holds the records.
 const RunsDir = "fence-runs"
 
 const maxDepth = 64
 
 // The refusals, word for word as fence_runs.py has them.
 const (
-	SessionRefusal = "the resident gate takes a session id only when it matches [A-Za-z0-9._-]{1,128}, " +
+	SessionRefusal = "the resident warden takes a session id only when it matches [A-Za-z0-9._-]{1,128}, " +
 		"so it denies this call"
-	PathRefusal = "the resident gate takes no path from a request: its root and captures root are " +
+	PathRefusal = "the resident warden takes no path from a request: its root and captures root are " +
 		"fixed when it starts. Drop --root and --captures-root from the request"
-	NoWorkspaceRefusal = "the resident gate takes a checkpoint only inside the workspace a fence run bound, " +
+	NoWorkspaceRefusal = "the resident warden takes a checkpoint only inside the workspace a fence run bound, " +
 		"and this caller runs under no fence run, so it denies this call"
 	OutsideRefusal = "the checkpoint cwd is not inside the workspace this caller's fence run bound, " +
-		"so the resident gate denies this call"
+		"so the resident warden denies this call"
 	// FencedCheckpointRefusal is FENCED_CHECKPOINT_REFUSAL (FN-R-36): the
 	// unfenced server never runs git for a fenced session.
 	FencedCheckpointRefusal = "checkpoints are off inside the fence"
 	GitDirRefusal           = "the workspace's git dir is not a plain directory inside the workspace this caller's " +
 		"fence run bound (a gitfile, a link, a common dir, or objects or refs that lead out), " +
-		"so the resident gate denies this call"
+		"so the resident warden denies this call"
 )
 
 // TranscriptCap is the largest transcript a resident checkpoint reads.
@@ -132,6 +132,17 @@ func ProcStart(pid int) string {
 	return ""
 }
 
+// BootID is the kernel's boot id, or "". A pid and a start time in clock
+// ticks can repeat after a reboot, so a record from an earlier boot never
+// matches.
+func BootID() string {
+	b, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func parent(pid int) int {
 	if f := statFields(pid); len(f) > 1 {
 		if n, err := strconv.Atoi(f[1]); err == nil {
@@ -144,6 +155,7 @@ func parent(pid int) int {
 type record struct {
 	Pid       *int    `json:"pid"`
 	Start     *string `json:"start"`
+	Boot      *string `json:"boot"`
 	Workspace *string `json:"workspace"`
 }
 
@@ -160,6 +172,7 @@ func BoundWorkspace(root string, peer *int) string {
 			var rec record
 			if json.Unmarshal(raw, &rec) == nil && rec.Pid != nil && *rec.Pid == pid &&
 				rec.Start != nil && *rec.Start == ProcStart(pid) &&
+				rec.Boot != nil && *rec.Boot != "" && *rec.Boot == BootID() &&
 				rec.Workspace != nil && filepath.IsAbs(*rec.Workspace) {
 				return *rec.Workspace
 			}
@@ -177,7 +190,7 @@ func Register(root string, pid int, workspace string) error {
 		ws = filepath.Clean(workspace)
 	}
 	sweep(root)
-	b, _ := json.Marshal(map[string]any{"pid": pid, "start": ProcStart(pid), "workspace": ws})
+	b, _ := json.Marshal(map[string]any{"pid": pid, "start": ProcStart(pid), "boot": BootID(), "workspace": ws})
 	_, err = statefile.WriteFile(root, []string{RunsDir}, strconv.Itoa(pid)+".json", string(b), true)
 	return err
 }

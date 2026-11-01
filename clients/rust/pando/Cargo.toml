@@ -1,0 +1,16 @@
+[package]
+name = "pando"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Pando R2, the conversation memory: the store, the compactor, the importer
+# and the read tools. No Z3 and no network (PD-R-3). The twin of
+# clients/go/pando.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = { version = "1", default-features = false, features = ["std", "unicode", "perf"] }
+libc = "0.2"
+miniz_oxide = "0.8"

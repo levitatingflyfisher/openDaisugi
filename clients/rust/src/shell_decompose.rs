@@ -15,8 +15,8 @@
 //! passes the frames already on the stack at its call, which differ by
 //! call site.
 
-use crate::gate::py::text::{encode_utf8_strict, repr};
-use crate::gate::py::PyErr;
+use crate::warden::py::text::{encode_utf8_strict, repr};
+use crate::warden::py::PyErr;
 use std::collections::{BTreeSet, HashSet};
 use tree_sitter::{Node, Parser, Tree};
 
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn a_lone_surrogate_raises_as_the_utf8_codec_does() {
         let mut p = ShellParser::new();
-        let s = format!("ls {}", crate::gate::py::text::surrogate_char(0xd800));
+        let s = format!("ls {}", crate::warden::py::text::surrogate_char(0xd800));
         let e = p.decompose_py(&s, Some(10)).unwrap_err();
         assert_eq!(e.kind, "UnicodeEncodeError");
     }

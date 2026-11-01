@@ -1,11 +1,11 @@
-//! `Envelope(**in).model_dump()` for the envelopes `gate init` and
-//! `gate register` write: every field in model order with its default
+//! `Envelope(**in).model_dump()` for the envelopes `warden init` and
+//! `warden register` write: every field in model order with its default
 //! filled in. Only the coercions pydantic is known to make are made; a
 //! value it may read another way is refused (`Bad::Unsure`) and nothing is
-//! written. The Go client's `gateroot/envelope.go` is the reference.
+//! written. The Go client's `wardenroot/envelope.go` is the reference.
 
-use super::gateroot::{envelopes_dir, join, safe_session_id};
-use crate::gate::pyjson::{dumps_indent_with, float_repr, Object, Value};
+use super::wardenroot::{envelopes_dir, join, safe_session_id};
+use crate::warden::pyjson::{dumps_indent_with, float_repr, Object, Value};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -42,7 +42,7 @@ fn non_finite<T>(k: &str) -> R<T> {
     invalid(format!("{k}: Input should be a finite number"))
 }
 
-/// `gate._STARTER_SHELL_ALLOWLIST`, sorted.
+/// `warden._STARTER_SHELL_ALLOWLIST`, sorted.
 pub const STARTER_ALLOWLIST: &[&str] = &[
     "cargo", "cat", "cd", "echo", "find", "git", "grep", "head", "ls", "npm", "printf", "pwd", "pytest", "python",
     "python3", "rg", "sort", "tail", "uniq", "wc", "which",
@@ -64,7 +64,7 @@ fn strs(ss: &[String]) -> Value {
     Value::List(ss.iter().map(|s| Value::Str(s.clone())).collect())
 }
 
-/// `gate.starter_envelope(ws, stakes="medium", allow_shell_decomposition=d)`
+/// `warden.starter_envelope(ws, stakes="medium", allow_shell_decomposition=d)`
 /// as a model dump; `ws` is resolved.
 pub fn starter(ws: &str, decompose: bool) -> R<Object> {
     let allow: Vec<String> = STARTER_ALLOWLIST.iter().map(|s| s.to_string()).collect();
@@ -80,21 +80,21 @@ pub fn starter(ws: &str, decompose: bool) -> R<Object> {
         .with("max_output_size_mb", Value::Int("20".into()));
     let input = Object::new()
         .with("id", new_id()?)
-        .with("generated_by", "opendaisugi.gate.starter_envelope")
+        .with("generated_by", "opendaisugi.warden.starter_envelope")
         .with("task", format!("session in {ws}"))
         .with("permissions", perms)
         .with("stakes", "medium");
     validate(&input)
 }
 
-/// `gate.register_envelope`: the dump written to
+/// `warden.register_envelope`: the dump written to
 /// `envelopes/<safe session or default>.json` through the root's directory
 /// fds (GR-R-9), the directories 0700 and the file 0600 from the moment it
-/// exists, then read back with the gate's reader. A link at the file's name
-/// or a directory is refused, as is a file the gate would not load (see
+/// exists, then read back with the warden's reader. A link at the file's name
+/// or a directory is refused, as is a file the warden would not load (see
 /// `statewrite::write_refused`).
 pub fn register(env: &Object, session: &str, root: &str) -> (String, std::io::Result<()>) {
-    use crate::gate::statewrite::{verify_written, write_file};
+    use crate::warden::statewrite::{verify_written, write_file};
     let d = envelopes_dir(root);
     let name = if session.is_empty() { "default".to_string() } else { safe_session_id(session) };
     let file = format!("{name}.json");
@@ -241,7 +241,7 @@ fn lax_int(v: &Value, k: &str) -> R<Value> {
         Value::Bool(b) => return Ok(Value::Int(if *b { "1" } else { "0" }.into())),
         Value::Float(f) => {
             if f.is_infinite() || f.is_nan() || *f != f.trunc() {
-                return invalid(format!("{k}: an integer is required, not {}", crate::gate::pyjson::py_float_repr(*f)));
+                return invalid(format!("{k}: an integer is required, not {}", crate::warden::pyjson::py_float_repr(*f)));
             }
             if f.abs() > (1u64 << 53) as f64 {
                 return Err(Bad::Unsure);
@@ -299,7 +299,7 @@ fn lax_float(v: &Value, k: &str) -> R<Value> {
             }
         }
         Value::Str(x) => {
-            if matches!(crate::gate::pymodel::str_as_float(x), Ok(f) if !f.is_finite()) {
+            if matches!(crate::warden::pymodel::str_as_float(x), Ok(f) if !f.is_finite()) {
                 return non_finite(k);
             }
             let t = trim_space(x);
@@ -411,6 +411,7 @@ fn permission(v: &Value) -> R<Object> {
     out.set("shell_allowlist", str_list(p, "shell_allowlist")?);
     out.set("shell_allow_decomposition", boolean(p, "shell_allow_decomposition", false)?);
     out.set("mcp_allowlist", str_list(p, "mcp_allowlist")?);
+    out.set("mcp_rules", mcp_rules(p)?);
     out.set("custom_step_allowlist", str_list(p, "custom_step_allowlist")?);
     out.set("max_execution_time_s", integer(p, "max_execution_time_s", "30")?);
     out.set("max_output_size_mb", integer(p, "max_output_size_mb", "10")?);
@@ -444,6 +445,17 @@ fn permission(v: &Value) -> R<Object> {
     out.set("joint_limits", joints);
     out.set("torque_limit", opt_float(p, "torque_limit")?);
     Ok(out)
+}
+
+/// The `mcp_rules` field: a list of McpRule models. A rule pydantic refuses
+/// is refused here as Unsure: the error text is pydantic's, and this binary
+/// does not word it.
+fn mcp_rules(p: &Object) -> R<Value> {
+    match p.get("mcp_rules") {
+        None => Ok(Value::List(vec![])),
+        Some(x @ Value::List(_)) => crate::warden::envelope::validate_mcp_rules_python(x).ok_or(Bad::Unsure),
+        Some(other) => invalid(format!("mcp_rules: a list is required, not {}", kind_of(other))),
+    }
 }
 
 fn fallback(input: &Object) -> R<Object> {
@@ -545,7 +557,7 @@ fn pydantic_floats(v: &Value) -> R<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::pyjson::loads;
+    use crate::warden::pyjson::loads;
 
     fn obj(text: &str) -> Object {
         match loads(text).unwrap() {

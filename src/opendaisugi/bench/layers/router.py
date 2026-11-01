@@ -1,6 +1,6 @@
 """`daisugi bench router`: one committed journal slice, four routing options.
 
-The gateway is the meter, so the comparison is honest only if every option
+The router is the meter, so the comparison is honest only if every option
 sees the same turns and the same price table. Prices come from `prices.json`
 and the three model targets from `switchyard-targets.json`, both read beside
 the journal slice and both pinned in the table, so an operator can edit them
@@ -27,7 +27,7 @@ from opendaisugi.bench.corpus import (
 )
 from opendaisugi.bench.registry import BenchOpts, BenchSpec, register
 from opendaisugi.bench.table import Column, Row, Table
-from opendaisugi.gateway import _latest_user_text, price_turn, route_turn
+from opendaisugi.router import _latest_user_text, price_turn, route_turn
 from opendaisugi.routing import estimate_difficulty
 
 CORPUS = "journal-slice.jsonl"
@@ -83,7 +83,7 @@ def choose(option: str, row: dict, targets: dict[str, str]) -> str:
 
 
 def _source(option: str) -> str:
-    """`built-in` for the gateway's own ladder and for off; `fake` for the Switchyard shapes."""
+    """`built-in` for the router's own ladder and for off; `fake` for the Switchyard shapes."""
     return "built-in" if option in ("rules", "off") else "fake"
 
 

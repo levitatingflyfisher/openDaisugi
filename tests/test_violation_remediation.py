@@ -24,7 +24,7 @@ def test_metachar_violation_suggests_decomposed_form():
         ],
     )
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    assert "metacharacter" in violations[0].message
     assert violations[0].suggested_remediation is not None
     text = violations[0].suggested_remediation.lower()
     assert "shellstep" in text or "depends_on" in text
@@ -41,7 +41,7 @@ def test_non_decomposable_metachar_has_no_remediation():
         ],
     )
     violations = check_permissions(plan, env)
-    assert len(violations) == 1
+    assert "metacharacter" in violations[0].message
     assert violations[0].suggested_remediation is None
 
 
@@ -84,7 +84,9 @@ def test_opaque_rejection_has_remediation():
     env = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["ls"], file_read=["**"], file_write=["**"]
+        ),
         stakes="high",
         invariants=[Invariant(type="no_secrets", description="x", expr=None)],
     )

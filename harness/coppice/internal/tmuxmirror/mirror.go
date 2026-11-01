@@ -26,7 +26,7 @@ type Pane struct {
 	Label  string
 	State  string
 	Closed bool
-	// Held is true while a foreman hears the pane's ask first.
+	// Held is true while a steward hears the pane's ask first.
 	Held bool
 }
 
@@ -121,7 +121,7 @@ func Plan(panes []Pane, windows []Window) []Op {
 
 // StatusLine is the roster count for status-right: how many open panes need
 // you and how many work, or quiet when none does either. A blocked pane
-// whose ask a foreman holds counts as working.
+// whose ask a steward holds counts as working.
 func StatusLine(panes []Pane) string {
 	need, working := 0, 0
 	for _, p := range panes {

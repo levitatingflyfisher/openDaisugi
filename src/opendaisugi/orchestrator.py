@@ -70,13 +70,13 @@ def _task_step_prompt(step) -> str:
 
 
 class BudgetAwareDelegatingExecutor(DelegatingExecutor):
-    """A DelegatingExecutor whose model choice is gated by a live budget.
+    """A DelegatingExecutor whose model choice is checked by a live budget.
 
     This is where the token budget is enforced *during* a run. On each step:
 
     1. The step is sized against the tracker's *current* remaining budget (not a
        static up-front decision), honoring an explicit ``preferred_model`` as the
-       starting rung and downgrading it when the budget is tight — the routing gate.
+       starting rung and downgrading it when the budget is tight — the routing warden.
     2. If the tracker is in strict-budget mode and even the cheapest rung is
        unaffordable, the step fails *without* an LLM call — a clean stop rather
        than a silent overspend.
@@ -113,7 +113,7 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
     def parallel_safe(self) -> bool:
         """Whether this executor's task steps may run concurrently (v0.40).
 
-        True only under an *unlimited* budget. Budget gating is inherently
+        True only under an *unlimited* budget. Budget checking is inherently
         sequential — each step's model is downgraded on what prior steps spent —
         but with no budget ``remaining()`` is +inf, so ``size_step`` never
         downgrades and the model choice is order-independent: concurrent execution
@@ -153,7 +153,7 @@ class BudgetAwareDelegatingExecutor(DelegatingExecutor):
             )
         except BudgetExceeded:
             # strict_budget: the spend is already counted (tracker exhausted → the
-            # next step's pre-gate stops and synthesis goes deterministic). Keep
+            # next step's pre-warden stops and synthesis goes deterministic). Keep
             # THIS step's completed result rather than discarding it as an error.
             pass
         return result
@@ -295,7 +295,7 @@ class Orchestrator:
         ``envelope`` is the authorization boundary — the decomposed plan must
         verify against it and each step is re-verified before execution. Steps
         are auto-approved by default (the verified envelope is the authorization);
-        pass ``approval=`` to gate execution differently.
+        pass ``approval=`` to warden execution differently.
 
         ``budget_tokens`` bounds the *mid-plan step routing*: each executed step is
         sized against what remains and downgraded when tight. The decompose and
@@ -343,7 +343,7 @@ class Orchestrator:
 
         # Static, budget-free sizing = the capability plan (difficulty → cheapest
         # capable model). It sets each task step's preferred_model. The live,
-        # budget-gated routing happens in the executor and is reported back below.
+        # budget-checked routing happens in the executor and is reported back below.
         planned = size_plan(plan, ladder=self.ladder)
         _apply_preferred_models(plan, planned)
 

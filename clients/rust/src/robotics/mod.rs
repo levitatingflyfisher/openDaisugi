@@ -12,8 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{py_float_repr, Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{py_float_repr, Object, Value};
 use crate::mujoco::{Data, Model, Obj, JNT_HINGE};
 use crate::supervise::{ms, str_of, ExecResult, Executor};
 

@@ -26,10 +26,10 @@ def test_a_live_stage_has_no_hint_to_show():
 def test_floor_hint_names_the_install_command():
     """A wired floor report must point at the command that applies it, not
     at the generic line."""
-    assert "daisugi install --gate --report herdr" in _effect_hint("floor_report")
+    assert "daisugi install --report herdr" in _effect_hint("floor_report")
 
 
-def test_the_gate_hint_and_the_map_tag_come_from_one_place():
+def test_the_warden_hint_and_the_map_tag_come_from_one_place():
     from opendaisugi.swap import tag_for
 
-    assert _effect_hint("gate") in tag_for("gate")
+    assert _effect_hint("warden") in tag_for("warden")

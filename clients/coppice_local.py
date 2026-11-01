@@ -9,7 +9,10 @@ matcher and the normalization read like any other reply:
 - `cli`: run the side's coppice binary. The driver puts `--socket S
   --data-dir D` first and refuses an argv that names either flag. The run has
   the server's environment, with COPPICE_NO_AUTOSTART=1, the request's
-  `env`, `cwd` (default {START}) and `stdin` (default empty). `"alt": true`
+  `env`, `cwd` (default {START}) and `stdin` (default empty). `"dial":
+  true` passes no --socket or --data-dir, so the run finds the server by
+  its own rule (a pane's COPPICE_SOCK, else the scratch home's default);
+  the case then names the environment. `"alt": true`
   names a second socket and data dir, {WORK}/alt.sock and {WORK}/alt-data,
   for the cases that start a detached server of their own; `"autostart":
   true` leaves COPPICE_NO_AUTOSTART unset. `"peer": true` runs the other
@@ -138,6 +141,8 @@ class Local:
         # The words after "--" are the command a new pane runs, which may
         # name its own socket; the driver owns only the run's own flags.
         own = args[: args.index("--")] if "--" in args else args
+        if req.get("dial"):
+            return [self.side.peer if req.get("peer") else self.side.binary, *args]
         for a in own:
             if a in self.OWNED or any(a.startswith(f + "=") for f in self.OWNED):
                 raise ValueError(f"a cli case may not pass {a}; the driver names the socket")
@@ -464,7 +469,7 @@ def frame_screen(sock: Path, pane: str) -> dict[str, Any]:
 # own between two spaces (now, 3s, 4m, 2h), an ended row says it ago, and a
 # held row says how long it waited.
 _AGE = re.compile(
-    r"(?<=  )(?:now|\d+[smh])(?=  |\s*(?:×|$)| ago)|(?<=foreman · )\d+[smh]|(?<=foreman · )now"
+    r"(?<=  )(?:now|\d+[smh])(?=  |\s*(?:×|$)| ago)|(?<=steward · )\d+[smh]|(?<=steward · )now"
 )
 
 

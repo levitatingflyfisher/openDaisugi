@@ -5,10 +5,10 @@
 
 use std::process::Command;
 
-use super::gateroot::{join, path_str};
+use super::wardenroot::{join, path_str};
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::{repr, strip};
-use crate::gate::pyjson::{dumps, py_str, Value};
+use crate::warden::py::text::{repr, strip};
+use crate::warden::pyjson::{dumps, py_str, Value};
 use crate::lerr::{LErr, PyError};
 use crate::pathways::store::Store as LocalStore;
 use crate::registry::{self, called_process_error, look_path, no_git, Options};

@@ -1,7 +1,7 @@
 """Shared render harness for the openDaisugi runtime-assurance gallery.
 
 Every scenario builds a small top-down MuJoCo scene (zones + agents), computes a
-trajectory that is gated by a REAL opendaisugi.verify / swarm check, and returns
+trajectory that is checked by a REAL opendaisugi.verify / swarm check, and returns
 color-coded, captioned frames. `make_gallery.py` renders each to a GIF and tiles the
 best into a grid. Headless CPU rendering (MUJOCO_GL=egl, mesa/llvmpipe).
 """

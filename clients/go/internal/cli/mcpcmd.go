@@ -10,13 +10,13 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/envgen"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/mcpwire"
 	"daisugi-verify/internal/pathways"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/tracejournal"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // refusalCode is the JSON-RPC error code of a request this binary does
@@ -77,7 +77,7 @@ func (e *Env) mcpServe(args []string) error {
 		return e.cmdHelp(cmd, "", "Serve openDaisugi tools over MCP stdio.", opts)
 	}
 	s := &mcpServer{e: e, out: e.Stdout,
-		dataDir: gateroot.PathStr(p.str("--data-dir", e.dataHome())),
+		dataDir: wardenroot.PathStr(p.str("--data-dir", e.dataHome())),
 		model:   p.str("--model", envgen.DefaultModel)}
 	// Daisugi(model=..., data_dir=...) makes the envelope cache.
 	if s.cache, err = envgen.OpenCache(filepath.Join(s.dataDir, "envelope_cache.db")); err != nil {
@@ -249,8 +249,8 @@ func (s *mcpServer) call(name string, args *pyjson.Object) (string, string) {
 		out, err = s.receiptsForRun(a)
 	case "recent_runs":
 		out, err = s.recentRuns(a)
-	case "delegate":
-		out, err = s.delegate(a)
+	case "spawn":
+		out, err = s.spawn(a)
 	}
 	var te *toolError
 	var re *refusal

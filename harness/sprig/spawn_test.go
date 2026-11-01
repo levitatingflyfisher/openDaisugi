@@ -88,9 +88,9 @@ func TestCLISpawnNeedsTheTreeCommand(t *testing.T) {
 	}
 }
 
-func TestGateSeesSpawnAsAnMCPTool(t *testing.T) {
-	if gateToolName("spawn") != "mcp__sprig__spawn" {
-		t.Fatal(gateToolName("spawn"))
+func TestWardenSeesSpawnAsAnMCPTool(t *testing.T) {
+	if wardenToolName("spawn") != "mcp__sprig__spawn" {
+		t.Fatal(wardenToolName("spawn"))
 	}
 	var tools []map[string]any
 	b, _ := json.Marshal(apiToolsFor([]string{"read", "spawn"}))

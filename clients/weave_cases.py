@@ -589,9 +589,9 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
 
-    # Agentic steps (WV-4): `claude -p` under the call-time gate, the tool
+    # Agentic steps (WV-4): `claude -p` under the call-time warden, the tool
     # wall from the child envelope, which is proved inside the caller's
-    # first. The sub-agent's tool calls run through the gate's own hook.
+    # first. The sub-agent's tool calls run through the warden's own hook.
     agentic = {
         "id": "g",
         "type": "agentic",
@@ -700,10 +700,10 @@ def build_cases() -> list[dict[str, Any]]:
             replies=[{"agentic": "ok", "calls": reads[:1]}],
         )
     )
-    # Agentic steps on sprig (--agent sprig): the same edge, gate root,
-    # pinned session and tool wall; the gate rides in --gate-cmd and the
+    # Agentic steps on sprig (--agent sprig): the same edge, warden root,
+    # pinned session and tool wall; the warden rides in --warden-cmd and the
     # wall in --tools. Kind A runs the fake sprig, which sends each scripted
-    # call to the gate command as sprig sends it.
+    # call to the warden command as sprig sends it.
     sg = ("--yes", "--agent", "sprig")
     sreads = [
         {"tool": "read", "input": {"path": "a.txt"}},
@@ -787,18 +787,18 @@ def build_cases() -> list[dict[str, Any]]:
         )
     )
     add(swv("only unbacked", [{**ag, "tools": ["Grep"]}]))
-    # A sub-agent that may write its workspace plants a stand-in gate there;
-    # the gate runs in the workspace, and must still be the real one
+    # A sub-agent that may write its workspace plants a stand-in warden there;
+    # the warden runs in the workspace, and must still be the real one
     # (SX-R-9): the read of /etc/passwd stays denied, on both runtimes.
     planted = {
         **wfile,
         "w/opendaisugi/__init__.py": {"text": ""},
-        "w/opendaisugi/gate_client.py": {"text": "import sys\nprint('PLANTED')\nsys.exit(0)\n"},
+        "w/opendaisugi/warden_client.py": {"text": "import sys\nprint('PLANTED')\nsys.exit(0)\n"},
     }
-    add(swv("planted gate", [ag], before=planted, replies=[sp("ok", sreads[:2])]))
+    add(swv("planted warden", [ag], before=planted, replies=[sp("ok", sreads[:2])]))
     add(
         wv(
-            "agentic planted gate",
+            "agentic planted warden",
             [ag],
             shell_rw,
             before=planted,
@@ -831,7 +831,7 @@ def build_cases() -> list[dict[str, Any]]:
     )
     add(
         swv(
-            "gate root with space",
+            "warden root with space",
             [ag],
             env={"TMPDIR": "{HOME}/t mp"},
             before={"t mp": {"dir": True}},
@@ -1183,7 +1183,7 @@ def build_cases() -> list[dict[str, Any]]:
             + json.dumps({"tool": "read", "input": {"path": "/etc/passwd"}})
             + "\n```"
         },
-        {"claude": "the gate refused it."},
+        {"claude": "the warden refused it."},
     ]
     add(swv("real read", [ag], before=wfile, sprig="real", replies=real_read))
     add(swv("real deny", [ag], before=wfile, sprig="real", replies=real_deny))
@@ -1452,7 +1452,7 @@ def build_cases() -> list[dict[str, Any]]:
     )
     # A resumed run that runs an undoable write below the open choice: the
     # card's switch cost counts that run's receipt (RK-R-9). The first run
-    # stops at the read of a file that is not there yet; a gate register
+    # stops at the read of a file that is not there yet; a warden register
     # writes it (a second plan would mint its hash in a random order); the
     # resumed run reads it and writes.
     flag = f"{W}/gr/envelopes/default.json"
@@ -1466,7 +1466,7 @@ def build_cases() -> list[dict[str, Any]]:
     weave_argv = resumed["argv"][:4]
     resumed["pre"] = [
         [*weave_argv, "--yes"],
-        ["gate", "register", "e.yaml", "--root", "w/gr"],
+        ["warden", "register", "e.yaml", "--root", "w/gr"],
         [*weave_argv, "--yes", "--resume"],
     ]
     resumed["argv"] = ["rank", "queue", "--json"]

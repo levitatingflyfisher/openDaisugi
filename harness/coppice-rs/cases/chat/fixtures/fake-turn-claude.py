@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A stand-in for `claude -p --output-format json`: one turn of the chat-mode
-foreman. It never calls a model.
+steward. It never calls a model.
 
 It records what the turn gave it in $FAKE_TURN_DIR/turn-N.json: the argv
 (the system prompt file as SYSTEM_FILE), the system prompt and the stdin,
@@ -15,6 +15,7 @@ bytes. Then it acts on the owner's message, the text in <message>:
 - "midfail": as "mid", then fails the turn (exit 1) after the tool call;
 - "spawn PROJECT [profile=P] [model=M] [background=1] BRIEF": calls spawn;
 - "label LABEL": calls zoom with that label;
+- "reply LABEL TEXT": calls reply with that label and answer;
 - "hook TOOL": runs the hook that --settings names for TOOL and says its exit
   code and its message;
   a tool's result has each date written as DATE and each owner-block nonce
@@ -86,7 +87,7 @@ def main():
     m = re.search(r"<message>\n(.*)\n</message>\n", stdin, re.S)
     msg = m.group(1) if m else ""
     words = msg.split()
-    mcp = json.loads(opt(args, "--mcp-config"))["mcpServers"]["foreman"]
+    mcp = json.loads(opt(args, "--mcp-config"))["mcpServers"]["steward"]
     cmd = [mcp["command"], *mcp["args"]]
     reply = "heard: " + msg
     if words[:1] == ["fail"]:
@@ -111,10 +112,14 @@ def main():
                 break
             time.sleep(0.1)
         call = ("status", {})
+    elif words[:1] == ["reply"] and len(words) >= 3:
+        call = ("reply", {"label": words[1], "text": " ".join(words[2:])})
     elif words[:1] == ["spawn"] and len(words) >= 3:
         args = {"project": words[1]}
         rest = words[2:]
-        while rest and "=" in rest[0] and rest[0].split("=")[0] in ("profile", "model", "background"):
+        while (
+            rest and "=" in rest[0] and rest[0].split("=")[0] in ("profile", "model", "background")
+        ):
             k, _, v = rest.pop(0).partition("=")
             args[k] = (v == "1") if k == "background" else v
         args["brief"] = " ".join(rest)

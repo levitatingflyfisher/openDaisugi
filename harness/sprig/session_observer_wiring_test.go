@@ -72,7 +72,7 @@ func TestExecutorReportsToolCallVerdictAndResultUnderTheSameID(t *testing.T) {
 	}
 }
 
-func TestExecutorReportsADenyVerdictWhenTheGateRefuses(t *testing.T) {
+func TestExecutorReportsADenyVerdictWhenTheWardenRefuses(t *testing.T) {
 	spy := &spyTool{out: "did work"}
 	ex := NewExecutor(map[string]Tool{"spy": spy}, DenyAll{Reason: "outside envelope"})
 	obs := &recordingSessionObserver{}

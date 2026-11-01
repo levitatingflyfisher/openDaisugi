@@ -33,6 +33,22 @@ export function applyFrame(grid, frame) {
   return g;
 }
 
+// lastContentRow is the index of the lowest row that shows a character, or
+// -1 for a blank grid. A full-screen program that redraws (Claude Code
+// does) hides the cursor and walks it up and down the screen, so the cursor
+// row says little about where the newest text is. The last row with text
+// does not move while the program rewrites the rows above it.
+export function lastContentRow(grid) {
+  for (let y = grid.rows - 1; y >= 0; y--) {
+    const row = grid.cells[y];
+    for (let x = 0; x < grid.cols; x++) {
+      const c = row[x];
+      if (c && c[0] && c[0] !== ' ') return y;
+    }
+  }
+  return -1;
+}
+
 // gridToText is what the hidden mirror in the page shows. A canvas is opaque
 // to a screen reader and to a test, and this is the fix for both.
 export function gridToText(grid) {

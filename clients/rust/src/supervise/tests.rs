@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use super::executors::Executor;
 use super::fallback::{recompute_with, Hooks};
 use super::*;
-use crate::gate::pyjson::{loads, Object, Value};
+use crate::warden::pyjson::{loads, Object, Value};
 use crate::pathways::pmodel::{validate_model, Id, Mode};
 use crate::pathways::verify::Outcome as Verified;
 use crate::pathways::PwErr;

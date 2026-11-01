@@ -596,7 +596,7 @@ func (p *prober) cleanup() (*pyjson.Object, error) {
 		return nil, err
 	}
 	var journal []any
-	raw, rerr := os.ReadFile(filepath.Join(cfg.DataDir, "gateway", "turns.jsonl"))
+	raw, rerr := os.ReadFile(filepath.Join(cfg.DataDir, "router", "turns.jsonl"))
 	if rerr == nil {
 		for _, ln := range pystr.Splitlines(string(raw)) {
 			v, derr := pyjson.LoadsPy(ln, 900)
@@ -663,7 +663,8 @@ func (c *scriptedClient) Transcribe(wav []byte) (any, error) {
 	*c.events = append(*c.events, obj("transcribe", b64s(wav)))
 	a := next(&c.transcribes)
 	if e, has := a.Get("error"); has {
-		return nil, &ServerError{pyStr(e)}
+		b, _ := a.Get("busy")
+		return nil, &ServerError{Msg: pyStr(e), Busy: truthy(b)}
 	}
 	return a.Value("reply"), nil
 }
@@ -672,7 +673,7 @@ func (c *scriptedClient) Deliver(pane, text, mode string) (any, error) {
 	*c.events = append(*c.events, obj("deliver", []any{pane, text, mode}))
 	a := next(&c.delivers)
 	if e, has := a.Get("error"); has {
-		return nil, &ServerError{pyStr(e)}
+		return nil, &ServerError{Msg: pyStr(e)}
 	}
 	return a.Value("reply"), nil
 }

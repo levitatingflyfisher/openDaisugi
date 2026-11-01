@@ -13,7 +13,11 @@ from opendaisugi.supervisor import Supervisor
 
 def _env() -> Envelope:
     return Envelope(
-        generated_by="t", task="t", permissions=Permission(shell=True, shell_allowlist=["echo"])
+        generated_by="t",
+        task="t",
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
 
 

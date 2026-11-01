@@ -92,17 +92,17 @@ def build_backend(name: str, config, *, autostart: bool = False) -> PaneBackend:
             sock_path=sock, data_dir=config.data_dir / "coppice", autostart=autostart
         )
     if name == "herdr":
-        from opendaisugi.floor.gate_states import gate_states_reader
         from opendaisugi.floor.herdr_backend import HerdrBackend
+        from opendaisugi.floor.warden_states import warden_states_reader
 
-        return HerdrBackend(gate_states=gate_states_reader(config.data_dir))
+        return HerdrBackend(warden_states=warden_states_reader(config.data_dir))
     if name == "tmux":
-        from opendaisugi.floor.gate_states import gate_states_reader
         from opendaisugi.floor.tmux_backend import TmuxBackend
+        from opendaisugi.floor.warden_states import warden_states_reader
 
         return TmuxBackend(
             socket=getattr(config.floor, "tmux_socket", None),
-            gate_states=gate_states_reader(config.data_dir),
+            warden_states=warden_states_reader(config.data_dir),
         )
     raise FloorNotAvailable(
         f"no pane backend named {name!r}. Choose one of: {', '.join(BACKEND_ORDER)}."
@@ -172,12 +172,12 @@ def prompt_pane(
     kind: str | None = None,
     wait: bool = False,
     timeout_s: float = 60.0,
-    foreman: bool = False,
+    steward: bool = False,
 ) -> str:
     """Deliver a prompt. Returns prompted for a real agent prompt, typed for typed text.
 
-    foreman, when true, sends the promotion line first, so the pane reads
-    the foreman page before the text. It waits up to timeout_s for the pane
+    steward, when true, sends the promotion line first, so the pane reads
+    the steward page before the text. It waits up to timeout_s for the pane
     to go idle, and raises PromotionNotSent, sending nothing, when it does
     not. With empty text it sends only that line.
 
@@ -207,7 +207,7 @@ def prompt_pane(
     may never report would turn a dropped wait into a full-timeout
     stall instead, a worse failure than the one this closes.
     """
-    if foreman:
+    if steward:
         from opendaisugi.floor.promote import promote
 
         promote(backend, ref, timeout_s=timeout_s)
@@ -252,8 +252,8 @@ def wait_for_state(
     The stored event is read through effective_state before it is compared,
     the same expiry merge() itself applies when a fresh event arrives. A
     poller only ever has the last stored event, never a fresh one to merge
-    against, so a gate blocked hold whose ask has expired must read as
-    working here too. Otherwise a crashed gate process would leave `until=
+    against, so a warden blocked hold whose ask has expired must read as
+    working here too. Otherwise a crashed warden process would leave `until=
     "blocked"` satisfied forever.
 
     A backend that can look up an ended record directly - find_ended, an

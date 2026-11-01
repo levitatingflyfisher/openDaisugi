@@ -28,7 +28,7 @@ def _env(stakes, *, invariants=None, postconditions=None):
     return Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["ls"]),
+        permissions=Permission(shell=True, shell_allowlist=["ls"], file_read=["**"]),
         stakes=stakes,
         invariants=invariants or [],
         postconditions=postconditions or [],
@@ -84,14 +84,16 @@ def test_opaque_postcondition_rejected_under_strict_high():
     )
 
 
-def test_opaque_postcondition_passes_as_documentation_at_low_stakes():
+def test_opaque_postcondition_is_rejected_at_low_stakes_too():
     env = _env(
         "low",
         postconditions=[
             Postcondition(type="no_pii_in_output", description="custom", expr=None, enforce=True)
         ],
     )
-    assert verify(_plan(), env).ok
+    result = verify(_plan(), env)
+    assert not result.ok
+    assert result.violations[0].detail["reason"] == "opaque_unrecognized"
 
 
 def test_opaque_postcondition_enforce_false_skipped_even_at_high():

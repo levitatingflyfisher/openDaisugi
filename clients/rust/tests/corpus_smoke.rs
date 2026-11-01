@@ -1,4 +1,4 @@
-//! Task 1 gate: every corpus line's `plan`/`envelope` must deserialize
+//! Task 1 warden: every corpus line's `plan`/`envelope` must deserialize
 //! without error. The corpus is never committed (it embeds real local
 //! paths — see `docs/spec/conformance.md`), so this test reads its path
 //! from `DAISUGI_CORPUS` and skips cleanly when unset, keeping the

@@ -6,8 +6,8 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use crate::gate::py::text;
-use crate::gate::pyjson::{self, Object, Value};
+use crate::warden::py::text;
+use crate::warden::pyjson::{self, Object, Value};
 
 /// Why a send failed: no pane backend (503), or anything else (500).
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl Coppice {
         self.is_socket() && self.call("server.status", Duration::from_millis(300), None).is_ok()
     }
 
-    /// `registry.prompt_pane` with no foreman and no wait.
+    /// `registry.prompt_pane` with no steward and no wait.
     fn prompt_pane(&mut self, pane: &str, text_: &str) -> Result<&'static str, SendError> {
         let mut kind = "pty".to_string();
         match self.call("pane.list", Duration::from_secs(5), None) {

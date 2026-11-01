@@ -15,7 +15,7 @@ func (m *scriptModel) Next([]Message) (Message, error) {
 	return msg, nil
 }
 
-func TestLoopRunsGatedToolThenReturnsFinalText(t *testing.T) {
+func TestLoopRunsACheckedToolThenReturnsFinalText(t *testing.T) {
 	model := &scriptModel{turns: []Message{
 		{Role: "assistant", Calls: []ToolCall{{Name: "bash", Input: map[string]any{"cmd": "echo hi"}}}},
 		{Role: "assistant", Text: "done: it said hi"},
@@ -36,7 +36,7 @@ func TestLoopRunsGatedToolThenReturnsFinalText(t *testing.T) {
 	}
 }
 
-func TestLoopIsFailClosedWhenGateDenies(t *testing.T) {
+func TestLoopIsFailClosedWhenWardenDenies(t *testing.T) {
 	model := &scriptModel{turns: []Message{
 		{Role: "assistant", Calls: []ToolCall{{Name: "bash", Input: map[string]any{"cmd": "rm -rf /"}}}},
 		{Role: "assistant", Text: "ok, I won't"},

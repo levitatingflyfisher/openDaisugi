@@ -83,17 +83,17 @@ def test_budgets_are_positive_whole_milliseconds():
 def test_relative_rules_name_real_surfaces():
     keys = {s.key for s in speed.SURFACES}
     rules = budgets()["relative"]
-    assert rules, "the gate speed-up over Python is a rule worth keeping"
+    assert rules, "the warden speed-up over Python is a rule worth keeping"
     for rule in rules:
         assert rule["fast"] in keys and rule["slow"] in keys
         assert 0 < rule["max_ratio"] < 1
 
 
-def test_native_gate_budgets_sit_far_below_python():
+def test_native_warden_budgets_sit_far_below_python():
     b = budgets()["budgets_ms"]
-    py = b["daisugi-gate/py/gate-hook"]
-    assert b["daisugi-gate/go/gate-hook"] * 4 <= py
-    assert b["daisugi-gate/rs/gate-hook"] * 4 <= py
+    py = b["daisugi-warden/py/warden-hook"]
+    assert b["daisugi-warden/go/warden-hook"] * 4 <= py
+    assert b["daisugi-warden/rs/warden-hook"] * 4 <= py
 
 
 # --- the check --------------------------------------------------------------
@@ -134,12 +134,12 @@ def test_relative_rule_compares_two_medians():
     assert speed.check([result("g/go/h", 200.0, 220.0, 210.0), py], b, 1.0)
 
 
-# A fake gate with the real shapes: allow is {"continue": true} on stdout,
+# A fake warden with the real shapes: allow is {"continue": true} on stdout,
 # deny is exit 2 with a DENIED line on stderr.
-FAKE_GATE = """#!/bin/sh
+FAKE_WARDEN = """#!/bin/sh
 in=$(cat)
 case "$in" in
-  *"rm -rf"*) echo "openDaisugi gate: DENIED - fake" >&2; exit 2 ;;
+  *"rm -rf"*) echo "openDaisugi warden: DENIED - fake" >&2; exit 2 ;;
 esac
 echo '{"continue": true}'
 """
@@ -151,37 +151,37 @@ def fake_bin(tmp_path: Path, name: str, body: str) -> None:
     f.chmod(0o755)
 
 
-GATE_GO = [x for x in speed.SURFACES if x.key == "daisugi-gate/go/gate-hook"]
+WARDEN_GO = [x for x in speed.SURFACES if x.key == "daisugi-warden/go/warden-hook"]
 
 
-def test_a_gate_that_denies_the_fixed_payload_is_an_error_not_a_fast_run(tmp_path):
+def test_a_warden_that_denies_the_fixed_payload_is_an_error_not_a_fast_run(tmp_path):
     fake_bin(
         tmp_path,
-        "daisugi-gate-go",
-        "#!/bin/sh\ncat >/dev/null\necho 'openDaisugi gate: DENIED - x' >&2\nexit 2\n",
+        "daisugi-warden-go",
+        "#!/bin/sh\ncat >/dev/null\necho 'openDaisugi warden: DENIED - x' >&2\nexit 2\n",
     )
-    out = speed.measure(GATE_GO, 2, tmp_path, tmp_path / "scratch")
+    out = speed.measure(WARDEN_GO, 2, tmp_path, tmp_path / "scratch")
     assert out[0].error and not out[0].runs_ms
 
 
-def test_a_gate_that_fails_open_is_an_error(tmp_path):
+def test_a_warden_that_fails_open_is_an_error(tmp_path):
     # Allows everything, even the deny probe: the envelope did not load.
     fake_bin(
-        tmp_path, "daisugi-gate-go", "#!/bin/sh\ncat >/dev/null\necho '{\"continue\": true}'\n"
+        tmp_path, "daisugi-warden-go", "#!/bin/sh\ncat >/dev/null\necho '{\"continue\": true}'\n"
     )
-    out = speed.measure(GATE_GO, 2, tmp_path, tmp_path / "scratch")
+    out = speed.measure(WARDEN_GO, 2, tmp_path, tmp_path / "scratch")
     assert out[0].error.startswith("the deny probe was not denied")
     assert out[0].runs_ms == []
 
 
-def test_a_gate_with_the_real_shapes_is_timed(tmp_path):
-    fake_bin(tmp_path, "daisugi-gate-go", FAKE_GATE)
-    out = speed.measure(GATE_GO, 3, tmp_path, tmp_path / "scratch")
+def test_a_warden_with_the_real_shapes_is_timed(tmp_path):
+    fake_bin(tmp_path, "daisugi-warden-go", FAKE_WARDEN)
+    out = speed.measure(WARDEN_GO, 3, tmp_path, tmp_path / "scratch")
     assert out[0].error == "" and len(out[0].runs_ms) == 3
 
 
-def test_the_deny_probe_really_is_denied_by_the_python_gate(tmp_path):
-    s = [x for x in speed.SURFACES if x.key == "daisugi-gate/py/gate-hook"]
+def test_the_deny_probe_really_is_denied_by_the_python_warden(tmp_path):
+    s = [x for x in speed.SURFACES if x.key == "daisugi-warden/py/warden-hook"]
     out = speed.measure(s, 1, tmp_path, tmp_path / "scratch")
     assert out[0].error == "" and len(out[0].runs_ms) == 1
 
@@ -270,8 +270,8 @@ def assert_within_budget(results: list["speed.Result"]) -> None:
 def test_python_cold_start_within_budget(tmp_path):
     keys = [
         "daisugi/py/version",
-        "daisugi-gate/py/gate-hook",
-        "daisugi-gate/py-client/gate-hook",
+        "daisugi-warden/py/warden-hook",
+        "daisugi-warden/py-client/warden-hook",
     ]
     assert_within_budget(measure_live(keys, tmp_path))
 

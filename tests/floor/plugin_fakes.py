@@ -95,7 +95,7 @@ def state(pane: str, st: str, ts: float, ask: dict | None = None) -> dict:
         "harness": "claude-code",
         "pane": pane,
         "state": st,
-        "source": "gate",
+        "source": "warden",
         "detail": "",
     }
     if ask is not None:

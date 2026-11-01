@@ -12,18 +12,18 @@ import (
 	"time"
 
 	"daisugi-verify/internal/fenceruns"
-	"daisugi-verify/internal/gate"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/statefile"
+	"daisugi-verify/internal/warden"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // maxResidentChildren bounds the calls decided at once. Each is a child
 // process of this binary; a call past the bound waits for a free one.
 const maxResidentChildren = 32
 
-// gateServe is `daisugi gate serve`: the resident gate (gate_server.py).
-// One JSON request line per connection on <root>/gate.sock, one reply
-// line, then the connection is closed. Each gate call is decided in a
+// wardenServe is `daisugi warden serve`: the resident warden (warden_server.py).
+// One JSON request line per connection on <root>/warden.sock, one reply
+// line, then the connection is closed. Each warden call is decided in a
 // child process of this binary, so no crash of one call ends the server
 // or reads as an allow.
 // capturesServeOpt fixes the captures root when the server starts: a
@@ -31,30 +31,30 @@ const maxResidentChildren = 32
 var capturesServeOpt = opt{names: []string{"--captures-root"}, value: true, metavar: "PATH",
 	help: "Mirror allowed calls into this captures root. Fixed at start: a request never names one."}
 
-func (e *Env) gateServe(args []string) error {
+func (e *Env) wardenServe(args []string) error {
 	opts := []opt{rootOpt, capturesServeOpt}
 	p, err := parseArgs(args, opts, 0)
 	if err != nil {
-		return e.usage("gate serve", err)
+		return e.usage("warden serve", err)
 	}
 	if p.help {
-		return e.cmdHelp("gate serve", "", "Run the resident gate in the foreground (Ctrl-C to stop).", opts)
+		return e.cmdHelp("warden serve", "", "Run the resident warden in the foreground (Ctrl-C to stop).", opts)
 	}
 	root := e.root(p)
 	srv := serveRoots{root: root}
 	if p.has("--captures-root") {
-		srv.captures = gateroot.PathStr(p.str("--captures-root", ""))
+		srv.captures = wardenroot.PathStr(p.str("--captures-root", ""))
 	}
-	sock := gateroot.Join(root, "gate.sock")
-	// A live gate keeps its socket; a second server never takes it over.
-	if probeGate(sock) == gateLive {
-		e.errf("gate: a resident gate already answers on %s; stop it first\n", sock)
+	sock := wardenroot.Join(root, "warden.sock")
+	// A live warden keeps its socket; a second server never takes it over.
+	if probeWarden(sock) == wardenLive {
+		e.errf("warden: a resident warden already answers on %s; stop it first\n", sock)
 		return exit(1)
 	}
-	e.errf("gate: serving on %s (Ctrl-C to stop)\n", sock)
-	ln, err := listenGate(root, sock)
+	e.errf("warden: serving on %s (Ctrl-C to stop)\n", sock)
+	ln, err := listenWarden(root, sock)
 	if err != nil {
-		e.errf("daisugi gate serve: %s\n", err)
+		e.errf("daisugi warden serve: %s\n", err)
 		return exit(1)
 	}
 	var inode uint64
@@ -65,11 +65,11 @@ func (e *Env) gateServe(args []string) error {
 	}
 	// This process serves every session, so it is no one pane: the calls
 	// it decides and the reports it sends never read these.
-	childEnv := gate.PaneFreeEnviron(e.Environ)
+	childEnv := warden.PaneFreeEnviron(e.Environ)
 	stopped := make(chan struct{})
 	// Ctrl-C prints a newline and ends the server, as the typer command's
 	// KeyboardInterrupt does; SIGTERM ends it with no newline. Either way
-	// the socket goes with it: one left behind reads as a running gate to
+	// the socket goes with it: one left behind reads as a running warden to
 	// the next `start`. A SIGINT this process was started with ignored
 	// stays ignored, as in Python. A SIGTERM ignored at start does not:
 	// the Go runtime does not keep it ignored, so no server does.
@@ -106,29 +106,29 @@ func (e *Env) gateServe(args []string) error {
 	}
 }
 
-// What probeGate finds at the socket path.
+// What probeWarden finds at the socket path.
 const (
-	gateNone  = "none"
-	gateLive  = "live"
-	gateStale = "stale"
+	wardenNone  = "none"
+	wardenLive  = "live"
+	wardenStale = "stale"
 )
 
-// probeGate is gate_server.probe: nothing at the path, a server that
+// probeWarden is warden_server.probe: nothing at the path, a server that
 // accepts a connection (or whose queue is full), or something nobody
 // listens on (the socket of a dead server, a regular file). It sends an
 // empty request and reads the reply, so a Python server never writes to
 // a client that already left.
-func probeGate(sock string) string {
+func probeWarden(sock string) string {
 	if !exists(sock) {
-		return gateNone
+		return wardenNone
 	}
 	c, err := net.DialTimeout("unix", sock, time.Second)
 	if err != nil {
 		var ne net.Error
 		if errors.Is(err, syscall.EAGAIN) || (errors.As(err, &ne) && ne.Timeout()) {
-			return gateLive
+			return wardenLive
 		}
-		return gateStale
+		return wardenStale
 	}
 	defer c.Close()
 	if uc, ok := c.(*net.UnixConn); ok {
@@ -136,7 +136,7 @@ func probeGate(sock string) string {
 	}
 	_ = c.SetReadDeadline(time.Now().Add(time.Second))
 	_, _ = io.Copy(io.Discard, c)
-	return gateLive
+	return wardenLive
 }
 
 // unlinkIfOurs removes the socket this server bound, and never one
@@ -151,9 +151,9 @@ func unlinkIfOurs(sock string, inode uint64) {
 	}
 }
 
-// listenGate is serve()'s start: the root made (0700), a stale socket
+// listenWarden is serve()'s start: the root made (0700), a stale socket
 // removed, a new one bound (0600).
-func listenGate(root, sock string) (*net.UnixListener, error) {
+func listenWarden(root, sock string) (*net.UnixListener, error) {
 	if err := mkdirPy(root); err != nil {
 		return nil, err
 	}
@@ -218,11 +218,11 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{},
 	// A failure here ends this connection with no reply, which every
 	// client reads as a deny; it never ends the server.
 	defer func() { _ = recover() }()
-	peer := gate.PeerPid(c)
+	peer := warden.PeerPid(c)
 	line := readRequestLine(c)
-	q, ok := gate.ParseRequest(line)
+	q, ok := warden.ParseRequest(line)
 	if !ok {
-		_, _ = c.Write(gate.BadRequest)
+		_, _ = c.Write(warden.BadRequest)
 		return
 	}
 	q.Caller.PeerPid = peer
@@ -236,14 +236,14 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{},
 		// The server takes no path from a request (FN-R-21): its root and
 		// captures root were fixed when it started.
 		if report {
-			reply = gate.ReplyLine("", "daisugi hook report: "+fenceruns.PathRefusal, 1)
+			reply = warden.ReplyLine("", "daisugi hook report: "+fenceruns.PathRefusal, 1)
 		} else {
-			res := gate.DenyResult(gate.FormatFromArgv(words), fenceruns.PathRefusal)
-			reply = gate.ReplyLine(res.OutStdout, res.OutStderr, res.Exit)
+			res := warden.DenyResult(warden.FormatFromArgv(words), fenceruns.PathRefusal)
+			reply = warden.ReplyLine(res.OutStdout, res.OutStderr, res.Exit)
 		}
 	} else if report {
-		out, errText, code := gate.HookReport(append([]string{"--root", srv.root}, words...), q.Stdin, q.Caller, childEnv)
-		reply = gate.ReplyLine(out, errText, code)
+		out, errText, code := warden.HookReport(append([]string{"--root", srv.root}, words...), q.Stdin, q.Caller, childEnv)
+		reply = warden.ReplyLine(out, errText, code)
 	} else {
 		fixed := []string{"--root", srv.root}
 		if srv.captures != "" {
@@ -252,11 +252,11 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{},
 		q.Argv = append(fixed, words...)
 		q.Caller.Workspace = fenceruns.BoundWorkspace(srv.root, peer)
 		slots <- struct{}{}
-		var res gate.Result
-		if e.GateExe != "" {
-			res = gate.RunResidentGuarded(e.GateExe, []string{"gate", "check"}, q, childEnv)
+		var res warden.Result
+		if e.WardenExe != "" {
+			res = warden.RunResidentGuarded(e.WardenExe, []string{"warden", "check"}, q, childEnv)
 		} else {
-			res = gate.RunResident(q, childEnv)
+			res = warden.RunResident(q, childEnv)
 		}
 		<-slots
 		statefile.GiveNotes([]byte(res.Notes))
@@ -265,7 +265,7 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{},
 			// the connection ends with no reply.
 			return
 		}
-		reply = gate.ReplyLine(res.OutStdout, res.OutStderr, res.Exit)
+		reply = warden.ReplyLine(res.OutStdout, res.OutStderr, res.Exit)
 	}
 	_, _ = c.Write(reply)
 }
@@ -276,8 +276,8 @@ func (e *Env) serveConn(c *net.UnixConn, childEnv []string, slots chan struct{},
 func readRequestLine(c *net.UnixConn) []byte {
 	var buf []byte
 	chunk := make([]byte, 65536)
-	for len(buf) < gate.MaxRequestBytes {
-		want := min(len(chunk), gate.MaxRequestBytes-len(buf))
+	for len(buf) < warden.MaxRequestBytes {
+		want := min(len(chunk), warden.MaxRequestBytes-len(buf))
 		n, err := c.Read(chunk[:want])
 		if n > 0 {
 			if i := bytes.IndexByte(chunk[:n], '\n'); i >= 0 {

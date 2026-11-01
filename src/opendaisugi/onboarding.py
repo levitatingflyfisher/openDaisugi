@@ -134,7 +134,7 @@ class StatusReport:
     shell_decomposition_enabled: bool = False
     shell_grammar_installed: bool = False
     # What the dialect's words would deny in audit: plans in the journal
-    # (plan-time verification) and calls in the gate's audit log.
+    # (plan-time verification) and calls in the warden's audit log.
     word_would_deny_plans: int = 0
     word_would_deny_calls: int = 0
 
@@ -212,9 +212,9 @@ def gather_status(data_dir: Path, *, threshold: float | None = None) -> StatusRe
         _log.warning("status: could not read journal: %s", exc)
 
     from opendaisugi.config import load_config
-    from opendaisugi.gate import word_would_deny as calls_would_deny
     from opendaisugi.journal import word_would_deny as plans_would_deny
     from opendaisugi.shell_decompose import parser_available
+    from opendaisugi.warden import word_would_deny as calls_would_deny
 
     decomposition = load_config(data_dir / "config.yaml").shell_allow_decomposition
 
@@ -230,7 +230,7 @@ def gather_status(data_dir: Path, *, threshold: float | None = None) -> StatusRe
         shell_decomposition_enabled=decomposition,
         shell_grammar_installed=parser_available(),
         word_would_deny_plans=plans_would_deny(data_dir),
-        word_would_deny_calls=calls_would_deny(root=data_dir / "gate"),
+        word_would_deny_calls=calls_would_deny(root=data_dir / "warden"),
     )
 
 

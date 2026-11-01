@@ -13,8 +13,8 @@ use daisugi_verify::envgen::compose::{contract_envelopes, handlers_for, run_skil
 use daisugi_verify::envgen::inherit::verify_inheritance;
 use daisugi_verify::envgen::tier1::{load_configured, Tier1};
 use daisugi_verify::envgen::{generate, GenErr, Options, PyError, DEFAULT_MODEL};
-use daisugi_verify::gate::pyjson::{self, loads, Object, Value};
-use daisugi_verify::gateway::recall::recall;
+use daisugi_verify::warden::pyjson::{self, loads, Object, Value};
+use daisugi_verify::router::recall::recall;
 use daisugi_verify::llm::Client;
 use daisugi_verify::pathways::pmodel::{take_model, Id, Mode};
 use daisugi_verify::pathways::potion;

@@ -25,7 +25,7 @@ quota-truncated addendum.*
 1. **Ship no MCP.** Eager tool-schema injection is the **"Tools Tax": ~10–60k tokens/turn**;
    schemas occupy **15–30KB before the first user message**; a heavy tool ≈ 1k tokens each. This is
    the single biggest win, and sprig already takes it (zero MCP; bash + skills instead).
-2. **Lazy/tiered tool schemas** save **60–70%**; an intent-gated two-phase loader hit a **95% cut**
+2. **Lazy/tiered tool schemas** save **60–70%**; an intent-checked two-phase loader hit a **95% cut**
    (context utilization 24%→91%) — *but on a synthetic 120-tool benchmark, not live agents.*
 3. **Compress tool *results*, not tool *calls*** (results −32%, calls no net gain — parse failures
    cascade). **Compaction** helps occupancy (steerable: 150k default / 50k min) but is **not free** —
@@ -83,25 +83,25 @@ quota-truncated addendum.*
 - **AgentSpec** (arXiv 2503.18666): triggers + predicates + enforcement; **>90%** unsafe executions
   prevented; **ms** overhead; rules can be **LLM-auto-generated** (95.56% precision / 70.96% recall);
   domain-agnostic (code / embodied / autonomous-vehicle). This is openDaisugi's published peer.
-- **The gate contract is exactly a PreToolUse hook: exit 0 = allow, exit 2 = deny.** DaisugiGate
+- **The warden contract is exactly a PreToolUse hook: exit 0 = allow, exit 2 = deny.** DaisugiWarden
   implements precisely this. Confirmed.
-- **The gate *improves quality*, not only safety:** a precondition/scope gate adds **+3.6pp** success;
-  removing a hallucination-rejection gate costs **−3.2pp**. The envelope is a capability, not a tax.
+- **The warden *improves quality*, not only safety:** a precondition/scope warden adds **+3.6pp** success;
+  removing a hallucination-rejection warden costs **−3.2pp**. The envelope is a capability, not a tax.
 - **⚠️ The warning that matters most for sprig:** *PreToolUse hooks match on tool NAME only and
-  cannot inspect Bash content* — so a gate that governs Write/Edit has a **blind spot for file
+  cannot inspect Bash content* — so a warden that governs Write/Edit has a **blind spot for file
   writes done via shell (heredocs, redirects).* This is **exactly** the shell-decomposition problem
-  openDaisugi's ADR-0010/0014 already solves. sprig's DaisugiGate delegates to openDaisugi, so it
-  **inherits the fix** — but it is the reason a naive name-only gate is unsafe, and the reason the
+  openDaisugi's ADR-0010/0014 already solves. sprig's DaisugiWarden delegates to openDaisugi, so it
+  **inherits the fix** — but it is the reason a naive name-only warden is unsafe, and the reason the
   openDaisugi envelope (not a stock hook) is the right spine.
 
 ## Net, for the build
 - **sprig / grove / weave in Go: validated.** The Go choice, the minimal loop, the tmux-style
-  glanceable fleet readout, the exit-0/2 gate contract, and the envelope-as-differentiator are all
+  glanceable fleet readout, the exit-0/2 warden contract, and the envelope-as-differentiator are all
   supported by measured evidence.
 - **Two honest counters to carry:** fleets are contested (Ronacher avoids them; the game UI is
   asserted, not measured — grove's minimap is right, the diorama is not); and Rust would beat Go on
   very long single sessions.
-- **The strongest new selling point:** the gate **raises pass-rate (+3.6pp)**, and a name-only hook
+- **The strongest new selling point:** the warden **raises pass-rate (+3.6pp)**, and a name-only hook
   has a shell blind spot the openDaisugi envelope closes — so "own your safety" also means "own your
   accuracy," and the envelope is load-bearing, not optional chrome.
 

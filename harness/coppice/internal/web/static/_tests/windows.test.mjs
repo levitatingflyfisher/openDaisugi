@@ -5,6 +5,7 @@ import {
   endedLine, endedSlot, isEndedSlot, paneOfSlot, livePanes, phoneSize, scrollFollow,
   fitFor, FIT_CELL_W, FIT_MIN_COLS, FIT_MIN_ROWS,
 } from '../windows.js';
+import { newGrid, applyFrame, lastContentRow } from '../grid.js';
 import { routeKey } from '../keys.js';
 
 // A monospace advance of six tenths of the font size, the common one.
@@ -207,4 +208,63 @@ test('fitFor never asks for less than the least size, and nothing without a body
   assert.equal(tiny.rows, FIT_MIN_ROWS);
   assert.equal(fitFor(0, 600, ADV, 1), null);
   assert.equal(fitFor(350, 0, ADV, 1), null);
+});
+
+// A full-screen program that redraws hides the cursor and walks it from the
+// top row down while it rewrites the screen. Replay that: 40 rows of text in
+// a body that shows 24, the cursor going home and down again, each step one
+// frame the way the server sends it. A reader at the bottom must never be
+// moved up, and a reader who scrolled up must never be moved at all.
+function redrawFrames() {
+  const rows = 40;
+  const text = (y, k) => Array.from(('row ' + y + ' pass ' + k).padEnd(20), (ch) => [ch, '', '', 0]);
+  const frames = [];
+  const all = {};
+  for (let y = 0; y < rows; y++) all[y] = text(y, 0);
+  frames.push({ cols: 20, rows, cursor: [0, rows - 1], rows_changed: all });
+  for (let k = 1; k <= 3; k++) {
+    for (let y = 0; y < rows; y += 4) {
+      const ch = {};
+      for (let r = 0; r <= y; r++) ch[r] = text(r, k);
+      frames.push({ cols: 20, rows, cursor: [5, y], rows_changed: ch });
+    }
+    frames.push({ cols: 20, rows, cursor: [0, rows - 1], rows_changed: {} });
+  }
+  return frames;
+}
+
+function replay(startTop, startAuto) {
+  let grid = null;
+  let top = startTop;
+  let autoTop = startAuto;
+  const tops = [];
+  for (const f of redrawFrames()) {
+    grid = applyFrame(grid, f);
+    const at = scrollFollow({
+      shownW: 160, shownH: 24 * 12, cols: grid.cols, rows: grid.rows, cellW: 8, cellH: 12,
+      cursor: grid.cursor, contentRow: lastContentRow(grid), top, left: 0, autoTop, lastX: 0,
+    });
+    top = at.top;
+    autoTop = at.autoTop;
+    tops.push(top);
+  }
+  return tops;
+}
+
+test('scrollFollow keeps a reader at the bottom there while the cursor walks down a redraw', () => {
+  const max = 40 * 12 - 24 * 12;
+  const tops = replay(max);
+  assert.ok(tops.every((t) => t === max), 'the view moved up mid-redraw: ' + tops.join(' '));
+});
+
+test('scrollFollow never moves a reader who scrolled up, through a redraw', () => {
+  const tops = replay(60, 480);
+  assert.ok(tops.every((t) => t === 60), 'the view moved: ' + tops.join(' '));
+});
+
+test('scrollFollow follows the last row with text when the cursor is above it', () => {
+  const r = scrollFollow(follow({ cursor: [0, 3], contentRow: 59 }));
+  assert.equal(r.top, 60 * 12 - 480);
+  const own = scrollFollow(follow({ cursor: [0, 59], contentRow: 10 }));
+  assert.equal(own.top, 60 * 12 - 480, 'the cursor row below the text was not followed');
 });

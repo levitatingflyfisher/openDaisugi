@@ -1,6 +1,6 @@
 package verify
 
-// Exported forms of the permission-stage helpers, for the gate binary,
+// Exported forms of the permission-stage helpers, for the warden binary,
 // which builds the oracle's violation messages around the same checks.
 
 // HeadAllowed is verify._head_allowed.
@@ -37,4 +37,18 @@ func Vacuity(expr Expression, timeoutMs int) (VacuityVerdict, error) {
 		return NonTrivial, err
 	}
 	return CheckVacuity(z3c, expr, timeoutMs)
+}
+
+// OpaqueUnrecognizedType is true for an enforced invariant or postcondition
+// with no expr that declares a safety property nothing can check
+// (models.unchecked_items, SG-8): its type is not a dialect word (invariants
+// only) and not one that another check discharges.
+func OpaqueUnrecognizedType(label, typeName string) bool {
+	if label == "invariant" {
+		if _, isWord := WordFor(typeName); isWord {
+			return false
+		}
+		return !recognizedOpaqueTypes[typeName]
+	}
+	return !recognizedStage2PostconditionTypes[typeName]
 }

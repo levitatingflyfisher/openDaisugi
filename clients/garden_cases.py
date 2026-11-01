@@ -371,9 +371,19 @@ _MINTED = [
 _TMP = re.compile(r"opendaisugi-claude-[A-Za-z0-9_]+")
 
 
+# A suite whose cases stamp "about now" sets this to the seconds after t0 that
+# read as +0. Left at 0, every offset rounds to the nearest minute, because
+# some suites seed or wait a full minute (an agentic timeout ends at +60).
+NOW_SNAP_S = 0.0
+
+
 def _offset(v: float, t0: float) -> str | None:
     off = v - t0
     if -400 * DAY <= off <= 5 * DAY:
+        if 0 <= off < NOW_SNAP_S:
+            # A stamp the run wrote "about now": a loaded run, or one that
+            # crosses the half minute, must not move a minute bucket.
+            return "+0"
         return f"{round(off / 60) * 60:+d}"
     return None
 
@@ -2516,7 +2526,7 @@ def build_repeats_cases() -> list[dict[str, Any]]:
 
     C: list[dict[str, Any]] = []
     lex = {CONFIG: {"text": "matcher_model: lexical\n"}}
-    turns_path = ".opendaisugi/gateway/turns.jsonl"
+    turns_path = ".opendaisugi/router/turns.jsonl"
 
     def turn(
         task: str, *, sig: str | None = None, tokens=(100, 10, 0, 0), dollars=0.01, **extra
@@ -2635,7 +2645,7 @@ def build_repeats_cases() -> list[dict[str, Any]]:
     add(
         "repeats data dir",
         ["--data-dir", "{HOME}/dd"],
-        extra={"dd/gateway/turns.jsonl": {"text": "\n".join(base)}},
+        extra={"dd/router/turns.jsonl": {"text": "\n".join(base)}},
     )
     add(
         "repeats float tokens",

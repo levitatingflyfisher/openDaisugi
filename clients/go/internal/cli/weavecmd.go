@@ -14,10 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"daisugi-verify/internal/delegate"
 	"daisugi-verify/internal/distill"
-	"daisugi-verify/internal/gateroot"
-	"daisugi-verify/internal/gateway"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/orchestrate"
 	"daisugi-verify/internal/pathways"
@@ -25,9 +22,12 @@ import (
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/rank"
+	"daisugi-verify/internal/router"
+	"daisugi-verify/internal/spawn"
 	"daisugi-verify/internal/supervise"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // The slot rules of weave.py (WV-1).
@@ -292,7 +292,7 @@ func weaveCheckValue(typ string, v any) bool {
 func weaveCollect(outputs *pyjson.Object, stdout string, fence bool) (*pyjson.Object, string) {
 	text := pystr.Strip(stdout)
 	if fence {
-		text = delegate.StripFence(stdout)
+		text = spawn.StripFence(stdout)
 	}
 	v, err := pyjson.Loads(text)
 	obj, isObj := v.(*pyjson.Object)
@@ -706,7 +706,7 @@ func (e *Env) weaveCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	env, perr, refusal := loadModelYAML(envPath, "Envelope", pmodel.Envelope)
 	if refusal != "" {
 		return e.refuse(cmd, fmt.Errorf("%s", refusal))
@@ -764,9 +764,9 @@ func (e *Env) weaveCmd(args []string) error {
 			continue
 		}
 		if m, _ := s.Value("preferred_model").(string); m == "" {
-			model := gateway.DefaultCheapModel
-			if gateway.EstimateDifficulty(str(s, "prompt")) >= 0.5 {
-				model = gateway.DefaultFrontierModel
+			model := router.DefaultCheapModel
+			if router.EstimateDifficulty(str(s, "prompt")) >= 0.5 {
+				model = router.DefaultFrontierModel
 			}
 			s.Set("preferred_model", model)
 		}
@@ -778,7 +778,7 @@ func (e *Env) weaveCmd(args []string) error {
 	}
 	sum := sha256.Sum256(raw)
 	digest := "sha256:" + hex.EncodeToString(sum[:])
-	state := gateroot.Join(gateroot.Join(dataDir, "weave"), "sha256-"+hex.EncodeToString(sum[:])+".jsonl")
+	state := wardenroot.Join(wardenroot.Join(dataDir, "weave"), "sha256-"+hex.EncodeToString(sum[:])+".jsonl")
 	var prior *weavePrior
 	if p.flag("--resume") {
 		if prior, err = weaveReadMarks(state); err != nil {

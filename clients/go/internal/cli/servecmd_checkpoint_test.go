@@ -12,14 +12,14 @@ import (
 
 // The resident checkpoint snapshots the bound workspace and nothing else,
 // and reads only a transcript under ~/.claude/projects (FN-R-27, FN-R-29;
-// tests/test_gate_resident_checkpoint.py is the oracle's copy).
+// tests/test_warden_resident_checkpoint.py is the oracle's copy).
 
 const cpSecret = "the-secret-the-fence-denies\n"
 
 type cpEnv struct {
 	t          *testing.T
 	sock, root string
-	dir        string // the temp dir above the gate root
+	dir        string // the temp dir above the warden root
 	projects   string
 }
 
@@ -108,7 +108,7 @@ func cpHas(list []string, s string) bool {
 
 // Checkpoints are off inside the fence (FN-R-36): the unfenced server would
 // run git on config the fenced agent writes. The bound snapshot itself is
-// tested in internal/gate.
+// tested in internal/warden.
 
 func TestResidentCheckpointAFencedCallIsDenied(t *testing.T) {
 	c := newCpEnv(t)

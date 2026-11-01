@@ -16,7 +16,7 @@ import (
 // daisugi voice serve, for example ["--data-dir", "/some/dir"].
 //
 // speak_url is the other direction: a speech server with an OpenAI-style
-// POST /v1/audio/speech that reads the foreman's replies aloud. With none,
+// POST /v1/audio/speech that reads the steward's replies aloud. With none,
 // the page speaks with the browser's own voice. speak_model and speak_voice
 // are sent to that server and are optional. speak_profile names an operator
 // agent profile whose key goes to that server as a bearer token. The key

@@ -17,17 +17,32 @@ committed at the level of documentation. Three classes:
 | **Soft enforcement** | The block path exists but is unverified at this version, or its timeout can fail open. |
 | **Observation** | The passive capture path only — calls are journaled, never blocked. |
 
-| Harness | Plan-time verify | Call-time gate | Basis |
+| Harness | Plan-time verify | Call-time warden | Basis |
 |---|---|---|---|
-| **Claude Code** | Hard (library call) | **Hard**, contract-tested | `tests/test_hook_gate_contract.py` on the pinned CLI: `--settings` hooks fire in `-p`, exit-2 blocks, the real gate denies a real Read, and a crashed gate still denies (`\|\| exit 2`). |
-| **Codex** | Hard (library call) | **Soft** (deny works; the host fails open) | `hooks.json` PreToolUse (v0.114+, experimental): same stdin shape and exit-2 deny as Claude Code, installed by `daisugi install --gate --runtime codex`. Codex documents hooks as fail-open — a crashed or timed-out hook lets the call run — so this can never be classed Hard, and no live contract test exists yet. |
+| **Claude Code** | Hard (library call) | **Hard**, contract-tested | `tests/test_hook_warden_contract.py` on the pinned CLI: `--settings` hooks fire in `-p`, exit-2 blocks, the real warden denies a real Read, and a crashed warden still denies (`\|\| exit 2`). |
+| **Codex** | Hard (library call) | **Soft** (deny works; the host fails open) | `hooks.json` PreToolUse (v0.114+, experimental): same stdin shape and exit-2 deny as Claude Code, installed by `daisugi install --runtime codex`. Codex documents hooks as fail-open — a crashed or timed-out hook lets the call run — so this can never be classed Hard, and no live contract test exists yet. |
 | **Hermes** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted belt-and-braces (both `decision` and `action` keys); no live contract test yet. Treat as observation until one exists. |
 | **OpenClaw** | Hard (library call) | **Unverified** (soft/observation) | Block-shape emitted; no live contract test yet. |
 
+### Where each harness's calls are recorded
+
+| Harness | Recorder | Captures land in | How they reach the journal |
+|---|---|---|---|
+| Claude Code | the capture hook `install` writes | `<data>/captures` | `hook auto-tend` |
+| Codex | the resident warden's mirror | `<data>/warden/captures` | `hook auto-tend`; `journal parse --format codex` for old chats |
+| pi | the resident warden's mirror | `<data>/warden/captures` | `hook auto-tend`; `journal parse --format pi` for old chats |
+| OpenCode | the resident warden's mirror | `<data>/warden/captures` | `hook auto-tend`; `journal parse --format opencode` for old chats |
+| Hermes | the shell hook `install` writes | `<data>/captures` | `hook auto-tend` |
+| OpenClaw | the `before_tool_call` plugin `install` writes | `<data>/captures` | `hook auto-tend` |
+
+Only a run on a real Hermes, OpenClaw, pi or OpenCode install proves that its
+recorder fires. The tool names and fields come from each project's docs; see
+[hook integration](hook-integration.md) for the unverified ones.
+
 Where the class is *observation* or *unverified*, the passive journaling path
 (`daisugi hook record`) remains fully supported — observation is a first-class
-mode, not a degraded one. The per-host call-time gate is the
-[gate how-to](how-to/gate.md); its non-guarantees are
+mode, not a degraded one. The per-host call-time warden is the
+[warden how-to](how-to/warden.md); its non-guarantees are
 [yellow paper §8](spec/yellow-paper.md).
 
 ## Hermes (Python, direct import)

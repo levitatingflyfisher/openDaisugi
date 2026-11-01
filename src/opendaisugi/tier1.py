@@ -61,12 +61,21 @@ _TIER1_PROMPT = (
     "Include generated_by, task, permissions (file_read, file_write, network, "
     "shell, shell_allowlist, max_execution_time_s, max_output_size_mb), "
     "invariants, postconditions. Default network=false and shell=false. "
-    "Only allow paths the task mentions. No placeholders."
+    "Only allow paths the task mentions. No placeholders. "
+    "To allow an MCP tool only with certain arguments, add permissions.mcp_rules: "
+    '{"tool": "server/tool", "args": [predicates over the arguments]}.'
 )
 
 
 _MAX_REASON = 200
 _CUT_PREFIX = "The output is incomplete due to a max_tokens"
+
+# Ollama's /v1 honours reasoning_effort "none" and ignores "think": false.
+OLLAMA_NO_THINK_EFFORT = "none"
+TRUNCATED_ADVICE = (
+    " A model that thinks first spends the limit on thinking: turn thinking off at the server,"
+    " or raise the limit."
+)
 
 
 def _clean_reason(text: str) -> str:
@@ -79,6 +88,7 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     """Name the outcome of a failed probe and a one-line reason.
 
     ``declined``: the model answered, but not with a valid envelope.
+    ``truncated``: the reply stopped at the token limit.
     ``error``: the call failed (a server, a key, a wire).
     ``timeout``: the probe ran past a deadline.
     """
@@ -88,10 +98,7 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     if msg.startswith("ValidationError"):
         return "declined", _clean_reason(msg)
     if msg.startswith(_CUT_PREFIX):
-        return "declined", _clean_reason(
-            msg + " A model that thinks first may have spent the token budget on thinking;"
-            " raise max_tokens."
-        )
+        return "truncated", _clean_reason(msg + TRUNCATED_ADVICE)
     return "error", _clean_reason(msg)
 
 
@@ -118,7 +125,11 @@ class HTTPTier1Provider:
         timeout_s: float = 30.0,
         name: str | None = None,
         backend: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
+        # ``reasoning_effort`` is sent in the chat body when set (an Ollama host
+        # gets "none" so a thinking model answers without thinking).
+        self.reasoning_effort = reasoning_effort
         # ``backend`` pins the model client's backend for this provider, as
         # ``get_model_client(backend=...)`` does; None leaves the choice to the
         # environment, the config file and auto-detection.
@@ -159,9 +170,10 @@ class HTTPTier1Provider:
         """``generate_envelope`` with the reason: ``(envelope, outcome, reason)``.
 
         ``outcome`` is ``valid``, ``declined`` (the model answered, but not with
-        a valid envelope), ``error`` (the call failed) or ``timeout``. ``reason``
+        a valid envelope), ``truncated`` (the reply stopped at the token limit),
+        ``error`` (the call failed) or ``timeout``. ``reason``
         is one short line, empty for ``valid``. The router reads only the
-        envelope; the qualification gate reads the rest.
+        envelope; the qualification check reads the rest.
         """
         from opendaisugi import llm as _llm  # local import; keeps module import cheap
 
@@ -189,10 +201,19 @@ class HTTPTier1Provider:
                         {"role": "user", "content": user_content},
                     ],
                     max_retries=1,
+                    reasoning_effort=self.reasoning_effort,
                     **extra,
                 ),
                 timeout=self.timeout_s,
             )
+            from opendaisugi.models import opaque_unrecognized
+
+            # The envelope still goes to the router, which demotes the item.
+            # Qualification counts the probe as declined: a model that writes
+            # protection nothing can check has not shown it can write an envelope.
+            unchecked = opaque_unrecognized(envelope)
+            if unchecked:
+                return envelope, "declined", f"opaque invariant {unchecked[0]}"
             return envelope, "valid", ""
         except asyncio.TimeoutError:
             _log.info(
@@ -235,6 +256,7 @@ class OllamaTier1Provider(HTTPTier1Provider):
         base_url: str = "http://localhost:11434",
         timeout_s: float = 60.0,
         name: str | None = None,
+        reasoning_effort: str | None = OLLAMA_NO_THINK_EFFORT,
     ) -> None:
         if not model.startswith("ollama/"):
             model = f"ollama/{model}"
@@ -244,6 +266,7 @@ class OllamaTier1Provider(HTTPTier1Provider):
             api_key=None,
             timeout_s=timeout_s,
             name=name or f"ollama:{model.removeprefix('ollama/')}",
+            reasoning_effort=reasoning_effort,
         )
 
 

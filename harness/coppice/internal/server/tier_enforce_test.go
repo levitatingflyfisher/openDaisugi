@@ -11,8 +11,8 @@ import (
 
 const permanentRefusal = "this cannot be undone. Type the pane name to allow: auth fix"
 
-// plantTieredAsk writes one pending ask the way the gate does, with the
-// tier the gate put in the ask file. An empty tier writes none.
+// plantTieredAsk writes one pending ask the way the warden does, with the
+// tier the warden put in the ask file. An empty tier writes none.
 func plantTieredAsk(t *testing.T, root, id, tier string) {
 	t.Helper()
 	dir := filepath.Join(root, "asks")
@@ -29,10 +29,10 @@ func plantTieredAsk(t *testing.T, root, id, tier string) {
 	}
 }
 
-// tieredBlockedLine reports a gate block on pane with ask id and tier. An
+// tieredBlockedLine reports a warden block on pane with ask id and tier. An
 // empty tier sends none.
 func tieredBlockedLine(pane, id, tier string) string {
-	line := strings.Replace(gateBlockedLine(pane), "toolu_1", id, 1)
+	line := strings.Replace(wardenBlockedLine(pane), "toolu_1", id, 1)
 	if tier == "" {
 		return line
 	}
@@ -62,7 +62,7 @@ func tierRun(t *testing.T, fileTier, reportTier, verb string) (resp struct {
 }, s *Server) {
 	t.Helper()
 	s = newAgentServer(t)
-	plantTieredAsk(t, s.cfg.GateRoot, "ask-3", fileTier)
+	plantTieredAsk(t, s.cfg.WardenRoot, "ask-3", fileTier)
 	got := roundTrip(t, s,
 		strings.Replace(paneCreate, "%s", t.TempDir(), 1),
 		tieredBlockedLine("w1:p1", "ask-3", reportTier),
@@ -81,7 +81,7 @@ func TestAPermanentAskAllowedWithoutTheNameIsRefused(t *testing.T) {
 	if r.ok || r.code != "unauthorized" || r.message != permanentRefusal {
 		t.Fatalf("got %+v, want unauthorized %q", r, permanentRefusal)
 	}
-	if _, ok := answerFile(t, s.cfg.GateRoot, "ask-3"); ok {
+	if _, ok := answerFile(t, s.cfg.WardenRoot, "ask-3"); ok {
 		t.Fatal("a refused allow wrote an answer")
 	}
 }
@@ -100,7 +100,7 @@ func TestAPermanentAskAllowedWithTheNamePasses(t *testing.T) {
 	if !r.ok {
 		t.Fatalf("got %+v, want ok", r)
 	}
-	ans, ok := answerFile(t, s.cfg.GateRoot, "ask-3")
+	ans, ok := answerFile(t, s.cfg.WardenRoot, "ask-3")
 	if !ok || ans["decision"] != "allow" {
 		t.Fatalf("answer %v", ans)
 	}
@@ -122,12 +122,12 @@ func TestAnUndoableAskAllowedWithoutTheNamePasses(t *testing.T) {
 	if !r.ok {
 		t.Fatalf("got %+v, want ok", r)
 	}
-	if ans, ok := answerFile(t, s.cfg.GateRoot, "ask-3"); !ok || ans["decision"] != "allow" {
+	if ans, ok := answerFile(t, s.cfg.WardenRoot, "ask-3"); !ok || ans["decision"] != "allow" {
 		t.Fatalf("answer %v", ans)
 	}
 }
 
-// A pane may report its own ask as undoable. The gate's own ask file says
+// A pane may report its own ask as undoable. The warden's own ask file says
 // permanent, and permanent wins.
 func TestTheAskFileTierWinsOverAnUndoableReport(t *testing.T) {
 	r, _ := tierRun(t, "permanent", "undoable",
@@ -148,7 +148,7 @@ func TestDenyNeverNeedsTheName(t *testing.T) {
 	if !r.ok {
 		t.Fatalf("got %+v, want ok", r)
 	}
-	if ans, ok := answerFile(t, s.cfg.GateRoot, "ask-3"); !ok || ans["decision"] != "deny" {
+	if ans, ok := answerFile(t, s.cfg.WardenRoot, "ask-3"); !ok || ans["decision"] != "deny" {
 		t.Fatalf("answer %v", ans)
 	}
 }
@@ -169,7 +169,7 @@ func TestAllowForTheTaskRidesInTheAnswerOnAnUndoableAsk(t *testing.T) {
 	if !r.ok {
 		t.Fatalf("got %+v, want ok", r)
 	}
-	ans, _ := answerFile(t, s.cfg.GateRoot, "ask-3")
+	ans, _ := answerFile(t, s.cfg.WardenRoot, "ask-3")
 	if ans["scope"] != "task" {
 		t.Fatalf("answer %v, want scope task", ans)
 	}

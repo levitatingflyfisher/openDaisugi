@@ -1,10 +1,10 @@
 //! `daisugi pathways list|show|stats|delete|export|import`: the pathway
 //! store, with the flags, output, exit codes and files of the Python CLI.
 
-use super::gateroot::path_str;
+use super::wardenroot::path_str;
 use super::{exit, parse_args, Env, Opt, Res, Stop};
-use crate::gate::py::text::repr;
-use crate::gate::pyjson::{Object, Value};
+use crate::warden::py::text::repr;
+use crate::warden::pyjson::{Object, Value};
 use crate::pathways::export::{export, FORMATS};
 use crate::pathways::importer::{is_skill, parse_bundle, parse_skill, storable, verify_pathway};
 use crate::pathways::pathway::{dump_json_indent, json_mode, py_dumps, Pathway};
@@ -327,9 +327,9 @@ impl Env {
         // nothing written; the errors are reported after the store is
         // opened, in Python's order.
         let read = std::fs::read(&source).map_err(PwErr::Io).and_then(|b| {
-            crate::gate::pymodel::decode_utf8_strict(&b)
+            crate::warden::pymodel::decode_utf8_strict(&b)
                 .map_err(|m| PwErr::Invalid(format!("UnicodeDecodeError: {m}")))
-                .map(|t| crate::gate::pymodel::universal_newlines(&t))
+                .map(|t| crate::warden::pymodel::universal_newlines(&t))
         });
         let src_name = path_str(&source);
         let mut staged: Result<Pathway, PwErr> = Err(PwErr::Invalid(String::new()));
@@ -403,7 +403,7 @@ fn int_text(v: &Value) -> String {
 /// `int(s)` for a flag value: white space around it, a sign, and
 /// underscores between digits.
 pub(super) fn py_int(s: &str) -> Option<i128> {
-    let t = crate::gate::py::text::strip(s);
+    let t = crate::warden::py::text::strip(s);
     let (neg, t) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),
         Some(b'+') => (false, &t[1..]),

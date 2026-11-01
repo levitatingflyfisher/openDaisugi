@@ -501,7 +501,7 @@ class Journal:
         A **failed run** (``run_status='failed'``) is excluded even when its
         plan verified: the outcome wasn't successful, so we don't learn it.
         Refusals (imports with ``ok=0``) are excluded here; reuse re-verifies
-        against the caller's envelope regardless, so this gate is about learning
+        against the caller's envelope regardless, so this warden is about learning
         quality, not safety.
 
         Reads the SQLite index only — does not load YAML bodies.

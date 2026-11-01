@@ -14,15 +14,15 @@ import (
 	"time"
 )
 
-// gate check decides in a child process of the daisugi binary: an allow
-// comes back as the gate's own answer, and a child that ends abnormally
+// warden check decides in a child process of the daisugi binary: an allow
+// comes back as the warden's own answer, and a child that ends abnormally
 // is a deny in the host's contract, never an allow.
-func TestGateCheckDeniesAnAbnormalChildEnd(t *testing.T) {
+func TestWardenCheckDeniesAnAbnormalChildEnd(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "daisugi")
 	if out, err := exec.Command("go", "build", "-tags", "netgo", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	root := filepath.Join(t.TempDir(), "data", "gate")
+	root := filepath.Join(t.TempDir(), "data", "warden")
 	if err := os.MkdirAll(filepath.Join(root, "envelopes"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -32,10 +32,10 @@ func TestGateCheckDeniesAnAbnormalChildEnd(t *testing.T) {
 	}
 	payload := `{"session_id":"s1","tool_name":"Read","tool_input":{"file_path":"/work/a"},"cwd":"/work"}`
 	run := func(format, crash string) (string, string, int) {
-		cmd := exec.Command(bin, "gate", "check", "--mode", "enforce", "--root", root, "--format", format)
+		cmd := exec.Command(bin, "warden", "check", "--mode", "enforce", "--root", root, "--format", format)
 		cmd.Env = []string{"HOME=/home/user", "PATH=/usr/bin:/bin"}
 		if crash != "" {
-			cmd.Env = append(cmd.Env, "DAISUGI_GATE_TEST_CRASH="+crash)
+			cmd.Env = append(cmd.Env, "DAISUGI_WARDEN_TEST_CRASH="+crash)
 		}
 		cmd.Stdin = strings.NewReader(payload)
 		var so, se bytes.Buffer
@@ -64,10 +64,10 @@ func TestGateCheckDeniesAnAbnormalChildEnd(t *testing.T) {
 	}
 }
 
-// SIGTERM ends `daisugi gateway --router switchyard` by that signal, as
+// SIGTERM ends `daisugi router serve --routing-mode switchyard` by that signal, as
 // the oracle does, but only after the same cleanup its exit runs: the
 // Switchyard child is stopped and its state file is removed.
-func TestGatewayStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T) {
+func TestRouterStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("no python3 for the fake switchyard-server")
 	}
@@ -89,12 +89,12 @@ func TestGatewayStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := "gateway_router: switchyard\nswitchyard_efficient_model: qwen3-coder:30b\n"
+	cfg := "routing_mode: switchyard\nswitchyard_efficient_model: qwen3-coder:30b\n"
 	if err := os.WriteFile(filepath.Join(data, "config.yaml"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gw, sy := freePort(t), freePort(t)
-	cmd := exec.Command(bin, "gateway", "--port", strconv.Itoa(gw), "--switchyard-port", strconv.Itoa(sy),
+	cmd := exec.Command(bin, "router", "serve", "--port", strconv.Itoa(gw), "--switchyard-port", strconv.Itoa(sy),
 		"--openai-cheap-model", "")
 	cmd.Env = []string{"HOME=" + home, "PATH=" + bindir + ":/usr/bin:/bin"}
 	cmd.Dir = home
@@ -113,7 +113,7 @@ func TestGatewayStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	states, _ := filepath.Glob(filepath.Join(data, "gateway", "switchyard-*.json"))
+	states, _ := filepath.Glob(filepath.Join(data, "router", "switchyard-*.json"))
 	if !ready || len(states) != 1 {
 		t.Fatalf("not ready (%v) or no one state file (%v); stderr=%q", ready, states, se.String())
 	}
@@ -130,7 +130,7 @@ func TestGatewayStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T
 	if ws, ok := ee.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
 		t.Fatalf("want death by SIGTERM, got %v", err)
 	}
-	if left, _ := filepath.Glob(filepath.Join(data, "gateway", "switchyard-*.json")); len(left) != 0 {
+	if left, _ := filepath.Glob(filepath.Join(data, "router", "switchyard-*.json")); len(left) != 0 {
 		t.Fatalf("the state file stayed: %v", left)
 	}
 	want := "switchyard: sent SIGTERM to switchyard-server, pid " + strconv.Itoa(state.PID)
@@ -144,7 +144,7 @@ func TestGatewayStoppedBySigtermStopsTheChildAndRemovesItsStateFile(t *testing.T
 		}
 		if i == 100 {
 			_ = syscall.Kill(state.PID, syscall.SIGKILL)
-			t.Fatal("the switchyard child outlived the gateway")
+			t.Fatal("the switchyard child outlived the router")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

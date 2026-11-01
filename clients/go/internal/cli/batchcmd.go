@@ -5,11 +5,11 @@ import (
 	"unicode/utf8"
 
 	"daisugi-verify/internal/batch"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/signing"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is `daisugi batch prove` (opendaisugi/batch.py): a declared
@@ -65,7 +65,7 @@ func (e *Env) batchProve(args []string) error {
 	if !p.has("--envelope") {
 		return e.usageArgs(cmd, "DECLARATION", &usageError{"Missing option '--envelope' / '-e'."})
 	}
-	text, err := readText(gateroot.PathStr(p.args[0]))
+	text, err := readText(wardenroot.PathStr(p.args[0]))
 	if err != nil {
 		return e.raise(cmd, err)
 	}
@@ -73,7 +73,7 @@ func (e *Env) batchProve(args []string) error {
 	if verr != nil {
 		return e.raise(cmd, verr)
 	}
-	etext, err := readText(gateroot.PathStr(p.str("--envelope", "")))
+	etext, err := readText(wardenroot.PathStr(p.str("--envelope", "")))
 	if err != nil {
 		return e.raise(cmd, err)
 	}

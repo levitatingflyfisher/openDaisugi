@@ -57,7 +57,7 @@ type harness struct {
 // adapter.Start against it, with no --session/--resume given in the base
 // argv: the first turn mints a fresh id. extraArgv, if given, rides on
 // StartOpts.Argv alongside --session-dir, same as a caller's own
-// --gate/--max-turns (or, for the tests that need it, an explicit
+// --warden/--max-turns (or, for the tests that need it, an explicit
 // --session/--resume of the caller's own choosing) would.
 func start(t *testing.T, extraArgv ...string) *harness {
 	t.Helper()
@@ -178,20 +178,20 @@ func TestInsertAfterSessionDirPlacesInjectedFlagsBeforeDoubleDash(t *testing.T) 
 // -- regardless of whether the "--" boundary is honoured at all. This one
 // puts a --session-dir LOOKALIKE only in the tail, so a version that never
 // stops at -- would find it there and splice inside the tail instead of
-// after --gate, corrupting content that was supposed to be left alone.
+// after --warden, corrupting content that was supposed to be left alone.
 func TestInsertAfterSessionDirIgnoresALookalikeAfterDoubleDash(t *testing.T) {
-	argv := []string{"--gate", "--", "--session-dir", "d"}
+	argv := []string{"--warden", "--", "--session-dir", "d"}
 	got := insertAfterSessionDir(argv, "--session", "newid")
-	want := []string{"--gate", "--session", "newid", "--", "--session-dir", "d"}
+	want := []string{"--warden", "--session", "newid", "--", "--session-dir", "d"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("insertAfterSessionDir() = %v, want %v", got, want)
 	}
 }
 
 func TestStripSessionFlagsLeavesContentAfterDoubleDashAlone(t *testing.T) {
-	argv := []string{"--session-dir", "/d", "--gate", "--", "--session", "x"}
+	argv := []string{"--session-dir", "/d", "--warden", "--", "--session", "x"}
 	got := stripSessionFlags(argv)
-	want := []string{"--gate", "--", "--session", "x"}
+	want := []string{"--warden", "--", "--session", "x"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stripSessionFlags() = %v, want %v", got, want)
 	}
@@ -241,7 +241,7 @@ func TestParseRowToolCallBecomesAToolEvent(t *testing.T) {
 }
 
 // A deny verdict is what a coppice client shows as blocked, with the clause
-// attached. That is the whole point of using sprig's own gate rather than
+// attached. That is the whole point of using sprig's own warden rather than
 // reading its screen.
 func TestParseRowDenyVerdictBecomesBlockedWithClause(t *testing.T) {
 	p := &proc{}
@@ -503,7 +503,7 @@ func TestATaskBeginningWithADashReachesTheFakeAsTheTask(t *testing.T) {
 	}
 }
 
-// SHOULD-FIX 1: the offset seeding must be unconditional, not gated on
+// SHOULD-FIX 1: the offset seeding must be unconditional, not checked on
 // isResume - a client-supplied --session naming a file that ALREADY
 // exists (not this adapter's own resume path at all) is just as much a
 // pre-existing file, and its history must not replay into the pane while

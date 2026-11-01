@@ -85,6 +85,18 @@ class IsEmpty(_ExprBase):
     path: str
 
 
+class PathIn(_ExprBase):
+    """The string (or each string of a list) at ``path`` is a path the
+    envelope's ``scope`` globs admit. Only absolute paths: a relative value
+    is refused, and so is a relative glob in the scope at registration
+    (``mcp_rules.PATH_IN_ABSOLUTE``). It is meaningful only inside
+    ``mcp_rules``; elsewhere it is false."""
+
+    op: Literal["path_in"] = "path_in"
+    path: str
+    scope: Literal["file_read", "file_write"]
+
+
 class And(_ExprBase):
     op: Literal["and"] = "and"
     children: list["Expression"]
@@ -179,6 +191,7 @@ Expression = Annotated[
         LengthRange,
         Exists,
         IsEmpty,
+        PathIn,
         And,
         Or,
         Not,
@@ -238,5 +251,6 @@ __all__ = [
     "NotMatches",
     "NumericRange",
     "Or",
+    "PathIn",
     "parse_expression",
 ]

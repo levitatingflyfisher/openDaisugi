@@ -3,8 +3,8 @@
 //
 // Two rule sets, since the oracle has two kinds of client:
 //
-//   - Httpx: httpx 0.28 with trust_env, as the gateway's upstream client
-//     and the model client (llm_client.py, the gate's llm_check) use it.
+//   - Httpx: httpx 0.28 with trust_env, as the router's upstream client
+//     and the model client (llm_client.py, the warden's llm_check) use it.
 //     HTTP_PROXY, HTTPS_PROXY and ALL_PROXY, and NO_PROXY as httpx turns
 //     each entry into a URL pattern. There is no bypass for loopback: a
 //     request to 127.0.0.1 goes through the proxy unless NO_PROXY names it.

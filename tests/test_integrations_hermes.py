@@ -60,7 +60,9 @@ def test_hermes_verify_plan_structural_check():
     envelope = Envelope(
         generated_by="t",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["echo"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["echo"], file_read=["**"], file_write=["**"]
+        ),
     )
     plan = ActionPlan(source="t", task="t", steps=[ShellStep(id="s1", command="echo hi")])
     result = hermes.verify_plan(plan, envelope)

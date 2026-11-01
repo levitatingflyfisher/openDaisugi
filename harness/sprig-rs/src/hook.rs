@@ -1,13 +1,13 @@
 //! sprig-hook: a Claude Code PreToolUse hook that rules on a driver's own
-//! tools with the gate. It reads {tool_name, tool_input} and prints the
+//! tools with the warden. It reads {tool_name, tool_input} and prints the
 //! decision; the caller exits 2 on a deny, an unconditional block.
 
-use crate::gate::{Gate, ToolCall};
+use crate::warden::{Warden, ToolCall};
 use crate::json::{encode, jmap, Map, J};
 
 /// The decision JSON and whether the call is allowed. An unreadable
 /// payload denies.
-pub fn decide(input: &[u8], gate: &dyn Gate) -> (Vec<u8>, bool) {
+pub fn decide(input: &[u8], warden: &dyn Warden) -> (Vec<u8>, bool) {
     let mut name = String::new();
     let mut tool_input: Option<Map> = None;
     let r = crate::json::unmarshal(input, |d, n| {
@@ -31,7 +31,7 @@ pub fn decide(input: &[u8], gate: &dyn Gate) -> (Vec<u8>, bool) {
             false,
         );
     }
-    let v = gate.check(&ToolCall {
+    let v = warden.check(&ToolCall {
         id: String::new(),
         name,
         input: tool_input,
@@ -40,7 +40,7 @@ pub fn decide(input: &[u8], gate: &dyn Gate) -> (Vec<u8>, bool) {
         return (decision("allow", b""), true);
     }
     let reason: &[u8] = if v.reason.is_empty() {
-        b"refused by the gate"
+        b"refused by the warden"
     } else {
         &v.reason
     };
@@ -73,10 +73,10 @@ pub fn atoi(s: &[u8]) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gate::{AllowAll, Verdict};
+    use crate::warden::{AllowAll, Verdict};
 
     struct Deny(&'static [u8]);
-    impl Gate for Deny {
+    impl Warden for Deny {
         fn check(&self, c: &ToolCall) -> Verdict {
             Verdict {
                 allow: c.name == "Read",
@@ -100,7 +100,7 @@ mod tests {
             br#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"no \u003cway\u003e"}}"#
         );
         let (o, _) = decide(br#"{"tool_name":"Bash"}"#, &Deny(b""));
-        assert!(o.ends_with(br#""permissionDecisionReason":"refused by the gate"}}"#));
+        assert!(o.ends_with(br#""permissionDecisionReason":"refused by the warden"}}"#));
         let (o, ok) = decide(br#"{"tool_name":5}"#, &AllowAll);
         assert!(!ok);
         assert!(o.ends_with(br#""sprig-hook: unreadable PreToolUse payload (fail-closed)"}}"#));

@@ -1,6 +1,6 @@
 ---
 name: opendaisugi-checklist
-description: Use when a task's failure mode is silent omission (agent forgets a step) rather than wrong action — invent a problem-specific DSL of typed step definitions, author a DAG plan in it, verify against a Z3-backed envelope, execute with per-step receipts and a run-end integrity check. Domain-agnostic: applies to shell, email, robotic motion, file ops. Core opendaisugi workflow for multi-step runs whose completeness matters.
+description: Use when a task's failure mode is silent omission (agent forgets a step) rather than wrong action — invent a problem-specific DSL of typed step definitions, author a DAG plan in it, verify against a Z3-backed envelope, execute with per-step receipts and a run-end integrity check. It is domain-agnostic and applies to shell, email, robotic motion, file ops. Core opendaisugi workflow for multi-step runs whose completeness matters.
 ---
 
 # opendaisugi-checklist
@@ -17,7 +17,13 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
 
 1. **Analyze the task.** What *kinds* of things will happen? Name the step-shapes — `DraftEmail`, `ReviewDraft`, `JointMove`, `Vote`. The shapes are your problem's grain.
 
-2. **Invent the DSL.** For each step-kind, subclass `StepBase`, decorate with `@opendaisugi.step_type`, add typed fields that capture what varies per instance. Declare an optional `postcondition` when "did this really happen" has evidence worth checking.
+2. **Invent the DSL.** A step kind is a JSON step record: a `type` name in `snake_case` and the typed fields that vary per instance. Name the new kinds in the envelope's `custom_step_allowlist`. `daisugi verify` and `daisugi run` in any port check a plan that uses them, and the warden denies a kind the envelope does not name. Declare an optional `postcondition` when "did this really happen" has evidence worth checking.
+
+   ```json
+   {"id": "d1", "type": "draft_email", "recipient": "...", "body": "...", "signature": "...", "depends_on": []}
+   ```
+
+   **Python package.** The Python package also lets a kind carry its own validator and executor: subclass `StepBase`, decorate with `@opendaisugi.step_type`, and add typed fields.
 
    ```python
    from typing import Literal
@@ -52,7 +58,7 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
 
 ## Common pitfalls
 
-- **Cramming logic into one step's command string.** If you write `command="ls && cat foo"`, the metachar gate rejects it. Emit two ShellSteps.
+- **Cramming logic into one step's command string.** If you write `command="ls && cat foo"`, the metachar warden rejects it. Emit two ShellSteps.
 - **Missing postconditions on steps that matter.** If "did this happen" has observable evidence, encode it. A step with no postcondition passes integrity trivially on execution-happened; that's fine when execution happening is enough, and weak when it isn't.
 - **Using Z3 for perceptual claims.** "Is this good" is LLM-as-judge territory — give it an `AgentReview` step whose postcondition returns the LLM's verdict, not an invariant.
 - **Silent executor behavior.** If a sub-agent "skips" a step, it must fail on the integrity check. Don't patch around missing receipts.
@@ -65,9 +71,9 @@ description: Use when a task's failure mode is silent omission (agent forgets a 
 - [Postconditions](references/postconditions.md) — per-step verify() shapes, evidence content
 - [Contract orchestration](references/contract-orchestration.md) — Z3-backed contracts between sub-agents
 - [Cheap-model delegation](references/delegation.md) — `preferred_model`, `llm_check`, model_id selection signal (v0.19+)
-- [When to delegate a read or a draft](references/when-to-delegate.md): the `delegate` MCP tool: a worker reads a large file and returns checked quotes, or drafts boilerplate for you to review and write
+- [When to spawn a read or a draft](references/when-to-spawn.md): the `spawn` MCP tool: a worker reads a large file and returns checked quotes, or drafts boilerplate for you to review and write
 - [Using openDaisugi via MCP](references/mcp-usage.md) — calling the same machinery as MCP tools (v0.20+)
 - [Passive capture](references/passive-capture.md) — the hook for fueling distillation from external agent runtimes (v0.21+)
 - [Git-backed shared registry](references/git-registry.md) — multiple opendaisugi instances share pathways through a git repo (v0.25+)
-- [VLA integration](references/vla-integration.md) — VLAStep + envelope-gated rollouts for learned visuomotor policies (v0.26+)
+- [VLA integration](references/vla-integration.md) — VLAStep + envelope-checked rollouts for learned visuomotor policies (v0.26+)
 - [Worked example: Agent council](references/worked-example-council.md)

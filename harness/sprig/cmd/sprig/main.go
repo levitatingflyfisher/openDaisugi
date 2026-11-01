@@ -1,5 +1,5 @@
 // Command sprig is a minimal, automatable coding-agent harness with a fail-closed
-// gate. This is the thin binary; the harness lives in package sprig.
+// warden. This is the thin binary; the harness lives in package sprig.
 package main
 
 import (

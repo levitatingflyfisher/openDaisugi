@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/datahome"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pyyaml"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // This file is save_config(load_config(path).model_copy(update=...)):
@@ -28,9 +28,9 @@ func defaults(home string) map[string]any {
 	return map[string]any{
 		"model": "anthropic/claude-sonnet-4-20250514", "max_task_chars": pyjson.Int{Text: "4000"},
 		"z3_timeout_ms": pyjson.Int{Text: "500"}, "data_dir": datahome.Dir(os.Getenv, home, datahome.Exists),
-		"auto_tend": null, "gateway_local_model": null, "gateway_router": "rules", "gateway_router_model": null, "gateway_grader": null, "switchyard_route_id": "daisugi",
+		"auto_tend": null, "router_local_model": null, "routing_mode": "rules", "routing_model": null, "router_grader": null, "switchyard_route_id": "daisugi",
 		"switchyard_capable_model": "claude-sonnet-5", "switchyard_efficient_model": null,
-		"switchyard_api_key_env": null, "shell_allow_decomposition": false, "gate_mode": "audit", "gate_ask": false,
+		"switchyard_api_key_env": null, "shell_allow_decomposition": false, "warden_mode": "audit", "warden_ask": false,
 		"dialect_enforce": null,
 		"verifier_client": "python", "matcher_model": "lexical", "llm_backend": null, "llm_base_url": null,
 		"llm_host_kind": null, "llm_host_model": null, "llm_context_window": null,
@@ -113,7 +113,7 @@ func dumped(v Value, t fieldType) (any, error) {
 	case tStr, tOptStr:
 		return v.Text, nil
 	case tPath:
-		return gateroot.PathStr(v.Text), nil
+		return wardenroot.PathStr(v.Text), nil
 	case tInt, tOptInt:
 		switch v.Kind {
 		case Int:
@@ -172,7 +172,7 @@ func Save(path, home string, updates map[string]any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
-	_, err = gateroot.WriteFile(path, text)
+	_, err = wardenroot.WriteFile(path, text)
 	return err
 }
 

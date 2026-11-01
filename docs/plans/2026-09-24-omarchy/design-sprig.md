@@ -73,6 +73,14 @@ delegation edges, GEPA tuning, recall. sprig owns only what needs the loop.
 - Whether the sprig loop speaks pi's RPC, or its own.
 - Gate on by default in sprig (owner: yes, once it runs smoothly). daisugi's agentic executor always passes `--gate`, with the gate pinned to its own root and session (SX-R-2).
 
+## Built since: branching (2026-10-31)
+
+The spawn tool takes `attempts` (2 to 8) and `why`. A call with `attempts` runs that many
+children in git worktrees of their own under one proved edge, ranks the survivors with
+`daisugi rank`, opens a card and goes on with the leader (rulings W3K-7 to W3K-13, BR-R-1 to
+BR-R-6). The hard checks come from the starter's side, never from the child's tool input
+(W3K-11). The steward's `spawn` passes the same two fields.
+
 ## Built since: mixed-provider trees (2026-10-10)
 
 sprig now speaks the Anthropic and OpenAI chat wires (`--wire`, `--base-url`), takes its key on

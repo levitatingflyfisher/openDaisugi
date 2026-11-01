@@ -138,7 +138,7 @@ fn sync_dir(p: &Path) {
 }
 
 impl Spec {
-    fn root(&self, area: &str) -> Option<&Path> {
+    pub(crate) fn root(&self, area: &str) -> Option<&Path> {
         self.roots.iter().find(|(a, _)| a == area).map(|(_, p)| p.as_path())
     }
 
@@ -823,6 +823,17 @@ fn read_manifest<R: Read>(spec: &Spec, f: &str, tar: &mut TarReader<R>) -> Resul
     Ok(out)
 }
 
+/// The paths an archive lists, after the checks a restore makes on its
+/// manifest (the right tool, every path on the allow-list). Go's
+/// `Spec.ReadManifest`.
+pub fn manifest_paths(spec: &Spec, file: &Path) -> Result<Vec<String>, String> {
+    let f = file.display().to_string();
+    let fh = fs::File::open(file).map_err(|e| format!("{f}: {e}"))?;
+    let gz = GzReader::open(&f, io::BufReader::with_capacity(BLOCK, fh))?;
+    let mut tar = TarReader::new(&f, gz);
+    Ok(read_manifest(spec, &f, &mut tar)?.into_iter().map(|(p, _, _)| p).collect())
+}
+
 /// `base`, or `base-2`, `base-3` and so on: the first that is not on disk.
 fn free_name(base: &str) -> PathBuf {
     let mut dst = PathBuf::from(base);
@@ -1069,7 +1080,7 @@ mod tests {
             tool: "daisugi".into(),
             version: "9.9".into(),
             roots: vec![("data".into(), root.to_path_buf())],
-            units: ["config.yaml", "journal", "gate/envelopes"].iter().map(|u| ("data".to_string(), u.to_string())).collect(),
+            units: ["config.yaml", "journal", "warden/envelopes"].iter().map(|u| ("data".to_string(), u.to_string())).collect(),
             ..Spec::default()
         }
     }
@@ -1134,20 +1145,20 @@ mod tests {
         put(&src, "config.yaml", "a: 1\n");
         put(&src, "journal/index.db", "db");
         put(&src, "journal/traces/x.json", "{}");
-        put(&src, "gate/envelopes/s.json", "{}");
-        put(&src, "gate/token", "SECRET");
+        put(&src, "warden/envelopes/s.json", "{}");
+        put(&src, "warden/token", "SECRET");
         put(&src, "journal/api-token.txt", "SECRET");
-        put(&src, "journal/gate.lock", "");
+        put(&src, "journal/warden.lock", "");
         put(&src, "keys/id_ed25519", "SECRET");
         let file = out.p("b.tgz");
         let r = create(&spec(&src.0), &file, T0).unwrap();
         assert_eq!(r.files, 4);
         assert_eq!(r.left, 2);
         restore(&spec(&dst.0), &file, false, T0).unwrap();
-        for p in ["config.yaml", "journal/index.db", "journal/traces/x.json", "gate/envelopes/s.json"] {
+        for p in ["config.yaml", "journal/index.db", "journal/traces/x.json", "warden/envelopes/s.json"] {
             assert!(dst.p(p).exists(), "{p}");
         }
-        for p in ["gate/token", "journal/api-token.txt", "journal/gate.lock", "keys"] {
+        for p in ["warden/token", "journal/api-token.txt", "journal/warden.lock", "keys"] {
             assert!(!dst.p(p).exists(), "{p}");
         }
         use std::os::unix::fs::MetadataExt;
@@ -1279,19 +1290,19 @@ mod tests {
         let (src, dst, out) = (Tmp::new("i1"), Tmp::new("i2"), Tmp::new("i3"));
         put(&src, "config.yaml", "new\n");
         put(&src, "journal/a", "new");
-        put(&src, "gate/envelopes/s.json", "{}");
+        put(&src, "warden/envelopes/s.json", "{}");
         let file = out.p("b.tgz");
         create(&spec(&src.0), &file, T0).unwrap();
         put(&dst, "config.yaml", "old\n");
         put(&dst, "journal/old", "old");
-        // "gate" is a file, so gate/envelopes cannot be put in place.
-        put(&dst, "gate", "a file");
+        // "warden" is a file, so warden/envelopes cannot be put in place.
+        put(&dst, "warden", "a file");
         let f = restore(&spec(&dst.0), &file, true, T0).unwrap_err();
         assert!(f.msg.contains("back in place") && f.msg.contains(".restore-"), "{}", f.msg);
         assert!(f.aside.is_empty(), "{:?}", f.aside);
         assert_eq!(fs::read_to_string(dst.p("config.yaml")).unwrap(), "old\n");
         assert_eq!(fs::read_to_string(dst.p("journal/old")).unwrap(), "old");
-        assert_eq!(fs::read_to_string(dst.p("gate")).unwrap(), "a file");
+        assert_eq!(fs::read_to_string(dst.p("warden")).unwrap(), "a file");
         assert!(!dst.p("journal/a").exists());
         let names: Vec<String> = fs::read_dir(&dst.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert!(names.iter().all(|n| !n.contains(".broken-")), "{names:?}");
@@ -1302,11 +1313,11 @@ mod tests {
     fn a_failed_undo_returns_what_stays_aside() {
         let (src, dst, out) = (Tmp::new("j1"), Tmp::new("j2"), Tmp::new("j3"));
         put(&src, "config.yaml", "new\n");
-        put(&src, "gate/envelopes/s.json", "{}");
+        put(&src, "warden/envelopes/s.json", "{}");
         let file = out.p("b.tgz");
         create(&spec(&src.0), &file, T0).unwrap();
         put(&dst, "config.yaml", "old\n");
-        put(&dst, "gate", "a file");
+        put(&dst, "warden", "a file");
         FAIL_RENAME.with(|f| *f.borrow_mut() = Some(|from, _| from.to_string_lossy().contains(".broken-")));
         let r = restore(&spec(&dst.0), &file, true, T0);
         FAIL_RENAME.with(|f| *f.borrow_mut() = None);
@@ -1472,16 +1483,16 @@ mod tests {
         let units = [
             ("data", "layout.json"),
             ("data", "recent-dirs.json"),
-            ("foreman", "main"),
-            ("foreman", "tree"),
-            ("foreman", "view.json"),
+            ("foreman", "main"), // names-ok: the area names the archives on disk use
+            ("foreman", "tree"), // names-ok
+            ("foreman", "view.json"), // names-ok
             ("config", "coppice.toml"),
             ("config", "pools.toml"),
         ];
         Spec {
             tool: "coppice".into(),
             version: "9.9".into(),
-            roots: vec![("data".into(), data.to_path_buf()), ("foreman".into(), data.join("foreman")), ("config".into(), cfg.to_path_buf())],
+            roots: vec![("data".into(), data.to_path_buf()), ("foreman".into(), data.join("foreman")), ("config".into(), cfg.to_path_buf())], // names-ok
             units: units.iter().map(|(a, u)| (a.to_string(), u.to_string())).collect(),
             ..Spec::default()
         }
@@ -1489,9 +1500,9 @@ mod tests {
 
     fn coppice_files(t: &Tmp, who: &str) {
         put(t, "d/layout.json", &format!("{{\"from\":\"{who}\"}}\n"));
-        put(t, "d/foreman/main/2026-10-24.jsonl", "{}\n");
-        put(t, "d/foreman/tree/a.jsonl", "{}\n");
-        put(t, "d/foreman/view.json", "{}");
+        put(t, "d/foreman/main/2026-10-24.jsonl", "{}\n"); // names-ok
+        put(t, "d/foreman/tree/a.jsonl", "{}\n"); // names-ok
+        put(t, "d/foreman/view.json", "{}"); // names-ok
         put(t, "c/coppice.toml", "fence = \"auto\"\n");
     }
 
@@ -1506,7 +1517,7 @@ mod tests {
         let r = restore(&coppice_spec(&dst.p("d"), &dst.p("c")), Path::new(GO_FIXTURE), false, T0).unwrap();
         assert_eq!(r.files, 5);
         assert_eq!(fs::read_to_string(dst.p("d/layout.json")).unwrap(), "{\"from\":\"go\"}\n");
-        assert_eq!(fs::read_to_string(dst.p("d/foreman/tree/a.jsonl")).unwrap(), "{}\n");
+        assert_eq!(fs::read_to_string(dst.p("d/foreman/tree/a.jsonl")).unwrap(), "{}\n"); // names-ok
         assert_eq!(fs::read_to_string(dst.p("c/coppice.toml")).unwrap(), "fence = \"auto\"\n");
     }
 

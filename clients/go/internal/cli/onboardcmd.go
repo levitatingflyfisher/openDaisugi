@@ -13,13 +13,13 @@ import (
 	"unicode/utf8"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/pmodel"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/sqlpath"
 	"daisugi-verify/internal/tracejournal"
 	"daisugi-verify/internal/transcript"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // splitPromptVersion is parsers.claude_code.SPLIT_PROMPT_VERSION.
@@ -164,8 +164,8 @@ func (e *Env) expandUser(p string) string {
 // order, with OPENDAISUGI_TRANSCRIPT_ROOTS on top.
 func (e *Env) transcriptRoots() ([]transcriptRoot, error) {
 	roots := []transcriptRoot{
-		{"claude-code", gateroot.Join(e.home, ".claude/projects")},
-		{"codex", gateroot.Join(e.home, ".codex/sessions")},
+		{"claude-code", wardenroot.Join(e.home, ".claude/projects")},
+		{"codex", wardenroot.Join(e.home, ".codex/sessions")},
 	}
 	set := func(h, r string) {
 		for i := range roots {
@@ -195,7 +195,7 @@ func (e *Env) transcriptRoots() ([]transcriptRoot, error) {
 		if strings.HasPrefix(path, "~") && path != "~" && !strings.HasPrefix(path, "~/") {
 			return nil, errors.New("a transcript root under another user's home (~user)")
 		}
-		set(harness, gateroot.PathStr(e.expandUser(path)))
+		set(harness, wardenroot.PathStr(e.expandUser(path)))
 	}
 	return roots, nil
 }
@@ -237,7 +237,7 @@ func discoverTranscripts(roots []transcriptRoot) ([]discovered, error) {
 				return nil
 			}
 			seen[resolved] = true
-			found = append(found, discovered{path: gateroot.PathStr(p), harness: r.harness,
+			found = append(found, discovered{path: wardenroot.PathStr(p), harness: r.harness,
 				mtime: float64(st.ModTime().UnixNano()) / 1e9})
 			return nil
 		})
@@ -329,7 +329,7 @@ func (e *Env) onboard(args []string) error {
 	dry := p.flag("--dry-run")
 	asJSON := p.flag("--json")
 	model := p.str("--model", splitDefaultModel)
-	dataDir := gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	dataDir := wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 	if err := e.renamedBackendAt(cmd, dataDir); err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func (e *Env) onboard(args []string) error {
 	}
 	decompose := p.flag("--allow-shell-decomposition")
 	if !p.flagSet("--allow-shell-decomposition") {
-		cfg, err := config.Load(gateroot.Join(dataDir, "config.yaml"))
+		cfg, err := config.Load(wardenroot.Join(dataDir, "config.yaml"))
 		if err != nil {
 			return e.configLoadErr(cmd, err)
 		}
@@ -423,7 +423,7 @@ func (e *Env) onboard(args []string) error {
 	if dry {
 		effMax = 1_000_000_000
 	}
-	traces := &tracejournal.Journal{TracesDir: gateroot.Join(dataDir, "journal/traces")}
+	traces := &tracejournal.Journal{TracesDir: wardenroot.Join(dataDir, "journal/traces")}
 	var runs []*onboardTranscript
 	neutral := ""
 	defer func() {
@@ -603,7 +603,7 @@ func (e *Env) onboard(args []string) error {
 			e.out("  → Token routing is live: matching tasks now skip envelope generation (Tier-0).\n")
 		}
 		e.out("  → Trust: replay any action with `daisugi journal replay <id>`; journal at %s.\n",
-			gateroot.Join(dataDir, "journal"))
+			wardenroot.Join(dataDir, "journal"))
 	}
 	for _, w := range warnings {
 		e.out("  warning: %s\n", w)

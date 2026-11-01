@@ -1,7 +1,7 @@
 // The shift log: where the hour went. Rows are panes and cells are spans
 // of time. A cell holds the strongest mark among the state events in its
 // span: working when the pane reported working, ask when it was blocked,
-// deny when the gate said no. A cell with no event is empty only inside
+// deny when the warden said no. A cell with no event is empty only inside
 // the span the server's ring holds without a break. Before that span, or
 // with no span known, a cell with no event is unknown, never a guess.
 
@@ -11,7 +11,7 @@ export const LEVEL = Object.freeze({ working: 1, ask: 2, deny: 3 });
 // UNKNOWN is a cell the ring does not cover and no event marked.
 export const UNKNOWN = null;
 
-// levelOf is the mark one event leaves. Only the gate's own verdict is a
+// levelOf is the mark one event leaves. Only the warden's own verdict is a
 // deny. An ask whose words hold deny is an ask.
 export function levelOf(e) {
   if (!e || e.event !== 'state') return 0;

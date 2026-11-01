@@ -11,17 +11,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
 	"unsafe"
 
 	"daisugi-verify/internal/config"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/pyjson"
 	"daisugi-verify/internal/pystr"
 	"daisugi-verify/internal/voice"
+	"daisugi-verify/internal/wardenroot"
 )
 
 const voiceHelp = `Usage: daisugi voice [OPTIONS] COMMAND [ARGS]...
@@ -94,7 +95,7 @@ func (e *Env) voiceParse(verb, argName string, args []string, opts []opt, want i
 }
 
 func (e *Env) voiceDataDir(p *parsed) string {
-	return gateroot.PathStr(p.str("--data-dir", e.dataHome()))
+	return wardenroot.PathStr(p.str("--data-dir", e.dataHome()))
 }
 
 func (e *Env) voiceConfig(cmd, dataDir string) (config.Config, error) {
@@ -255,7 +256,17 @@ func (e *Env) voicePTT(args []string) error {
 		e.errf("--server must be an http or https URL with a host. Got %s.\n", pystr.Repr(serverURL))
 		return exit(1)
 	}
-	print := func(s string) { e.out("%s\n", s) }
+	// On a terminal in raw mode a newline does not return the carriage,
+	// and a line may follow the live text: each line starts by clearing
+	// its row and ends with both.
+	tty := e.stdoutTTY()
+	print := func(s string) {
+		if tty {
+			e.out("\r\x1b[K%s\r\n", s)
+			return
+		}
+		e.out("%s\n", s)
+	}
 	client, err := voice.NewHTTPClient(serverURL, dataDir, 30*time.Second)
 	var se *voice.ServerError
 	if errors.As(err, &se) {
@@ -277,13 +288,46 @@ func (e *Env) voicePTT(args []string) error {
 		}
 		return string(r), true
 	}
-	_, err = voice.RunPTT(pane, client, keys, openRecorder, 1600, print)
+	_, err = voice.RunPTTLive(pane, client, keys, openRecorder, 1600, print, e.pttLive(tty))
 	if err != nil {
 		restore()
 		e.errf("%v\n", err)
 		return exit(1)
 	}
 	return nil
+}
+
+// pttLive draws the text so far on the row under the prompt, redrawn in
+// place, dim unless NO_COLOR or --no-color is set. Off the terminal it shows nothing.
+func (e *Env) pttLive(tty bool) voice.Live {
+	if !tty {
+		return voice.Live{}
+	}
+	dim, plain := "\x1b[2m", "\x1b[0m"
+	// NO_COLOR set but empty is unset, as no-color.org says.
+	if e.noColor || e.env["NO_COLOR"] != "" {
+		dim, plain = "", ""
+	}
+	return voice.Live{Show: func(line string) {
+		if line == "" {
+			e.out("\r\x1b[K")
+			return
+		}
+		e.out("\r\x1b[K%s%s%s", dim, voice.TailLine(line, termColumns(e.Stdout)), plain)
+	}}
+}
+
+// termColumns is the width of the terminal w writes to, or 80.
+func termColumns(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok {
+		return 80
+	}
+	var ws struct{ Row, Col, X, Y uint16 }
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws))); errno != 0 || ws.Col == 0 {
+		return 80
+	}
+	return int(ws.Col)
 }
 
 // rawTerminal puts stdin in raw mode when it is a terminal, as main_loop
@@ -316,12 +360,15 @@ func rawTerminal(stdin io.Reader) func() {
 
 // recorder records from the default capture device through arecord, the
 // ALSA recorder: the Python build uses PortAudio through sounddevice,
-// which this binary does not carry (ruling VO-5). The whole press is
-// returned by the first Read.
+// which this binary does not carry (ruling VO-5). The audio gathers as it
+// comes, so Snapshot can give the recording so far; Read stops arecord
+// and returns the whole press.
 type recorder struct {
-	cmd *os.Process
-	out *os.File
-	buf chan []byte
+	cmd  *os.Process
+	out  *os.File
+	mu   sync.Mutex
+	pcm  []byte
+	done chan struct{}
 }
 
 func openRecorder() (voice.Stream, error) {
@@ -344,12 +391,34 @@ func (r *recorder) Start() error {
 		pr.Close()
 		return err
 	}
-	r.cmd, r.out, r.buf = proc, pr, make(chan []byte, 1)
+	r.cmd, r.out, r.done = proc, pr, make(chan struct{})
+	r.mu.Lock()
+	r.pcm = nil
+	r.mu.Unlock()
 	go func() {
-		b, _ := io.ReadAll(pr)
-		r.buf <- b
+		defer close(r.done)
+		buf := make([]byte, 32768)
+		for {
+			n, err := pr.Read(buf)
+			if n > 0 {
+				r.mu.Lock()
+				r.pcm = append(r.pcm, buf[:n]...)
+				r.mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
 	}()
 	return nil
+}
+
+// Snapshot is the audio so far, whole samples only.
+func (r *recorder) Snapshot() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := len(r.pcm) &^ 1
+	return append([]byte(nil), r.pcm[:n]...)
 }
 
 func (r *recorder) Read(int) ([]byte, bool, error) {
@@ -358,9 +427,13 @@ func (r *recorder) Read(int) ([]byte, bool, error) {
 	}
 	r.cmd.Signal(os.Interrupt)
 	r.cmd.Wait()
-	b := <-r.buf
+	<-r.done
 	r.out.Close()
 	r.cmd = nil
+	r.mu.Lock()
+	b := r.pcm
+	r.pcm = nil
+	r.mu.Unlock()
 	return b, false, nil
 }
 
@@ -425,15 +498,15 @@ func (e *Env) voiceServe(args []string) error {
 	}
 	tokenFile := voice.TokenFile(dataDir)
 	if p.has("--token-file") {
-		tokenFile = gateroot.PathStr(p.str("--token-file", ""))
+		tokenFile = wardenroot.PathStr(p.str("--token-file", ""))
 	}
 	var cert, key *string
 	if p.has("--tls-cert") {
-		s := gateroot.PathStr(p.str("--tls-cert", ""))
+		s := wardenroot.PathStr(p.str("--tls-cert", ""))
 		cert = &s
 	}
 	if p.has("--tls-key") {
-		s := gateroot.PathStr(p.str("--tls-key", ""))
+		s := wardenroot.PathStr(p.str("--tls-key", ""))
 		key = &s
 	}
 	scheme := "http"

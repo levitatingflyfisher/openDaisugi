@@ -16,7 +16,9 @@ def _envelope_with_postcondition(expr) -> Envelope:
     return Envelope(
         generated_by="test",
         task="t",
-        permissions=Permission(shell=True, shell_allowlist=["*"]),
+        permissions=Permission(
+            shell=True, shell_allowlist=["*"], file_read=["**"], file_write=["**"]
+        ),
         postconditions=[
             Postcondition(type="body_safety", description="body rules", expr=expr),
         ],

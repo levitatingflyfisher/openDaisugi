@@ -76,8 +76,8 @@ func saveRecentDirs(dataDir string, dirs []string) error {
 // handlePaneCreate calls this once a pane has actually started, so a
 // directory a pane failed to start in never crowds out one that worked.
 func (s *Server) recordRecentDir(dir string) {
-	// The foreman's own directory is its scratch space, not a project.
-	if dir == "" || s.isForemanDir(dir) {
+	// The steward's own directory is its scratch space, not a project.
+	if dir == "" || s.isStewardDir(dir) {
 		return
 	}
 	// The same directory reached once through a symlink and once through
@@ -257,7 +257,7 @@ func projectRow(path string, pinned bool) map[string]any {
 // near, recent, pinned or start. The New reply carries it, so the screen can
 // say where an agent started and why.
 func (s *Server) defaultCwd(nearCwd string) (dir, why string) {
-	if nearCwd != "" && dirExists(nearCwd) && !s.isForemanDir(nearCwd) {
+	if nearCwd != "" && dirExists(nearCwd) && !s.isStewardDir(nearCwd) {
 		return nearCwd, "near"
 	}
 	for _, d := range loadRecentDirs(s.cfg.DataDir) {
@@ -312,7 +312,7 @@ func (s *Server) defaultLabel(harness, cwd string) string {
 	// The base is cleaned and leaves room for a -N, so the label the
 	// count makes is the label that is stored.
 	base := strings.TrimSpace(textwidth.Printable(h+"-"+labelBaseName(cwd), labelMax-4))
-	if isForemanLabel(base) {
+	if isStewardLabel(base) {
 		base += "-agent"
 	}
 	if !s.liveLabelTaken(base) {

@@ -310,15 +310,15 @@ fn read_tailnet() -> (&'static str, TsStatus) {
 }
 
 /// The operator's agent profiles from `daisugi agent-profiles list --json`,
-/// run in the foreman's neutral compactor directory as Go does: name, base
+/// run in the steward's neutral compactor directory as Go does: name, base
 /// URL and whether the key is set, never a key. A profile with no base URL
 /// is left out.
-fn profile_rows() -> Option<Vec<(String, String, bool)>> {
+fn profile_rows(steward_dir: &str) -> Option<Vec<(String, String, bool)>> {
     let bin = std::env::var("COPPICE_DAISUGI_BIN")
         .ok()
         .filter(|b| !b.is_empty())
         .unwrap_or_else(|| "daisugi".to_string());
-    let dir = format!("{}/compactor", Server::foreman_dir());
+    let dir = format!("{steward_dir}/compactor");
     {
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new()
@@ -434,7 +434,7 @@ impl Server {
         });
         rows.extend(peers);
         let mut profiles_line = false;
-        match profile_rows() {
+        match profile_rows(&self.steward_dir()) {
             Some(list) => {
                 for (name, url, key_set) in list {
                     if let Some((i, mut p)) = locate(&rows, &url) {

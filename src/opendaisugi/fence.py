@@ -27,9 +27,10 @@ The grants (FN-3):
   read and write on the parts the harness writes (FN-R-13);
 - each directory on PATH, as the entry itself, read and execute, and the
   directory of the harness's own binary and of this binary;
-- the gate root and config.yaml of each data dir, read only. The gate
-  root also takes ``unix``, so the fenced hook reaches the resident gate on
-  ``<root>/gate.sock``; that server, outside the fence, makes every write
+- the warden root and config.yaml of each data dir, read only (never its
+  ``pando`` or ``foreman`` store: ``MEMORY``, shut like a secret). The warden
+  root also takes ``unix``, so the fenced hook reaches the resident warden on
+  ``<root>/warden.sock``; that server, outside the fence, makes every write
   (FN-R-12);
 - the directory of the coppice socket, ``unix`` only;
 - the envelope's file_read and file_write globs, each cut to its longest
@@ -43,7 +44,7 @@ work dir, the temp dir and a harness path that is, holds or is inside a
 secret are refused: only an explicit ``--allow`` opens a secret (FN-R-11),
 and one of them that lies inside a standing ``--allow`` stands with it.
 An ambient grant (a PATH entry) or an envelope prefix that touches a secret
-is dropped. A grant that would let the agent write the gate's state is
+is dropped. A grant that would let the agent write the warden's state is
 refused, named or not. The one exception is the fence's own temp dir: a
 leaf directly under ``<data dir>/fence-tmp/`` or ``<coppice dir>/fence-tmp/``.
 
@@ -114,18 +115,25 @@ SECRETS = (
 # runs git on them later, outside any fence (FN-R-31). Claude's projects
 # dir is not in the table: only this workspace's own project dir is read
 # and write (plan, FN-R-31), so the agent cannot write the auto memory a
-# later session in another project loads.
+# later session in another project loads. ~/.claude itself is not granted
+# either, only its entries one by one, because Landlock cannot shut a dir
+# inside a granted one: so ~/.claude/projects, the transcripts of every
+# other project, stays shut (Pando round 8b, fix 1: a fenced long-running
+# agent must not read the owner's chats).
 HARNESS: dict[str, tuple[tuple[str, str], ...]] = {
     "claude": (
-        (".claude", "ro"),
-        (".claude/todos", "rw"),
-        (".claude/shell-snapshots", "rw"),
+        (".claude/settings.json", "ro"),
+        (".claude/settings.local.json", "ro"),
+        (".claude/CLAUDE.md", "ro"),
+        (".claude/agents", "ro"),
+        (".claude/commands", "ro"),
+        (".claude/skills", "ro"),
+        (".claude/hooks", "ro"),
+        (".claude/output-styles", "ro"),
+        (".claude/plugins", "ro"),
+        (".claude/keybindings.json", "ro"),
+        (".claude/local", "ro"),
         (".claude/statsig", "rw"),
-        (".claude/session-env", "rw"),
-        (".claude/file-history", "rw"),
-        (".claude/plans", "rw"),
-        (".claude/debug", "rw"),
-        (".claude/ide", "rw"),
         (".claude/.credentials.json", "rw"),
         (".claude.json", "ro"),
         (".config/claude", "ro"),
@@ -155,6 +163,19 @@ HARNESS: dict[str, tuple[tuple[str, str], ...]] = {
         (".cache/opencode", "ro"),
     ),
     "sprig": ((".local/share/sprig", "ro"),),
+    # Hermes (Nous Research): config.yaml, .env, SOUL.md, skills/ and cron/
+    # stay read only. It writes its sessions, logs, memories, OAuth file and
+    # state db as it runs.
+    "hermes": (
+        (".hermes", "ro"),
+        (".hermes/sessions", "rw"),
+        (".hermes/logs", "rw"),
+        (".hermes/memories", "rw"),
+        (".hermes/auth.json", "rw"),
+        (".hermes/state.db", "rw"),
+        (".hermes/state.db-wal", "rw"),
+        (".hermes/state.db-shm", "rw"),
+    ),
 }
 
 # Claude Code shortens a project dir name past this length and adds a hash
@@ -167,6 +188,10 @@ def claude_project_name(workspace: str) -> str:
     every character but an ASCII letter or digit becomes "-"."""
     return "".join(c if c.isascii() and c.isalnum() else "-" for c in workspace)
 
+
+# The memory stores under each data dir: Pando R2's store and the steward's
+# old directory. No fenced agent reads or writes them; only --allow opens one.
+MEMORY = ("pando", "foreman")  # names-ok: the on-disk store name
 
 SYSTEM_RO = (
     "/usr",
@@ -268,7 +293,7 @@ def _uniq(paths: list[str]) -> list[str]:
 
 
 def data_dirs(env: dict[str, str], home: str) -> list[str]:
-    """datahome.guarded_data_dirs: every data dir the gate may use."""
+    """datahome.guarded_data_dirs: every data dir the warden may use."""
 
     def usable(v: str | None) -> str | None:
         if not v:
@@ -317,12 +342,13 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
     Input keys: harness, workspace, home (the HOME the harness sees),
     other_homes (the password entry's home when it differs: its secrets stay
     shut too), tmpdir (the fence's private temp dir, or ""), env (the XDG,
-    data and coppice variables), path_dirs, exe_dirs, gate_root (or ""),
+    data and coppice variables), path_dirs, exe_dirs, warden_root (or ""),
     envelope ({"file_read": [...], "file_write": [...]}), allow
     (["PATH[:rw]"]), workdirs (more dirs to read and write, checked like the
     workspace), sockets (the coppice socket path), real (a harness path or
     envelope prefix to its resolved spelling), never_extra (other spellings
-    of a secret), state_extra (other spellings of the gate's state).
+    of a secret), state_extra (other spellings of the warden's state),
+    git_dirs (a linked worktree's gitdir and the repo's common dir).
 
     Output: ``{"rules": [{"path", "mode"}], "notes": [...], "refusals": [...]}``.
     Any refusal means the harness must not start under this plan.
@@ -343,9 +369,16 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
         secrets.extend(coppice_dirs(env, h))
         state_dirs.extend(data_dirs(env, h))
     state_dirs = _uniq(state_dirs)
-    gate_root = inp.get("gate_root") or ""
-    state = list(state_dirs) + ([norm(gate_root)] if gate_root else [])
+    # The memory stores (Pando R2 and the steward's old dir) hold every
+    # conversation: shut like a secret, read and write (plan task 5).
+    # A data dir that is a link has a second spelling (state_extra), and its
+    # stores close under that one too. A store that is itself a link comes in
+    # as a never_extra spelling.
+    warden_root = inp.get("warden_root") or ""
+    state = list(state_dirs) + ([norm(warden_root)] if warden_root else [])
     state.extend(norm(extra) for extra in inp.get("state_extra") or [])
+    for d in _uniq(state_dirs + [norm(extra) for extra in inp.get("state_extra") or []]):
+        secrets.extend(d + "/" + m for m in MEMORY)
     secrets = sorted(set(secrets))
     home_secrets = sorted(set(home_secrets))
     state = sorted(set(state))
@@ -412,7 +445,7 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
             s = state_hit(path)
             if s is not None:
                 refusals.append(
-                    f"{who} {path} would let the agent write the gate's state under {s}. "
+                    f"{who} {path} would let the agent write the warden's state under {s}. "
                     "Name another directory, or run with --no-fence."
                 )
                 return
@@ -431,7 +464,7 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
             s = state_hit(path)
             if s is not None:
                 refusals.append(
-                    f"--allow {path} would let the agent write the gate's state under {s}. "
+                    f"--allow {path} would let the agent write the warden's state under {s}. "
                     "Name another directory, or run with --no-fence."
                 )
                 return
@@ -467,12 +500,24 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
         projects = resolved(norm(home + "/.claude/projects"))
         if workspace.isascii() and len(workspace) <= CLAUDE_PROJECT_NAME_MAX:
             strict(projects + "/" + claude_project_name(workspace), "rw", "the harness path")
+        elif under_allow(projects, "rw"):
+            put(projects, "rw")
         else:
-            strict(projects, "rw", "the harness path")
-            notes.append(
-                "the fence cannot name Claude's project dir for this workspace; "
-                "~/.claude/projects stays writable, the memory of every project with it."
+            # Granting all of projects/ would open every project's chats
+            # (Pando fix 2, G7): refuse, unless --allow names it.
+            refusals.append(
+                "the fence cannot name Claude's project dir for this workspace (its path is not ASCII or is "
+                "longer than 200 bytes), and granting ~/.claude/projects would open the chats of every project. "
+                "Use a shorter ASCII path, --allow ~/.claude/projects:rw, or --no-fence."
             )
+
+    # A linked git worktree keeps its index in a gitdir and its objects and
+    # refs in the repo's common dir, both outside the workspace: git in the
+    # worktree needs them read and write (Pando fix 2, G2). The caller reads
+    # the gitfile; the plan checks them like a work dir.
+    for d in inp.get("git_dirs") or []:
+        if d.startswith("/"):
+            strict(norm(d), "rw", "the git dir")
 
     for d in inp.get("path_dirs") or []:
         if d.startswith("/"):
@@ -482,10 +527,10 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
             ambient(norm(d), "ro")
 
     for d in state_dirs:
-        put(d + "/gate", "sock")
+        put(d + "/warden", "sock")
         put(d + "/config.yaml", "ro")
-    if gate_root:
-        put(norm(gate_root), "sock")
+    if warden_root:
+        put(norm(warden_root), "sock")
 
     wide = list(SOCKET_WIDE) + homes
     rt = env.get("XDG_RUNTIME_DIR") or ""
@@ -516,7 +561,7 @@ def plan(inp: dict[str, Any]) -> dict[str, Any]:
                 notes.append(f"envelope {key} {pat}: would reach a secret directory; dropped.")
                 continue
             if mode == "rw" and state_hit(pre):
-                notes.append(f"envelope {key} {pat}: would reach the gate's state; dropped.")
+                notes.append(f"envelope {key} {pat}: would reach the warden's state; dropped.")
                 continue
             put(pre, mode)
 

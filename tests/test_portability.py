@@ -31,8 +31,12 @@ def _pathway(id_: str = "pathway_abc12345") -> CompiledPathway:
     env = Envelope(
         generated_by="test",
         task="delete stale .tmp files",
-        permissions=Permission(shell=True, shell_allowlist=["find"]),
-        invariants=[Invariant(type="no_side_effects", description="read-only dry-run")],
+        permissions=Permission(
+            shell=True, shell_allowlist=["find"], file_read=["**"], file_write=["**"]
+        ),
+        invariants=[
+            Invariant(type="no_side_effects", description="read-only dry-run", enforce=False)
+        ],
     )
     plan = ActionPlan(
         source="tmpl",

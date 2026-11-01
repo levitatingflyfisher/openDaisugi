@@ -293,3 +293,60 @@ def test_report_child_outside_a_pane_goes_nowhere():
     from opendaisugi._state_report import report_child
 
     assert report_child("a1", "working", "Explore", env={}) == "none"
+
+
+def test_record_and_contract_passes_the_format_to_the_record(tmp_path):
+    from opendaisugi.hook import record_and_contract
+
+    raw = json.dumps(
+        {"tool_name": "bash", "tool_input": {"command": "ls"}, "session_id": "p"}
+    ).encode()
+    record_and_contract(raw, root=tmp_path, fmt="pi")
+    assert (tmp_path / "p.jsonl").exists()
+
+
+def _cap(root, sid, n=1):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"{sid}.jsonl").write_text(
+        "".join(
+            json.dumps(
+                {
+                    "captured_at": 1.0 + i,
+                    "session_id": sid,
+                    "tool_name": "Bash",
+                    "step_type": "shell",
+                    "command": "ls",
+                }
+            )
+            + "\n"
+            for i in range(n)
+        )
+    )
+
+
+def test_capture_roots_primary_first(tmp_path):
+    from opendaisugi.hook import capture_roots
+
+    assert capture_roots(tmp_path) == [tmp_path / "captures", tmp_path / "warden" / "captures"]
+
+
+def test_list_sessions_in_merges_roots_primary_wins(tmp_path):
+    from opendaisugi.hook import capture_roots, list_sessions_in
+
+    _cap(tmp_path / "captures", "same", 2)
+    _cap(tmp_path / "warden" / "captures", "same", 5)
+    _cap(tmp_path / "warden" / "captures", "pi-only", 1)
+    rows = {r["session_id"]: r for r in list_sessions_in(capture_roots(tmp_path))}
+    assert rows["same"]["calls"] == 2 and rows["same"]["root"] == str(tmp_path / "captures")
+    assert rows["pi-only"]["root"] == str(tmp_path / "warden" / "captures")
+    assert list(rows["same"]) == ["session_id", "calls", "first_at", "last_at", "root"]
+
+
+def test_find_capture_checks_roots_in_order(tmp_path):
+    from opendaisugi.hook import capture_roots, find_capture
+
+    _cap(tmp_path / "warden" / "captures", "x")
+    assert (
+        find_capture("x", capture_roots(tmp_path)) == tmp_path / "warden" / "captures" / "x.jsonl"
+    )
+    assert find_capture("nope", capture_roots(tmp_path)) is None

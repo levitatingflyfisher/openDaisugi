@@ -22,7 +22,7 @@ const DENY_NO_DEADLINE: f64 = 600.0;
 
 /// What a push for a blocked pane with no ask says, by what found the
 /// block. They match the floor's own words.
-pub const BLOCKED_BY_GATE: &str = "Blocked. The gate gave no detail.";
+pub const BLOCKED_BY_WARDEN: &str = "Blocked. The warden gave no detail.";
 pub const BLOCKED_OWN_QUESTION: &str = "Waiting on the agent's own question. Open it to answer.";
 
 /// What the answer route says about an ask a harness holds.
@@ -63,7 +63,7 @@ struct Ask {
     summary: String,
     deadline: f64,
     tier: String,
-    gate: Option<(String, Option<i64>)>,
+    warden: Option<(String, Option<i64>)>,
     holder: String,
 }
 
@@ -167,11 +167,11 @@ impl Publisher {
                 ev.ask.as_ref().map(|a| a.summary.as_str()).unwrap_or("")
             )
         } else if let Some(a) = ev.ask.as_ref().filter(|a| !a.summary.is_empty()) {
-            format!("Wants {}. {}", a.summary, gate_says(&a.gate))
+            format!("Wants {}. {}", a.summary, warden_says(&a.warden))
         } else if !ev.detail.is_empty() && ev.source != "manifest" {
             ev.detail.clone()
-        } else if ev.source == "gate" {
-            BLOCKED_BY_GATE.into()
+        } else if ev.source == "warden" {
+            BLOCKED_BY_WARDEN.into()
         } else {
             BLOCKED_OWN_QUESTION.into()
         };
@@ -454,7 +454,7 @@ fn read_event(m: &Any) -> Option<Event> {
             summary: a.str_of("summary"),
             deadline: num(a.get("deadline")),
             tier: a.str_of("tier"),
-            gate: match a.get("gate") {
+            warden: match a.get("warden") {
                 Some(g @ Any::Map(_)) => Some((
                     g.str_of("verdict"),
                     match g.get("rule") {
@@ -478,11 +478,11 @@ fn read_event(m: &Any) -> Option<Event> {
     })
 }
 
-fn gate_says(g: &Option<(String, Option<i64>)>) -> String {
+fn warden_says(g: &Option<(String, Option<i64>)>) -> String {
     match g {
-        Some((v, _)) if v == "allow" => "Gate says yes.".into(),
-        Some((_, Some(rule))) => format!("Gate says no, rule {rule}."),
-        _ => "Gate says no.".into(),
+        Some((v, _)) if v == "allow" => "Warden says yes.".into(),
+        Some((_, Some(rule))) => format!("Warden says no, rule {rule}."),
+        _ => "Warden says no.".into(),
     }
 }
 

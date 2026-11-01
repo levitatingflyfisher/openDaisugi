@@ -38,7 +38,7 @@ Swarm **task allocation** (CBBA), **path finding** (CBS/ECBS), **reactive avoida
 InterUSS, NASA UTM) are all more mature — and, for NASA, formally certified — than
 anything here. openDaisugi does **not** out-verify them. Its distinct niche is the
 **composition, not the geometry**: the tasking spec is a first-class, machine-checkable
-object with a subsumption/delegation algebra *and* it gates **LLM-authored** plans
+object with a subsumption/delegation algebra *and* it checks **LLM-authored** plans
 before execution (the v0.32 Orchestrator produces the plan; this verifies it). It is a
 complementary plan-/spec-level assurance layer.
 
@@ -50,7 +50,7 @@ complementary plan-/spec-level assurance layer.
 - Sibling sectors are **provably non-overlapping** (interior-disjoint, plus an optional
   separation `margin`), recursively across a swarm-of-swarms hierarchy.
 - The whole tasking structure is one **authored, declarative, machine-checkable
-  artifact** — subsumption + disjointness + plan-gating in a single spec.
+  artifact** — subsumption + disjointness + plan-checking in a single spec.
 
 ## What it does NOT prove (honest scope)
 

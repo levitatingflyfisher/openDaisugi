@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from opendaisugi import route_knn as rk  # noqa: E402
 
-PATH = Path(__file__).resolve().parent / "fixtures" / "gateway" / "knn_golden.json"
+PATH = Path(__file__).resolve().parent / "fixtures" / "router" / "knn_golden.json"
 OPUS, SONNET, HAIKU, LOCAL = "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5", "local-model"
 PRICES = {
     OPUS: [15.0, 75.0],

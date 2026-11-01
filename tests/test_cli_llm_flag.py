@@ -170,7 +170,7 @@ def test_orchestrate_echoes_resolved_state(monkeypatch, tmp_path):
     res = runner.invoke(app, ["orchestrate", "t", "--llm", "api", "--data-dir", str(tmp_path)])
     assert res.exit_code == 0, res.output
     assert "backend: api" in res.output
-    assert "gate: audit" in res.output
+    assert "warden: audit" in res.output
     assert "data:" in res.output
 
 

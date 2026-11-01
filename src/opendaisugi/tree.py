@@ -372,7 +372,10 @@ def _fits(row: dict[str, Any]) -> bool:
             and _count(row.get("turns"))
             and (row.get("deadline") is None or _finite(row.get("deadline")))
             and isinstance(row.get("proved"), bool)
-            and all(row.get(k) is None or s(k) for k in ("profile", "model"))
+            and all(row.get(k) is None or s(k) for k in ("profile", "model", "branch_of", "why"))
+            and (row.get("base") is None) == (row.get("repo") is None)
+            and (row.get("base") is None or (s("base") and is_object_id(row["base"])))
+            and (row.get("repo") is None or (s("repo") and bool(row["repo"])))
             and _count(row.get("parent_tokens_used"))
             and _count(row.get("parent_turns_used"))
         )
@@ -421,6 +424,15 @@ class Node:
     own_turns_used: int | None = None
     # The process group its starter put it in, as its group row holds it.
     pgid: int | None = None
+    # The ranking a branch belongs to, and why the branch was started.
+    branch_of: str | None = None
+    why: str | None = None
+    # The commit a branch started from and the repository's git directory,
+    # as the parent recorded them when it made the worktree.
+    base: str | None = None
+    repo: str | None = None
+    # When the end row was written.
+    ended_at: float | None = None
 
 
 @dataclass
@@ -546,6 +558,10 @@ def read_tree(data_dir: Path) -> Tree:
                 proved=bool(row.get("proved", True)),
                 profile=row.get("profile") if ev == "spawn" else None,
                 model=row.get("model") if ev == "spawn" else None,
+                branch_of=row.get("branch_of") if ev == "spawn" else None,
+                why=row.get("why") if ev == "spawn" else None,
+                base=row.get("base") if ev == "spawn" else None,
+                repo=row.get("repo") if ev == "spawn" else None,
             )
             if parent is None:
                 t.roots.append(sid)
@@ -583,6 +599,7 @@ def read_tree(data_dir: Path) -> Tree:
                 t.skipped += 1
                 continue
             n.state = "ended"
+            n.ended_at = float(row["ts"])
             n.tokens_used = row.get("tokens_used")
             n.turns_used = row.get("turns_used")
         elif ev == "group":
@@ -654,27 +671,27 @@ def _check_model(model: str | None) -> None:
         )
 
 
-def load_registered_checked(session: str, gate_root: Path) -> tuple[Envelope | None, str | None]:
-    """The envelope registered for ``session`` as the gate reads it
+def load_registered_checked(session: str, warden_root: Path) -> tuple[Envelope | None, str | None]:
+    """The envelope registered for ``session`` as the warden reads it
     (GR-R-1): (envelope, None); (None, None) when there is none or it does
     not read as one; (None, refusal) when the root, envelopes/ or the file
     is a link, is owned by another user, has a second link or is writable
     by group or others. A refusal means "cannot be read" (GR-R-7)."""
     from pydantic import ValidationError
 
-    from opendaisugi.gate import load_envelope_checked
+    from opendaisugi.warden import load_envelope_checked
 
     try:
-        return load_envelope_checked(session, root=gate_root)
+        return load_envelope_checked(session, root=warden_root)
     except (ValidationError, ValueError, OSError):
         return None, None
 
 
-def load_registered(session: str, gate_root: Path) -> Envelope | None:
+def load_registered(session: str, warden_root: Path) -> Envelope | None:
     """The envelope registered for ``session``, or None when there is none,
-    it does not read as one or the gate would refuse to read it: a parent
+    it does not read as one or the warden would refuse to read it: a parent
     the tree cannot read has no envelope, and its child does not start."""
-    return load_registered_checked(session, gate_root)[0]
+    return load_registered_checked(session, warden_root)[0]
 
 
 def root_of(t: Tree, session: str) -> str:
@@ -685,15 +702,15 @@ def root_of(t: Tree, session: str) -> str:
     return root
 
 
-def _envelope_file(gate_root: Path, session: str) -> Path:
-    from opendaisugi.gate import _envelopes_dir
+def _envelope_file(warden_root: Path, session: str) -> Path:
+    from opendaisugi.warden import _envelopes_dir
 
-    return _envelopes_dir(gate_root) / f"{session}.json"
+    return _envelopes_dir(warden_root) / f"{session}.json"
 
 
 def make_root(
     data_dir: Path,
-    gate_root: Path,
+    warden_root: Path,
     envelope: Envelope,
     session: str,
     *,
@@ -702,14 +719,14 @@ def make_root(
 ) -> Path:
     """Register the operator's root envelope for ``session`` and open its
     budget. Only the operator runs this."""
-    from opendaisugi.gate import register_envelope
+    from opendaisugi.warden import register_envelope
 
     what = f"Tried to make session {session} a root of the tree."
     _check_session(session, what)
     _check_counts(tokens=tokens, turns=turns)
     with _locked(data_dir):
         t = read_tree(data_dir)
-        if session in t.nodes or _envelope_file(gate_root, session).exists():
+        if session in t.nodes or _envelope_file(warden_root, session).exists():
             raise TreeError(
                 what, f"Session {session} is in use already.", "Pick another session id."
             )
@@ -727,7 +744,7 @@ def make_root(
                 }
             ],
         )
-        return register_envelope(envelope, session_id=session, root=gate_root)
+        return register_envelope(envelope, session_id=session, root=warden_root)
 
 
 @dataclass
@@ -770,7 +787,7 @@ def _budget_reasons(t: Tree, parent: Node, tokens: int | None, turns: int | None
 
 def spawn(
     data_dir: Path,
-    gate_root: Path,
+    warden_root: Path,
     envelope: Envelope,
     *,
     parent: str,
@@ -782,14 +799,66 @@ def spawn(
     model: str | None = None,
     parent_tokens_used: int | None = None,
     parent_turns_used: int | None = None,
+    branch_of: str | None = None,
+    why: str | None = None,
 ) -> Spawn:
     """Prove the edge from ``parent`` to a child, reserve its budget, and
     register its envelope for ``session``. The starter runs this, and the
     starter picks the session, not the child: with none, it mints one
     (mint_session). ``parent_*_used`` is the parent's own use so far; it
-    lowers what the parent has left before the reservation."""
-    from opendaisugi.gate import register_envelope
+    lowers what the parent has left before the reservation. ``branch_of``
+    and ``why`` mark a branch: the ranking it belongs to and the reason it
+    was started."""
+    _check_spawn_args(
+        parent=parent,
+        session=session,
+        tokens=tokens,
+        turns=turns,
+        model=model,
+        parent_tokens_used=parent_tokens_used,
+        parent_turns_used=parent_turns_used,
+        branch_of=branch_of,
+        why=why,
+    )
+    with _locked(data_dir):
+        return _spawn_locked(
+            data_dir,
+            warden_root,
+            envelope,
+            parent=parent,
+            session=session,
+            tokens=tokens,
+            turns=turns,
+            timeout_ms=timeout_ms,
+            profile=profile,
+            model=model,
+            parent_tokens_used=parent_tokens_used,
+            parent_turns_used=parent_turns_used,
+            branch_of=branch_of,
+            why=why,
+        )
 
+
+_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
+
+
+def is_object_id(text: object) -> bool:
+    """A full git object id: 40 or 64 lower-case hex digits, nothing else."""
+    return isinstance(text, str) and _OBJECT_ID.fullmatch(text) is not None
+
+
+def _check_spawn_args(
+    *,
+    parent: str,
+    session: str | None,
+    tokens: int | None,
+    turns: int | None,
+    model: str | None,
+    parent_tokens_used: int | None,
+    parent_turns_used: int | None,
+    branch_of: str | None,
+    why: str | None,
+) -> None:
     what = f"Tried to start session {session} under {parent}."
     if session is not None:
         _check_session(session, what)
@@ -800,112 +869,250 @@ def spawn(
         **{"parent-tokens-used": parent_tokens_used, "parent-turns-used": parent_turns_used},
     )
     _check_model(model)
-    with _locked(data_dir):
-        t = read_tree(data_dir)
-        if session is None:
-            n = t.parent_rows(parent)
+    for name, v in (("branch_of", branch_of), ("why", why)):
+        if v is not None and (not isinstance(v, str) or not v or len(v) > 200):
+            raise TreeError(what, f"{name} must be 1 to 200 characters of text.", "Fix it.")
+
+
+def _spawn_locked(
+    data_dir: Path,
+    warden_root: Path,
+    envelope: Envelope,
+    *,
+    parent: str,
+    session: str | None,
+    tokens: int | None,
+    turns: int | None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    profile: str | None = None,
+    model: str | None = None,
+    parent_tokens_used: int | None = None,
+    parent_turns_used: int | None = None,
+    branch_of: str | None = None,
+    why: str | None = None,
+    base: str | None = None,
+    repo: str | None = None,
+) -> Spawn:
+    """``spawn`` with the ledger lock already held."""
+    from opendaisugi.warden import register_envelope
+
+    what = f"Tried to start session {session} under {parent}."
+    t = read_tree(data_dir)
+    if session is None:
+        n = t.parent_rows(parent)
+        session = mint_session(parent, n)
+        while session in t.nodes or _envelope_file(warden_root, session).exists():
+            n += 1
             session = mint_session(parent, n)
-            while session in t.nodes or _envelope_file(gate_root, session).exists():
-                n += 1
-                session = mint_session(parent, n)
-            what = f"Tried to start session {session} under {parent}."
-        pnode = t.running(parent)
-        if pnode is None:
-            raise TreeError(
-                what,
-                f"{parent} is not a running node of the tree.",
-                "Start the child under a running node; daisugi tree status lists them.",
-            )
-        if session in t.nodes or _envelope_file(gate_root, session).exists():
-            raise TreeError(
-                what, f"Session {session} is in use already.", "Pick another session id."
-            )
-        if any(a["session"] == session for a in t.open_asks()):
-            raise TreeError(
-                what,
-                f"An ask for session {session} is open.",
-                "Wait for the operator's answer, or pick another session id.",
-            )
-        for axis, used in (("tokens", parent_tokens_used), ("turns", parent_turns_used)):
-            if used is not None:
-                setattr(pnode, f"own_{axis}_used", used)
-        penv = load_registered(parent, gate_root)
-        res: EdgeResult | None = None
-        if penv is not None and penv.stakes == "physical":
-            reasons = ["stakes: the parent's stakes are physical, so it cannot start an agent"]
-        else:
-            res = edge_ok(penv, envelope, timeout_ms=timeout_ms)
-            reasons = list(res.reasons)
-        reasons += _budget_reasons(t, pnode, tokens, turns)
-        ts = now()
-        if reasons:
-            if pnode.refused >= ASK_AFTER:
-                dump = envelope.model_dump(mode="json")
-                aid = _ask_id(parent, session, dump, len(t.asks))
-                _append(
-                    data_dir,
-                    [
-                        {
-                            "event": "ask",
-                            "ask_id": aid,
-                            "parent": parent,
-                            "session": session,
-                            "tokens": tokens,
-                            "turns": turns,
-                            "envelope": dump,
-                            "reasons": reasons,
-                            "ts": ts,
-                        }
-                    ],
-                )
-                return Spawn("asked", reasons, ask_id=aid, session=session)
+        what = f"Tried to start session {session} under {parent}."
+    pnode = t.running(parent)
+    if pnode is None:
+        raise TreeError(
+            what,
+            f"{parent} is not a running node of the tree.",
+            "Start the child under a running node; daisugi tree status lists them.",
+        )
+    if session in t.nodes or _envelope_file(warden_root, session).exists():
+        raise TreeError(what, f"Session {session} is in use already.", "Pick another session id.")
+    if any(a["session"] == session for a in t.open_asks()):
+        raise TreeError(
+            what,
+            f"An ask for session {session} is open.",
+            "Wait for the operator's answer, or pick another session id.",
+        )
+    for axis, used in (("tokens", parent_tokens_used), ("turns", parent_turns_used)):
+        if used is not None:
+            setattr(pnode, f"own_{axis}_used", used)
+    penv = load_registered(parent, warden_root)
+    res: EdgeResult | None = None
+    if penv is not None and penv.stakes == "physical":
+        reasons = ["stakes: the parent's stakes are physical, so it cannot start an agent"]
+    else:
+        res = edge_ok(penv, envelope, timeout_ms=timeout_ms)
+        reasons = list(res.reasons)
+    reasons += _budget_reasons(t, pnode, tokens, turns)
+    ts = now()
+    if reasons:
+        if pnode.refused >= ASK_AFTER:
+            dump = envelope.model_dump(mode="json")
+            aid = _ask_id(parent, session, dump, len(t.asks))
             _append(
                 data_dir,
                 [
                     {
-                        "event": "refused",
+                        "event": "ask",
+                        "ask_id": aid,
                         "parent": parent,
                         "session": session,
+                        "tokens": tokens,
+                        "turns": turns,
+                        "envelope": dump,
                         "reasons": reasons,
                         "ts": ts,
                     }
                 ],
             )
-            return Spawn("refused", reasons, session=session)
-        assert res is not None and res.child is not None and penv is not None
-        child = res.child.model_copy(update={"parent_envelope": penv.id})
-        row: dict[str, Any] = {
-            "event": "spawn",
-            "parent": parent,
-            "session": session,
-            "envelope_id": child.id,
-            "tokens": tokens,
-            "turns": turns,
-            "deadline": child.deadline,
-            "proved": True,
-        }
-        extra = {
-            "profile": profile,
-            "model": model,
-            "parent_tokens_used": parent_tokens_used,
-            "parent_turns_used": parent_turns_used,
-        }
-        row.update({k: v for k, v in extra.items() if v is not None})
-        row["ts"] = ts
-        _append(data_dir, [row])
-        path = register_envelope(child, session_id=session, root=gate_root)
-        return Spawn(
-            "started",
-            path=path,
-            inherited=child.deadline if res.deadline_inherited else None,
-            session=session,
-            child=child,
+            return Spawn("asked", reasons, ask_id=aid, session=session)
+        _append(
+            data_dir,
+            [
+                {
+                    "event": "refused",
+                    "parent": parent,
+                    "session": session,
+                    "reasons": reasons,
+                    "ts": ts,
+                }
+            ],
         )
+        return Spawn("refused", reasons, session=session)
+    assert res is not None and res.child is not None and penv is not None
+    child = res.child.model_copy(update={"parent_envelope": penv.id})
+    row: dict[str, Any] = {
+        "event": "spawn",
+        "parent": parent,
+        "session": session,
+        "envelope_id": child.id,
+        "tokens": tokens,
+        "turns": turns,
+        "deadline": child.deadline,
+        "proved": True,
+    }
+    extra = {
+        "profile": profile,
+        "model": model,
+        "parent_tokens_used": parent_tokens_used,
+        "parent_turns_used": parent_turns_used,
+        "branch_of": branch_of,
+        "why": why,
+        "base": base,
+        "repo": repo,
+    }
+    row.update({k: v for k, v in extra.items() if v is not None})
+    row["ts"] = ts
+    _append(data_dir, [row])
+    path = register_envelope(child, session_id=session, root=warden_root)
+    return Spawn(
+        "started",
+        path=path,
+        inherited=child.deadline if res.deadline_inherited else None,
+        session=session,
+        child=child,
+    )
+
+
+@dataclass
+class Branches:
+    status: str  # started, refused or asked
+    reasons: list[str] = field(default_factory=list)
+    sessions: list[str] = field(default_factory=list)
+    ask_id: str | None = None
+
+
+def spawn_branches(
+    data_dir: Path,
+    warden_root: Path,
+    envelope: Envelope,
+    *,
+    parent: str,
+    sessions: list[str],
+    tokens: int | None,
+    turns: int | None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    profile: str | None = None,
+    model: str | None = None,
+    parent_tokens_used: int | None = None,
+    parent_turns_used: int | None = None,
+    branch_of: str,
+    why: str,
+    base: str | None = None,
+    repo: str | None = None,
+) -> Branches:
+    """Reserve every branch of one task, or none (W3K-9, W3K-13). The whole
+    check and all the spawn rows happen under one lock, in branch order, so a
+    refused reservation leaves no branch behind and two starters cannot take
+    the same budget. Each branch reserves the full ``tokens`` and ``turns``."""
+    n = len(sessions)
+    _check_spawn_args(
+        parent=parent,
+        session=None,
+        tokens=tokens,
+        turns=turns,
+        model=model,
+        parent_tokens_used=parent_tokens_used,
+        parent_turns_used=parent_turns_used,
+        branch_of=branch_of,
+        why=why,
+    )
+    if (base is None) != (repo is None) or (base is not None and not is_object_id(base)):
+        raise TreeError(
+            f"Tried to start branches under {parent}.",
+            "base must be a 40 or 64 digit hex object id, and repo must come with it.",
+            "Fix it.",
+        )
+    for sid in sessions:
+        _check_session(sid, f"Tried to start session {sid} under {parent}.")
+    with _locked(data_dir):
+        t = read_tree(data_dir)
+        pnode = t.running(parent)
+        if pnode is not None:
+            for axis, used in (("tokens", parent_tokens_used), ("turns", parent_turns_used)):
+                if used is not None:
+                    setattr(pnode, f"own_{axis}_used", used)
+            for axis, want in (("tokens", tokens), ("turns", turns)):
+                left = t.left(pnode, axis)
+                if left is not None and want is not None and want * n > left:
+                    return Branches(
+                        "refused",
+                        [
+                            f"the parent has {left} {axis} left; "
+                            f"{n} branches of {want} each need {n * want}"
+                        ],
+                    )
+        done: list[str] = []
+
+        def undo() -> None:
+            # End what started, with no report: each keeps its whole reservation.
+            for done_sid in done:
+                _end_locked(data_dir, warden_root, done_sid, tokens_used=None, turns_used=None)
+
+        for sid in sessions:
+            try:
+                sp = _spawn_locked(
+                    data_dir,
+                    warden_root,
+                    envelope,
+                    parent=parent,
+                    session=sid,
+                    tokens=tokens,
+                    turns=turns,
+                    timeout_ms=timeout_ms,
+                    profile=profile,
+                    model=model,
+                    parent_tokens_used=parent_tokens_used,
+                    parent_turns_used=parent_turns_used,
+                    branch_of=branch_of,
+                    why=why,
+                    base=base,
+                    repo=repo,
+                )
+            except TreeError as e:
+                undo()
+                return Branches("refused", [e.why])
+            if sp.status != "started":
+                # The same envelope and budget were proved for the first
+                # branch, so a later refusal is a race.
+                if not done:
+                    return Branches(sp.status, sp.reasons, ask_id=sp.ask_id)
+                undo()
+                return Branches("refused", sp.reasons)
+            done.append(sid)
+        return Branches("started", sessions=done)
 
 
 def end(
     data_dir: Path,
-    gate_root: Path,
+    warden_root: Path,
     session: str,
     *,
     tokens_used: int | None,
@@ -913,61 +1120,76 @@ def end(
 ) -> tuple[Node, Tree]:
     """Record that ``session`` ended and what it used itself; the row
     holds its branch total (Tree.branch_total), and its parent gets the
-    unspent part back. Its envelope is unregistered, so the gate denies
+    unspent part back. Its envelope is unregistered, so the warden denies
     any later call of it."""
     what = f"Tried to end session {session}."
     _check_session(session, what)
     _check_counts(**{"tokens-used": tokens_used, "turns-used": turns_used})
     with _locked(data_dir):
-        t = read_tree(data_dir)
-        node = t.running(session)
-        if node is None:
-            raise TreeError(
-                what,
-                f"{session} is not a running node of the tree.",
-                "daisugi tree status lists the running nodes.",
-            )
-        busy = [c for c in node.children if t.nodes[c].state == "running"]
-        if busy:
-            raise TreeError(what, f"It has running children: {', '.join(busy)}.", "End them first.")
-        tokens_total = t.branch_total(node, "tokens", tokens_used)
-        turns_total = t.branch_total(node, "turns", turns_used)
-        _append(
-            data_dir,
-            [
-                {
-                    "event": "end",
-                    "session": session,
-                    "tokens_used": tokens_total,
-                    "turns_used": turns_total,
-                    "ts": now(),
-                }
-            ],
+        return _end_locked(
+            data_dir, warden_root, session, tokens_used=tokens_used, turns_used=turns_used
         )
-        # Removed through the directory fd (GR-R-9). A refused envelopes/ is
-        # one the gate refuses to read as well, so nothing there stays honored.
-        from opendaisugi._state_files import StateWriteRefused, unlink_state_file
 
-        # The end row is written, so a refusal keeps the exit code but is
-        # said: the file stays behind and the operator must remove it (N1).
-        import sys
 
-        left = os.path.join(str(gate_root), "envelopes", f"{session}.json")
-        why: str | None = None
-        try:
-            if not unlink_state_file(gate_root, ("envelopes",), f"{session}.json"):
-                why = "it was not found"  # N3: envelopes/ moved aside, or never there
-        except StateWriteRefused as e:
-            why = str(e)
-        if why is not None:
-            print(
-                f"daisugi tree: the envelope of {session} was not removed: {why}; "
-                f"remove {left} after the fix",
-                file=sys.stderr,
-            )
-        node.state = "ended"
-        node.tokens_used, node.turns_used = tokens_total, turns_total
-        return node, t
+def _end_locked(
+    data_dir: Path,
+    warden_root: Path,
+    session: str,
+    *,
+    tokens_used: int | None,
+    turns_used: int | None,
+) -> tuple[Node, Tree]:
+    """``end`` with the ledger lock already held."""
+    what = f"Tried to end session {session}."
+    t = read_tree(data_dir)
+    node = t.running(session)
+    if node is None:
+        raise TreeError(
+            what,
+            f"{session} is not a running node of the tree.",
+            "daisugi tree status lists the running nodes.",
+        )
+    busy = [c for c in node.children if t.nodes[c].state == "running"]
+    if busy:
+        raise TreeError(what, f"It has running children: {', '.join(busy)}.", "End them first.")
+    tokens_total = t.branch_total(node, "tokens", tokens_used)
+    turns_total = t.branch_total(node, "turns", turns_used)
+    _append(
+        data_dir,
+        [
+            {
+                "event": "end",
+                "session": session,
+                "tokens_used": tokens_total,
+                "turns_used": turns_total,
+                "ts": now(),
+            }
+        ],
+    )
+    # Removed through the directory fd (GR-R-9). A refused envelopes/ is
+    # one the warden refuses to read as well, so nothing there stays honored.
+    # The end row is written, so a refusal keeps the exit code but is
+    # said: the file stays behind and the operator must remove it (N1).
+    import sys
+
+    from opendaisugi._state_files import StateWriteRefused, unlink_state_file
+
+    left = os.path.join(str(warden_root), "envelopes", f"{session}.json")
+    why: str | None = None
+    try:
+        if not unlink_state_file(warden_root, ("envelopes",), f"{session}.json"):
+            why = "it was not found"  # N3: envelopes/ moved aside, or never there
+    except StateWriteRefused as e:
+        why = str(e)
+    if why is not None:
+        print(
+            f"daisugi tree: the envelope of {session} was not removed: {why}; "
+            f"remove {left} after the fix",
+            file=sys.stderr,
+        )
+    node.state = "ended"
+    node.tokens_used, node.turns_used = tokens_total, turns_total
+    return node, t
 
 
 def record_group(data_dir: Path, session: str, pgid: int) -> None:
@@ -979,7 +1201,7 @@ def record_group(data_dir: Path, session: str, pgid: int) -> None:
 
 
 def end_subtree(
-    data_dir: Path, gate_root: Path, session: str, *, include_self: bool = True
+    data_dir: Path, warden_root: Path, session: str, *, include_self: bool = True
 ) -> list[str]:
     """End every running node under ``session`` and then ``session``
     (unless include_self is False), leaves first, each with no report, so
@@ -998,17 +1220,17 @@ def end_subtree(
         walk(session)
     for sid in order:
         with contextlib.suppress(TreeError):
-            end(data_dir, gate_root, sid, tokens_used=None, turns_used=None)
+            end(data_dir, warden_root, sid, tokens_used=None, turns_used=None)
     return order
 
 
 def answer(
-    data_dir: Path, gate_root: Path, ask_id: str, verdict: str
+    data_dir: Path, warden_root: Path, ask_id: str, verdict: str
 ) -> tuple[dict[str, Any], Path | None]:
     """The operator's answer to an ask. An allow starts the child as
     proposed, not proved against its parent and marked so; it must still
     fit inside the root of its branch, and the budget must still fit."""
-    from opendaisugi.gate import register_envelope
+    from opendaisugi.warden import register_envelope
 
     what = f"Tried to answer ask {ask_id}."
     if verdict not in ("allow", "deny"):
@@ -1034,20 +1256,20 @@ def answer(
         pnode = t.running(parent)
         if pnode is None:
             raise TreeError(what, f"{parent} is not a running node of the tree.", "Deny the ask.")
-        if session in t.nodes or _envelope_file(gate_root, session).exists():
+        if session in t.nodes or _envelope_file(warden_root, session).exists():
             raise TreeError(what, f"Session {session} is in use already.", "Deny the ask.")
         over = [r for r in _budget_reasons(t, pnode, ask["tokens"], ask["turns"])]
         if over:
             raise TreeError(what, f"The budget does not fit: {'; '.join(over)}.", "Deny the ask.")
         # AT-5 holds under an allow too: a physical parent starts no agent.
         # One read of the parent serves the check and the edge below. A
-        # parent the gate would refuse to read cannot be shown not to be
+        # parent the warden would refuse to read cannot be shown not to be
         # physical, so an allow is refused (GR-R-7).
-        ppar, refusal = load_registered_checked(parent, gate_root)
+        ppar, refusal = load_registered_checked(parent, warden_root)
         if refusal is not None:
             raise TreeError(
                 what,
-                f"The envelope of {parent} cannot be read: the gate refuses it.",
+                f"The envelope of {parent} cannot be read: the warden refuses it.",
                 "Deny the ask, then fix the file's owner, links or mode.",
             )
         if ppar is None and parent != root_of(t, parent):
@@ -1056,7 +1278,7 @@ def answer(
             # be shown to hold under an allow (N2, GR-R-17).
             raise TreeError(
                 what,
-                f"The envelope of {parent} is missing or not valid: the gate cannot read it.",
+                f"The envelope of {parent} is missing or not valid: the warden cannot read it.",
                 "Deny the ask, then register the parent's envelope again.",
             )
         if ppar is not None and ppar.stakes == "physical":
@@ -1070,7 +1292,7 @@ def answer(
         # an edge, so every node stays inside the root. "Not proved" means
         # not proved against its parent.
         root = root_of(t, parent)
-        edge = edge_ok(load_registered(root, gate_root), Envelope.model_validate(ask["envelope"]))
+        edge = edge_ok(load_registered(root, warden_root), Envelope.model_validate(ask["envelope"]))
         if not edge.holds or edge.child is None:
             raise TreeError(
                 what,
@@ -1097,7 +1319,7 @@ def answer(
                 },
             ],
         )
-        return ask, register_envelope(child, session_id=session, root=gate_root)
+        return ask, register_envelope(child, session_id=session, root=warden_root)
 
 
 def _axis(node: Node, t: Tree, axis: str) -> dict[str, Any]:
@@ -1125,7 +1347,48 @@ def _node_doc(n: Node, t: Tree) -> dict[str, Any]:
         doc["profile"] = n.profile
     if n.model is not None:
         doc["model"] = n.model
+    if n.branch_of is not None:
+        doc["branch_of"] = n.branch_of
+    if n.why is not None:
+        doc["why"] = n.why
     return doc
+
+
+def _branch_groups(t: Tree, data_dir: Path) -> list[dict[str, Any]]:
+    """The branches of each ranking, in the order their first branch was
+    reserved, with the leader and the eliminated count when the ranking
+    opened a card."""
+    from opendaisugi import rank
+
+    order: list[str] = []
+    members: dict[str, list[Node]] = {}
+    for n in t.nodes.values():
+        if n.branch_of is not None:
+            if n.branch_of not in members:
+                order.append(n.branch_of)
+            members.setdefault(n.branch_of, []).append(n)
+    if not order:
+        return []
+    cards = {c.opened["ranking_id"]: c for c in rank.read_cards(data_dir)}
+    out = []
+    for rid in order:
+        nodes = members[rid]
+        g: dict[str, Any] = {
+            "ranking_id": rid,
+            "why": nodes[0].why,
+            "sessions": [n.session for n in nodes],
+            "ended": sum(1 for n in nodes if n.state == "ended"),
+            "tokens": min(sum(t.charge(n, "tokens") for n in nodes), MAX_COUNT),
+        }
+        card = cards.get(rid)
+        if card is not None:
+            g["leader"] = card.opened["chosen"]
+            g["ran"] = len(card.opened["options"]["survivors"]) + len(
+                card.opened["options"].get("eliminated") or []
+            )
+            g["eliminated"] = len(card.opened["options"].get("eliminated") or [])
+        out.append(g)
+    return out
 
 
 def status_doc(data_dir: Path) -> dict[str, Any]:
@@ -1151,7 +1414,11 @@ def status_doc(data_dir: Path) -> dict[str, Any]:
         }
         for a in t.open_asks()
     ]
-    return {"nodes": nodes, "asks": asks, "skipped": t.skipped}
+    doc: dict[str, Any] = {"nodes": nodes, "asks": asks, "skipped": t.skipped}
+    groups = _branch_groups(t, data_dir)
+    if groups:
+        doc["branches"] = groups
+    return doc
 
 
 def _amount(a: dict[str, Any], state: str) -> str:
@@ -1190,6 +1457,15 @@ def status_text(doc: dict[str, Any]) -> str:
         lines.append(line)
     if not lines:
         lines.append("The tree is empty.")
+    for g in doc.get("branches", []):
+        if "leader" in g:
+            body = (
+                f"{len(g['sessions'])} started, {g['ended']} ended, "
+                f"{g['eliminated']} eliminated, leader {g['leader']}"
+            )
+        else:
+            body = f"{len(g['sessions'])} started, {g['ended']} ended"
+        lines.append(f"  branches of {g['ranking_id']} ({g['why']}): {body}, {g['tokens']} tokens")
     if doc["asks"]:
         lines.append("Open asks:")
         for a in doc["asks"]:

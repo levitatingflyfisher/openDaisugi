@@ -1,16 +1,16 @@
-// The chat with the foreman, on the phone's home. It shows what the owner
-// said to the floor's foreman and what the foremen said back, from
+// The chat with the steward, on the phone's home. It shows what the owner
+// said to the floor's steward and what the stewards said back, from
 // floor.chat. A messages event for the chat only says the chat changed, so
 // the page reads it again. A sentence the owner sends shows at once, is
 // marked sent once floor.talk answers, and read once the server marks its
-// line read: the foreman's transcript recorded it, so its turn started.
+// line read: the steward's transcript recorded it, so its turn started.
 // The page never guesses a read mark. The chat is drawn from the open
 // page only:
 // nothing here is ever stored on the phone.
 
 // CHAT_LIMIT is how many messages one read asks for.
 export const CHAT_LIMIT = 100;
-export const CHAT_EMPTY = 'No messages yet. Type a sentence below. It goes to the foreman.';
+export const CHAT_EMPTY = 'No messages yet. Type a sentence below. It goes to the steward.';
 export const CHAT_NAMED = "The chat is for the owner's own sign-in.";
 export const CHAT_REFUSED = "The server will not show the chat to this page. Open the floor with the owner's own sign-in.";
 
@@ -117,10 +117,10 @@ export function chatTime(at) {
 }
 
 // DESK_LINE is the line under the chat window on the desk. The words go
-// to the foreman through floor.talk, not to its terminal.
-export const DESK_LINE = 'Tell the foreman. Enter sends.';
+// to the steward through floor.talk, not to its terminal.
+export const DESK_LINE = 'Tell the steward. Enter sends.';
 
-// lastReply is the id of the newest message the foreman wrote in words, or
+// lastReply is the id of the newest message the steward wrote in words, or
 // ''. A tool use is not a reply, and neither is a line the owner wrote.
 export function lastReply(messages) {
   const list = Array.isArray(messages) ? messages : [];
@@ -131,7 +131,7 @@ export function lastReply(messages) {
   return '';
 }
 
-const WHO = { owner: 'you', agent: 'foreman', note: '' };
+const WHO = { owner: 'you', agent: 'steward', note: '' };
 // READING_WHO names the speakers of one agent's transcript.
 export const READING_WHO = { owner: 'you', agent: 'agent', note: '' };
 
@@ -197,7 +197,7 @@ function make(tag, className, text) {
 
 // rowItem draws one message. A reply's agents are chips that open their
 // sheets.
-function rowItem(r, panes, open, chips = true, speak = null) {
+function rowItem(r, panes, open, chips = true, listen = null) {
   const li = make('li', 'msg msg-' + r.role + (r.tool ? ' msg-tool' : ''));
   li.dataset.key = r.key;
   if (r.role === 'note') {
@@ -211,12 +211,13 @@ function rowItem(r, panes, open, chips = true, speak = null) {
     const t = chatTime(r.at);
     if (t) head.append(' ', make('span', 'time muted', t));
     if (r.mark) head.append(' ', make('span', 'mark mark-' + r.mark.replace(/\s+/g, '-'), r.mark));
-    // Listen reads this reply aloud.
-    if (speak && r.role === 'agent') {
-      const b = make('button', 'chip listen', 'Listen');
+    // Listen reads this reply aloud. While it reads, the same button
+    // says Stop and stops it.
+    if (listen && listen.available() && r.role === 'agent') {
+      const b = make('button', 'chip listen', listen.label(r));
       b.type = 'button';
-      b.title = 'Read this reply aloud';
-      b.addEventListener('click', () => speak(r.text));
+      b.title = listen.title(r);
+      b.addEventListener('click', () => listen.click(r));
       head.append(' ', b);
     }
     li.append(head);
@@ -321,7 +322,11 @@ export function mountImportBar(bar, rpc) {
   return { refresh, paint };
 }
 
-export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', fields, match, who, marks, chips = true, empty = CHAT_EMPTY, scroller, speak, importBar }) {
+// SHRUNK_WAIT is the wait, in ms, before the second ask of a read that was
+// far shorter than the list on screen.
+export const SHRUNK_WAIT = 150;
+
+export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', fields, match, who, marks, chips = true, empty = CHAT_EMPTY, scroller, speak, speech, tag = 'chat', importBar, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const imp = importBar ? mountImportBar(importBar, rpc) : null;
   let messages = [];
   let local = [];
@@ -331,6 +336,11 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
   let reading = null;
   let again = false;
   let queued = false;
+  // epoch counts resets: a read that started before one is dropped.
+  let epoch = 0;
+  let shrunk = false;
+  // held is true while a far-shorter read waits for its second ask.
+  let held = false;
   const live = () => typeof on !== 'function' || on();
   const named = () => Boolean(typeof me === 'function' && me());
   const near = () => {
@@ -340,6 +350,64 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
     if (!doc || typeof window === 'undefined') return true;
     return (doc.scrollHeight || 0) - (doc.scrollTop || 0) - (window.innerHeight || 0) < 120;
   };
+  // pinned is whether the reader is at the newest line. A scroll event sets
+  // it, so a layout change (a taller last row, the keyboard opening) does
+  // not unpin a reader who did not scroll. It stays null where the page
+  // gives no scroll events, and near() answers then.
+  let pinned = null;
+  let watched = null;
+  const PIN_SLACK = 40;
+  const atEnd = (own) => (own.scrollHeight || 0) - (own.scrollTop || 0) - (own.clientHeight || 0) < PIN_SLACK;
+  const toEnd = (own, last) => {
+    if (own) own.scrollTop = own.scrollHeight;
+    else if (last && typeof last.scrollIntoView === 'function') last.scrollIntoView({ block: 'end' });
+    if (pinned !== null) pinned = true;
+  };
+  const watch = () => {
+    const own = typeof scroller === 'function' ? scroller() : null;
+    if (!own || own === watched || typeof own.addEventListener !== 'function') return;
+    watched = own;
+    pinned = true;
+    own.addEventListener('scroll', () => { pinned = atEnd(own); });
+    // The keyboard opening or closing changes the height: a reader at the
+    // end stays at the end.
+    const refit = () => {
+      if (pinned && live()) toEnd(own, null);
+    };
+    // The box itself changes height when the cards or the agents above it
+    // grow or shrink on the phone: a reader at the end stays at the end.
+    if (typeof ResizeObserver === 'function') {
+      try { new ResizeObserver(refit).observe(own); } catch { /* an older browser has none */ }
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') window.addEventListener('resize', refit);
+    if (typeof window !== 'undefined' && window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
+      window.visualViewport.addEventListener('resize', refit);
+    }
+  };
+  // Listen. speech() gives the page's speech, or null. The speech holds the
+  // tag of the text it speaks, so a button says Stop only for the reply
+  // that is being spoken now, whoever started it.
+  const talk = () => (typeof speech === 'function' ? speech() : null);
+  const tagOf = (r) => tag + ':' + r.key;
+  const isPlaying = (r) => {
+    const t = talk();
+    return Boolean(t && typeof t.current === 'function' && t.speaking() && t.current() === tagOf(r));
+  };
+  const listen = speak || typeof speech === 'function' ? {
+    available: () => Boolean(speak || talk()),
+    label: (r) => (isPlaying(r) ? 'Stop' : 'Listen'),
+    title: (r) => (isPlaying(r) ? 'Stop reading aloud' : 'Read this reply aloud'),
+    click: (r) => {
+      if (isPlaying(r)) {
+        talk().stop();
+      } else if (talk()) {
+        talk().speak(r.text, tagOf(r));
+      } else if (speak) {
+        speak(r.text);
+      }
+      relabel();
+    },
+  } : null;
   // drawn is what the list shows now: each item's signature and element.
   // A paint that only adds messages at the end appends them, so the list
   // announces only the new ones.
@@ -348,7 +416,8 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
   // the owner had scrolled up, as after a send.
   const paint = (follow) => {
     if (!list) return;
-    const stay = follow === true || near();
+    watch();
+    const stay = follow === true || (pinned === null ? near() : pinned);
     const agents = panes ? panes() : [];
     const want = [];
     if (named()) {
@@ -356,31 +425,99 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
     } else {
       for (const r of chatRows(messages, local, { who, marks })) {
         const found = r.role === 'agent' && chips ? chipParts(r.text, agents).filter((x) => x.chip).map((x) => x.pane + '=' + x.label) : [];
-        want.push({ sig: JSON.stringify([r.key, r.who, r.at, r.mark, r.text, r.tool, found]), make: () => rowItem(r, agents, open, chips, speak) });
+        want.push({ sig: JSON.stringify([r.key, r.who, r.at, r.mark, r.text, r.tool, found]), make: () => rowItem(r, agents, open, chips, listen) });
       }
       if (failed) want.push({ sig: 'failed ' + failed, make: () => make('li', 'msg msg-error', failed) });
       else if (want.length === 0 && loaded) want.push({ sig: 'empty', make: () => make('li', 'msg msg-empty muted', empty) });
     }
+    const own = typeof scroller === 'function' ? scroller() : null;
     const prefix = drawn.length <= want.length && drawn.every((d, i) => d.sig === want[i].sig);
     if (prefix) {
       const added = want.slice(drawn.length).map((w) => ({ sig: w.sig, el: w.make() }));
       if (added.length) list.append(...added.map((a) => a.el));
       drawn = drawn.concat(added);
     } else {
+      // Only the rows that changed are touched. Emptying the list and
+      // filling it again would let the browser clamp the scroll position to
+      // the top between the two.
+      const keep = !stay ? anchorOf(own, new Set(want.map((w) => w.sig))) : null;
       const old = new Map(drawn.map((d) => [d.sig, d.el]));
-      drawn = want.map((w) => ({ sig: w.sig, el: old.get(w.sig) || w.make() }));
-      list.replaceChildren(...drawn.map((d) => d.el));
+      const next = want.map((w) => ({ sig: w.sig, el: old.get(w.sig) || w.make() }));
+      const keepEls = new Set(next.map((d) => d.el));
+      for (const d of drawn) if (!keepEls.has(d.el)) list.removeChild(d.el);
+      next.forEach((d, i) => {
+        const at = list.children[i];
+        if (at !== d.el) list.insertBefore(d.el, at || null);
+      });
+      drawn = next;
+      if (keep) restoreAnchor(own, keep);
     }
     const last = drawn.length ? drawn[drawn.length - 1].el : null;
-    if (stay && last && typeof last.scrollIntoView === 'function') last.scrollIntoView({ block: 'end' });
+    if (stay && last) toEnd(own, last);
   };
+  // anchorOf is the first row in view and where it sits, so a reader who
+  // scrolled up keeps the same lines in view while rows change above or
+  // below. Only a row that stays as it is can be the anchor: a row that is
+  // changing or going away moves, and the reader with it. It is null where
+  // the page cannot measure.
+  const anchorOf = (own, kept) => {
+    if (!own || typeof own.getBoundingClientRect !== 'function') return null;
+    const top = own.getBoundingClientRect().top;
+    for (const d of drawn) {
+      if (!d.el || typeof d.el.getBoundingClientRect !== 'function') return null;
+      const r = d.el.getBoundingClientRect();
+      if (r.bottom > top && (!kept || kept.has(d.sig))) return { el: d.el, at: r.top - top };
+    }
+    return null;
+  };
+  const restoreAnchor = (own, keep) => {
+    if (!keep.el.parentNode) return;
+    const was = own.getBoundingClientRect().top;
+    const now = keep.el.getBoundingClientRect().top - was;
+    if (now !== keep.at) own.scrollTop += now - keep.at;
+  };
+  // relabel puts Listen or Stop on each reply's button.
+  const relabel = () => {
+    for (const d of drawn) {
+      const b = d.el && typeof d.el.querySelector === 'function' ? d.el.querySelector('.listen') : null;
+      if (!b) continue;
+      const r = { key: d.el.dataset.key };
+      b.textContent = isPlaying(r) ? 'Stop' : 'Listen';
+      b.title = isPlaying(r) ? 'Stop reading aloud' : 'Read this reply aloud';
+    }
+  };
+  // stopListening stops the speech when this list started it, and no other.
+  const stopListening = () => {
+    const t = talk();
+    if (t && typeof t.current === 'function' && t.speaking() && String(t.current()).startsWith(tag + ':')) t.stop();
+    relabel();
+  };
+  const sp = talk();
+  if (sp && typeof sp.on === 'function') sp.on(relabel);
   const readOnce = async () => {
+    const mine = epoch;
     try {
       const r = await rpc(cmd, { ...(typeof fields === 'function' ? fields() : {}), limit: CHAT_LIMIT });
-      messages = Array.isArray(r && r.messages) ? r.messages : [];
+      if (mine !== epoch) return;
+      const got = Array.isArray(r && r.messages) ? r.messages : [];
+      // A read far shorter than the list on screen, but not empty, is held
+      // back once and asked again: a short read mid-write would collapse
+      // the list and move the reader.
+      if (loaded && messages.length >= 4 && got.length > 0 && got.length * 2 < messages.length && !shrunk) {
+        shrunk = true;
+        held = true;
+        again = true;
+        return;
+      }
+      shrunk = false;
+      held = false;
+      messages = got;
       local = pendingLines(messages, local);
       failed = '';
     } catch (e) {
+      if (mine !== epoch) return;
+      shrunk = false;
+      held = false;
       failed = (e && e.code === 'unauthorized') ? (named() ? CHAT_NAMED : CHAT_REFUSED) : 'Could not read the chat: ' + ((e && e.message) || String(e));
     }
     loaded = true;
@@ -402,6 +539,9 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
     reading = (async () => {
       do {
         again = false;
+        // A far-shorter read is asked again after a short wait: the write
+        // that made it short is likely done by then.
+        if (held) await wait(SHRUNK_WAIT);
         await readOnce();
       } while (again);
       reading = null;
@@ -439,6 +579,10 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
   };
   // reset empties the list, for another agent.
   const reset = () => {
+    stopListening();
+    epoch += 1;
+    shrunk = false;
+    held = false;
     messages = [];
     local = [];
     failed = '';
@@ -446,5 +590,5 @@ export function mountChat({ list, rpc, panes, open, me, on, cmd = 'floor.chat', 
     drawn = [];
     if (list && typeof list.replaceChildren === 'function') list.replaceChildren();
   };
-  return { read, sent, onEvent, paint, seed, reset };
+  return { read, sent, onEvent, paint, seed, reset, stopListening };
 }

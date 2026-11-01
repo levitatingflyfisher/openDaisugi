@@ -153,7 +153,7 @@ fn specs(group: &str) -> Option<Vec<(&'static str, Spec)>> {
                 on_task(&[("keep-worktree", "keep_worktree", Bool(true))]),
             ),
             ("move", on_task(&[("parent", "parent", Str)])),
-            ("set-foreman", on_task(&[("pane", "pane", Str)])),
+            ("set-steward", on_task(&[("pane", "pane", Str)])),
         ],
         "agent" => vec![
             // list --ended, forget and resume are the pane verbs of the

@@ -21,11 +21,18 @@ CASES = Path(__file__).resolve().parent / "fixtures" / "fence" / "cases.jsonl"
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bin", required=True, type=Path)
+    ap.add_argument(
+        "--skip-go-only",
+        action="store_true",
+        help="skip cases marked go_only (for the frozen Rust port)",
+    )
     args = ap.parse_args()
     bad = 0
     n = 0
     for line in CASES.read_text().splitlines():
         case = json.loads(line)
+        if args.skip_go_only and case.get("go_only"):
+            continue
         n += 1
         run = subprocess.run(
             [str(args.bin), "fence", "--plan-from", "-"],

@@ -72,7 +72,7 @@ fn ustar_writes_python_bytes_and_reads_them_back() {
     let b = ustar::write(&files).unwrap();
     assert_eq!(b.len(), 3072);
     assert_eq!(
-        crate::gate::sha256::hexdigest(&b),
+        crate::warden::sha256::hexdigest(&b),
         "cf85a0b218a0e9bb759e89ad547d576f370f2f0e4b73d4083eb0270a2b5ca3ab"
     );
     let back = ustar::read(&b).unwrap();
@@ -86,7 +86,7 @@ fn ustar_writes_python_bytes_and_reads_them_back() {
     ])
     .unwrap();
     assert_eq!(
-        crate::gate::sha256::hexdigest(&pax),
+        crate::warden::sha256::hexdigest(&pax),
         "4fd858c9e651dd835f78a85eff780cabdb930685c815c6a734f6c50551747c08"
     );
     assert_eq!(ustar::read(&pax).unwrap()[1].0, long);

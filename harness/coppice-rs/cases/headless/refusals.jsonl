@@ -1,7 +1,7 @@
 # What a headless pane refuses before it starts, and a start that fails:
 # no harness, a harness with no adapter, a binary not on PATH or not
 # executable, sprig with no --session-dir, opencode with --pure or with
-# no gate plugin where its config dir says, a codex binary that is not
+# no warden plugin where its config dir says, a codex binary that is not
 # there (refused at the first prompt, which is when codex starts), and a
 # fork of a pty pane.
 #!env COPPICE_CLAUDE_BIN=coppice-no-such-claude
@@ -20,9 +20,9 @@
 {"id":"5","cmd":"pane.create","kind":"headless","harness":"sprig","cwd":"{WORK}","cmd_argv":["--session","x"]}
 {"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"sprig needs --session-dir in the pane's argv. That file is where its state comes from"}}
 {"id":"6","cmd":"pane.create","kind":"headless","harness":"opencode","cwd":"{WORK}","cmd_argv":["--pure"]}
-{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: --pure makes OpenCode skip the gate plugin. Remove --pure from the pane's argv"}}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: --pure makes OpenCode skip the warden plugin. Remove --pure from the pane's argv"}}
 {"id":"7","cmd":"pane.create","kind":"headless","harness":"opencode","cwd":"{WORK}","env":{"XDG_CONFIG_HOME":"{WORK}/xdg"}}
-{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: the gate plugin is not at {WORK}/xdg/opencode/plugins/daisugi-gate.ts, so OpenCode would run ungated. Run: daisugi install --harness opencode"}}
+{"id":"$id","ok":false,"error":{"code":"spawn_failed","message":"opencode: the warden plugin is not at {WORK}/xdg/opencode/plugins/daisugi-warden.ts, so OpenCode would run ungated. Run: daisugi install --harness opencode"}}
 {"id":"8","cmd":"pane.create","kind":"headless","harness":"codex","cwd":"{WORK}","label":"nocodex"}
 {"id":"$id","ok":true,"result":{"pane":"$nocodex"}}
 {"id":"9","cmd":"agent.prompt","pane":"$nocodex","text":"hi"}

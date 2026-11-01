@@ -60,7 +60,7 @@ def _fake_tarballs(srcdir: Path, version: str) -> None:
     for d, files in (
         (go, ["coppice", "sprig", "daisugi", "LICENSE", "NOTICE-coppice", "NOTICE-sprig",
               "NOTICE-daisugi", "README"]),
-        (rs, ["daisugi", "daisugi-gate", "LICENSE", "NOTICE-rust", "README"]),
+        (rs, ["daisugi", "daisugi-warden", "LICENSE", "NOTICE-rust", "README"]),
     ):  # fmt: skip
         d.mkdir(parents=True)
         for f in files:
@@ -107,11 +107,11 @@ def test_source_and_bin_packages_install_the_same_files(tmp_path):
     assert bins == [
         "usr/bin/coppice",
         "usr/bin/daisugi",
-        "usr/bin/daisugi-gate-rs",
         "usr/bin/daisugi-rs",
+        "usr/bin/daisugi-warden-rs",
         "usr/bin/sprig",
     ]
-    # daisugi is the Go build; daisugi-rs and daisugi-gate-rs the Rust ones.
+    # daisugi is the Go build; daisugi-rs and daisugi-warden-rs the Rust ones.
     assert src["usr/bin/daisugi"].startswith(f"opendaisugi-{VERSION}-linux-x86_64/daisugi")
     assert src["usr/bin/daisugi-rs"].startswith(
         f"opendaisugi-rust-{VERSION}-linux-x86_64/daisugi\n"

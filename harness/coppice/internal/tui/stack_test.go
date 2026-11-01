@@ -156,15 +156,15 @@ func TestApplyDropsAPathTaskThatIsGone(t *testing.T) {
 	}
 }
 
-// foreman with a harness while pushed opens that task's foreman: a pane in
-// the task, named for it, that the task names as its foreman. The floor's
-// own foreman in the config file stays as it was.
-func TestForemanWhilePushedNamesTheTaskForeman(t *testing.T) {
+// steward with a harness while pushed opens that task's steward: a pane in
+// the task, named for it, that the task names as its steward. The floor's
+// own steward in the config file stays as it was.
+func TestStewardWhilePushedNamesTheTaskSteward(t *testing.T) {
 	s := newTestServer(t)
-	foremanConfig(t)
+	stewardConfig(t)
 	teamDir := t.TempDir()
 	team := createTask(t, s.Socket(), map[string]any{"label": "review-team", "cwd": teamDir})
-	if _, err := runFloor(t, s, scripted("\x14tree\r", "\r", "\x14foreman pi\r", "\x03")); err != nil {
+	if _, err := runFloor(t, s, scripted("\x14tree\r", "\r", "\x14steward pi\r", "\x03")); err != nil {
 		t.Fatal(err)
 	}
 	res := rawCall(t, s.Socket(), "pane.list", nil)
@@ -174,18 +174,18 @@ func TestForemanWhilePushedNamesTheTaskForeman(t *testing.T) {
 	}
 	row, _ := rows[0].(map[string]any)
 	id, _ := row["id"].(string)
-	if row["label"] != "review-team-foreman" || row["task"] != team || row["cwd"] != teamDir {
+	if row["label"] != "review-team-steward" || row["task"] != team || row["cwd"] != teamDir {
 		t.Fatalf("row = %v", row)
 	}
 	tasks := rawCall(t, s.Socket(), "task.list", nil)
 	list, _ := tasks["tasks"].([]any)
 	tk, _ := list[0].(map[string]any)
-	if tk["foreman"] != id {
-		t.Fatalf("task row = %v, want foreman %s", tk, id)
+	if tk["steward"] != id {
+		t.Fatalf("task row = %v, want steward %s", tk, id)
 	}
 	facts := rawCall(t, s.Socket(), "floor.facts", nil)
-	if facts["foreman"] != nil {
-		t.Fatalf("floor foreman = %v: a task foreman changed the floor's", facts["foreman"])
+	if facts["steward"] != nil {
+		t.Fatalf("floor steward = %v: a task steward changed the floor's", facts["steward"])
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -195,7 +195,7 @@ func TestForemanWhilePushedNamesTheTaskForeman(t *testing.T) {
 		if strings.Contains(text, "Say ready.") {
 			// The pane wraps, and a wrap drops the space at the break, so
 			// the test reads the line up to its first sentence end.
-			if !strings.Contains(text, "You are the foreman of task review-team.") {
+			if !strings.Contains(text, "You are the steward of task review-team.") {
 				t.Fatalf("the pane got %q", text)
 			}
 			break
@@ -227,12 +227,12 @@ func TestEnterOnAPaneRowWhilePushedTypesInThatPane(t *testing.T) {
 }
 
 // The message after a promotion says where the operator's sentences go,
-// and a task foreman does not claim them.
-func TestThePromotedMessageFitsTheForeman(t *testing.T) {
-	if got := promotedMessage(ForemanLabel, ""); got != "foreman has its page. Type a sentence and it goes there." {
+// and a task steward does not claim them.
+func TestThePromotedMessageFitsTheSteward(t *testing.T) {
+	if got := promotedMessage(StewardLabel, ""); got != "steward has its page. Type a sentence and it goes there." {
 		t.Fatalf("floor message = %q", got)
 	}
-	got := promotedMessage("review-team-foreman", "review-team")
+	got := promotedMessage("review-team-steward", "review-team")
 	if strings.Contains(got, "Type a sentence") || !strings.Contains(got, "review-team") ||
 		!strings.Contains(got, "first") {
 		t.Fatalf("task message = %q", got)

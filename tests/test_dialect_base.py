@@ -1,6 +1,6 @@
 """A word placed from the call's cwd: relative targets and relative writes.
 
-At the gate a model's target is mostly relative (``src/**``) while the
+At the warden a model's target is mostly relative (``src/**``) while the
 call's paths are absolute. ``verify(..., dialect_base=cwd)`` joins a
 relative target to the cwd and resolves each relative write path against
 it, so both sides are absolute. Hand-written ``forall_writes`` terms are
@@ -21,7 +21,7 @@ from opendaisugi.verify import verify
 def _env(*invariants) -> Envelope:
     perms = {
         "shell": True,
-        "shell_allowlist": ["echo", "cp", "ls", "cd", "touch"],
+        "shell_allowlist": ["echo", "cp", "ls", "cd", "touch", "pushd"],
         "file_write": ["**"],
         "file_read": ["**"],
         "shell_allow_decomposition": True,
@@ -119,7 +119,7 @@ def test_an_operand_write_is_seen_and_placed():
 
 def test_a_cd_makes_a_relative_write_unknown():
     env = _env(_inv("read_only", "docs/**"))
-    got = _audit(_plan(_shell("cd src && touch a.py")), env, "/repo")
+    got = _audit(_plan(_shell("pushd src && touch a.py")), env, "/repo")
     assert got == [
         AUDIT_PREFIX + "invariant 'read_only' is keep_unchanged('docs/**'); "
         "step 's1' has write paths that cannot be read; enforcing would deny"
@@ -168,7 +168,7 @@ def test_a_hand_written_term_is_not_placed():
 
 
 def test_the_hash_covers_the_write_paths_version():
-    assert '"write_paths":2' in dialect.DIALECT_JSON
+    assert f'"write_paths":{dialect.WRITE_PATHS_VERSION}' in dialect.DIALECT_JSON
 
 
 def test_the_base_travels_in_the_conformance_options(monkeypatch):
@@ -183,3 +183,13 @@ def test_the_base_travels_in_the_conformance_options(monkeypatch):
     seen.clear()
     verify(_plan(_shell("ls")), _env())
     assert "dialect_base" not in seen
+
+
+def test_enforce_mode_pins_the_build_dialect(tmp_path):
+    from opendaisugi import warden
+
+    assert warden._dialect_pin("enforce", tmp_path / "warden") == dialect.DIALECT_HASH
+    assert warden._dialect_pin("audit", tmp_path / "warden") is None
+    (tmp_path / "config.yaml").write_text('dialect_enforce: "0000000000000000"\n')
+    assert warden._dialect_pin("audit", tmp_path / "warden") == "0000000000000000"
+    assert warden._dialect_pin("enforce", tmp_path / "warden") == "0000000000000000"

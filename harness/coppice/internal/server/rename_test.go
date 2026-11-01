@@ -176,7 +176,7 @@ func TestADefaultLabelIsCleaned(t *testing.T) {
 // screen raw.
 func TestAHarnessNameIsAShortWord(t *testing.T) {
 	s := newPaneServer(t)
-	for _, h := range []string{"foreman" + strings.Repeat(" ", 53), "a b", "x\x1b[2J", strings.Repeat("h", 40)} {
+	for _, h := range []string{"steward" + strings.Repeat(" ", 53), "a b", "x\x1b[2J", strings.Repeat("h", 40)} {
 		b, _ := json.Marshal(map[string]any{"id": "1", "cmd": "pane.create", "cwd": t.TempDir(), "harness": h,
 			"cmd_argv": []string{"sh", "-c", "sleep 30"}, "kind": "pty"})
 		got := roundTrip(t, s, string(b))
@@ -186,16 +186,16 @@ func TestAHarnessNameIsAShortWord(t *testing.T) {
 	}
 }
 
-// A pane never ends up labelled foreman, whatever made the label: its own
+// A pane never ends up labelled steward, whatever made the label: its own
 // words, a harness-made default, or characters the cleaning drops.
-func TestAPaneNeverEndsUpLabelledForeman(t *testing.T) {
+func TestAPaneNeverEndsUpLabelledSteward(t *testing.T) {
 	s := newPaneServer(t)
 	pane := &peerFacts{checked: true, pane: true, paneID: "w1:p9"}
-	for _, label := range []string{"fore​man", "‮foreman", "fore\x01man"} {
+	for _, label := range []string{"stew​ard", "‮steward", "stew\x01ard"} {
 		b, _ := json.Marshal(map[string]any{"id": "1", "cmd": "pane.create", "cwd": t.TempDir(), "label": label,
 			"cmd_argv": []string{"sh", "-c", "sleep 30"}, "kind": "pty"})
 		got := roundTripFacts(t, s, pane, string(b))
-		if got[0].OK || got[0].Error == nil || got[0].Error.Message != ForemanLabelRefusal {
+		if got[0].OK || got[0].Error == nil || got[0].Error.Message != StewardLabelRefusal {
 			t.Fatalf("label %q from a pane got %+v, want the refusal", label, got[0])
 		}
 	}

@@ -1,6 +1,6 @@
 """Fail-closed compound-shell decomposition for the verifier.
 
-The verifier's default shell gate rejects any command containing a shell
+The verifier's default shell warden rejects any command containing a shell
 metacharacter (``;`` ``|`` ``&`` `` ` `` ``<`` ``>`` ``$(`` newline), because a
 single allowlisted head can smuggle more work past a head-classifier
 (``git status; rm -rf /``). That is correct but blunt: it also rejects every

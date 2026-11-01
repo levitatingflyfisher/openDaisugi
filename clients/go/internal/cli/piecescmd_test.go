@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// A bare home: every piece is off, the router too (it needs the gateway).
+// A bare home: every piece is off, the router too (it needs the router).
 func TestPiecesOnABareHome(t *testing.T) {
 	home := t.TempDir()
 	code, out, errs := run(t, home, "", "modules", "--pieces", "--data-dir", filepath.Join(home, "dd"))
@@ -15,12 +15,12 @@ func TestPiecesOnABareHome(t *testing.T) {
 		t.Fatalf("exit %d, %s", code, errs)
 	}
 	for _, want := range []string{
-		"gate                  off   no gate hook found",
-		"router                off   gateway_router: rules; it runs only when the gateway is on",
+		"warden                off   no warden hook found",
+		"routing mode          off   routing_mode: rules; it runs only when the router is on",
 		"memory and pathways   off   MCP server not registered",
 		"floor (coppice)       off   no server answers",
 		"loop (sprig)          off   sprig is not on PATH",
-		"on:   daisugi install --gate",
+		"on:   daisugi install",
 		"off:  coppice server stop",
 	} {
 		if !strings.Contains(out, want) {
@@ -32,7 +32,7 @@ func TestPiecesOnABareHome(t *testing.T) {
 	}
 }
 
-// A gate hook and an MCP entry turn two pieces on; --json has the same six keys.
+// A warden hook and an MCP entry turn two pieces on; --json has the same six keys.
 func TestPiecesSeeAHookAndAnMCPEntry(t *testing.T) {
 	home := t.TempDir()
 	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o755); err != nil {
@@ -50,7 +50,7 @@ func TestPiecesSeeAHookAndAnMCPEntry(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, %s", code, errs)
 	}
-	for _, want := range []string{`"key": "gate"`, `"detail": "hook installed for claude-code"`, `"detail": "MCP server registered"`} {
+	for _, want := range []string{`"key": "warden"`, `"detail": "hook installed for claude-code"`, `"detail": "MCP server registered"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}

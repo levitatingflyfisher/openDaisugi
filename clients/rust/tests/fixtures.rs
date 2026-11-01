@@ -1,4 +1,4 @@
-//! Task 3 gate: unit-test every port against the 134 oracle-generated
+//! Task 3 warden: unit-test every port against the 134 oracle-generated
 //! cases in `clients/fixtures/semantics.json` (committed, unlike the
 //! corpus).
 

@@ -1,11 +1,11 @@
-// Package cli is the `daisugi` command: the gate commands and the gate
+// Package cli is the `daisugi` command: the warden commands and the warden
 // half of `install`, with the flags, files and output of the Python CLI
 // (opendaisugi.cli). A command or flag it does not carry says so in one
 // line and exits 2, changing nothing.
 //
-// The CLI never runs Python. `daisugi gate check`, the hook entry an
-// installed hook runs, answers every call through internal/gate, decided
-// in a child process of this binary; a call the gate cannot decide is
+// The CLI never runs Python. `daisugi warden check`, the hook entry an
+// installed hook runs, answers every call through internal/warden, decided
+// in a child process of this binary; a call the warden cannot decide is
 // denied with a reason.
 package cli
 
@@ -21,10 +21,10 @@ import (
 	"strings"
 
 	"daisugi-verify/internal/datahome"
-	"daisugi-verify/internal/gate"
-	"daisugi-verify/internal/gateroot"
 	"daisugi-verify/internal/llm"
 	"daisugi-verify/internal/verify"
+	"daisugi-verify/internal/warden"
+	"daisugi-verify/internal/wardenroot"
 )
 
 // Version is the build's version, set at link time:
@@ -72,10 +72,10 @@ type Env struct {
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Environ []string
-	// GateExe, when set, is this binary: gate check then decides each call
+	// WardenExe, when set, is this binary: warden check then decides each call
 	// in a child process of it, so no abnormal end reads as an allow
-	// (gate.RunGuardedAs). Empty runs the gate in this process.
-	GateExe string
+	// (warden.RunGuardedAs). Empty runs the warden in this process.
+	WardenExe string
 
 	env map[string]string
 	// miseWhich runs `mise which daisugi` (with --tool when tool is set);
@@ -94,12 +94,16 @@ type Env struct {
 	quiet bool
 	// plain is the root --plain: no box drawing.
 	plain bool
+	// noColor is --no-color: the same as NO_COLOR=1.
+	noColor bool
 	// checkClient is the model client llm_check calls go through.
 	checkClient *llm.Client
 	// selfPath and execFn stand in for install.Self and syscall.Exec in
 	// tests of the DAISUGI_PORT hand-over.
 	selfPath string
 	execFn   func(argv0 string, argv, env []string) error
+	// unitHookFn stands in for systemctl in tests of install and uninstall.
+	unitHookFn func(action, unit string) error
 }
 
 func (e *Env) out(format string, a ...any)  { fmt.Fprintf(e.Stdout, format, a...) }
@@ -136,11 +140,11 @@ func (e *Env) fail(cmd string, err error) error {
 	return exit(1)
 }
 
-const startHere = `daisugi: a gate that proves each agent action stays inside an envelope, and a garden
+const startHere = `daisugi: a warden that proves each agent action stays inside an envelope, and a garden
 of reusable pathways distilled from the work.
 
 Start here
-  daisugi start                          gate this directory (audit mode) and watch it
+  daisugi start                          warden this directory (audit mode) and watch it
   daisugi start --enforce                the same, but out-of-envelope calls are denied
   daisugi orchestrate "list three risks" run a prompt end to end under a verified plan
   daisugi status                         is this machine ready; what is installed
@@ -155,14 +159,14 @@ More
 // what this binary does not carry.
 var notInBinary = []string{
 	"bench", "conformance", "coppice",
-	"gate audit",
+	"warden audit",
 }
 
 const rootHelp = `Usage: daisugi [OPTIONS] COMMAND [ARGS]...
 
   Runtime assurance for agent actions. This is the daisugi Go binary:
-  the gate commands, the gate half of install, and the pathway store.
-  gate check answers every call natively.
+  the warden commands, the warden half of install, and the pathway store.
+  warden check answers every call natively.
 
 Options:
   --version        Show the opendaisugi version and exit.
@@ -173,7 +177,7 @@ Options:
   --help           Show this message and exit.
 
 Start here:
-  start            Gate this directory (audit by default) and open the live view.
+  start            Warden this directory (audit by default) and open the live view.
   status           Show day-one readiness: are token savings live and are actions verified?
   config           Show every setting as daisugi will use it, and where each one came from.
   dashboard        The live floor: the module map with gauges read from the stores.
@@ -183,19 +187,19 @@ View:
   modules          Show the module wiring: what is active, available, or an open slot.
   metrics          Prometheus metrics: the exposition text, or a /metrics endpoint.
 
-Gate:
-  gate check       Answer one tool-call hook: the verdict for the payload on stdin.
-  gate init        Register a reviewable starter envelope for this session.
-  gate register    Register the envelope the gate checks this session's calls against.
-  gate arm         Remove the disarm marker; the gate resumes evaluating calls.
-  gate disarm      Kill switch: the gate allows everything until re-armed.
-  gate status      Show armed/disarmed state, the verdict mode, and the envelopes.
-  gate report      Summarize the audit log: what an enforcing gate would have denied.
-  gate settings    Print the Claude Code hooks-settings JSON that wires in the gate.
-  gate proposals   List recorded envelope-edit proposals.
-  gate replay      Replay a captured session through the gate offline (nothing executes).
-  gate serve       Run the resident gate in the foreground (Ctrl-C to stop).
-  install          Wire the gate into agent harnesses (--gate, --harness).
+Warden:
+  warden check       Answer one tool-call hook: the verdict for the payload on stdin.
+  warden init        Register a reviewable starter envelope for this session.
+  warden register    Register the envelope the warden checks this session's calls against.
+  warden arm         Remove the disarm marker; the warden resumes evaluating calls.
+  warden disarm      Kill switch: the warden allows everything until re-armed.
+  warden status      Show armed/disarmed state, the verdict mode, and the envelopes.
+  warden report      Summarize the audit log: what an enforcing warden would have denied.
+  warden settings    Print the Claude Code hooks-settings JSON that wires in the warden.
+  warden proposals   List recorded envelope-edit proposals.
+  warden replay      Replay a captured session through the warden offline (nothing executes).
+  warden serve       Run the resident warden in the foreground (Ctrl-C to stop).
+  install          Wire the warden into agent harnesses (--enforce, --harness).
 
 Pathways:
   pathways list    List all compiled pathways.
@@ -214,11 +218,11 @@ Garden:
   gardener status  Report store size, activation stats, failure ratios.
   tend             Distil successful journal traces into pathways.
 
-Gateway:
-  gateway          Run the token-saving gateway: a local proxy a harness points at.
-  gateway-report   Calibrate the gateway on its journal: realized routing, reuse ceiling.
-  router status    Show the router choice, the Switchyard binary and child, recent turns.
-  router stop      Stop every switchyard-server a gateway left running.
+Router:
+  router          Run the token-saving router: a local proxy a harness points at.
+  router report   Calibrate the router on its journal: realized routing, reuse ceiling.
+  router status    Show the routing mode, the Switchyard binary and child, recent turns.
+  router stop      Stop every switchyard-server a router left running.
   route            Recommend the cheapest viable model or tier for a task.
 
 Envelopes:
@@ -313,7 +317,7 @@ func (e *Env) homeDir() (string, error) {
 	if h == "" || !strings.HasPrefix(h, "/") {
 		return "", errors.New("HOME is unset or not an absolute path")
 	}
-	return gateroot.PathStr(h), nil
+	return wardenroot.PathStr(h), nil
 }
 
 func (e *Env) run(args []string) error {
@@ -332,7 +336,10 @@ func (e *Env) run(args []string) error {
 		case "--plain":
 			e.plain = true
 			continue
-		case "-v", "--verbose", "--no-color":
+		case "--no-color":
+			e.noColor = true
+			continue
+		case "-v", "--verbose":
 			continue
 		}
 		break
@@ -345,10 +352,10 @@ func (e *Env) run(args []string) error {
 	if strings.HasPrefix(args[0], "-") {
 		return e.usage("", &usageError{"No such option: " + args[0]})
 	}
-	if len(args) >= 2 && args[0] == "gate" && args[1] == "check" {
-		// The hook entry: the gate package reads the environment itself,
+	if len(args) >= 2 && args[0] == "warden" && args[1] == "check" {
+		// The hook entry: the warden package reads the environment itself,
 		// and a refusal here would be exit 2, a deny, even in audit.
-		return e.gateCheck(args[2:])
+		return e.wardenCheck(args[2:])
 	}
 	if args[0] == "fence" {
 		// First, before any config or store: the fence costs one exec.
@@ -361,14 +368,16 @@ func (e *Env) run(args []string) error {
 	e.home = home
 	verify.LLM = e.llmCheck
 	switch args[0] {
-	case "gate":
-		return e.gate(args[1:])
+	case "warden":
+		return e.warden(args[1:])
 	case "help":
 		return e.helpCmd(args[1:])
 	case "viz":
 		return e.vizCmd(args[1:])
 	case "install":
 		return e.install(args[1:])
+	case "recipe":
+		return e.recipeCmd(args[1:])
 	case "pathways":
 		return e.pathways(args[1:])
 	case "gardener":
@@ -379,16 +388,14 @@ func (e *Env) run(args []string) error {
 		return e.hook(args[1:])
 	case "distill-repeats":
 		return e.distillRepeats(args[1:])
-	case "gateway":
-		return e.gatewayCmd(args[1:])
-	case "gateway-report":
-		return e.gatewayReport(args[1:])
 	case "router":
 		return e.router(args[1:])
 	case "graft":
 		return e.graft(args[1:])
 	case "rank":
 		return e.rankCmd(args[1:])
+	case "pando":
+		return e.pandoCmd(args[1:])
 	case "tree":
 		return e.treeCmd(args[1:])
 	case "agent-profiles":
@@ -445,6 +452,10 @@ func (e *Env) run(args []string) error {
 		return e.backupCmd(args[1:])
 	case "restore":
 		return e.restoreCmd(args[1:])
+	case "gate": // names-ok: a hook written before the rename still calls this
+		// Fail closed, and say why: exit 2 blocks the call.
+		e.errf("daisugi gate is now daisugi warden; run daisugi install to update the hook\n") // names-ok
+		return exit(2)
 	}
 	for _, name := range notInBinary {
 		if name == args[0] {
@@ -471,102 +482,106 @@ func (e *Env) rootHelp() error {
 	return nil
 }
 
-var gateHelp = `Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...
+var wardenHelp = `Usage: daisugi warden [OPTIONS] COMMAND [ARGS]...
 
-  Call-time tool gate (ADR-0007): verify each live tool call against a
+  Call-time tool warden (ADR-0007): verify each live tool call against a
   registered envelope. Audit by default; --mode enforce denies.
 
 Commands:
   check      Answer one hook payload on stdin with the host's verdict.
   init       Generate and register a reviewable starter envelope.
-  register   Register the envelope the gate checks calls against.
-  disarm     Kill switch: the gate allows everything until re-armed.
-  arm        Remove the disarm marker; the gate resumes evaluating calls.
+  register   Register the envelope the warden checks calls against.
+  disarm     Kill switch: the warden allows everything until re-armed.
+  arm        Remove the disarm marker; the warden resumes evaluating calls.
   status     Show armed state, the verdict mode, and the envelopes.
   report     Summarize the audit log.
-  settings   Print the Claude Code hooks-settings JSON for the gate.
+  settings   Print the Claude Code hooks-settings JSON for the warden.
   proposals  List recorded envelope-edit proposals.
-  serve      Run the resident gate in the foreground (Ctrl-C to stop).
+  serve      Run the resident warden in the foreground (Ctrl-C to stop).
+  schemas    The MCP tool schemas on file, which warden register checks
+             mcp_rules against.
 
 Not yet in this binary: replay, audit.
 `
 
-func (e *Env) gate(args []string) error {
+func (e *Env) warden(args []string) error {
 	if len(args) == 0 || args[0] == "--help" {
-		e.out("%s", gateHelp)
+		e.out("%s", wardenHelp)
 		return nil
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "check":
-		return e.gateCheck(rest)
+		return e.wardenCheck(rest)
 	case "init":
-		return e.gateInit(rest)
+		return e.wardenInit(rest)
 	case "register":
-		return e.gateRegister(rest)
+		return e.wardenRegister(rest)
+	case "schemas":
+		return e.wardenSchemas(rest)
 	case "disarm":
-		return e.gateDisarm(rest)
+		return e.wardenDisarm(rest)
 	case "arm":
-		return e.gateArm(rest)
+		return e.wardenArm(rest)
 	case "status":
-		return e.gateStatus(rest)
+		return e.wardenStatus(rest)
 	case "report":
-		return e.gateReport(rest)
+		return e.wardenReport(rest)
 	case "settings":
-		return e.gateSettings(rest)
+		return e.wardenSettings(rest)
 	case "proposals":
-		return e.gateProposals(rest)
+		return e.wardenProposals(rest)
 	case "serve":
-		return e.gateServe(rest)
+		return e.wardenServe(rest)
 	case "replay":
-		return e.gateReplay(rest)
+		return e.wardenReplay(rest)
 	case "audit":
-		return e.notYet("daisugi gate " + sub)
+		return e.notYet("daisugi warden " + sub)
 	}
-	e.errf("Usage: daisugi gate [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi gate --help' for help.\n\nError: No such command '%s'.\n", sub)
+	e.errf("Usage: daisugi warden [OPTIONS] COMMAND [ARGS]...\nTry 'daisugi warden --help' for help.\n\nError: No such command '%s'.\n", sub)
 	return exit(2)
 }
 
-// gateCheck is the hook entry, the contract of `python -m opendaisugi.gate`:
-// the same flags, stdin, stdout, stderr and exit code, answered by the gate
+// wardenCheck is the hook entry, the contract of `python -m opendaisugi.warden`:
+// the same flags, stdin, stdout, stderr and exit code, answered by the warden
 // package in this process.
-func (e *Env) gateCheck(args []string) error {
+func (e *Env) wardenCheck(args []string) error {
 	for _, a := range args {
 		if a == "--help" {
 			e.out("%s", checkHelp)
 			return nil
 		}
 	}
-	stdin, err := io.ReadAll(io.LimitReader(e.in, gate.MaxPayloadBytes+1))
+	stdin, err := io.ReadAll(io.LimitReader(e.in, warden.MaxPayloadBytes+1))
 	if err != nil {
 		stdin = nil
 	}
-	var res gate.Result
-	frame := gate.ChildPipe(e.env[gate.ChildEnv])
+	var res warden.Result
+	frame := warden.ChildPipe(e.env[warden.ChildEnv])
 	switch {
 	case frame != nil:
 		// The child of a guarded run: one frame for the parent, and the
 		// format's deny on its own stdout and exit code.
-		frame.Write(gate.ChildFrame(args, stdin, e.Environ))
+		frame.Write(warden.ChildFrame(args, stdin, e.Environ))
 		frame.Close()
-		res = gate.ChildDeny(args)
+		res = warden.ChildDeny(args)
 		io.WriteString(e.Stdout, res.Stdout)
 		io.WriteString(e.Stderr, res.Stderr)
 		if res.Exit != 0 {
 			return exit(res.Exit)
 		}
 		return nil
-	case gate.Fenced(e.Environ):
-		// Inside daisugi fence the gate's state is read only: the resident
-		// gate, outside the fence, decides and writes (FN-R-12).
-		res = gate.FencedCheck(args, stdin, e.Environ)
-	case e.GateExe != "":
-		res = gate.RunGuardedAs(e.GateExe, []string{"gate", "check"}, args, stdin,
-			gate.ChildEnviron(e.Environ), gate.ChildDeadline(args))
+	case warden.Fenced(e.Environ):
+		// Inside daisugi fence the warden's state is read only: the resident
+		// warden, outside the fence, decides and writes (FN-R-12).
+		res = warden.FencedCheck(args, stdin, e.Environ)
+	case e.WardenExe != "":
+		res = warden.RunGuardedAs(e.WardenExe, []string{"warden", "check"}, args, stdin,
+			warden.ChildEnviron(e.Environ), warden.ChildDeadline(args))
 	default:
-		res = gate.Run(args, stdin, e.Environ)
+		res = warden.Run(args, stdin, e.Environ)
 	}
-	if trace := e.env["DAISUGI_GATE_TRACE"]; trace != "" {
+	if trace := e.env["DAISUGI_WARDEN_TRACE"]; trace != "" {
 		writeTrace(trace, res)
 	}
 	io.WriteString(e.Stdout, res.Stdout)
@@ -577,7 +592,7 @@ func (e *Env) gateCheck(args []string) error {
 	return nil
 }
 
-const checkHelp = `Usage: daisugi gate check --mode audit|enforce [OPTIONS] < payload.json
+const checkHelp = `Usage: daisugi warden check --mode audit|enforce [OPTIONS] < payload.json
 
   Read one hook payload from stdin and emit the host's verdict contract.
   On the Claude Code path a deny is exit code 2 with the reason on stderr.
@@ -585,18 +600,18 @@ const checkHelp = `Usage: daisugi gate check --mode audit|enforce [OPTIONS] < pa
 
 Options:
   --mode audit|enforce      audit observes and logs; enforce denies.
-  --root PATH               Gate state directory (default: the data directory's gate).
+  --root PATH               Warden state directory (default: the data directory's warden).
   --format NAME             Host contract: claude | pi | opencode | hermes | openclaw.
   --verify-timeout SECONDS  Inner verifier budget; running out of it denies.
   --captures-root PATH      Also mirror each call into this captures directory.
   --session ID              Check against this registered session's envelope.
 `
 
-// writeTrace appends one JSON line saying whether the gate answered the
+// writeTrace appends one JSON line saying whether the warden answered the
 // call (native), denied it undecided (unported) or denied it after the
-// child ended abnormally (crash), and why, as cmd/daisugi-gate does. It
+// child ended abnormally (crash), and why, as cmd/daisugi-warden does. It
 // never changes stdout, stderr or the exit code.
-func writeTrace(path string, res gate.Result) {
+func writeTrace(path string, res warden.Result) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return

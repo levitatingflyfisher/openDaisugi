@@ -281,3 +281,40 @@ func TestProjectListPrintsATableAndJSON(t *testing.T) {
 		t.Fatalf("json = %q", out)
 	}
 }
+
+// project list shows the directories panes started in beside the pinned
+// ones. rm names any row of that list: a pinned one leaves coppice.toml, a
+// recent one leaves the server's recent list. Without a server, a recent
+// directory is still not a project.
+func TestProjectRmRemovesARecentDirectoryTheServerListed(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	sock, dataDir := liveServer(t)
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "recent-dirs.json"), []byte(`["`+resolved+`"]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLI(t, sock, dataDir, "project", "list")
+	if code != 0 || !strings.Contains(out, resolved) {
+		t.Fatalf("list: exit %d, out %q: the recent directory is not listed", code, out)
+	}
+	code, out, errb := runCLI(t, sock, dataDir, "project", "rm", dir)
+	if code != 0 {
+		t.Fatalf("rm of a listed recent directory: exit %d: %s", code, errb)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Fatalf("stdout = %q, want removed", out)
+	}
+	_, out, _ = runCLI(t, sock, dataDir, "project", "list")
+	if strings.Contains(out, resolved) {
+		t.Fatalf("the directory is still listed: %q", out)
+	}
+	// A second rm finds nothing, and says so.
+	code, _, errb = runCLI(t, sock, dataDir, "project", "rm", dir)
+	if code != 1 || !strings.Contains(errb, "project list") {
+		t.Fatalf("second rm: exit %d, stderr %q", code, errb)
+	}
+}

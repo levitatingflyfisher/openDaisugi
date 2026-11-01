@@ -20,7 +20,7 @@ import (
 )
 
 // DecaySeconds is rank.DECAY_SECONDS.
-const DecaySeconds = 7 * 86400
+const DecaySeconds = 14 * 86400
 
 // Switch costs.
 const (
@@ -516,7 +516,7 @@ func Sweep(dataDir string, now float64) []*pyjson.Object {
 }
 
 // OpenedRow is rank.opened_row.
-func OpenedRow(r *Ranking, res *pyjson.Object, now float64, run *pyjson.Object) *pyjson.Object {
+func OpenedRow(r *Ranking, res *pyjson.Object, now float64, run *pyjson.Object, adopt string) *pyjson.Object {
 	byID := map[string]*Attempt{}
 	for _, a := range r.Attempts {
 		byID[a.ID] = a
@@ -544,13 +544,17 @@ func OpenedRow(r *Ranking, res *pyjson.Object, now float64, run *pyjson.Object) 
 	if run != nil {
 		runV = run
 	}
+	facts := pyjson.NewObject().Set("order", order).Set("decided_by", res.Value("decided_by")).
+		Set("quality_tiers", res.Value("quality_tiers")).Set("confidence", res.Value("confidence")).
+		Set("cost", cost).Set("summary", summary).Set("where", where).Set("run", runV)
+	if adopt != "" {
+		facts.Set("adopt", adopt)
+	}
 	return pyjson.NewObject().Set("choice_id", ChoiceID(r.ID, surv)).Set("ranking_id", r.ID).
 		Set("project", r.Project).Set("task", r.Task).Set("event", "opened").
 		Set("options", pyjson.NewObject().Set("survivors", survOut).Set("eliminated", res.Value("eliminated"))).
 		Set("chosen", res.Value("leader")).Set("status", res.Value("status")).
-		Set("facts", pyjson.NewObject().Set("order", order).Set("decided_by", res.Value("decided_by")).
-			Set("quality_tiers", res.Value("quality_tiers")).Set("confidence", res.Value("confidence")).
-			Set("cost", cost).Set("summary", summary).Set("where", where).Set("run", runV)).
+		Set("facts", facts).
 		Set("ts", now)
 }
 
@@ -678,6 +682,9 @@ func CardView(card *Card, dataDir string, now float64) View {
 		Set("headline", head).Set("why", why).
 		Set("switch", pyjson.NewObject().Set("cost", sc.Cost).Set("undo_steps", sc.UndoSteps).Set("text", sc.Text)).
 		Set("impact_lines", int(impact))
+	if a, ok := facts.Value("adopt").(string); ok && a != "" {
+		obj.Set("adopt", a)
+	}
 	return View{obj, sc.Cost, openedAt, conf, impact, str("project"), card.ID()}
 }
 
@@ -780,6 +787,9 @@ func QueueText(views []View, decayed int) string {
 		}
 		sw := o.Value("switch").(*pyjson.Object)
 		fmt.Fprintf(&b, "  Switching (%s): %s\n", sw.Value("cost"), sw.Value("text"))
+		if a, ok := o.Value("adopt").(string); ok && a != "" {
+			fmt.Fprintf(&b, "  To take the kept edits into your tree: %s\n", a)
+		}
 		fmt.Fprintf(&b, "  Decays in %v days unless switching gets expensive first.\n", o.Value("decays_in_days"))
 	}
 	if decayed > 0 {

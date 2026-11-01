@@ -98,13 +98,13 @@ func TestTheTokenCheckSaysTheName(t *testing.T) {
 }
 
 // answerFile posts one answer with tok and returns the answer file the
-// gate reads.
+// warden reads.
 func answerFile(t *testing.T, tok, decision string) map[string]any {
 	t.Helper()
 	_, d := newFakeServer(t, agentsWithAsk("toolu_w", "undoable"))
-	gate := t.TempDir()
-	writeTieredAsk(t, gate, "toolu_w", "undoable")
-	ts, s, main := newTestServer(t, Options{Dial: d, Gate: AskChannel{Root: gate}})
+	warden := t.TempDir()
+	writeTieredAsk(t, warden, "toolu_w", "undoable")
+	ts, s, main := newTestServer(t, Options{Dial: d, Warden: AskChannel{Root: warden}})
 	if tok == "" {
 		tok = main
 	} else {
@@ -124,7 +124,7 @@ func answerFile(t *testing.T, tok, decision string) map[string]any {
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	raw, err := os.ReadFile(filepath.Join(gate, "answers", "toolu_w.json"))
+	raw, err := os.ReadFile(filepath.Join(warden, "answers", "toolu_w.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

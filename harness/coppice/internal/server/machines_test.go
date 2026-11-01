@@ -233,7 +233,7 @@ func TestFloorMachinesCutsAHangingTailscale(t *testing.T) {
 	}
 }
 
-// A pane and a plugin are refused, as for the foreman.
+// A pane and a plugin are refused, as for the steward.
 func TestFloorMachinesRefusesAPane(t *testing.T) {
 	machinesFixtures(t, `[]`)
 	s := newTestServer(t)

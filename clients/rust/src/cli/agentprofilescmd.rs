@@ -59,7 +59,7 @@ impl Env {
         let Some(fd) = super::pathwayscmd::py_int(&raw) else {
             return self.usage(
                 CMD,
-                format!("Invalid value for '--fd': {} is not a valid int.", crate::gate::py::text::repr(&raw)),
+                format!("Invalid value for '--fd': {} is not a valid int.", crate::warden::py::text::repr(&raw)),
             );
         };
         if (0..3).contains(&fd) {
@@ -116,18 +116,18 @@ impl Env {
             self.errf(&format!("agent profile '{n}' is left out: {why}\n"));
         }
         if p.flag("--json") {
-            use crate::gate::pyjson::{canonical_json_ascii, Value};
+            use crate::warden::pyjson::{canonical_json_ascii, Value};
             self.out(&format!("{}\n", canonical_json_ascii(&Value::List(rows))));
             return Ok(());
         }
         for r in &rows {
-            let crate::gate::pyjson::Value::Obj(o) = r else { continue };
+            let crate::warden::pyjson::Value::Obj(o) = r else { continue };
             let text = |k: &str| match o.get(k) {
-                Some(crate::gate::pyjson::Value::Str(s)) if !s.is_empty() => s.clone(),
+                Some(crate::warden::pyjson::Value::Str(s)) if !s.is_empty() => s.clone(),
                 _ => "-".to_string(),
             };
             let key = match o.get("key_set") {
-                Some(crate::gate::pyjson::Value::Bool(true)) => "key set",
+                Some(crate::warden::pyjson::Value::Bool(true)) => "key set",
                 _ => "key not set",
             };
             self.out(&format!(

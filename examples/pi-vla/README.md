@@ -23,7 +23,7 @@ the per-action stream inside the skill.
 - **VLAStep is a first-class step type.** Registers via `@step_type`,
   participates in the discriminated union, round-trips through
   `ActionPlan.model_validate`.
-- **Workspace bounds gate VLA targets.** v0.8's
+- **Workspace bounds warden VLA targets.** v0.8's
   `_check_workspace_containment` (`z3_checks.py:117`) now treats
   `VLAStep.target_pose` the same as `CartesianMoveStep.target_position`.
   An out-of-bounds target rejects pre-execution — *before* any action

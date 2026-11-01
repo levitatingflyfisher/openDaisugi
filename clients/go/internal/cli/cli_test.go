@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"daisugi-verify/internal/gate"
+	"daisugi-verify/internal/warden"
 )
 
 func run(t *testing.T, home string, stdin string, args ...string) (int, string, string) {
@@ -47,7 +47,7 @@ func TestNotYetChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"dashboard", "--tui"}, {"dashboard", "--serve"}, {"gate", "audit"},
+		{"dashboard", "--tui"}, {"dashboard", "--serve"}, {"warden", "audit"},
 	} {
 		code, out, errs := run(t, home, "", args...)
 		if code != 2 || out != "" || !strings.HasSuffix(errs, "is not in this binary yet.\n") || strings.Count(errs, "\n") != 1 {
@@ -70,8 +70,8 @@ func TestHelpListsWhatIsNotInTheBinary(t *testing.T) {
 func TestUsageErrors(t *testing.T) {
 	home := t.TempDir()
 	for _, args := range [][]string{
-		{"gate", "status", "--bogus"}, {"gate", "arm", "extra"}, {"gate", "register"},
-		{"gate", "status", "--root"}, {"gate", "status", "--json=1"}, {"nope"}, {"gate", "nope"},
+		{"warden", "status", "--bogus"}, {"warden", "arm", "extra"}, {"warden", "register"},
+		{"warden", "status", "--root"}, {"warden", "status", "--json=1"}, {"nope"}, {"warden", "nope"},
 	} {
 		if code, _, errs := run(t, home, "", args...); code != 2 || !strings.Contains(errs, "Error: ") {
 			t.Errorf("%v: exit %d err %q", args, code, errs)
@@ -79,19 +79,19 @@ func TestUsageErrors(t *testing.T) {
 	}
 }
 
-// gate check is the hook entry: whatever the environment, it answers
-// exactly what the gate package answers, never a CLI refusal (an exit 2
+// warden check is the hook entry: whatever the environment, it answers
+// exactly what the warden package answers, never a CLI refusal (an exit 2
 // that would deny even in audit mode).
-func TestGateCheckIsTheGatePackage(t *testing.T) {
+func TestWardenCheckIsTheWardenPackage(t *testing.T) {
 	root := t.TempDir()
-	args := []string{"gate", "check", "--mode", "audit", "--root", root, "--format", "claude"}
+	args := []string{"warden", "check", "--mode", "audit", "--root", root, "--format", "claude"}
 	payload := `{"session_id": "s1", "tool_name": "TodoWrite", "tool_input": {}, "cwd": "/work"}`
 	for _, environ := range [][]string{{"PATH=/nonexistent"}, {"HOME=relative", "PATH=/nonexistent"}} {
 		var out, errb bytes.Buffer
 		code := Main(&Env{Args: args, Stdin: strings.NewReader(payload), Stdout: &out, Stderr: &errb, Environ: environ})
-		want := gate.Run(args[2:], []byte(payload), environ)
+		want := warden.Run(args[2:], []byte(payload), environ)
 		if code != want.Exit || out.String() != want.Stdout {
-			t.Errorf("%v: got %d %q %q, gate.Run %d %q %q", environ, code, out.String(), errb.String(),
+			t.Errorf("%v: got %d %q %q, warden.Run %d %q %q", environ, code, out.String(), errb.String(),
 				want.Exit, want.Stdout, want.Stderr)
 		}
 		if strings.Contains(errb.String(), "Nothing was changed") {
@@ -145,7 +145,7 @@ func TestInstallHandsOverToDaisugiPort(t *testing.T) {
 	var gotArgv, gotEnv []string
 	var out, errb bytes.Buffer
 	e := &Env{
-		Args:     []string{"-q", "install", "--gate", "--dry-run"},
+		Args:     []string{"-q", "install", "--dry-run"},
 		Stdin:    strings.NewReader(""),
 		Stdout:   &out,
 		Stderr:   &errb,
@@ -159,7 +159,7 @@ func TestInstallHandsOverToDaisugiPort(t *testing.T) {
 	if code := Main(e); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
-	want := []string{rs, "-q", "install", "--gate", "--dry-run"}
+	want := []string{rs, "-q", "install", "--dry-run"}
 	if strings.Join(gotArgv, " ") != strings.Join(want, " ") {
 		t.Fatalf("argv %q, want %q", gotArgv, want)
 	}

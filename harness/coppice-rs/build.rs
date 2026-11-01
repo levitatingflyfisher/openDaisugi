@@ -56,6 +56,7 @@ fn version() -> String {
 /// The directories harness/coppice/plugins/embed.go names.
 const SHIPPED: &[&str] = &[
     "_lib",
+    "cards",
     "tree",
     "minimap",
     "kanban",

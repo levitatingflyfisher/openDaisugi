@@ -1,0 +1,51 @@
+# The cards and tree routes of the phone server. The server runs daisugi as
+# a child and shows what it prints; the fake daisugi answers fixed JSON. A
+# pane, a bad token and a bad body never reach it.
+#!env COPPICE_DAISUGI_BIN={FIXTURES}/web/bin/fake-cards-daisugi
+#!env COPPICE_DAISUGI_DATA_DIR={WORK}/dd
+{"id": "w0", "write": "{DATA}/web/token", "text": "pinned-web-token-0001\n"}
+{"id": "$id", "ok": true, "result": {"written": true}}
+{"id": "v1", "cli": ["web", "serve", "--tls", "off", "--listen", "{ADDR}", "--qr=false"], "bg": "web"}
+{"id": "$id", "ok": true, "result": {"started": true}}
+{"id": "g0", "http": "GET", "url": "http://{ADDR}/", "wait_ms": 8000, "same_as": "{FIXTURES}/web/static/index.html"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "c0", "http": "GET", "url": "http://{ADDR}/api/cards"}
+{"id": "$id", "ok": true, "result": {"status": 401}}
+{"id": "c1", "http": "GET", "url": "http://{ADDR}/api/cards?sort=impact", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "c2", "http": "GET", "url": "http://{ADDR}/api/cards?sort=bogus", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "d1", "http": "GET", "url": "http://{ADDR}/api/cards/ch_1/diff", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "d2", "http": "GET", "url": "http://{ADDR}/api/cards/nope/diff", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "a1", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"choice_id\":\"ch_1\",\"outcome\":\"drop\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "a2", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"choice_id\":\"ch_1\",\"outcome\":\"switch\",\"pick\":\"b\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "a3", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"choice_id\":\"nope\",\"outcome\":\"keep\"}"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "a4", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"choice_id\":\"--apply\",\"outcome\":\"drop\"}"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "a5", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"choice_id\":\"ch_1\",\"outcome\":\"switch\"}"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "a6", "http": "POST", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "not json"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+{"id": "a7", "http": "GET", "url": "http://{ADDR}/api/cards/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 405}}
+{"id": "t1", "http": "GET", "url": "http://{ADDR}/api/tree", "headers": {"Authorization": "Bearer pinned-web-token-0001"}}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t2", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"a1\",\"decision\":\"allow\"}"}
+{"id": "$id", "ok": true, "result": {"status": 200}}
+{"id": "t3", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"zz\",\"decision\":\"deny\"}"}
+{"id": "$id", "ok": true, "result": {"status": 404}}
+{"id": "t4", "http": "POST", "url": "http://{ADDR}/api/tree/answer", "headers": {"Authorization": "Bearer pinned-web-token-0001"}, "body": "{\"ask_id\":\"a1\",\"decision\":\"maybe\"}"}
+{"id": "$id", "ok": true, "result": {"status": 400}}
+# A pane process may not answer a card, as it may not answer an ask.
+{"id": "p1", "cmd": "pane.create", "cwd": "{START}", "cmd_argv": ["/usr/bin/python3", "-c", "import urllib.request as u, time\nr = u.Request('http://{ADDR}/api/cards/answer', data=b'{\"choice_id\":\"ch_1\",\"outcome\":\"drop\"}', headers={'Authorization': 'Bearer pinned-web-token-0001'})\ntry:\n    out = 'status %d\\n' % u.urlopen(r).status\nexcept Exception as e:\n    out = 'status %d %s\\n' % (e.code, e.read().decode())\nopen('{WORK}/card-out.txt', 'w').write(out)\ntime.sleep(600)\n"], "kind": "pty", "label": "asker"}
+{"id": "$id", "ok": true, "result": {"pane": "$p"}}
+#!retry 8000
+{"id": "r1", "file": "{WORK}/card-out.txt", "count": "status"}
+{"id": "$id", "ok": true, "result": {"count": 1}}
+{"id": "r1b", "file": "{WORK}/card-out.txt"}
+{"id": "$id", "ok": true, "result": {"text": "status 403 {\"error\":\"a pane can propose. It cannot allow.\"}\n\n"}}

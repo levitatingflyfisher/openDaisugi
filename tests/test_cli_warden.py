@@ -1,0 +1,463 @@
+"""Tests for the ``daisugi warden`` CLI surface (ADR-0007).
+
+The one contract that matters most here: ``warden check --mode enforce``
+exits 2 with the reason on stderr when the call is denied — that exit
+code IS the deny on the Claude Code hook path, pinned empirically by
+tests/test_hook_warden_contract.py.
+"""
+
+from __future__ import annotations
+
+import json
+
+from typer.testing import CliRunner
+
+from opendaisugi.cli import app
+from opendaisugi.models import Envelope, Permission
+from opendaisugi.warden import main as warden_main
+from opendaisugi.warden import warden_settings_json
+
+runner = CliRunner()
+
+
+def _envelope_file(tmp_path, **perm_kwargs):
+    env = Envelope(
+        generated_by="test",
+        task="cli warden test",
+        permissions=Permission(file_read=["/allowed/**"], **perm_kwargs),
+    )
+    p = tmp_path / "env.json"
+    p.write_text(env.model_dump_json())
+    return p
+
+
+def _payload(path="/allowed/x.txt", session="cli-sess"):
+    return json.dumps(
+        {
+            "tool_name": "Read",
+            "tool_input": {"file_path": path},
+            "session_id": session,
+        }
+    )
+
+
+def _register(tmp_path, root):
+    env_file = _envelope_file(tmp_path)
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "register",
+            str(env_file),
+            "--root",
+            str(root),
+        ],
+    )
+    assert res.exit_code == 0, res.output
+    return env_file
+
+
+def test_warden_register_and_status(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    res = runner.invoke(app, ["warden", "status", "--root", str(root)])
+    assert res.exit_code == 0
+    assert "default" in res.output
+    assert "armed" in res.output.lower()
+
+
+def test_warden_check_enforce_denies_with_exit_2(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
+    assert res.exit_code == 2
+
+
+def test_warden_check_enforce_allows_in_envelope(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/allowed/x.txt"),
+    )
+    assert res.exit_code == 0
+    assert json.loads(res.stdout.strip()) == {"continue": True}
+
+
+def test_warden_check_audit_never_exits_nonzero(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "check",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
+    assert res.exit_code == 0
+
+
+def test_warden_disarm_and_arm_roundtrip_via_cli(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    assert runner.invoke(app, ["warden", "disarm", "--root", str(root)]).exit_code == 0
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
+    assert res.exit_code == 0  # disarmed warden allows
+    assert runner.invoke(app, ["warden", "arm", "--root", str(root)]).exit_code == 0
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "check",
+            "--mode",
+            "enforce",
+            "--root",
+            str(root),
+        ],
+        input=_payload("/etc/passwd"),
+    )
+    assert res.exit_code == 2
+
+
+def test_warden_report_shows_would_denies(tmp_path):
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    runner.invoke(app, ["warden", "check", "--root", str(root)], input=_payload("/etc/passwd"))
+    res = runner.invoke(app, ["warden", "report", "--root", str(root), "--json"])
+    assert res.exit_code == 0
+    rep = json.loads(res.stdout)
+    assert rep["would_deny"] == 1
+
+
+def test_warden_replay_reports_from_captures(tmp_path):
+    env_file = _envelope_file(tmp_path)
+    captures = tmp_path / "cap.jsonl"
+    captures.write_text(
+        json.dumps(
+            {
+                "captured_at": 1.0,
+                "session_id": "s",
+                "tool_name": "Read",
+                "step_type": "file_read",
+                "path": "/nope/x",
+            }
+        )
+        + "\n"
+    )
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "replay",
+            str(captures),
+            "--envelope",
+            str(env_file),
+            "--json",
+        ],
+    )
+    assert res.exit_code == 0
+    rep = json.loads(res.stdout)
+    assert rep["calls"] == 1
+    assert rep["would_deny"] == 1
+
+
+def test_warden_settings_prints_hooks_json(tmp_path):
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "settings",
+            "--root",
+            str(tmp_path),
+            "--enforce",
+        ],
+    )
+    assert res.exit_code == 0
+    settings = json.loads(res.stdout)
+    entry = settings["hooks"]["PreToolUse"][0]
+    assert entry["matcher"] == "*"
+    cmd = entry["hooks"][0]["command"]
+    assert "--mode enforce" in cmd
+    assert "opendaisugi.warden" in cmd
+
+
+def test_warden_settings_json_helper_defaults_to_audit(tmp_path):
+    settings = json.loads(warden_settings_json(root=tmp_path))
+    cmd = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--mode audit" in cmd
+
+
+def test_lean_entry_main_enforce_denies(tmp_path, monkeypatch, capsys):
+    """python -m opendaisugi.warden — the lean hook entry (no typer import)."""
+    import io
+    import sys
+
+    root = tmp_path / "wardenroot"
+    _register(tmp_path, root)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        type("S", (), {"buffer": io.BytesIO(_payload("/etc/passwd").encode())})(),
+    )
+    code = warden_main(["--mode", "enforce", "--root", str(root)])
+    assert code == 2
+    assert "DENIED" in capsys.readouterr().err
+
+
+def test_warden_settings_session_pin_flows_into_command(tmp_path):
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "settings",
+            "--root",
+            str(tmp_path),
+            "--session",
+            "job7",
+        ],
+    )
+    assert res.exit_code == 0
+    cmd = json.loads(res.stdout)["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "--session job7" in cmd
+
+
+def test_warden_audit_reports_attack_and_fp_rates():
+    res = runner.invoke(app, ["warden", "audit", "--json"])
+    assert res.exit_code == 0
+    rep = json.loads(res.stdout)
+    assert rep["attack_denial_rate"] == 1.0
+    assert rep["unexpected_allowed_attacks"] == []
+    assert "arms" in rep
+
+
+def test_warden_audit_text_summary():
+    res = runner.invoke(app, ["warden", "audit"])
+    assert res.exit_code == 0
+    assert "attack" in res.output.lower()
+    assert "13/13" in res.output or "1.00" in res.output
+
+
+def test_warden_init_registers_a_starter_envelope(tmp_path):
+    root = tmp_path / "warden"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "init",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+        ],
+    )
+    assert res.exit_code == 0
+    assert (root / "envelopes" / "default.json").exists()
+    # It tells the operator to review it and how to launch.
+    assert "review" in res.output.lower()
+    assert "warden settings" in res.output
+
+
+def test_warden_init_prints_the_audit_launch_line(tmp_path):
+    """`warden quickstart` is gone (daisugi start is the one way in) — `warden init`
+    is the reviewable-envelope command that remains, and it still prints a
+    copy-pasteable audit launch line."""
+    root = tmp_path / "warden"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    res = runner.invoke(
+        app,
+        [
+            "warden",
+            "init",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+        ],
+    )
+    assert res.exit_code == 0
+    out = res.output
+    assert "--settings" in out
+    assert "audit" in out.lower()
+    assert (root / "envelopes" / "default.json").exists()
+
+
+def test_warden_init_refuses_to_clobber_without_force(tmp_path):
+    root = tmp_path / "warden"
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    runner.invoke(app, ["warden", "init", "--workspace", str(ws), "--root", str(root)])
+    res = runner.invoke(app, ["warden", "init", "--workspace", str(ws), "--root", str(root)])
+    assert res.exit_code != 0
+    assert "already" in res.output.lower()
+    forced = runner.invoke(
+        app,
+        [
+            "warden",
+            "init",
+            "--workspace",
+            str(ws),
+            "--root",
+            str(root),
+            "--force",
+        ],
+    )
+    assert forced.exit_code == 0
+
+
+def test_warden_proposals_lists_nothing_by_default(tmp_path):
+    root = tmp_path / "wardenroot"
+    res = runner.invoke(app, ["warden", "proposals", "--root", str(root)])
+    assert res.exit_code == 0
+    assert "no pending" in res.output.lower()
+
+
+def test_warden_proposals_lists_a_recorded_proposal(tmp_path):
+    import time
+
+    from opendaisugi.ask import propose
+
+    root = tmp_path / "wardenroot"
+    propose(
+        root,
+        kind="widen-allowlist",
+        scope="shell",
+        expires_at=time.time() + 3600,
+        body={"note": "operator asked to widen curl"},
+    )
+    res = runner.invoke(app, ["warden", "proposals", "--root", str(root)])
+    assert res.exit_code == 0
+    assert "widen-allowlist" in res.output
+    assert "shell" in res.output
+
+    as_json = runner.invoke(app, ["warden", "proposals", "--root", str(root), "--json"])
+    assert as_json.exit_code == 0
+    body = json.loads(as_json.output)
+    assert len(body) == 1
+    assert body[0]["kind"] == "widen-allowlist"
+    assert body[0]["note"] == "operator asked to widen curl"
+
+
+def _write_go_hook(settings, prog: str, mode: str) -> None:
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    cmd = (
+        f"DAISUGI_WARDEN_HOOK=opendaisugi.warden '{prog}' warden check --mode {mode} "
+        "--root /x/warden --format claude --verify-timeout 10.0"
+    )
+    if mode == "enforce":
+        cmd += " || exit 2"
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": cmd}]}]
+                }
+            }
+        )
+    )
+
+
+def test_warden_status_warns_when_the_hook_program_is_gone(tmp_path, monkeypatch):
+    """A package manager that removes the binary a hook names leaves a hook
+    that fails on every call; warden status says so and names the fix."""
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(tmp_path)
+    gone = str(tmp_path / "mise" / "installs" / "daisugi" / "0.43.0" / "daisugi")
+    _write_go_hook(home / ".claude" / "settings.json", gone, "enforce")
+    res = runner.invoke(app, ["warden", "status", "--root", str(tmp_path / "warden")])
+    assert res.exit_code == 0
+    assert f"runs {gone}, which does not exist, so every call is denied" in res.stderr
+    assert "Run: daisugi install --enforce" in res.stderr
+
+    present = tmp_path / "bin" / "daisugi"
+    present.parent.mkdir()
+    present.write_text("#!/bin/sh\n")
+    _write_go_hook(home / ".claude" / "settings.json", str(present), "audit")
+    res = runner.invoke(app, ["warden", "status", "--root", str(tmp_path / "warden"), "--json"])
+    assert res.exit_code == 0
+    assert "does not exist" not in res.stderr
+
+
+# GD-16 at the model level: an envelope with NaN or an infinity is refused
+# with one clear line, and nothing is registered.
+def test_warden_register_refuses_a_non_finite_envelope(tmp_path):
+    root = tmp_path / "warden"
+    env_file = tmp_path / "e.yaml"
+    env_file.write_text("task: t\ngenerated_by: g\npermissions:\n  velocity_limit: .nan\n")
+    res = runner.invoke(app, ["warden", "register", str(env_file), "--root", str(root)])
+    assert res.exit_code == 1
+    assert res.stdout == ""
+    assert res.stderr == (
+        f"not registered: {env_file} is not a valid envelope: "
+        "permissions.velocity_limit: Input should be a finite number\n"
+    )
+    assert not (root / "envelopes").exists()
+
+
+def test_the_old_mode_word_and_flag_get_one_line(tmp_path):
+    runner = CliRunner()
+    res = runner.invoke(
+        app, ["warden", "check", "--mode", "shadow", "--root", str(tmp_path)], input="{}"
+    )
+    assert res.exit_code == 2
+    assert "'shadow' is now 'audit': use --mode audit" in res.output
+    res = runner.invoke(
+        app, ["warden", "check", "--mode", "x", "--root", str(tmp_path)], input="{}"
+    )
+    assert res.exit_code == 2, res.output
+    res = runner.invoke(app, ["install", "--shadow", "--dry-run"])
+    assert res.exit_code == 2
+    assert "shadow mode is now audit mode: use --audit" in res.output
+
+
+def test_register_refuses_an_envelope_nothing_can_check(tmp_path):
+    env = {
+        "generated_by": "t",
+        "task": "t",
+        "permissions": {"shell": True, "shell_allowlist": ["ls"]},
+        "invariants": [{"type": "no_side_effects", "description": "d"}],
+    }
+    f = tmp_path / "e.json"
+    f.write_text(json.dumps(env))
+    res = runner.invoke(app, ["warden", "register", str(f), "--root", str(tmp_path / "root")])
+    assert res.exit_code == 2
+    assert "envelope declares 1 item(s) nothing can check: no_side_effects." in res.output
+    assert not (tmp_path / "root" / "envelopes").exists()

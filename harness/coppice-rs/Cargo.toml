@@ -21,6 +21,10 @@ rustls = { version = "=0.23.45", default-features = false, features = ["ring", "
 rustls-pki-types = { version = "=1.15.1", features = ["std"] }
 ring = "=0.17.14"
 miniz_oxide = "=0.8.9"
+# A Hermes Agent session lives in its state.db; the server only reads it.
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
+# Pando R2, the conversation memory (ADR-0023).
+pando = { path = "../../clients/rust/pando" }
 
 [profile.release]
 debug = false

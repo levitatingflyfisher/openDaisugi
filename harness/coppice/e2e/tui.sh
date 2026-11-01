@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tui.sh: the TUI check. run.sh starts the server, makes the panes and puts
-# a gate ask on "e2e ask"; this script runs the coppice TUI inside a coppice
+# a warden ask on "e2e ask"; this script runs the coppice TUI inside a coppice
 # pane. The server's own virtual terminal is then the screen, and
 # `coppice pane read` returns its text. Each screen read is saved to
 # $E2E_DIR/shots/tui-*.txt. Three runs: 80x36, where no window fits and Space
 # opens a peek, 100x36, where the rail is 6 columns wide and one window
-# takes keys, and 120x36, where the foreman's chat is the window.
+# takes keys, and 120x36, where the steward's chat is the window.
 set -euo pipefail
 : "${COPPICE_BIN:?run tui.sh through run.sh}" "${sock:?}" "${E2E_DIR:?}"
 cop() { "$COPPICE_BIN" --socket "$sock" --data-dir "$E2E_DIR/data" "$@"; }
@@ -113,20 +113,20 @@ hcop pane send-text "$tui" "echo slim-typed-$$" --no-enter >/dev/null
 hcop pane send-keys "$tui" enter >/dev/null
 expect slim-typed "[│┃]slim-typed-$$ *\$" || true
 
-# 120 columns: the chat is a window. The floor's foreman is fake-foreman.sh
+# 120 columns: the chat is a window. The floor's steward is fake-steward.sh
 # (the claude table). Once it has replied, a floor that opens fills the
 # chat window first, with the reply in it and an input line of its own. A
-# line typed there goes to the foreman through floor.talk, and its next
+# line typed there goes to the steward through floor.talk, and its next
 # reply shows in the same window. The server treats a process in one of
 # its own panes as a pane, and a pane may not read the chat or talk to the
-# foreman, so this floor runs in a pane of a second server and speaks to
-# the first as the operator. The foreman is closed after, so the web check
+# steward, so this floor runs in a pane of a second server and speaks to
+# the first as the operator. The steward is closed after, so the web check
 # starts its own.
 hcop pane close "$tui" >/dev/null 2>&1 || true
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 rpc() { node "$here/rpc.mjs" "$sock" call "$1" "$2"; }
-fm=$(rpc floor.foreman '{"harness":"claude"}' | id_of)
-[ -n "$fm" ] || { echo "FAIL tui: the fake foreman was not started"; failed=1; }
+fm=$(rpc floor.steward '{"harness":"claude"}' | id_of)
+[ -n "$fm" ] || { echo "FAIL tui: the fake steward was not started"; failed=1; }
 for _ in $(seq 1 100); do
   rpc floor.chat '{}' | grep -q "I can see e2e shell" && break
   sleep 0.3
@@ -145,20 +145,20 @@ for _ in $(seq 1 100); do
 done
 start_tui 120
 # The chat takes a window the way an agent does: a free one. The agents that
-# need you fill first, so the one window holds one of them and the foreman's
+# need you fill first, so the one window holds one of them and the steward's
 # rail row says it holds a reply. The leave key and the down arrow move to
 # that row, and Enter puts the chat in the window.
-expect chat-mark "foreman +claude +reply" || true
+expect chat-mark "steward +claude +reply" || true
 hcop pane send-keys "$tui" ctrl+space >/dev/null
 for _ in $(seq 1 12); do
   hcop pane read "$tui" > "$shots/tui-chat-cursor.txt" 2>&1 || true
-  grep -Eq "^ +› .*foreman +claude" "$shots/tui-chat-cursor.txt" && break
+  grep -Eq "^ +› .*steward +claude" "$shots/tui-chat-cursor.txt" && break
   hcop pane send-keys "$tui" down >/dev/null
   sleep 0.3
 done
 hcop pane send-keys "$tui" enter >/dev/null
-expect chat-reply "foreman Ready. I can see e2e shell" || true
-if grep -q "Tell the foreman. Type and press Enter." "$shots/tui-chat-reply.txt" && grep -Eq "Screen +×" "$shots/tui-chat-reply.txt"; then
+expect chat-reply "steward Ready. I can see e2e shell" || true
+if grep -q "Tell the steward. Type and press Enter." "$shots/tui-chat-reply.txt" && grep -Eq "Screen +×" "$shots/tui-chat-reply.txt"; then
   echo "ok   tui: the chat window has its own line and the Screen word"
 else
   echo "FAIL tui: no chat line or Screen word; the screen is in $shots/tui-chat-reply.txt"; failed=1
@@ -170,21 +170,21 @@ expect chat-sent "you tell e2e shell hi-$$" || true
 answered=0
 for _ in $(seq 1 50); do
   hcop pane read "$tui" > "$shots/tui-chat-answer.txt" 2>&1 || true
-  if [ "$(grep -c "foreman Got it. I asked e2e shell to look." "$shots/tui-chat-answer.txt")" -ge 2 ]; then answered=1; break; fi
+  if [ "$(grep -c "steward Got it. I asked e2e shell to look." "$shots/tui-chat-answer.txt")" -ge 2 ]; then answered=1; break; fi
   sleep 0.3
 done
 if [ "$answered" = 1 ]; then
-  echo "ok   tui: the foreman's answer to the typed line shows in the chat window"
+  echo "ok   tui: the steward's answer to the typed line shows in the chat window"
 else
-  echo "FAIL tui: no second foreman answer; the screen is in $shots/tui-chat-answer.txt"; failed=1
+  echo "FAIL tui: no second steward answer; the screen is in $shots/tui-chat-answer.txt"; failed=1
 fi
-# Tab in the chat line shows the foreman's terminal, with the Chat word in
+# Tab in the chat line shows the steward's terminal, with the Chat word in
 # its header to come back, and what is typed then reaches the terminal as
 # keys, not the chat line.
 hcop pane send-keys "$tui" tab >/dev/null
 expect chat-screen "Chat +×" || true
-if grep -q "Tell the foreman. Type and press Enter." "$shots/tui-chat-screen.txt"; then
-  echo "FAIL tui: the chat line stayed over the foreman's terminal after Tab"; failed=1
+if grep -q "Tell the steward. Type and press Enter." "$shots/tui-chat-screen.txt"; then
+  echo "FAIL tui: the chat line stayed over the steward's terminal after Tab"; failed=1
 fi
 hcop pane send-text "$tui" "tabbed-$$" --no-enter >/dev/null
 expect chat-tabbed "tabbed-$$" || true

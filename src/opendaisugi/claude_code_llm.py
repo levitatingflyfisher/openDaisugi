@@ -18,6 +18,7 @@ import os
 import shlex
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Mapping
 from typing import Any, TypeVar
 
@@ -93,6 +94,46 @@ def _build_claude_args(binary: str, model: str | None, extra_args: tuple[str, ..
     return args
 
 
+_PANDO_SKIP_ENV = "DAISUGI_PANDO_SKIP"
+_PANDO_SKIPLIST_ENV = "DAISUGI_PANDO_SKIPLIST"
+
+
+def _skip_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """The child's environment with the Pando skip marker set.
+
+    A ``claude -p`` call of ours is not a chat of the owner's: with the marker
+    the user's Claude Code hooks give it no memory view and log nothing. None
+    starts from this process's environment, as exec does.
+    """
+    out = dict(os.environ if env is None else env)
+    out[_PANDO_SKIP_ENV] = "1"
+    return out
+
+
+def _skip_session_args(env: Mapping[str, str]) -> list[str]:
+    """``--session-id`` for one call when a spawner named the skip list.
+
+    The id is written to the list before the child starts, so the follow
+    service cannot take the first line of the transcript. Without the list
+    variable, or when the list cannot be written, no flag is passed (the
+    child's hooks list the session instead).
+    """
+    path = env.get(_PANDO_SKIPLIST_ENV, "")
+    if not path:
+        return []
+    sid = str(uuid.uuid4())
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+        try:
+            os.write(fd, (sid + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        return []
+    return ["--session-id", sid]
+
+
 async def _terminate_and_reap(proc) -> None:
     """SIGTERM the subprocess and AWAIT its exit so it doesn't linger as a zombie.
 
@@ -133,10 +174,13 @@ async def call_claude_p_async(
     ``cwd`` to override.
     """
     args = _build_claude_args(binary, model, extra_args)
+    child_env = _skip_env(None)
+    args += _skip_session_args(child_env)
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
+            env=child_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
@@ -181,6 +225,8 @@ def call_claude_p_sync(
     is the child's whole environment; None inherits this process's.
     """
     args = _build_claude_args(binary, model, extra_args)
+    child_env = _skip_env(env)
+    args += _skip_session_args(child_env)
 
     try:
         result = subprocess.run(
@@ -191,7 +237,7 @@ def call_claude_p_sync(
             check=False,
             input=prompt,
             cwd=cwd if cwd is not None else _neutral_cwd(),
-            env=dict(env) if env is not None else None,
+            env=child_env,
         )
     except FileNotFoundError as exc:
         raise EnvelopeGenerationError(f"claude binary not found: {binary!r}") from exc

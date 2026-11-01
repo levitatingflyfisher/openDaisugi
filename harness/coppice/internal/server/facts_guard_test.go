@@ -27,7 +27,7 @@ func reportOwn(t *testing.T, s *Server, pane, extra string) {
 	t.Helper()
 	send, next, stop := ownPane(t, s, pane)
 	defer stop()
-	send(gateReportLine("r", pane, extra))
+	send(wardenReportLine("r", pane, extra))
 	mustOK(t, next())
 }
 
@@ -93,7 +93,7 @@ func TestAPaneHoldsABoundedNumberOfClaims(t *testing.T) {
 	}
 	for i := 0; i < maxClaimsPerPane+10; i++ {
 		p := filepath.Join(dir, fmt.Sprintf("fake-%03d.jsonl", i))
-		send(gateReportLine("r", "w1:p1", `"transcript_path":"`+p+`"`))
+		send(wardenReportLine("r", "w1:p1", `"transcript_path":"`+p+`"`))
 		r := next()
 		res, _ := r["result"].(map[string]any)
 		if r["ok"] != true {
@@ -157,9 +157,9 @@ func TestASprigVerdictFromTheFutureIsDatedNow(t *testing.T) {
 		ID: "w9:p1", Kind: layout.KindHeadless, Harness: "sprig",
 		Argv: []string{"sprig", "--session-dir", dir}, HarnessSessionID: "fake-session",
 	})
-	g, _ := row["gate"].(*gateFact)
+	g, _ := row["warden"].(*wardenFact)
 	if g == nil || g.At > unixSeconds(time.Now())+1 {
-		t.Fatalf("gate %+v, want at no later than now", g)
+		t.Fatalf("warden %+v, want at no later than now", g)
 	}
 }
 
@@ -184,7 +184,7 @@ func TestAnEndedPanesTranscriptStaysItsOwnAndCountsOnceToday(t *testing.T) {
 		t.Fatal(err)
 	}
 	send, next, stop := ownPane(t, s, "w1:p2")
-	send(gateReportLine("r", "w1:p2", `"transcript_path":"`+first+`"`))
+	send(wardenReportLine("r", "w1:p2", `"transcript_path":"`+first+`"`))
 	if r := next(); r["ok"] != true || r["result"].(map[string]any)["transcript"] != transcriptTakenRefusal {
 		t.Fatalf("a pane took an ended pane's transcript: %v", r)
 	}

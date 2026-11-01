@@ -181,7 +181,7 @@ async def test_ingest_infers_envelope_from_observed_steps(journal):
         id="ep_infer",
         task="count matches and save them",
         steps=[
-            ShellStep(id="s1", command="grep -n foo src/*.py | head -5 > out/hits.txt"),
+            ShellStep(id="s1", command="grep -n foo src/a.py | head -5 > out/hits.txt"),
             FileWriteStep(id="s2", path="out/summary.md", content="x", depends_on=["s1"]),
         ],
         source_range={"first_message": 0, "last_message": 5},

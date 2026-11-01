@@ -16,7 +16,7 @@ shaped for one purpose, from one carefully tended base stump. The shoots are cut
 again for centuries, and the root never dies. Read the whole project through it:
 
 - **The base stump** is the tended core that survives every harvest: the verified
-  envelope, the pathway store, the gate.
+  envelope, the pathway store, the warden.
 - **The shoots** are distilled skills, each cut to the exact shape of one purpose: cheap,
   repeatable, provably in bounds, grown from the base.
 - **The gardener** is distillation itself: it turns a journaled run into a new shoot and
@@ -35,7 +35,7 @@ enough to act at the speed of thought, and a record clear enough to explain ever
 after the fact, including a proof that it took *the safest action available at the time*.
 
 Its deepest structure is already this project's ancestry: **Simplex runtime assurance**
-(Sha, 1996). A fast, high-performance controller may do anything; a slow, *proven* safety
+(Sha, 2001; early work 1996). A fast, high-performance controller may do anything; a slow, *proven* safety
 controller can always take over. The pilot is Simplex with a model as the performance
 controller and a **distilled, verified reflex** as the muscle memory.
 
@@ -47,6 +47,27 @@ controller and a **distilled, verified reflex** as the muscle memory.
 - **New hard problem:** envelopes that depend on live sensor state, and verification
   *ahead of the tick*. A solver call per frame is too slow, so the proof must be compiled in
   advance: the batch move, "prove once, run N", applied to a control loop.
+
+#### The universal driver (a thesis)
+
+The pilot generalises. Keep each machine's fast control laws where they are: the
+millisecond loops that hold a drone level, keep a car in its lane, stop a forklift short,
+or limit a surgical tool's force. Those stay classical and verified. Above them, a large
+language or vision-language model can drive almost any machine, because openDaisugi gives
+it what it lacks alone: an envelope it must stay inside, proved before each action;
+reflexes, the repeated work compiled into checked paths that skip the model; and a journal,
+so both improve with use. The thesis is that this pairing learns to drive better than
+reinforcement learning alone: the model brings general knowledge, the envelope brings
+safety, and the garden turns experience into reflexes.
+
+- **It is wrong if** a machine's real hazards cannot be written as an envelope, the model
+  is too slow for the decisions above the fast loop, or the tasks never repeat, so no
+  reflexes form.
+- **It is right if** the same core, with a new dialect and a new envelope, drives a second
+  kind of machine with no change to the core.
+- **Its hard edge** is perception. An envelope can bound force and speed. It cannot prove
+  the camera saw the person. The fast loop and its own sensors stay the last line. See
+  [Robotics](robotics.md) for what is built today.
 
 ### 2. The 500-model household (daisugi incarnate)
 
@@ -111,6 +132,11 @@ between them is the **vocabulary**.
 - **Dialects meet at the kernel.** A word from one dialect can be checked against a word
   from another, because both unfold to the same kernel. Two teams, or a drone team and a
   warehouse team, can prove their policies agree.
+- **Idea, not planned: plans by proof search.** Where a dialect's words are finite and
+  typed, a bounded search could find a plan that meets the goal and the envelope with no
+  model call, the way Djinn derives a function from its type. See
+  [weights, types and containment](research/2026-11-03-weights-types-and-containment.md),
+  idea 3.
 
 So the three dreams are one kernel with three dialects: the pilot's reflex words, the
 household's role and tenant words, the software team's repository words. A dialect is also
@@ -127,7 +153,7 @@ actions, with one kernel from a software team to a robot swarm.
   changes first ([design-dialects.md](plans/2026-09-24-omarchy/design-dialects.md), §3.4).
   The software team's dialect can start now.
 - The kernel is not decidable everywhere. Robot dynamics bring nonlinear real arithmetic,
-  and Z3's string and regex checks can also answer "unknown". The gate then fails closed:
+  and Z3's string and regex checks can also answer "unknown". The warden then fails closed:
   an unknown is a deny, never an allow.
 - A word is only as trustworthy as its definition, which Z3 checks, and its name, which a
   model chose. A misleading name is a real risk, so names are checked against their
@@ -146,7 +172,7 @@ them. Each maps to a part of the system:
 
 | The capability | Where it lives | Where it stands |
 |---|---|---|
-| Strong token saving and model routing | the model ladder (Tier-0 reuse, local, cheap, frontier), the gateway, the per-step sizer, and the designed router and grafts | routing works in Python, Go and Rust; a router that learns from verified results is designed, not built |
+| Strong token saving and model routing | the model ladder (Tier-0 reuse, local, cheap, frontier), the router, the per-step sizer, and the designed router and grafts | routing works in Python, Go and Rust; a router that learns from verified results is designed, not built |
 | Task recognition, decomposition and execution | the typed `ActionPlan`, the orchestrator, verify per step | working and tested in Python |
 | Distillation into repeatable, safe, fast skills | distillation, verified pathways, Tier-0 reuse, the garden | the mechanism is real in all three languages; its *value* (roadmap stage 4) is the unmeasured linchpin |
 | A shared language for policy | the kernel, definitions today, dialects next | definitions built; dialects designed |

@@ -1,6 +1,6 @@
 //! Claude Code, headless: one long-lived `claude -p` process per pane that
 //! speaks stream-json both ways. This adapter never reports blocked: in -p
-//! mode Claude's permission decisions reach coppice through the gate hook,
+//! mode Claude's permission decisions reach coppice through the warden hook,
 //! not this stream. Model text goes into the grid as is.
 
 use std::io::Write;

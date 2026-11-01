@@ -103,4 +103,4 @@ Any agent that speaks MCP can call `find_pathway` / `envelope_for` / `verify_pla
 
 - **Path abstraction.** A pathway that hardcodes `/home/alice/tmp` is not portable. Future versions will add a `metadata.portability` tag distinguishing `portable` from `requires_path_adaptation`, with template substitution on import. For v0.7, portability is the caller's responsibility.
 - **Embedding model.** `task_embedding` is specific to the embedding model that produced it. If you import a pathway embedded by `all-MiniLM-L6-v2` into a store whose lookup uses a different model, similarity scoring will be meaningless. The `embedding_model` field is informational for now — v0.8+ may add compatibility checks.
-- **Python/library version.** The bundle encodes the openDaisugi version that produced it. Imports from significantly older or newer versions should work if the schema version matches, but Z3 re-verification is the authoritative gate.
+- **Python/library version.** The bundle encodes the openDaisugi version that produced it. Imports from significantly older or newer versions should work if the schema version matches, but Z3 re-verification is the authoritative warden.

@@ -37,4 +37,4 @@ anthropic_message.json   https://docs.ollama.com/api/anthropic-compatibility
                          ANTHROPIC_AUTH_TOKEN=ollama is the documented literal token;
                          the api key is "accepted but not validated"; and
                          /v1/messages/count_tokens is listed as NOT supported. That last
-                         fact is the premise of the count-tokens shim in gateway_asgi.py.
+                         fact is the premise of the count-tokens shim in router_asgi.py.

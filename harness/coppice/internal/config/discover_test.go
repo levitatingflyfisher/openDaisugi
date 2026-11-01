@@ -2,7 +2,10 @@ package config
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +92,104 @@ func TestFromFoundGivesClaudeItsResumeArgs(t *testing.T) {
 	}
 	if got := c.Harness["pi"].ResumeArgs; len(got) != 0 {
 		t.Fatalf("pi resume_args = %v, want none", got)
+	}
+}
+
+func TestAMiseWrapperResolvesToTheRealBinary(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real", "claude")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("\x7fELF"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wrap := filepath.Join(dir, "claude")
+	body := "#!/usr/bin/env bash\nmise use -g node@lts claude\nexec mise x claude -- claude \"$@\"\n"
+	if err := os.WriteFile(wrap, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	old := MiseWhich
+	defer func() { MiseWhich = old }()
+	MiseWhich = func(n string) (string, error) { asked = append(asked, n); return real, nil }
+
+	found := Discover(func(n string) (string, error) {
+		if n == "claude" {
+			return wrap, nil
+		}
+		return "", errors.New("no")
+	})
+	if len(found) != 1 || found[0].Command != real || !strings.Contains(found[0].Note, "mise wrapper") {
+		t.Fatalf("found = %+v", found)
+	}
+	if !reflect.DeepEqual(asked, []string{"claude"}) {
+		t.Errorf("mise asked %v", asked)
+	}
+	if got := FromFound(found, "claude").Harness["claude"].Command; got != real {
+		t.Errorf("command = %q", got)
+	}
+}
+
+func TestOnlyANarrowMiseWrapperIsResolved(t *testing.T) {
+	dir := t.TempDir()
+	old := MiseWhich
+	defer func() { MiseWhich = old }()
+	MiseWhich = func(n string) (string, error) { t.Errorf("mise asked about %s", n); return "", errors.New("no") }
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := map[string]string{
+		"codex":    "\x7fELF binary",                                                                             // not a script
+		"pi":       "#!/bin/sh\nexec mise x other -- other \"$@\"\n",                                             // names another tool
+		"sprig":    "#!/bin/sh\necho hi\n",                                                                       // no mise exec
+		"opencode": "#!/bin/sh\n" + strings.Repeat("# pad\n", 500) + "exec mise x opencode -- opencode \"$@\"\n", // too large
+	}
+	for n, body := range cases {
+		if _, ok := resolveMiseWrapper(write(n, body)); ok {
+			t.Errorf("%s resolved", n)
+		}
+	}
+	// A wrapper whose mise answer is relative or missing stays as it was.
+	MiseWhich = func(string) (string, error) { return "claude", nil }
+	if _, ok := resolveMiseWrapper(write("claude", "#!/bin/bash\nexec mise x claude -- claude \"$@\"\n")); ok {
+		t.Error("a relative answer was taken")
+	}
+}
+
+func TestMiseWhichRunsInTheHomeDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if cmd, err := miseWhichCmd("claude"); err != nil || cmd.Dir != home {
+		t.Errorf("mise which runs in %q, want %q", cmd.Dir, home)
+	}
+}
+
+func TestWithNoHomeDirMiseIsNotAskedAndTheNoteSaysSo(t *testing.T) {
+	t.Setenv("HOME", "")
+	if cmd, err := miseWhichCmd("claude"); err == nil || cmd != nil {
+		t.Fatalf("mise would run with no home: %v %v", cmd, err)
+	}
+	dir := t.TempDir()
+	w := filepath.Join(dir, "claude")
+	if err := os.WriteFile(w, []byte("#!/bin/bash\nexec mise x claude -- claude \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	found := Discover(func(n string) (string, error) {
+		if n == "claude" {
+			return w, nil
+		}
+		return "", errors.New("no")
+	})
+	if len(found) != 1 || found[0].Command != "" {
+		t.Fatalf("found %+v", found)
+	}
+	notes := FoundNotes(found)
+	if len(notes) != 1 || !strings.Contains(notes[0], "home dir is unknown") || !strings.Contains(notes[0], "mise was not asked") {
+		t.Errorf("notes %v", notes)
 	}
 }

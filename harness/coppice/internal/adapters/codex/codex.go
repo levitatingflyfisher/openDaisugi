@@ -37,9 +37,9 @@
 // in flight, rather than queueing or overlapping it. See beginTurn.
 //
 // This adapter never emits state "blocked". Permission decisions do not
-// surface on this stream at all - they go through the gate hook
+// surface on this stream at all - they go through the warden hook
 // (COPPICE_SOCK/COPPICE_PANE, wired by rule (a) of pane.Adapter), which is
-// what reports blocked, with source gate, when it has something to report.
+// what reports blocked, with source warden, when it has something to report.
 //
 // This adapter also never emits EvEnd. adapter.go's rule (d) treats EvEnd as
 // terminal, and the server's pump reacts to it by calling Stop() and
@@ -49,7 +49,7 @@
 // solely by relay, never by Stop itself) is how a client learns that.
 //
 // Codex's own hooks are a fail-open class (spec-01 keeps that honesty tag), so
-// a coppice pane running Codex is a soft gate. Nothing here changes that.
+// a coppice pane running Codex is a soft warden. Nothing here changes that.
 //
 // Model text (Event.Text) is written into the pane's grid raw, unescaped -
 // rule (d) of pane.Adapter requires this file to say which choice it made,
@@ -319,7 +319,7 @@ func (p *proc) Prompt(text string) error {
 	name, args := pane.Wrapped(p.opts.Wrap, binary(), argv)
 	cmd := exec.CommandContext(p.ctx, name, args...)
 	cmd.Dir = p.opts.Cwd
-	// Rule (a) of pane.Adapter: the only path by which the gate hook finds
+	// Rule (a) of pane.Adapter: the only path by which the warden hook finds
 	// COPPICE_SOCK and COPPICE_PANE, for this turn's process same as every
 	// other adapter's spawn.
 	cmd.Env = pane.BuildEnv(os.Environ(), p.opts.Env, p.opts.Sock, p.opts.PaneID, p.opts.DataDir)
@@ -423,7 +423,7 @@ func (p *proc) runTurn(cmd *exec.Cmd, r *os.File, closeR *sync.Once) {
 			// underlying process eventually exits. bash keeps this turn's
 			// stdout pipe open for a little while after its last line is
 			// written (it is still running, checking COPPICE_CODEX_EXIT and
-			// tearing down), so waiting for EOF or Wait here would gate a
+			// tearing down), so waiting for EOF or Wait here would warden a
 			// client's next Prompt on that OS-level teardown delay even
 			// though the client already saw this turn's terminal event and
 			// is entitled to send another. endTurn happens-before the

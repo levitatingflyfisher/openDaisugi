@@ -10,7 +10,7 @@ use crate::config;
 
 const BACKUP_HELP: &str = "Usage: coppice backup [FILE]
 
-  Write the foreman's chat and memory, the layout, coppice.toml and
+  Write the steward's chat and memory, the layout, coppice.toml and
   pools.toml to one .tgz (default ./coppice-backup-DATE.tgz). No key, token
   or credential files go in. Your chat and logs do, so keep the file as
   private as the data. The config files always come from the XDG config
@@ -44,36 +44,91 @@ fn now() -> i64 {
 }
 
 impl Cli {
-    /// What `coppice backup` holds: the foreman's log and memory tree, the
+    /// What `coppice backup` holds: the steward's conversation memory, the
     /// layout, coppice.toml and pools.toml. It is an allow-list. The web
     /// token, certificates, sockets, locks and the server log stay out, and
     /// so does anything new until it is added here.
     fn backup_spec(&self) -> Spec {
-        let cfg_dir = config::path().parent().map(Path::to_path_buf).unwrap_or_default();
-        self.backup_spec_in(cfg_dir)
+        self.backup_spec_in(Self::cfg_dir())
+    }
+
+    fn cfg_dir() -> PathBuf {
+        config::path().parent().map(Path::to_path_buf).unwrap_or_default()
     }
 
     fn backup_spec_in(&self, cfg_dir: PathBuf) -> Spec {
-        let units: [(&str, &str); 7] = [
-            ("data", "layout.json"),
-            ("data", "recent-dirs.json"),
-            ("foreman", "main"),
-            ("foreman", "tree"),
-            ("foreman", "view.json"),
-            ("config", "coppice.toml"),
-            ("config", "pools.toml"),
+        self.backup_spec_for(cfg_dir, &[])
+    }
+
+    /// The memory is every Pando R2 store in <data home>/pando (ADR-0023),
+    /// with the parts the pando crate names (`backup_rels`), and a chat that
+    /// has not been moved yet. A restore passes the paths its archive holds:
+    /// a store the target does not have yet is put back, and an archive made
+    /// before the move (area "foreman", the old chat) goes into the work
+    /// store.
+    fn backup_spec_for(&self, cfg_dir: PathBuf, archived: &[String]) -> Spec {
+        let home = crate::steward::store_root(&self.data_dir);
+        let pando_dir = home.join("pando");
+        let old = crate::steward::DIR_NAME;
+        let in_pando: Vec<String> = archived
+            .iter()
+            .filter_map(|p| p.strip_prefix("datahome/pando/").map(str::to_string))
+            .collect();
+        let legacy = archived.iter().any(|p| p.starts_with(&format!("{old}/")));
+        let mut roots: Vec<(String, PathBuf)> = vec![
+            ("data".into(), self.data_dir.clone()),
+            ("datahome".into(), home.clone()),
+            // A chat that has not been moved yet is still saved.
+            ("steward-old".into(), crate::steward::log_dir(&self.data_dir)),
+            ("config".into(), cfg_dir),
         ];
+        let mut units: Vec<(String, String)> = vec![
+            ("data".into(), "layout.json".into()),
+            ("data".into(), "recent-dirs.json".into()),
+        ];
+        let work = pando::store::DEFAULT_STORE;
+        for r in pando::store::backup_rels(&pando::store::backup_stores(&pando_dir, &in_pando)) {
+            // An old archive's chat is the work store; one area holds it.
+            if legacy && r.starts_with(&format!("{work}/")) {
+                continue;
+            }
+            units.push(("datahome".into(), format!("pando/{r}")));
+        }
+        if legacy {
+            roots.push((old.into(), pando_dir.join(work)));
+            for part in pando::store::BACKUP_PARTS {
+                units.push((old.into(), part.into()));
+            }
+        }
+        for part in ["main", "tree", "view.json", pando::import::IMPORT_FILE] {
+            units.push(("steward-old".into(), part.into()));
+        }
+        units.push(("config".into(), "coppice.toml".into()));
+        units.push(("config".into(), "pools.toml".into()));
         Spec {
             tool: "coppice".into(),
             version: env!("COPPICE_VERSION").into(),
-            roots: vec![
-                ("data".into(), self.data_dir.clone()),
-                ("foreman".into(), crate::foreman::log_dir(&self.data_dir)),
-                ("config".into(), cfg_dir),
-            ],
-            units: units.iter().map(|(a, u)| (a.to_string(), u.to_string())).collect(),
+            roots,
+            units,
             ..Spec::default()
         }
+    }
+
+    /// The paths an archive holds, as its manifest lists them. The manifest
+    /// is read with the whole pando dir and the old chat's area allowed,
+    /// only to learn which stores it names; the restore itself checks every
+    /// path against the real list. An archive that does not read gives
+    /// none, and the restore then says what is wrong with it.
+    fn archived_paths(&self, cfg_dir: PathBuf, file: &Path) -> Vec<String> {
+        let mut peek = self.backup_spec_in(cfg_dir);
+        let old = crate::steward::DIR_NAME;
+        let pando_dir = crate::steward::store_root(&self.data_dir).join("pando");
+        peek.roots.push((old.into(), pando_dir.join(pando::store::DEFAULT_STORE)));
+        peek.units.push(("datahome".into(), "pando".into()));
+        for part in pando::store::BACKUP_PARTS {
+            peek.units.push((old.into(), part.into()));
+        }
+        backup::manifest_paths(&peek, file).unwrap_or_default()
     }
 
     /// coppice backup [FILE]. It reads files only and dials no socket.
@@ -112,7 +167,7 @@ impl Cli {
     }
 
     /// coppice restore FILE [--force]. The server must be stopped: it holds
-    /// the layout and the foreman files open and writes them back.
+    /// the layout and the steward files open and writes them back.
     pub(super) fn run_restore(&self, argv: &[String]) -> i32 {
         self.restore_with(&self.backup_spec(), argv)
     }
@@ -137,6 +192,9 @@ impl Cli {
             return 1;
         }
         let file: PathBuf = PathBuf::from(rest[0]);
+        // The archive's own paths widen the list to the stores it holds.
+        let cfg_dir = spec.root("config").map(Path::to_path_buf).unwrap_or_else(Self::cfg_dir);
+        let spec = &self.backup_spec_for(cfg_dir.clone(), &self.archived_paths(cfg_dir, &file));
         match backup::restore(spec, &file, force, now()) {
             Ok(r) => {
                 for a in &r.aside {
@@ -199,11 +257,11 @@ mod tests {
         let sock = o.0.join("none.sock");
         put(&a.0, "layout.json", "{}");
         put(&a.0, "recent-dirs.json", "[]");
-        put(&a.0, "foreman/main/2026-10-24.jsonl", "{}\n");
-        put(&a.0, "foreman/tree/2026-10-24.jsonl", "{}\n");
-        put(&a.0, "foreman/view.json", "{}");
-        put(&a.0, "foreman/lock", "");
-        put(&a.0, "foreman/tools.sock", "");
+        put(&a.0, "foreman/main/2026-10-24.jsonl", "{}\n"); // names-ok: the log dir name on disk
+        put(&a.0, "foreman/tree/2026-10-24.jsonl", "{}\n"); // names-ok: the log dir name on disk
+        put(&a.0, "foreman/view.json", "{}"); // names-ok: the log dir name on disk
+        put(&a.0, "foreman/lock", ""); // names-ok: the log dir name on disk
+        put(&a.0, "foreman/tools.sock", ""); // names-ok
         put(&a.0, "web/token", "SECRET");
         put(&a.0, "server.log", "log");
         put(&ca, "coppice.toml", "fence = \"auto\"\n");
@@ -216,8 +274,8 @@ mod tests {
         assert!(cb.join("coppice.toml").exists());
         assert!(!cb.join("api-key").exists());
         assert!(b.0.join("layout.json").exists());
-        assert!(b.0.join("foreman/tree/2026-10-24.jsonl").exists());
-        for p in ["web", "server.log", "foreman/lock", "foreman/tools.sock"] {
+        assert!(b.0.join("foreman/tree/2026-10-24.jsonl").exists()); // names-ok
+        for p in ["web", "server.log", "foreman/lock", "foreman/tools.sock"] { // names-ok
             assert!(!b.0.join(p).exists(), "restored {p}");
         }
         // A full target is refused without --force and kept aside with it.
@@ -280,17 +338,76 @@ mod tests {
     fn a_failed_restore_leaves_the_old_files_and_exits_1() {
         let (a, b, o) = (Tmp::new("j"), Tmp::new("k"), Tmp::new("l"));
         put(&a.0, "layout.json", "new");
-        put(&a.0, "foreman/view.json", "{}");
+        put(&a.0, "foreman/view.json", "{}"); // names-ok: the log dir name on disk
         let file = o.0.join("b.tgz");
         let ca = cli(&a.0, &o.0.join("none.sock"));
         assert_eq!(ca.backup_with(&ca.backup_spec_in(a.0.join("cfg")), &[file.display().to_string()]), 0);
         put(&b.0, "layout.json", "old");
-        // "foreman" is a file, so foreman/view.json cannot be put in place.
-        put(&b.0, "foreman", "a file");
+        // "foreman" is a file, so foreman/view.json cannot be put in place. // names-ok
+        put(&b.0, "foreman", "a file"); // names-ok
         let cb = cli(&b.0, &o.0.join("none.sock"));
         assert_eq!(cb.restore_with(&cb.backup_spec_in(b.0.join("cfg")), &[file.display().to_string(), "--force".into()]), 1);
         assert_eq!(fs::read_to_string(b.0.join("layout.json")).unwrap(), "old");
-        assert_eq!(fs::read_to_string(b.0.join("foreman")).unwrap(), "a file");
+        assert_eq!(fs::read_to_string(b.0.join("foreman")).unwrap(), "a file"); // names-ok
+    }
+
+    /// Every Pando store in the data home is in the backup, with its
+    /// children, view and import queue, and never a lock. A restore puts
+    /// back a store the target does not have.
+    #[test]
+    fn backup_holds_every_pando_store_and_its_children() {
+        let (a, b, o) = (Tmp::new("pa"), Tmp::new("pb"), Tmp::new("po"));
+        for s in ["work", "notes"] {
+            put(&a.0, &format!("pando/{s}/main/2026-10-24.jsonl"), "{\"id\":0}\n");
+            put(&a.0, &format!("pando/{s}/tree/2026-10-24.jsonl"), "{}\n");
+            put(&a.0, &format!("pando/{s}/view.json"), "{}");
+            put(&a.0, &format!("pando/{s}/lock"), "");
+        }
+        put(&a.0, "pando/work/import.json", "{}");
+        put(&a.0, "pando/work/children/w1/main/2026-10-24.jsonl", "{\"id\":0}\n");
+        put(&a.0, "pando/work/children/w1/lock", "");
+        let file = o.0.join("b.tgz").display().to_string();
+        let sock = o.0.join("none.sock");
+        let ca = cli(&a.0, &sock);
+        assert_eq!(ca.backup_with(&ca.backup_spec_in(a.0.join("cfg")), &[file.clone()]), 0);
+        let cb = cli(&b.0, &sock);
+        assert_eq!(cb.restore_with(&cb.backup_spec_in(b.0.join("cfg")), &[file]), 0);
+        for p in [
+            "pando/work/main/2026-10-24.jsonl",
+            "pando/notes/view.json",
+            "pando/notes/tree/2026-10-24.jsonl",
+            "pando/work/import.json",
+            "pando/work/children/w1/main/2026-10-24.jsonl",
+        ] {
+            assert!(b.0.join(p).exists(), "not restored: {p}");
+        }
+        for p in ["pando/work/lock", "pando/notes/lock", "pando/work/children/w1/lock"] {
+            assert!(!b.0.join(p).exists(), "restored a lock: {p}");
+        }
+    }
+
+    /// An archive made before the move holds the chat in area "foreman" (the
+    /// old log dir). It restores into the work store.
+    #[test]
+    fn an_old_archive_restores_into_the_work_store() {
+        let (old, b, o) = (Tmp::new("oa"), Tmp::new("ob"), Tmp::new("oo"));
+        put(&old.0, "main/2026-10-24.jsonl", "{\"id\":0}\n");
+        put(&old.0, "view.json", "{}");
+        let file = o.0.join("old.tgz");
+        let area = crate::steward::DIR_NAME;
+        let spec = Spec {
+            tool: "coppice".into(),
+            version: "old".into(),
+            roots: vec![(area.into(), old.0.clone())],
+            units: vec![(area.into(), "main".into()), (area.into(), "view.json".into())],
+            ..Spec::default()
+        };
+        backup::create(&spec, &file, now()).unwrap();
+        let cb = cli(&b.0, &o.0.join("none.sock"));
+        assert_eq!(cb.restore_with(&cb.backup_spec_in(b.0.join("cfg")), &[file.display().to_string()]), 0);
+        for p in ["pando/work/main/2026-10-24.jsonl", "pando/work/view.json"] {
+            assert!(b.0.join(p).exists(), "not restored: {p}");
+        }
     }
 
     #[test]

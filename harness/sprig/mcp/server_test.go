@@ -66,6 +66,12 @@ func TestToolsListAdvertisesTheFourTools(t *testing.T) {
 		if m["inputSchema"] == nil {
 			t.Fatalf("tool %v must carry an inputSchema", m["name"])
 		}
+		// MCP: required is an array or absent, never null.
+		if r, has := m["inputSchema"].(map[string]any)["required"]; has {
+			if _, ok := r.([]any); !ok {
+				t.Fatalf("tool %v: required = %#v, want an array", m["name"], r)
+			}
+		}
 	}
 	for _, want := range []string{"read", "write", "edit", "bash"} {
 		if !names[want] {
@@ -88,14 +94,14 @@ func TestToolsCallRunsAnAllowedToolThroughTheExecutor(t *testing.T) {
 	}
 }
 
-func TestToolsCallGateDenialIsAToolErrorWithTheReason(t *testing.T) {
+func TestToolsCallWardenDenialIsAToolErrorWithTheReason(t *testing.T) {
 	// The crux of the MCP bridge: a denied call comes back to the DRIVER as a tool
 	// error it can see and adapt to — fail-closed, but legible, same as the loop.
 	s := NewServer(sprig.NewExecutor(sprig.DefaultTools(), sprig.DenyAll{Reason: "outside envelope"}))
 	resp, _ := s.Handle([]byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bash","arguments":{"cmd":"rm -rf /"}}}`))
 	res := decodeResult(t, resp)
 	if res["isError"] != true {
-		t.Fatalf("a gate denial must be reported as a tool error, got %v", res)
+		t.Fatalf("a warden denial must be reported as a tool error, got %v", res)
 	}
 	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
 	if !strings.Contains(text, "outside envelope") {

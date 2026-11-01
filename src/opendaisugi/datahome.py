@@ -11,24 +11,24 @@ The rule, the same in Python, Go (clients/go/internal/datahome), Rust
 A value is usable when, after a leading ``~`` or ``~/`` is replaced by the
 home directory, it is an absolute path. Any other value (empty, relative,
 ``~user``) is ignored, as the XDG spec says of a relative XDG path: a
-relative data home would move with the cwd and could put the gate's own
+relative data home would move with the cwd and could put the warden's own
 state inside an agent's workspace.
 
 An existing install keeps its directory: once ``~/.opendaisugi`` exists,
-XDG_DATA_HOME does not move it. The gate guards every directory the rule
+XDG_DATA_HOME does not move it. The warden guards every directory the rule
 can pick (``guarded_data_dirs``), with no exists check, so a move of the
-data never leaves the gate's own state unguarded.
+data never leaves the warden's own state unguarded.
 
 coppice keeps its own rule (harness/coppice/internal/datahome and
 harness/coppice-rs datahome.rs). It never asks whether ``~/.opendaisugi``
-exists, because ``daisugi install --gate`` creates that directory and the
+exists, because ``daisugi install`` creates that directory and the
 same box would then use two places, depending on the order of two commands.
 ``coppice_data_home`` is that rule, for the code here that must find
 coppice's socket. The gap behind it: ``~/.local/share/opendaisugi`` is in no
 guard set when XDG_DATA_HOME is unset, so XDG is chosen only when the
 variable is set.
 
-Stdlib only: gate_client imports it on the hook's hot path.
+Stdlib only: warden_client imports it on the hook's hot path.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def guarded_data_dirs(
     env: Mapping[str, str] | None = None, home: Path | str | None = None
 ) -> list[Path]:
     """Every directory ``data_home`` can pick under ``env``, legacy first,
-    without duplicates and with no exists check. The gate guards them all."""
+    without duplicates and with no exists check. The warden guards them all."""
     env = os.environ if env is None else env
     h = _home(home)
     out = [h / LEGACY_NAME]
@@ -108,8 +108,9 @@ def coppice_data_home(env: Mapping[str, str] | None = None, home: Path | str | N
 
     ``$OPENDAISUGI_HOME``, else ``$XDG_DATA_HOME/opendaisugi`` when that
     variable is usable, else ``~/.opendaisugi``. One exception, as in
-    coppice: when XDG was chosen, an old ``~/.opendaisugi/coppice`` that holds
-    data is kept while the XDG coppice directory holds none.
+    coppice: when XDG was chosen, an old ``~/.opendaisugi`` that holds data under
+    ``coppice`` or ``foreman`` is kept while the XDG directory holds none under  # names-ok: the on-disk store name
+    either name (``foreman`` is the steward's store on disk).  # names-ok: the on-disk store name
     """
     env = os.environ if env is None else env
     h = _home(home)
@@ -121,6 +122,10 @@ def coppice_data_home(env: Mapping[str, str] | None = None, home: Path | str | N
     if x is None:
         return dot
     xdg = x / "opendaisugi"
-    if not _has(xdg / "coppice") and _has(dot / "coppice"):
+    if (
+        not _has(xdg / "coppice")
+        and not _has(xdg / "foreman")  # names-ok: the on-disk store name
+        and (_has(dot / "coppice") or _has(dot / "foreman"))  # names-ok: the on-disk store name
+    ):
         return dot
     return xdg

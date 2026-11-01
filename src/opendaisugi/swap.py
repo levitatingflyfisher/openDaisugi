@@ -6,11 +6,11 @@ Each stage of the pipeline has an *effect*, how a choice there takes hold:
   matcher, router. The verifier reads ``verifier_client`` on every verify
   call and dispatches to that compiled client beside the Python oracle. The
   matcher re-resolves ``matcher_model`` on every lookup, and ``tend``
-  re-embeds the rows an earlier embedder stamped. The gateway re-reads its
+  re-embeds the rows an earlier embedder stamped. The router re-reads its
   config on mtime change, SIGHUP, and a loopback ``POST /_reload``. See
   ADR-0018, 0019, and 0021.
 * ``cfg``: a real choice, but it needs an install, restart, or relaunch.
-  Gate, harness, envelope. ``CFG_REASON`` says why, per stage.
+  Warden, harness, envelope. ``CFG_REASON`` says why, per stage.
 * ``planned``: you can record it, but nothing reads it yet. Stores.
 
 A stage with a config field also has a :class:`SwapKnob` whose options carry a
@@ -36,17 +36,17 @@ PLANNED = "planned"
 # markers and the GUI. Every stage appears here exactly once.
 STAGE_EFFECT: dict[str, str] = {
     "harness": CFG,  # via `daisugi install` into your agent host
-    "gate": CFG,  # via `daisugi install --enforce/--audit`
+    "warden": CFG,  # via `daisugi install --enforce/--audit`
     "verifier": LIVE,  # dispatched per verify call by verifier_dispatch
     "shell": LIVE,
     "envelope": CFG,  # needs a configured backend
     "backend": LIVE,  # resolve_backend reads the config file per call
     "matcher": LIVE,  # _search.reload() and tend re-embed; find re-resolves per call
-    "router": LIVE,  # the gateway re-reads config on mtime, SIGHUP, and POST /_reload
+    "router": LIVE,  # the router re-reads config on mtime, SIGHUP, and POST /_reload
     "distill": LIVE,
     "stores": PLANNED,  # git store is a separate `daisugi registry init`
     # cfg, not live: the Stop/Notification hooks live in settings.json,
-    # which the harness owns and reloads, not us, same reason gate mode
+    # which the harness owns and reloads, not us, same reason warden mode
     # stays cfg (§5.9), spec-01.
     "floor_report": CFG,
     # live: the next pane pick reads config.floor.backend, no restart.
@@ -67,12 +67,12 @@ EFFECT_TAG: dict[str, str] = {
 # reads a reason rather than a shrug. Every cfg stage must have one; the
 # honesty test in tests/test_hot_swap.py enforces that.
 CFG_REASON: dict[str, str] = {
-    "gate": "the hook file belongs to the harness, not to us; "
+    "warden": "the hook file belongs to the harness, not to us; "
     "run `daisugi install --enforce` to apply",
     "harness": "run `daisugi install` inside your agent host",
     "envelope": "pick a backend first, then this choice has something to run",
     "floor_report": "the Stop and Notification hooks live in the harness's "
-    "settings.json; run `daisugi install --gate --report herdr` to apply",
+    "settings.json; run `daisugi install --report herdr` to apply",
     "voice_engine": "a running `daisugi voice serve` loads one engine; "
     "set voice_engine in config.yaml, then start it again",
 }
@@ -147,9 +147,9 @@ SWAP_KNOBS: dict[str, SwapKnob] = {
             SwapOption("no-embedder", False, "log only, build no pathways"),
         ),
     ),
-    "gate": SwapKnob(
-        "gate",
-        "gate_mode",
+    "warden": SwapKnob(
+        "warden",
+        "warden_mode",
         (
             SwapOption("enforce", "enforce", "block unsafe actions"),
             SwapOption("audit", "audit", "watch only, block nothing"),
@@ -234,7 +234,7 @@ def is_live(stage_key: str) -> bool:
 
 
 def get_field(config: Any, dotted: str) -> Any:
-    """Read a field by a dotted path: ``gate_mode`` or ``floor.backend``.
+    """Read a field by a dotted path: ``warden_mode`` or ``floor.backend``.
 
     ``config`` is a ``Config`` at the top level and a nested ``BaseModel``
     below it, so the annotation stays loose on purpose.
@@ -271,14 +271,14 @@ def resolve_command(text: str) -> tuple[str, str]:
     """Parse a ``:stage option`` command line into ``(stage_key, option_label)``.
 
     Forgiving: the option matches by its config value, its exact label, or a unique
-    case-insensitive substring of the label, so ``gate enforce``, ``shell reject``,
+    case-insensitive substring of the label, so ``warden enforce``, ``shell reject``,
     and ``verifier go`` all resolve. Raises ``ValueError`` with a usable message on a
     bad stage, no match, or an ambiguous one. The caller applies the result through
     :func:`apply_swap`, so the honesty (effect tag in the confirmation) is preserved.
     """
     parts = text.strip().lstrip(":").split()
     if len(parts) < 2:
-        raise ValueError("usage: <stage> <option>, for example gate enforce")
+        raise ValueError("usage: <stage> <option>, for example warden enforce")
     stage = parts[0].lower()
     query = " ".join(parts[1:]).lower()
     if stage not in SWAP_KNOBS:

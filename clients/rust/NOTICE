@@ -1,4 +1,4 @@
-clients/rust (the Rust verifier client and the daisugi-gate and daisugi binaries)
+clients/rust (the Rust verifier client and the daisugi-warden and daisugi binaries)
 is part of openDaisugi and is MIT licensed.
 
 It builds on these crates from crates.io. Each is used under one of the
@@ -23,15 +23,15 @@ licences it offers:
                    SQLite amalgamation it bundles, SQLite 3.45.0, into the
                    binary. SQLite itself is in the public domain:
                    https://sqlite.org/copyright.html)
-  num-bigint       MIT OR Apache-2.0 (exact integers for the gateway's token
+  num-bigint       MIT OR Apache-2.0 (exact integers for the router's token
                    counts, as Python's int)
   num-traits       MIT OR Apache-2.0 (the same)
-  miniz_oxide      MIT OR Zlib OR Apache-2.0 (the gateway's gzip and deflate
+  miniz_oxide      MIT OR Zlib OR Apache-2.0 (the router's gzip and deflate
                    decoders, as httpx decodes an upstream answer; pure Rust)
   adler2           0BSD OR MIT OR Apache-2.0 (the zlib checksum, for
                    miniz_oxide)
 
-rustls runs on these, each linked into daisugi-gate:
+rustls runs on these, each linked into daisugi-warden:
 
   ring             Apache-2.0 AND ISC (its crypto; carries C and assembly
                    code, compiled by its build script)

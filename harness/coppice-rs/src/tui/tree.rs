@@ -17,7 +17,7 @@ pub struct TaskRow {
     pub cwd: String,
     pub worktree: String,
     pub model: String,
-    pub foreman: String,
+    pub steward: String,
     pub state: String,
     pub panes: Vec<String>,
     pub ahead: i64,
@@ -44,7 +44,7 @@ pub fn decode_tasks(list: &[Obj]) -> Vec<TaskRow> {
                 cwd: s(t, "cwd"),
                 worktree: s(t, "worktree"),
                 model: s(t, "model"),
-                foreman: s(t, "foreman"),
+                steward: s(t, "steward"),
                 state: s(t, "state"),
                 ..Default::default()
             };

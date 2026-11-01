@@ -20,7 +20,7 @@
 # (clients/sprig_compare.py); Go stays the default (SPRIG_PORT=go or
 # unset).
 #
-# With --rust it also builds the Rust daisugi and daisugi-gate (about half
+# With --rust it also builds the Rust daisugi and daisugi-warden (about half
 # an hour, most of it Z3) into a second tarball,
 # dist/opendaisugi-rust-VERSION-linux-<arch>.tar.gz. Its name is longer,
 # so mise's github backend, which picks the shortest name among equal
@@ -227,18 +227,18 @@ openDaisugi $version for Linux $arch
 
   $coppice_line
   $sprig_line
-  daisugi   the gate: checks each agent tool call before it runs
+  daisugi   the warden: checks each agent tool call before it runs
 
 Install: put the three binaries on PATH, for example in ~/.local/bin.
 Then a floor of agents is two commands:
 
-  daisugi install --gate    # audit: logs what it would deny
+  daisugi install           # audit: records every call, blocks none
   coppice                   # or: coppice web
 
 To enforce, register a policy first:
 
-  daisugi gate init --workspace ~/Work
-  daisugi install --gate --enforce
+  daisugi warden init --workspace ~/Work
+  daisugi install --enforce
 
 $links Built from commit $commit$dirty.
 Licenses: LICENSE (MIT) for openDaisugi, NOTICE-* for the code each
@@ -257,21 +257,21 @@ if [ "$rust" -eq 1 ]; then
     . tools/z3-build-env.sh
     DAISUGI_VERSION="$version" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
       CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-2}" NUM_JOBS="${NUM_JOBS:-2}" \
-      cargo build --release --locked --bin daisugi --bin daisugi-gate
+      cargo build --release --locked --bin daisugi --bin daisugi-warden
   )
-  for b in daisugi daisugi-gate; do
+  for b in daisugi daisugi-warden; do
     install -m 0755 "$root/clients/rust/target/release/$b" "$rstage/$b"
     strip "$rstage/$b"
   done
   notices "$rstage" rust:clients/rust/NOTICE
   checked 'libgcc_s\.so' "$rstage/daisugi"
-  "$root/clients/go/scripts/check-paths.sh" "$rstage/daisugi-gate"
-  "$root/clients/rust/tools/check-paths.sh" "$rstage/daisugi-gate"
+  "$root/clients/go/scripts/check-paths.sh" "$rstage/daisugi-warden"
+  "$root/clients/rust/tools/check-paths.sh" "$rstage/daisugi-warden"
   cat > "$rstage/README" <<EOF
-openDaisugi $version for Linux $arch: the Rust port of the gate
+openDaisugi $version for Linux $arch: the Rust port of the warden
 
-  daisugi        the gate commands and install --gate, as the Go daisugi has
-  daisugi-gate   the hook entry alone
+  daisugi        the warden commands and install, as the Go daisugi has
+  daisugi-warden   the hook entry alone
 
 Both link libc, libm and libgcc_s, and run on any $arch CPU.
 Built from commit $commit$dirty. Licenses: LICENSE (MIT) for openDaisugi,

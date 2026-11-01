@@ -1,8 +1,8 @@
-"""How the gate opens, and writes, the files it keeps under its root
+"""How the warden opens, and writes, the files it keeps under its root
 (GR-R-1, GR-R-2, GR-R-7 to GR-R-10).
 
 Python twin of the Go package internal/statefile and the Rust module
-gate::statefile. The three do the same thing and write the same words.
+warden::statefile. The three do the same thing and write the same words.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 import threading
 from pathlib import Path
 
-# The gate reads its own state through no link (GR-R-1, GR-R-2): the gate
+# The warden reads its own state through no link (GR-R-1, GR-R-2): the warden
 # root, DISARMED, envelopes/, the envelope files, the mode markers and the
 # files below. The root is opened as a directory without following a
 # symlink at its last component (the path DOWN TO the root may follow
@@ -24,7 +24,7 @@ from pathlib import Path
 # DISARMED reads as not disarmed, an envelope as none, a marker as none.
 # A refusal that is not a plain "missing" leaves one stderr note naming the
 # file and the reason, once per file and reason in a process. The reasons
-# are fixed words, the same in the Go and Rust gates, and the note ends
+# are fixed words, the same in the Go and Rust checks, and the note ends
 # with the fix: ``(fix: chmod 600 '<path>')`` and so on (GR-R-8). A reader can
 # ask for the refusal as a third answer, beside opened and missing
 # (``probe_*``), for the caller that must not read a refusal as an absence.
@@ -70,13 +70,13 @@ def refusal_text(path: str, why: str, *, is_dir: bool) -> str:
 
 
 def state_note(text: str) -> None:
-    """One stderr line: ``daisugi gate: not reading <refusal text>``."""
+    """One stderr line: ``daisugi warden: not reading <refusal text>``."""
     with _NOTED_LOCK:
         if text in _NOTED:
             return
         _NOTED.add(text)
     try:
-        sys.stderr.write(f"daisugi gate: not reading {text}\n")
+        sys.stderr.write(f"daisugi warden: not reading {text}\n")
         sys.stderr.flush()
     except Exception:  # noqa: BLE001 - a note that cannot be written changes nothing
         pass
@@ -86,7 +86,7 @@ def _repair_note(path: str) -> None:
     """One stderr line when an operator command set a directory's mode."""
     try:
         sys.stderr.write(
-            f"daisugi gate: repaired {path}: it was writable by group or others; now 700\n"
+            f"daisugi warden: repaired {path}: it was writable by group or others; now 700\n"
         )
         sys.stderr.flush()
     except Exception:  # noqa: BLE001 - a note that cannot be written changes nothing
@@ -156,7 +156,7 @@ def open_state_dir(name: str, dir_fd: int | None, note_path: str) -> int | None:
 
 
 def probe_state_dirs(root: Path, dirs: tuple[str, ...]) -> tuple[list[int] | None, str | None]:
-    """The fds of the gate root and each directory below it, in order, with
+    """The fds of the warden root and each directory below it, in order, with
     no refusal; or (None, None) when one is missing; or (None, refusal) when
     one is refused (the ones opened are closed). The caller closes the fds.
     The last is the directory itself."""
@@ -273,7 +273,7 @@ def read_state_text(root: Path, dirs: tuple[str, ...], name: str) -> str | None:
 # (O_CREAT | O_EXCL | O_NOFOLLOW, 0600) under a temp name nobody can
 # predict, then renamed over its name inside the same directory. So a link
 # that a concurrent write planted at a name is never written through. The
-# gate's own files (checkpoint state, the ask channel) replace whatever
+# warden's own files (checkpoint state, the ask channel) replace whatever
 # stands at their name; the operator's files (DISARMED, an envelope, a
 # graft rule) refuse a link or a non-file there, so the owner is told.
 
@@ -284,7 +284,7 @@ def _make_dirs(root: Path, dirs: tuple[str, ...], *, repair: bool) -> list[int]:
     raises StateWriteRefused. A directory that group or others can write is
     refused as well, as the reader refuses it (GR-R-8), unless ``repair``
     is set, which is the operator's own command: it sets every directory to
-    0700 and says so on stderr when the mode was loose. The gate's own
+    0700 and says so on stderr when the mode was loose. The warden's own
     writers never repair and never chmod."""
     base = str(Path(root))
     Path(base).parent.mkdir(parents=True, exist_ok=True)
@@ -441,9 +441,9 @@ def _open_for_unlink(root: Path, dirs: tuple[str, ...]) -> tuple[list[int] | Non
 
 
 def verify_written(root: Path, dirs: tuple[str, ...], name: str) -> None:
-    """Read a file the operator just wrote with the gate's reader. A refusal
+    """Read a file the operator just wrote with the warden's reader. A refusal
     raises StateWriteRefused (one line), so the writer never claims success
-    for a file the gate would not read (GR-R-9)."""
+    for a file the warden would not read (GR-R-9)."""
     fd, why = probe_state_file(root, dirs, name)
     if fd is None:
         path = os.path.join(str(Path(root)), *dirs, name)
@@ -452,7 +452,7 @@ def verify_written(root: Path, dirs: tuple[str, ...], name: str) -> None:
 
 
 def refused_paths(root: Path) -> list[str]:
-    """Every path under the gate root the gate would refuse to read, each
+    """Every path under the warden root the warden would refuse to read, each
     as ``<path>: <reason> (fix: ...)`` (GR-R-8): the root; then, if it
     opens, DISARMED, and each of ``envelopes/``, ``grafts/`` and
     ``checkpoint-state/`` with every ``*.json`` file in it. A refused

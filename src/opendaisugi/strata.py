@@ -18,7 +18,7 @@ openDaisugi does **not** rewrite its own prompts. Two hard boundaries:
   open-constraints always, then tag/recency) — sophisticated relevance-selection is
   this stage's own landmine and is left to the harness; ``repage`` returns any
   dropped stratum verbatim so nothing is lost, only deprioritized.
-- **Facts and hypotheses never gate actions.** They inform reasoning only. The one
+- **Facts and hypotheses never warden actions.** They inform reasoning only. The one
   path that touches authority is ``promote_constraint`` (below), and it flows
   through ``verify_inheritance`` — a promoted constraint may only *tighten* the
   envelope, never loosen it.
@@ -246,7 +246,7 @@ class PromotionResult:
     violations: list[Violation] = field(default_factory=list)
     reason: str = ""
     # True only when a ``deny_witness`` was supplied AND the tightened envelope
-    # rejected it — i.e. enforcement was *proven*, not merely gated as a tightening.
+    # rejected it — i.e. enforcement was *proven*, not merely checked as a tightening.
     # A glob-removal promotion enforces structurally but leaves this False unless a
     # witness was given; a soft-compiled invariant can never set it True.
     enforcement_proven: bool = False
@@ -285,9 +285,9 @@ def promote_constraint(
     """Promote a mid-task constraint into the enforcement envelope — the one path
     from deliberation to authority.
 
-    Four fail-closed gates, any of which refuses:
+    Four fail-closed checks, any of which refuses:
     - **Kind.** Only a ``constraint`` stratum may touch authority; a ``fact`` /
-      ``hypothesis`` / ``goal`` is refused — those inform reasoning, never gate actions.
+      ``hypothesis`` / ``goal`` is refused — those inform reasoning, never warden actions.
     - **Only tightens.** The candidate — built from the delta (globs removed,
       invariants appended), or supplied explicitly via ``candidate`` — must pass
       ``verify_inheritance`` against the current envelope; a delta that would loosen is
@@ -310,7 +310,7 @@ def promote_constraint(
             reason=(
                 f"only a 'constraint' stratum may touch authority; got kind "
                 f"'{constraint.kind}' — facts, hypotheses and goals inform reasoning, "
-                f"never gate actions"
+                f"never warden actions"
             ),
         )
     if constraint.status == "promoted":

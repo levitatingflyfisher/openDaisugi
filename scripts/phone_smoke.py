@@ -147,8 +147,8 @@ def main() -> int:
     home.mkdir(exist_ok=True)
     data_dir = WORK / "data"
     data_dir.mkdir(exist_ok=True)
-    gate_root = WORK / "gate"
-    gate_root.mkdir(exist_ok=True)
+    warden_root = WORK / "warden"
+    warden_root.mkdir(exist_ok=True)
     sock = WORK / "coppice.sock"
     http_log = WORK / "http-serve.log"
     https_log = WORK / "https-serve.log"
@@ -160,8 +160,8 @@ def main() -> int:
     run(["go", "build", "-o", str(binary), "./cmd/coppice"], env=os.environ.copy(), cwd=COPPICE)
 
     # Everything after this point is a coppice run against its own scratch
-    # home, socket, data directory and gate root, so it never touches the
-    # operator's real server or the operator's real gate.
+    # home, socket, data directory and warden root, so it never touches the
+    # operator's real server or the operator's real warden.
     env = {**os.environ, "HOME": str(home), "XDG_RUNTIME_DIR": str(WORK / "run")}
     (WORK / "run").mkdir(exist_ok=True)
     top = ["--socket", str(sock), "--data-dir", str(data_dir)]
@@ -230,8 +230,8 @@ def main() -> int:
                         "off",
                         "--listen",
                         f"127.0.0.1:{HTTP_PORT}",
-                        "--gate-root",
-                        str(gate_root),
+                        "--warden-root",
+                        str(warden_root),
                         "--qr=false",
                     ],
                     env=env,
@@ -277,8 +277,8 @@ def main() -> int:
                         f"127.0.0.1:{HTTPS_PORT}",
                         "--ca-listen",
                         f":{CA_PORT}",
-                        "--gate-root",
-                        str(gate_root),
+                        "--warden-root",
+                        str(warden_root),
                         "--qr=false",
                     ],
                     env=env,

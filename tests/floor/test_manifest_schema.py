@@ -1,6 +1,6 @@
 """The recorded Herdr manifest schema is read off the Go source, not guessed.
 
-Two things must stay true as the Go side evolves. Every key, gate and region a
+Two things must stay true as the Go side evolves. Every key, condition and region a
 vendored manifest actually uses must be one opendaisugi.floor.manifest_schema
 names. And every constant that module records must match the Go source it was
 read from, not just itself. A sha256 pin over the vendored manifests and the
@@ -87,14 +87,14 @@ def _region_known(region: str) -> bool:
     return False
 
 
-def _walk_nested_gates(gate: dict, manifest_name: str, rule_id: str) -> None:
+def _walk_nested_conditions(condition: dict, manifest_name: str, rule_id: str) -> None:
     for combinator in ("all", "any", "not"):
-        for nested in gate.get(combinator, []):
+        for nested in condition.get(combinator, []):
             for key in nested:
                 assert key in schema.MATCHER_KEYS, (
-                    f"{manifest_name} rule {rule_id} uses unrecorded gate key {key!r}"
+                    f"{manifest_name} rule {rule_id} uses unrecorded condition key {key!r}"
                 )
-            _walk_nested_gates(nested, manifest_name, rule_id)
+            _walk_nested_conditions(nested, manifest_name, rule_id)
 
 
 # --- the schema module resolves the same directory hostfacts does --------
@@ -118,7 +118,7 @@ def test_the_schema_module_matches_the_go_struct_tags():
     go_text = MANIFEST_GO.read_text(encoding="utf-8")
     assert _struct_toml_tags(go_text, "Manifest") == schema.MANIFEST_KEYS
     assert _struct_toml_tags(go_text, "Rule") == schema.RULE_KEYS
-    assert _struct_toml_tags(go_text, "Gate") == schema.MATCHER_KEYS
+    assert _struct_toml_tags(go_text, "Condition") == schema.MATCHER_KEYS
 
 
 def test_the_schema_module_matches_the_go_regions():
@@ -139,9 +139,9 @@ def test_the_schema_module_matches_the_go_limits():
     assert _top_level_const_int(go_text, "EngineVersion") == schema.ENGINE_VERSION
     block = _const_block(go_text)
     assert _const_int(block, "maxRules") == schema.MAX_RULES
-    assert _const_int(block, "maxGateDepth") == schema.MAX_GATE_DEPTH
-    assert _const_int(block, "maxTotalGates") == schema.MAX_TOTAL_GATES
-    assert _const_int(block, "maxMatchersPerGate") == schema.MAX_MATCHERS_PER_GATE
+    assert _const_int(block, "maxConditionDepth") == schema.MAX_CONDITION_DEPTH
+    assert _const_int(block, "maxTotalConditions") == schema.MAX_TOTAL_CONDITIONS
+    assert _const_int(block, "maxMatchersPerCondition") == schema.MAX_MATCHERS_PER_CONDITION
     assert _const_int(block, "maxTotalMatchers") == schema.MAX_TOTAL_MATCHERS
     assert _const_int(block, "maxMatcherChars") == schema.MAX_MATCHER_CHARS
     assert _const_int(block, "topRegionMinVer") == schema.TOP_NON_EMPTY_LINES_MIN_ENGINE_VERSION
@@ -160,7 +160,7 @@ def test_the_readme_code_disagreements_are_recorded_not_dropped():
 # --- every vendored manifest fits inside the recorded schema -------------
 
 
-def test_every_vendored_manifest_uses_only_recorded_keys_gates_and_regions():
+def test_every_vendored_manifest_uses_only_recorded_keys_conditions_and_regions():
     reason = hostfacts.skip_reason("vendored_manifests")
     if reason:
         pytest.skip(reason)
@@ -188,7 +188,7 @@ def test_every_vendored_manifest_uses_only_recorded_keys_gates_and_regions():
             assert _region_known(region), (
                 f"{path.name} rule {rule.get('id')} uses unrecorded region {region!r}"
             )
-            _walk_nested_gates(rule, path.name, rule.get("id", "?"))
+            _walk_nested_conditions(rule, path.name, rule.get("id", "?"))
             checked += 1
     assert checked > 0, "no rules were checked, the manifest walk found nothing"
 

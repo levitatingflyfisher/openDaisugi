@@ -4,7 +4,7 @@ name: clients
 # own tests, then run each golden compare against the oracle's committed
 # fixtures. No model, no claude and no real upstream: the compares that
 # need a model skip it (HF_HUB_OFFLINE with an empty HF_HOME), and the
-# gateway compare answers from its own fake upstream.
+# router compare answers from its own fake upstream.
 on:
   push:
     branches: [master]
@@ -85,7 +85,7 @@ jobs:
           cache-dependency-path: clients/go/go.sum
       - uses: ./.github/actions/native-prefix
 
-      - name: Build daisugi, daisugi-gate and conform
+      - name: Build daisugi, daisugi-warden and conform
         run: clients/go/scripts/build.sh
 
       - name: Build the test instruments
@@ -93,8 +93,8 @@ jobs:
         run: |
           export CGO_CFLAGS="-O2 -g -DOPENDAISUGI_NATIVE=$(scripts/native.sh --print-key)"
           mkdir -p "$RUNNER_TEMP/bin"
-          cp daisugi daisugi-gate conform "$RUNNER_TEMP/bin/"
-          for p in pathway-probe gateway-probe recall-probe fake-upstream l-probe voice-probe alias-probe; do
+          cp daisugi daisugi-warden conform "$RUNNER_TEMP/bin/"
+          for p in pathway-probe router-probe recall-probe fake-upstream l-probe voice-probe alias-probe; do
             go build -trimpath -o "$RUNNER_TEMP/bin/$p" "./cmd/$p"
           done
 
@@ -165,12 +165,12 @@ jobs:
         run: rm -rf clients/rust/target/release/build/z3-sys-*/out/build
 
       - name: Check the binaries name no build path
-        run: clients/rust/tools/check-paths.sh clients/rust/target/release/daisugi-gate clients/rust/target/release/daisugi
+        run: clients/rust/tools/check-paths.sh clients/rust/target/release/daisugi-warden clients/rust/target/release/daisugi
 
       - name: Collect the binaries
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          for b in daisugi daisugi-gate conform pathway-probe gateway-probe recall-probe l-probe voice-probe alias-probe; do
+          for b in daisugi daisugi-warden conform pathway-probe router-probe recall-probe l-probe voice-probe alias-probe; do
             cp "clients/rust/target/release/$b" "$RUNNER_TEMP/bin/"
           done
 
@@ -193,7 +193,7 @@ jobs:
       fail-fast: false
       matrix:
         lang: [go, rust]
-        suite: [gate, cli, pathway, garden, gateway, gate_server, k2, k3, k4, l, f, weave, rank, tree, models, voice, alias]
+        suite: [warden, cli, pathway, garden, router, warden_server, k2, k3, k4, l, f, weave, rank, tree, models, voice, alias]
     env:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
@@ -220,12 +220,12 @@ jobs:
           B: ${{ runner.temp }}/bin
           S: ${{ runner.temp }}/runs
           HF_HOME: ${{ runner.temp }}/hf-empty
-          DAISUGI_GATE_SCRATCH: ${{ runner.temp }}/runs/gate
+          DAISUGI_WARDEN_SCRATCH: ${{ runner.temp }}/runs/warden
           DAISUGI_CLI_SCRATCH: ${{ runner.temp }}/runs/cli
           DAISUGI_PATHWAY_SCRATCH: ${{ runner.temp }}/runs/pathway
           DAISUGI_GARDEN_SCRATCH: ${{ runner.temp }}/runs/garden
-          DAISUGI_GATEWAY_SCRATCH: ${{ runner.temp }}/runs/gateway
-          DAISUGI_GATE_SERVER_SCRATCH: ${{ runner.temp }}/runs/server
+          DAISUGI_ROUTER_SCRATCH: ${{ runner.temp }}/runs/router
+          DAISUGI_WARDEN_SERVER_SCRATCH: ${{ runner.temp }}/runs/server
           DAISUGI_K2_SCRATCH: ${{ runner.temp }}/runs/k2
           DAISUGI_K3_SCRATCH: ${{ runner.temp }}/runs/k3
           DAISUGI_K4_SCRATCH: ${{ runner.temp }}/runs/k4
@@ -252,12 +252,12 @@ jobs:
           mkdir -p "$HF_HOME"
           if command -v claude >/dev/null; then echo "claude is on PATH; refusing to run"; exit 1; fi
           case "${{ matrix.suite }}" in
-            gate)    uv run --no-sync python clients/gate_compare.py --binary "$B/daisugi-gate" ;;
+            warden)    uv run --no-sync python clients/warden_compare.py --binary "$B/daisugi-warden" ;;
             cli)     uv run --no-sync python clients/cli_compare.py --binary "$B/daisugi" ;;
             pathway) uv run --no-sync python clients/pathway_compare.py --binary "$B/daisugi" --probe "$B/pathway-probe" ;;
             garden)  uv run --no-sync python clients/garden_compare.py --binary "$B/daisugi" ;;
-            gateway) uv run --no-sync python clients/gateway_compare.py --binary "$B/daisugi" ;;
-            gate_server) uv run --no-sync python clients/gate_server_compare.py --binary "$B/daisugi" --port "${{ matrix.lang }}" ;;
+            router) uv run --no-sync python clients/router_compare.py --binary "$B/daisugi" ;;
+            warden_server) uv run --no-sync python clients/warden_server_compare.py --binary "$B/daisugi" --port "${{ matrix.lang }}" ;;
             k2)      uv run --no-sync python clients/k2_compare.py --binary "$B/daisugi" --max-refused 3 ;;
             k3)      uv run --no-sync python clients/k3_compare.py --binary "$B/daisugi" --max-refused "$K3_MAX_REFUSED" ;;
             k4)      uv run --no-sync python clients/k4_compare.py --binary "$B/daisugi" --max-refused "$K4_MAX_REFUSED" ;;
@@ -285,8 +285,8 @@ jobs:
   # Cold-start speed (docs/reference/speed-budgets.md). Rebuilds nothing: it
   # takes the Go and Rust daisugi binaries the go and rust jobs built, names
   # them as tests/test_speed.py expects, and runs that file. On a CI runner
-  # only the relative rules judge the native binaries (native gate under 0.1
-  # of the Python gate time); the absolute native budgets are a local check.
+  # only the relative rules judge the native binaries (native warden under 0.1
+  # of the Python warden time); the absolute native budgets are a local check.
   # coppice and sprig are built in other jobs, so their rows skip here.
   speed:
     needs: [go, rust]
@@ -312,7 +312,7 @@ jobs:
       - name: Name the binaries for the speed test
         run: |
           mkdir -p "$RUNNER_TEMP/speed-bin"
-          for t in daisugi daisugi-gate; do
+          for t in daisugi daisugi-warden; do
             cp "$RUNNER_TEMP/bin-go/$t" "$RUNNER_TEMP/speed-bin/$t-go"
             cp "$RUNNER_TEMP/bin-rust/$t" "$RUNNER_TEMP/speed-bin/$t-rs"
           done
@@ -493,9 +493,9 @@ jobs:
 
   # The Rust sprig (harness/sprig-rs): its own tests, then every case of
   # clients/sprig_compare.py run on the Go sprig and the Rust sprig side by
-  # side, with fake claude, fake gate and fake API (over http, and over
+  # side, with fake claude, fake warden and fake API (over http, and over
   # https through a scratch CA openssl makes). Both are stamped with one
-  # version so --version compares. The real-gate cases run through the Go
+  # version so --version compares. The real-warden cases run through the Go
   # and the Rust daisugi the go and rust jobs built; none is refused.
   sprig-rs:
     needs: [go, rust]
@@ -548,7 +548,7 @@ jobs:
             --daisugi "rust=$RUNNER_TEMP/daisugi-rust/daisugi" --max-refused 0
       # The weave cases that start a real sprig (kind B, SX-R-7) skip in the
       # compare matrix, which builds no sprig. They run here: each daisugi
-      # with each sprig, through the real gate, against the fake claude and
+      # with each sprig, through the real warden, against the fake claude and
       # (the mixed trees, MX-R-11) the fake Anthropic and OpenAI wires.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -570,7 +570,7 @@ jobs:
 
   # The release tarball and the coppice end-to-end suite. release.sh builds
   # coppice, sprig and daisugi as a release does; smoke-tarball.sh unpacks
-  # that tarball into a scratch HOME and runs it to the first gate decision;
+  # that tarball into a scratch HOME and runs it to the first warden decision;
   # harness/coppice/e2e drives the tarball's coppice: the web floor in
   # headless chromium and the TUI in coppice's own virtual terminal.
   e2e:

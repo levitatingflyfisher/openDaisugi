@@ -6,10 +6,12 @@ import (
 	"os/signal"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 )
 
-// toolGroups holds the process group of each bash and gate process sprig
+// toolGroups holds the process group of each bash and warden process sprig
 // started that may still have members. KillToolGroups kills them all when
 // sprig ends, so nothing a tool left behind outlives sprig (MX-R-8).
 var toolGroups struct {
@@ -23,6 +25,14 @@ var toolGroups struct {
 // follows the thread that started the child. A group with no member left
 // after the wait is forgotten.
 func runInGroup(cmd *exec.Cmd) error {
+	_, err := runInGroupFor(cmd, 0)
+	return err
+}
+
+// runInGroupFor is runInGroup with a cap: past it the whole group is
+// killed, and killed is true. Zero is no cap. Output a process outside the
+// group still holds is not waited for past a short delay.
+func runInGroupFor(cmd *exec.Cmd, limit time.Duration) (killed bool, err error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if cmd.SysProcAttr == nil {
@@ -30,14 +40,30 @@ func runInGroup(cmd *exec.Cmd) error {
 	}
 	cmd.SysProcAttr.Setpgid = true
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+	if limit > 0 && cmd.WaitDelay == 0 {
+		cmd.WaitDelay = 2 * time.Second
+	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return false, err
 	}
 	pgid := cmd.Process.Pid
 	toolGroups.Lock()
 	toolGroups.ids = append(toolGroups.ids, pgid)
 	toolGroups.Unlock()
-	err := cmd.Wait()
+	var fired atomic.Bool
+	var t *time.Timer
+	if limit > 0 {
+		t = time.AfterFunc(limit, func() {
+			fired.Store(true)
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		})
+	}
+	err = cmd.Wait()
+	// Stopped at once: a timer that fires after the wait would report a
+	// finished call as killed and signal a reaped group (review r9, 7).
+	if t != nil && t.Stop() {
+		fired.Store(false)
+	}
 	if syscall.Kill(-pgid, 0) != nil {
 		toolGroups.Lock()
 		for i, g := range toolGroups.ids {
@@ -48,7 +74,7 @@ func runInGroup(cmd *exec.Cmd) error {
 		}
 		toolGroups.Unlock()
 	}
-	return err
+	return fired.Load(), err
 }
 
 // forgetToolGroup forgets a group that has no member left, and says

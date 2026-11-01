@@ -64,7 +64,7 @@ class AllowlistBypassStrategy:
         cmd = (step.command or "").strip()
         if not cmd:
             return self._inner.decide(step, envelope)
-        # v0.28.4: reuse verify's metachar gate before short-circuiting on
+        # v0.28.4: reuse verify's metachar warden before short-circuiting on
         # allowlist match. Pre-v0.28.4 the approval strategy auto-approved on
         # ``cmd.split()[0]`` alone, so ``cat > /etc/passwd`` (head ``cat``
         # in allowlist) was auto-approved at the human-in-the-loop layer

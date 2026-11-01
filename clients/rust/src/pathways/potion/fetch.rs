@@ -13,7 +13,7 @@ use std::time::Duration;
 use crate::netproxy;
 
 use super::{Env, Pinned};
-use crate::gate::sha256;
+use crate::warden::sha256;
 
 /// The most redirects one download follows.
 const MAX_HOPS: usize = 8;
@@ -41,7 +41,7 @@ pub fn fetch(url: &str, f: &Pinned, dest: &str, e: &Env) -> Result<(), String> {
     }
     // A temporary file of its own, so two processes fetching at once
     // never write into one file; each renames a checked file into place.
-    let part = dir.join(format!("{name}.part-{}", crate::gate::random_hex(8).unwrap_or_else(|_| "0".into())));
+    let part = dir.join(format!("{name}.part-{}", crate::warden::random_hex(8).unwrap_or_else(|_| "0".into())));
     let write = || -> std::io::Result<()> {
         let mut out = std::fs::File::create(&part)?;
         out.write_all(&body)?;
@@ -195,7 +195,7 @@ fn get_once(u: &Url, size: u64, proxies: &netproxy::Urllib) -> Result<Reply, Str
     }
     if (200..300).contains(&status) {
         if chunked {
-            body = crate::gate::llm::dechunk(&body).ok_or("a chunked reply that could not be read")?;
+            body = crate::warden::llm::dechunk(&body).ok_or("a chunked reply that could not be read")?;
         } else if let Some(n) = length {
             if body.len() < n {
                 return Err("a reply cut short".into());

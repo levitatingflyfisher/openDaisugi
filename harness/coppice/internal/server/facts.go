@@ -63,9 +63,13 @@ const (
 	kindClaude transcriptKind = iota
 	// kindSprig is a sprig session tree: one JSON object per line. An
 	// assistant entry carries a unique id, model and usage with fresh,
-	// cacheRead, cacheWrite and out. A verdict entry carries the gate's
+	// cacheRead, cacheWrite and out. A verdict entry carries the warden's
 	// decision on a tool call.
 	kindSprig
+	// kindHermes is a Hermes Agent session in its state.db. The path
+	// names the database and the session, as "db#session". The server
+	// reads it only for messages; no tailer reads it.
+	kindHermes
 )
 
 // tailCap is the most bytes one poll reads. A transcript that grew by more
@@ -77,8 +81,8 @@ const tailCap = 4 << 20
 // short memory is enough.
 const idKeep = 1024
 
-// gateFact is the last verdict known for a pane. At is unix seconds.
-type gateFact struct {
+// wardenFact is the last verdict known for a pane. At is unix seconds.
+type wardenFact struct {
 	Decision string  `json:"decision"`
 	Tool     string  `json:"tool"`
 	Clause   string  `json:"clause"`
@@ -118,13 +122,13 @@ type tailer struct {
 
 	// Sprig only: the last verdict and the mode it was made in, and the
 	// last tool call, whose name the verdict that follows it takes.
-	verdict      *gateFact
+	verdict      *wardenFact
 	mode         string
 	lastCallID   string
 	lastCallName string
 	// verdicts holds each verdict read since the owner last took them, the
 	// newest tailCapVerdicts of them, for the journal.
-	verdicts []gateFact
+	verdicts []wardenFact
 }
 
 // tailCapVerdicts is the most verdicts one tailer holds between two takes.
@@ -140,7 +144,7 @@ type tailSnap struct {
 	refused  bool
 	sum      Tokens
 	model    string
-	verdict  *gateFact
+	verdict  *wardenFact
 	mode     string
 	off      int64
 	dev, ino uint64
@@ -268,7 +272,7 @@ func (t *tailer) line(b []byte) {
 		case bytes.Contains(b, assistantMark):
 			t.sprigAssistant(b)
 		case bytes.Contains(b, toolCallMark), bytes.Contains(b, verdictMark):
-			t.sprigGate(b)
+			t.sprigWarden(b)
 		}
 	}
 }
@@ -330,7 +334,7 @@ func (t *tailer) sprigAssistant(b []byte) {
 	}
 }
 
-func (t *tailer) sprigGate(b []byte) {
+func (t *tailer) sprigWarden(b []byte) {
 	var e struct {
 		Type      string  `json:"type"`
 		TS        float64 `json:"ts"`
@@ -350,7 +354,7 @@ func (t *tailer) sprigGate(b []byte) {
 		if e.Decision != "allow" && e.Decision != "deny" {
 			return
 		}
-		v := &gateFact{Decision: e.Decision, Clause: truncate(e.Clause, 200), At: e.TS}
+		v := &wardenFact{Decision: e.Decision, Clause: truncate(e.Clause, 200), At: e.TS}
 		if e.ToolUseID != "" && e.ToolUseID == t.lastCallID {
 			v.Tool = truncate(t.lastCallName, 200)
 		}
@@ -402,13 +406,13 @@ const maxFilesPerPane = 8
 const retiredKeep = 64
 
 // paneFacts is what the floor knows about one pane beyond its state: the
-// last verdict and mode its gate hook reported, and the transcripts it is
+// last verdict and mode its warden hook reported, and the transcripts it is
 // allowed to read. Its lock is never held while a file is read, and never
 // taken while Server.factsMu is held, or the reverse.
 type paneFacts struct {
 	mu      sync.Mutex
 	mode    string
-	verdict *gateFact
+	verdict *wardenFact
 	// path is the transcript read now. files are the ones this pane reads,
 	// in order of use, the one used last at the end.
 	path  string
@@ -894,7 +898,7 @@ func (s *Server) checkTranscript(c *Client, id, harness, path string) (real, ref
 	return real, ""
 }
 
-// canonHarness names one harness one way: the gate calls Claude Code
+// canonHarness names one harness one way: the warden calls Claude Code
 // claude-code, and coppice calls it claude.
 func canonHarness(h string) string {
 	if h == "claude-code" {
@@ -950,7 +954,7 @@ func (s *Server) noteReport(id string, x proto.ReportExtras, real string) {
 		pf.mode = x.Mode
 	}
 	if v := x.Verdict; v != nil {
-		pf.verdict = &gateFact{Decision: v.Decision, Tool: v.Tool, Clause: v.Clause, At: unixSeconds(now)}
+		pf.verdict = &wardenFact{Decision: v.Decision, Tool: v.Tool, Clause: v.Clause, At: unixSeconds(now)}
 		defer s.noteVerdict(id, v, x.Mode)
 	}
 	if real != "" {
@@ -968,7 +972,7 @@ type factsView struct {
 	model   string
 	tokens  *Tokens
 	mode    string
-	verdict *gateFact
+	verdict *wardenFact
 	seen    time.Time
 }
 
@@ -987,7 +991,7 @@ func (s *Server) runPoll(id string, pf *paneFacts, t *tailer, done chan<- struct
 	fresh, mode := t.verdicts, t.mode
 	t.verdicts = nil
 	t.mu.Unlock()
-	// Verdicts a sprig tree holds go to the journal, as the gate's own do.
+	// Verdicts a sprig tree holds go to the journal, as the warden's own do.
 	// This runs before the pane's lock is taken, so the two never nest.
 	for _, v := range fresh {
 		s.noteTreeVerdict(id, v, mode)
@@ -1060,7 +1064,7 @@ func (s *Server) viewFacts(p layout.Pane) factsView {
 			c := *tv
 			// A tree's clock is the harness's own. A verdict dated after
 			// now counts as now, before it is compared, so it cannot hide
-			// a newer verdict from the gate.
+			// a newer verdict from the warden.
 			if nowS := unixSeconds(now); c.At > nowS {
 				c.At = nowS
 			}

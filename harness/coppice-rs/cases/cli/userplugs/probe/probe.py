@@ -48,7 +48,7 @@ event = {
     "harness": "x",
     "pane": "w1:p1",
     "state": "idle",
-    "source": "gate",
+    "source": "warden",
     "detail": "",
 }
 for cmd, params in [

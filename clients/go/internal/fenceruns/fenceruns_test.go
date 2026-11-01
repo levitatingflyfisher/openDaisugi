@@ -3,6 +3,7 @@ package fenceruns
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestStripPathFlags(t *testing.T) {
 }
 
 func TestBoundWorkspaceFollowsTheParents(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "gate")
+	root := filepath.Join(t.TempDir(), "warden")
 	ws := t.TempDir()
 	pid := os.Getpid()
 	if BoundWorkspace(root, &pid) != "" {
@@ -77,6 +78,33 @@ func TestBoundWorkspaceFollowsTheParents(t *testing.T) {
 	}
 	if got := BoundWorkspace(root, &pid); got != "" {
 		t.Fatalf("a stale record bound %q", got)
+	}
+}
+
+// Review F5: a record from an earlier boot, or one with no boot id, binds
+// nothing.
+func TestBoundWorkspaceNeedsThisBootsID(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "warden")
+	ws := t.TempDir()
+	pid := os.Getpid()
+	pp := os.Getppid()
+	if err := Register(root, pp, ws); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(root, RunsDir, itoa(pp)+".json")
+	raw, err := os.ReadFile(f)
+	if err != nil || BootID() == "" || !strings.Contains(string(raw), `"boot":"`+BootID()+`"`) {
+		t.Fatalf("the record lacks the boot id: %s %v", raw, err)
+	}
+	start := ProcStart(pp)
+	for _, boot := range []string{`,"boot":"00000000-0000-0000-0000-000000000000"`, `,"boot":""`, ""} {
+		body := `{"pid":` + itoa(pp) + `,"start":"` + start + `"` + boot + `,"workspace":"/"}`
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := BoundWorkspace(root, &pid); got != "" {
+			t.Fatalf("%s bound %q", boot, got)
+		}
 	}
 }
 

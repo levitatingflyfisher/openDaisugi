@@ -11,7 +11,7 @@ prompt boundaries).
 
 A checkpoint is always WHOLE-REPO scoped: ``snapshot`` and ``restore``
 normalize ``repo`` to the git toplevel at entry (:func:`_toplevel`), so a
-``repo`` that is a subdirectory of the toplevel (the common case — a gate hook
+``repo`` that is a subdirectory of the toplevel (the common case — a warden hook
 passes the agent's cwd, routinely a monorepo subdir) still captures and
 restores the whole tree, and every git command and filesystem join here speaks
 ONE path namespace instead of mixing toplevel-relative and subdir-relative
@@ -97,7 +97,7 @@ _SAFE_GIT_ARGS: tuple[str, ...] = (
 )
 
 # A timeout never changes a verdict here: every caller already swallows
-# any exception from this module (the gate's checkpoint path), or is an
+# any exception from this module (the warden's checkpoint path), or is an
 # interactive TUI action where raising is the existing behavior for any
 # other git failure too. It only stops a git call the repo's config can
 # still stall (a lock, an included file that never arrives) from hanging
@@ -482,33 +482,33 @@ def snapshot(
 ) -> Checkpoint:
     """Commit the current working tree to ``refs/daisugi/<prefix>/<session>/<id>``.
 
-    Tracked and untracked files are captured (``git add -A``, so
-    ``.gitignore`` is honored the same way it always is); a regular file
-    over ``max_file_bytes`` is left out of the commit and named in
-    ``skipped``. Symlinks are NEVER size-skipped — a symlink's git blob is
-    its (small) target text, not the bytes at the far end, and
-    ``os.lstat`` (never ``stat``, which follows the link and raises on a
-    dangling target) is used to tell a symlink from a regular file so a
-    broken symlink is captured like any other, not miscategorized into
-    ``skipped`` by an exception.
+        Tracked and untracked files are captured (``git add -A``, so
+        ``.gitignore`` is honored the same way it always is); a regular file
+        over ``max_file_bytes`` is left out of the commit and named in
+        ``skipped``. Symlinks are NEVER size-skipped — a symlink's git blob is
+        its (small) target text, not the bytes at the far end, and
+        ``os.lstat`` (never ``stat``, which follows the link and raises on a
+        dangling target) is used to tell a symlink from a regular file so a
+        broken symlink is captured like any other, not miscategorized into
+        ``skipped`` by an exception.
 
-    ``timeout_s`` bounds the WHOLE call. Every git invocation below shares
-    one deadline, taken from ``time.monotonic()`` here, not a fresh one per
-    invocation, so a repo with many files (more ``rm --cached`` calls)
-    cannot add up to minutes just by having more of them. Every
-    caller already treats any exception from this function (a git failure,
-    ``subprocess.TimeoutExpired`` included) the same way it always did:
-    the gate's checkpoint path swallows it (best-effort, never touches the
-    verdict), and callers that don't (the TUI restore) already surface any
-    other git failure the same way.
+        ``timeout_s`` bounds the WHOLE call. Every git invocation below shares
+        one deadline, taken from ``time.monotonic()`` here, not a fresh one per
+        invocation, so a repo with many files (more ``rm --cached`` calls)
+        cannot add up to minutes just by having more of them. Every
+        caller already treats any exception from this function (a git failure,
+        ``subprocess.TimeoutExpired`` included) the same way it always did:
+        the warden's checkpoint path swallows it (best-effort, never touches the
+        verdict), and callers that don't (the TUI restore) already surface any
+        other git failure the same way.
 
-    ``workspace`` (a resident checkpoint, FN-R-27) is the workspace a fence
-    run bound, resolved. Then ``repo`` is ignored: the tree is that
-    workspace, its ``.git`` (or, for a git worktree whose link checks out,
-its admin dir and common dir) is the git dir, git is told both and finds
-    neither itself, and a file whose resolved path leaves the workspace
-    (a link that leads out) is left out of the commit and named in
-    ``skipped``.
+        ``workspace`` (a resident checkpoint, FN-R-27) is the workspace a fence
+        run bound, resolved. Then ``repo`` is ignored: the tree is that
+        workspace, its ``.git`` (or, for a git worktree whose link checks out,
+    its admin dir and common dir) is the git dir, git is told both and finds
+        neither itself, and a file whose resolved path leaves the workspace
+        (a link that leads out) is left out of the commit and named in
+        ``skipped``.
     """
     deadline = time.monotonic() + timeout_s
     bound: dict[str, str] | None = None
